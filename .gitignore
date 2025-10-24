@@ -1,0 +1,18 @@
+# --- Laravel ---
+/vendor
+.env
+.env.*
+/node_modules
+/public/storage
+/storage/*.key
+
+# --- Frontend ---
+front/node_modules
+front/dist
+front/.env
+
+# --- IDEs / OS ---
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
