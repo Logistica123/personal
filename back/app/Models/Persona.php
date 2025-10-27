@@ -11,6 +11,7 @@ use App\Models\Sucursal;
 use App\Models\User;
 use App\Models\Estado;
 use App\Models\Archivo;
+use App\Models\Dueno;
 
 class Persona extends Model
 {
@@ -76,5 +77,10 @@ class Persona extends Model
     public function documentos()
     {
         return $this->hasMany(Archivo::class, 'persona_id');
+    }
+
+    public function dueno()
+    {
+        return $this->hasOne(Dueno::class, 'persona_id');
     }
 }

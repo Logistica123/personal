@@ -143,6 +143,15 @@ class PersonalController extends Controller
         ]);
     }
 
+    public function destroy(Persona $persona): JsonResponse
+    {
+        $persona->delete();
+
+        return response()->json([
+            'message' => 'Personal eliminado correctamente.',
+        ]);
+    }
+
     public function storeDocument(Request $request, Persona $persona): JsonResponse
     {
         $validated = $request->validate([
@@ -219,6 +228,14 @@ class PersonalController extends Controller
             'observaciones' => ['nullable', 'string'],
             'combustible' => ['required', 'boolean'],
             'tarifaEspecial' => ['required', 'boolean'],
+            'duenoNombre' => ['nullable', 'string', 'max:255'],
+            'duenoFechaNacimiento' => ['nullable', 'date'],
+            'duenoEmail' => ['nullable', 'email', 'max:255'],
+            'duenoTelefono' => ['nullable', 'string', 'max:255'],
+            'duenoCuil' => ['nullable', 'string', 'max:255'],
+            'duenoCuilCobrador' => ['nullable', 'string', 'max:255'],
+            'duenoCbuAlias' => ['nullable', 'string', 'max:255'],
+            'duenoObservaciones' => ['nullable', 'string'],
         ]);
 
         $persona = Persona::create([
@@ -242,6 +259,38 @@ class PersonalController extends Controller
             'combustible' => $validated['combustible'],
             'tarifaespecial' => $validated['tarifaEspecial'],
         ]);
+
+        $shouldCreateOwner = ($validated['perfilValue'] ?? null) === 2;
+
+        if ($shouldCreateOwner) {
+            $ownerPayload = [
+                'nombreapellido' => $request->input('duenoNombre'),
+                'fecha_nacimiento' => $request->input('duenoFechaNacimiento'),
+                'email' => $request->input('duenoEmail'),
+                'telefono' => $request->input('duenoTelefono'),
+                'cuil' => $request->input('duenoCuil'),
+                'cuil_cobrador' => $request->input('duenoCuilCobrador'),
+                'cbu_alias' => $request->input('duenoCbuAlias'),
+                'observaciones' => $request->input('duenoObservaciones'),
+            ];
+
+            $hasOwnerData = collect($ownerPayload)
+                ->reject(fn ($value) => $value === null || $value === '')
+                ->isNotEmpty();
+
+            if ($hasOwnerData) {
+                $persona->dueno()->create([
+                    'nombreapellido' => $ownerPayload['nombreapellido'] ?: 'Sin nombre',
+                    'fecha_nacimiento' => $ownerPayload['fecha_nacimiento'] ?: null,
+                    'email' => $ownerPayload['email'] ?: null,
+                    'telefono' => $ownerPayload['telefono'] ?: null,
+                    'cuil' => $ownerPayload['cuil'] ?: null,
+                    'cuil_cobrador' => $ownerPayload['cuil_cobrador'] ?: null,
+                    'cbu_alias' => $ownerPayload['cbu_alias'] ?: null,
+                    'observaciones' => $ownerPayload['observaciones'] ?: null,
+                ]);
+            }
+        }
 
         return response()->json([
             'message' => 'Personal registrado correctamente.',

@@ -32,6 +32,7 @@ Route::get('/personal/{persona}', [PersonalController::class, 'show']);
 Route::put('/personal/{persona}', [PersonalController::class, 'update']);
 Route::post('/personal/{persona}/documentos', [PersonalController::class, 'storeDocument']);
 Route::post('/personal', [PersonalController::class, 'store']);
+Route::delete('/personal/{persona}', [PersonalController::class, 'destroy']);
 Route::get('/personal-meta', [PersonalController::class, 'meta']);
 
 Route::post('/login', [AuthController::class, 'login']);

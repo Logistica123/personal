@@ -2995,6 +2995,7 @@ const PersonalPage: React.FC = () => {
   const [estadoFilter, setEstadoFilter] = useState('');
   const [combustibleFilter, setCombustibleFilter] = useState('');
   const [tarifaFilter, setTarifaFilter] = useState('');
+  const [deletingPersonalId, setDeletingPersonalId] = useState<number | null>(null);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -3197,6 +3198,48 @@ const PersonalPage: React.FC = () => {
     setTarifaFilter('');
     setSearchTerm('');
     setCurrentPage(1);
+  };
+
+  const handleDeletePersonal = async (registro: PersonalRecord) => {
+    if (deletingPersonalId !== null) {
+      return;
+    }
+
+    const nombre = registro.nombre ? `"${registro.nombre}"` : `ID ${registro.id}`;
+    const confirmed = window.confirm(`¿Seguro que querés eliminar el registro ${nombre}?`);
+
+    if (!confirmed) {
+      return;
+    }
+
+    try {
+      setDeletingPersonalId(registro.id);
+
+      const response = await fetch(`${apiBaseUrl}/api/personal/${registro.id}`, {
+        method: 'DELETE',
+      });
+
+      if (!response.ok) {
+        let message = `Error ${response.status}: ${response.statusText}`;
+
+        try {
+          const payload = await response.json();
+          if (payload && typeof payload === 'object' && 'message' in payload && typeof payload.message === 'string') {
+            message = payload.message;
+          }
+        } catch {
+          // Ignored: sin cuerpo de respuesta utilizable.
+        }
+
+        throw new Error(message);
+      }
+
+      setPersonal((prev) => prev.filter((item) => item.id !== registro.id));
+    } catch (err) {
+      window.alert((err as Error).message ?? 'No se pudo eliminar el registro.');
+    } finally {
+      setDeletingPersonalId(null);
+    }
   };
 
   const handleExportCsv = () => {
@@ -3456,7 +3499,12 @@ const PersonalPage: React.FC = () => {
                       >
                         ✏️
                       </button>
-                      <button type="button" aria-label={`Eliminar personal ${registro.nombre ?? ''}`} disabled>
+                      <button
+                        type="button"
+                        aria-label={`Eliminar personal ${registro.nombre ?? ''}`}
+                        onClick={() => handleDeletePersonal(registro)}
+                        disabled={deletingPersonalId === registro.id}
+                      >
                         🗑️
                       </button>
                     </div>
@@ -4658,6 +4706,13 @@ const PersonalCreatePage: React.FC = () => {
     observaciones: '',
     combustible: false,
     tarifaEspecial: false,
+    duenoNombre: '',
+    duenoFechaNacimiento: '',
+    duenoEmail: '',
+    duenoCuil: '',
+    duenoCuilCobrador: '',
+    duenoTelefono: '',
+    duenoObservaciones: '',
   });
 
   useEffect(() => {
@@ -4736,6 +4791,13 @@ const PersonalCreatePage: React.FC = () => {
           observaciones: formValues.observaciones.trim() || null,
           combustible: formValues.combustible,
           tarifaEspecial: formValues.tarifaEspecial,
+          duenoNombre: formValues.duenoNombre.trim() || null,
+          duenoFechaNacimiento: formValues.duenoFechaNacimiento || null,
+          duenoEmail: formValues.duenoEmail.trim() || null,
+          duenoCuil: formValues.duenoCuil.trim() || null,
+          duenoCuilCobrador: formValues.duenoCuilCobrador.trim() || null,
+          duenoTelefono: formValues.duenoTelefono.trim() || null,
+          duenoObservaciones: formValues.duenoObservaciones.trim() || null,
         }),
       });
 
@@ -4823,15 +4885,19 @@ const PersonalCreatePage: React.FC = () => {
 
             <h3>Dueño de la unidad</h3>
             <div className="form-grid">
-              {renderDisabledInput('Nombre completo (Dueño)')}
-              {renderDisabledInput('Fecha de nacimiento', 'date')}
-              {renderDisabledInput('Correo (Dueño)', 'email')}
-              {renderDisabledInput('CUIL (Dueño)')}
-              {renderDisabledInput('CUIL cobrador')}
-              {renderDisabledInput('Teléfono (Dueño)')}
+              {renderInput('Nombre completo (Dueño)', 'duenoNombre')}
+              {renderInput('Fecha de nacimiento', 'duenoFechaNacimiento', false, 'date')}
+              {renderInput('Correo (Dueño)', 'duenoEmail', false, 'email')}
+              {renderInput('CUIL (Dueño)', 'duenoCuil')}
+              {renderInput('CUIL cobrador', 'duenoCuilCobrador')}
+              {renderInput('Teléfono (Dueño)', 'duenoTelefono')}
               <label className="input-control" style={{ gridColumn: '1 / -1' }}>
                 <span>Observaciones</span>
-                <textarea disabled rows={2} />
+                <textarea
+                  rows={2}
+                  value={formValues.duenoObservaciones}
+                  onChange={(event) => setFormValues((prev) => ({ ...prev, duenoObservaciones: event.target.value }))}
+                />
               </label>
             </div>
           </section>
