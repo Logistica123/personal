@@ -60,6 +60,28 @@ class PersonalDocumentController extends Controller
         ]);
     }
 
+    public function storeType(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'nombre' => ['required', 'string', 'max:255'],
+            'vence' => ['required', 'boolean'],
+        ]);
+
+        $tipo = FileType::query()->create([
+            'nombre' => $validated['nombre'],
+            'vence' => $validated['vence'],
+        ]);
+
+        return response()->json([
+            'message' => 'Tipo de documento creado correctamente.',
+            'data' => [
+                'id' => $tipo->id,
+                'nombre' => $tipo->nombre,
+                'vence' => (bool) $tipo->vence,
+            ],
+        ], 201);
+    }
+
     public function show(FileType $tipo): JsonResponse
     {
         return response()->json([
