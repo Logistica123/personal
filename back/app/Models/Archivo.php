@@ -5,6 +5,7 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
+use App\Models\FileType;
 
 class Archivo extends Model
 {
@@ -36,5 +37,10 @@ class Archivo extends Model
     public function persona()
     {
         return $this->belongsTo(Persona::class);
+    }
+
+    public function tipo()
+    {
+        return $this->belongsTo(FileType::class, 'tipo_archivo_id');
     }
 }

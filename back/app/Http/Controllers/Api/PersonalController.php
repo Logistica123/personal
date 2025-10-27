@@ -9,10 +9,9 @@ use App\Models\Unidad;
 use App\Models\Sucursal;
 use App\Models\Estado;
 use App\Models\User;
+use App\Models\FileType;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Storage;
-use Illuminate\Http\UploadedFile;
 
 class PersonalController extends Controller
 {
@@ -70,7 +69,7 @@ class PersonalController extends Controller
             'sucursal:id,nombre',
             'agente:id,name',
             'estado:id,nombre',
-            'documentos' => fn ($query) => $query->orderByDesc('created_at'),
+            'documentos' => fn ($query) => $query->with('tipo:id,nombre,vence')->orderByDesc('created_at'),
         ]);
 
         $perfilMap = [
@@ -117,6 +116,9 @@ class PersonalController extends Controller
                         'mime' => $documento->mime,
                         'size' => $documento->size,
                         'fechaVencimiento' => optional($documento->fecha_vencimiento)->format('Y-m-d'),
+                        'tipoId' => $documento->tipo_archivo_id,
+                        'tipoNombre' => $documento->tipo?->nombre,
+                        'requiereVencimiento' => (bool) $documento->tipo?->vence,
                     ];
                 })->values(),
             ],
@@ -152,44 +154,6 @@ class PersonalController extends Controller
         ]);
     }
 
-    public function storeDocument(Request $request, Persona $persona): JsonResponse
-    {
-        $validated = $request->validate([
-            'archivo' => ['required', 'file', 'max:5120'],
-            'nombre' => ['nullable', 'string'],
-        ]);
-
-        /** @var UploadedFile $file */
-        $file = $validated['archivo'];
-        $disk = 'public';
-        $directory = 'personal/'.$persona->id;
-        $storedPath = $file->store($directory, $disk);
-
-        $downloadUrl = Storage::disk($disk)->url($storedPath);
-
-        $documento = $persona->documentos()->create([
-            'carpeta' => $directory,
-            'ruta' => $storedPath,
-            'download_url' => $downloadUrl,
-            'disk' => $disk,
-            'nombre_original' => $validated['nombre'] ?? $file->getClientOriginalName(),
-            'mime' => $file->getClientMimeType(),
-            'size' => $file->getSize(),
-        ]);
-
-        return response()->json([
-            'message' => 'Documento cargado correctamente.',
-            'data' => [
-                'id' => $documento->id,
-                'nombre' => $documento->nombre_original,
-                'downloadUrl' => $documento->download_url,
-                'mime' => $documento->mime,
-                'size' => $documento->size,
-                'fechaVencimiento' => optional($documento->fecha_vencimiento)->format('Y-m-d'),
-            ],
-        ], 201);
-    }
-
     public function meta(): JsonResponse
     {
         return response()->json([
@@ -203,6 +167,16 @@ class PersonalController extends Controller
             'agentes' => User::query()->select('id', 'name')->orderBy('name')->get(),
             'unidades' => Unidad::query()->select('id', 'matricula', 'marca', 'modelo')->orderBy('matricula')->get(),
             'estados' => Estado::query()->select('id', 'nombre')->orderBy('nombre')->get(),
+            'documentTypes' => FileType::query()
+                ->select('id', 'nombre', 'vence')
+                ->orderBy('nombre')
+                ->get()
+                ->map(fn (FileType $tipo) => [
+                    'id' => $tipo->id,
+                    'nombre' => $tipo->nombre,
+                    'vence' => (bool) $tipo->vence,
+                ])
+                ->values(),
         ]);
     }
 

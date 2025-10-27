@@ -97,7 +97,16 @@ type PersonalDetail = {
     mime: string | null;
     size: number | null;
     fechaVencimiento: string | null;
+    tipoId: number | null;
+    tipoNombre: string | null;
+    requiereVencimiento: boolean;
   }>;
+};
+
+type PersonalDocumentType = {
+  id: number;
+  nombre: string | null;
+  vence: boolean;
 };
 
 type PersonalMeta = {
@@ -107,6 +116,7 @@ type PersonalMeta = {
   agentes: Array<{ id: number; name: string | null }>;
   unidades: Array<{ id: number; matricula: string | null; marca: string | null; modelo: string | null }>;
   estados: Array<{ id: number; nombre: string | null }>;
+  documentTypes?: PersonalDocumentType[];
 };
 
 type ReclamoRecord = {
@@ -1505,10 +1515,37 @@ const ReclamosPage: React.FC = () => {
       return;
     }
 
-    // Mientras no exista un endpoint real, dejamos un mensaje informativo.
-    setDeletingReclamoId(reclamo.id);
-    window.alert('Aún no hay un endpoint disponible para eliminar reclamos.');
-    setDeletingReclamoId(null);
+    try {
+      setDeletingReclamoId(reclamo.id);
+      setFlashMessage(null);
+
+      const response = await fetch(`${apiBaseUrl}/api/reclamos/${reclamo.id}`, {
+        method: 'DELETE',
+      });
+
+      if (!response.ok) {
+        let message = `Error ${response.status}: ${response.statusText}`;
+        try {
+          const payload = await response.json();
+          if (typeof payload?.message === 'string') {
+            message = payload.message;
+          }
+        } catch {
+          // ignore
+        }
+
+        throw new Error(message);
+      }
+
+      setReclamos((prev) => prev.filter((item) => item.id !== reclamo.id));
+      setFlashMessage(
+        `Reclamo ${reclamo.codigo ?? `#${reclamo.id}`} eliminado correctamente.`
+      );
+    } catch (err) {
+      window.alert((err as Error).message ?? 'No se pudo eliminar el reclamo.');
+    } finally {
+      setDeletingReclamoId(null);
+    }
   };
 
   return (
@@ -4281,6 +4318,30 @@ const PersonalEditPage: React.FC = () => {
   const [uploadFiles, setUploadFiles] = useState<FileList | null>(null);
   const [uploading, setUploading] = useState(false);
   const [uploadStatus, setUploadStatus] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  const [documentTypes, setDocumentTypes] = useState<PersonalDocumentType[]>([]);
+  const [documentTypesLoading, setDocumentTypesLoading] = useState(true);
+  const [documentTypesError, setDocumentTypesError] = useState<string | null>(null);
+  const [selectedDocumentTypeId, setSelectedDocumentTypeId] = useState('');
+  const [documentExpiry, setDocumentExpiry] = useState('');
+  const selectedDocumentType = useMemo(() => {
+    if (!selectedDocumentTypeId) {
+      return null;
+    }
+
+    const targetId = Number(selectedDocumentTypeId);
+    if (Number.isNaN(targetId)) {
+      return null;
+    }
+
+    return documentTypes.find((tipo) => tipo.id === targetId) ?? null;
+  }, [documentTypes, selectedDocumentTypeId]);
+  const selectedDocument = useMemo(() => {
+    if (!detail || selectedDocumentId === null) {
+      return null;
+    }
+
+    return detail.documents.find((doc) => doc.id === selectedDocumentId) ?? null;
+  }, [detail, selectedDocumentId]);
 
   const fetchDetail = useCallback(async () => {
     if (!personaId) {
@@ -4325,6 +4386,60 @@ const PersonalEditPage: React.FC = () => {
   useEffect(() => {
     fetchDetail();
   }, [fetchDetail]);
+
+  useEffect(() => {
+    if (!selectedDocumentType?.vence && documentExpiry) {
+      setDocumentExpiry('');
+    }
+  }, [selectedDocumentType, documentExpiry]);
+
+  useEffect(() => {
+    if (documentTypesLoading) {
+      return;
+    }
+
+    if (documentTypes.length === 0) {
+      setSelectedDocumentTypeId('');
+      return;
+    }
+
+    if (!selectedDocumentTypeId) {
+      setSelectedDocumentTypeId(String(documentTypes[0].id));
+    }
+  }, [documentTypesLoading, documentTypes, selectedDocumentTypeId]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+
+    const fetchDocumentTypes = async () => {
+      try {
+        setDocumentTypesLoading(true);
+        setDocumentTypesError(null);
+
+        const response = await fetch(`${apiBaseUrl}/api/personal/documentos/tipos`, {
+          signal: controller.signal,
+        });
+
+        if (!response.ok) {
+          throw new Error(`Error ${response.status}: ${response.statusText}`);
+        }
+
+        const payload = (await response.json()) as { data: PersonalDocumentType[] };
+        setDocumentTypes(payload?.data ?? []);
+      } catch (err) {
+        if ((err as Error).name === 'AbortError') {
+          return;
+        }
+        setDocumentTypesError((err as Error).message ?? 'No se pudieron cargar los tipos de documento.');
+      } finally {
+        setDocumentTypesLoading(false);
+      }
+    };
+
+    fetchDocumentTypes();
+
+    return () => controller.abort();
+  }, [apiBaseUrl]);
 
   const handleDownloadFicha = useCallback((record: PersonalDetail) => {
     const lines = [
@@ -4448,6 +4563,26 @@ const PersonalEditPage: React.FC = () => {
       return;
     }
 
+    if (!selectedDocumentTypeId) {
+      setUploadStatus({
+        type: 'error',
+        message: 'Seleccioná el tipo de documento antes de subir.',
+      });
+      return;
+    }
+
+    const tipoSeleccionado = documentTypes.find(
+      (tipo) => tipo.id === Number(selectedDocumentTypeId)
+    );
+
+    if (tipoSeleccionado?.vence && !documentExpiry) {
+      setUploadStatus({
+        type: 'error',
+        message: 'Este tipo de documento requiere una fecha de vencimiento.',
+      });
+      return;
+    }
+
     try {
       setUploading(true);
       setUploadStatus(null);
@@ -4456,6 +4591,10 @@ const PersonalEditPage: React.FC = () => {
         const formData = new FormData();
         formData.append('archivo', file);
         formData.append('nombre', file.name);
+        formData.append('tipoArchivoId', selectedDocumentTypeId);
+        if (documentExpiry) {
+          formData.append('fechaVencimiento', documentExpiry);
+        }
 
         const response = await fetch(`${apiBaseUrl}/api/personal/${personaId}/documentos`, {
           method: 'POST',
@@ -4479,6 +4618,8 @@ const PersonalEditPage: React.FC = () => {
 
       setUploadStatus({ type: 'success', message: 'Documentos cargados correctamente.' });
       setUploadFiles(null);
+      setSelectedDocumentTypeId('');
+      setDocumentExpiry('');
       fetchDetail();
     } catch (err) {
       setUploadStatus({ type: 'error', message: (err as Error).message ?? 'No se pudieron subir los documentos.' });
@@ -4618,12 +4759,24 @@ const PersonalEditPage: React.FC = () => {
               <option value="">Seleccionar documento</option>
               {detail.documents.map((doc) => (
                 <option key={doc.id} value={doc.id}>
-                  {doc.nombre ?? `Documento #${doc.id}`}
+                  {doc.tipoNombre
+                    ? `${doc.tipoNombre}${doc.nombre ? ` – ${doc.nombre}` : ''}`
+                    : doc.nombre ?? `Documento #${doc.id}`}
                 </option>
               ))}
             </select>
           </label>
         </div>
+        {selectedDocument ? (
+          <div className="document-extra-info">
+            <p className="form-info">Tipo: {selectedDocument.tipoNombre ?? 'Sin tipo asignado'}</p>
+            {selectedDocument.fechaVencimiento ? (
+              <p className="form-info">Vence: {selectedDocument.fechaVencimiento}</p>
+            ) : selectedDocument.requiereVencimiento ? (
+              <p className="form-info">Este documento requiere fecha de vencimiento, pero no está cargada.</p>
+            ) : null}
+          </div>
+        ) : null}
         {detail.documents.length === 0 ? (
           <p className="form-info">No hay documentos disponibles para este personal.</p>
         ) : null}
@@ -4640,6 +4793,39 @@ const PersonalEditPage: React.FC = () => {
       <section className="personal-edit-section">
         <h2>Carga de documentos</h2>
         <p className="form-info">Sube archivos relacionados con este personal para centralizar su documentación.</p>
+        <div className="form-grid">
+          <label className="input-control">
+            <span>Tipo de documento</span>
+            <select
+              value={selectedDocumentTypeId}
+              onChange={(event) => setSelectedDocumentTypeId(event.target.value)}
+              disabled={documentTypesLoading}
+            >
+              <option value="">Seleccionar</option>
+              {documentTypes.map((tipo) => (
+                <option key={tipo.id} value={tipo.id}>
+                  {tipo.nombre ?? `Tipo #${tipo.id}`}
+                </option>
+              ))}
+            </select>
+          </label>
+          {selectedDocumentType?.vence ? (
+            <label className="input-control">
+              <span>Fecha de vencimiento</span>
+              <input
+                type="date"
+                value={documentExpiry}
+                onChange={(event) => setDocumentExpiry(event.target.value)}
+              />
+            </label>
+          ) : null}
+        </div>
+        {documentTypesError ? (
+          <p className="form-info form-info--error">{documentTypesError}</p>
+        ) : null}
+        {selectedDocumentType?.vence && !documentExpiry ? (
+          <p className="form-info">Recordá ingresar la fecha de vencimiento para este tipo de documento.</p>
+        ) : null}
         <div className="upload-dropzone" role="presentation">
           <div className="upload-dropzone__icon">📄</div>
           <p>Arrastra y suelta archivos aquí</p>
@@ -4668,7 +4854,13 @@ const PersonalEditPage: React.FC = () => {
           type="button"
           className="primary-action"
           onClick={handleUploadDocumentos}
-          disabled={uploading || !uploadFiles || uploadFiles.length === 0}
+          disabled={
+            uploading ||
+            !uploadFiles ||
+            uploadFiles.length === 0 ||
+            documentTypesLoading ||
+            !selectedDocumentTypeId
+          }
         >
           {uploading ? 'Subiendo...' : 'Subir documentos'}
         </button>

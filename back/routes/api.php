@@ -7,7 +7,18 @@ use App\Http\Controllers\Api\UserController;
 use App\Http\Controllers\Api\PersonalController;
 use App\Http\Controllers\Api\ReclamoController;
 use App\Http\Controllers\Api\NotificationController;
+use App\Http\Controllers\Api\PersonalDocumentController;
 use Illuminate\Support\Facades\Route;
+
+Route::get('/personal/documentos/tipos', [PersonalDocumentController::class, 'types']);
+Route::get('/personal/{persona}/documentos', [PersonalDocumentController::class, 'index']);
+Route::post('/personal/{persona}/documentos', [PersonalDocumentController::class, 'store']);
+Route::get('/personal-meta', [PersonalController::class, 'meta']);
+Route::get('/personal', [PersonalController::class, 'index']);
+Route::post('/personal', [PersonalController::class, 'store']);
+Route::get('/personal/{persona}', [PersonalController::class, 'show']);
+Route::put('/personal/{persona}', [PersonalController::class, 'update']);
+Route::delete('/personal/{persona}', [PersonalController::class, 'destroy']);
 
 Route::get('/clientes', [ClienteController::class, 'index']);
 Route::get('/clientes/{cliente}', [ClienteController::class, 'show']);
@@ -27,27 +38,19 @@ Route::get('/usuarios/{usuario}', [UserController::class, 'show']);
 Route::put('/usuarios/{usuario}', [UserController::class, 'update']);
 Route::delete('/usuarios/{usuario}', [UserController::class, 'destroy']);
 
-Route::get('/personal', [PersonalController::class, 'index']);
-Route::get('/personal/{persona}', [PersonalController::class, 'show']);
-Route::put('/personal/{persona}', [PersonalController::class, 'update']);
-Route::post('/personal/{persona}/documentos', [PersonalController::class, 'storeDocument']);
-Route::post('/personal', [PersonalController::class, 'store']);
-Route::delete('/personal/{persona}', [PersonalController::class, 'destroy']);
-Route::get('/personal-meta', [PersonalController::class, 'meta']);
-
-Route::post('/login', [AuthController::class, 'login']);
-
 Route::get('/reclamos/meta', [ReclamoController::class, 'meta']);
 Route::get('/reclamos', [ReclamoController::class, 'index']);
 Route::post('/reclamos', [ReclamoController::class, 'store']);
 Route::get('/reclamos/{reclamo}', [ReclamoController::class, 'show']);
 Route::put('/reclamos/{reclamo}', [ReclamoController::class, 'update']);
-Route::get('/notificaciones', [NotificationController::class, 'index']);
-Route::post('/notificaciones/{notification}/leer', [NotificationController::class, 'markAsRead']);
-Route::get('/notificaciones', [NotificationController::class, 'index']);
-Route::post('/notificaciones/{notification}/leer', [NotificationController::class, 'markAsRead']);
-Route::get('/reclamos/{reclamo}/documentos/{documento}/descargar', [ReclamoController::class, 'downloadDocument']);
+Route::delete('/reclamos/{reclamo}', [ReclamoController::class, 'destroy']);
 Route::post('/reclamos/{reclamo}/comments', [ReclamoController::class, 'storeComment']);
 Route::post('/reclamos/{reclamo}/documentos', [ReclamoController::class, 'storeDocument']);
+Route::get('/reclamos/{reclamo}/documentos/{documento}/descargar', [ReclamoController::class, 'downloadDocument']);
+
+Route::get('/notificaciones', [NotificationController::class, 'index']);
+Route::post('/notificaciones/{notification}/leer', [NotificationController::class, 'markAsRead']);
+
+Route::post('/login', [AuthController::class, 'login']);
 
 Route::options('/{any}', fn () => response()->noContent())->where('any', '.*');

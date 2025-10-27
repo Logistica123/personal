@@ -229,9 +229,13 @@ class ReclamoController extends Controller
             'fechaReclamo' => ['nullable', 'date'],
         ]);
 
+        $reclamo->loadMissing('agente:id,name');
         $originalAgente = $reclamo->agente_id;
+        $originalAgenteName = $reclamo->agente?->name;
+        $agentChanged = false;
+        $newAgenteId = null;
 
-        DB::transaction(function () use ($reclamo, $validated) {
+        DB::transaction(function () use ($reclamo, $validated, $originalAgente, $originalAgenteName, &$agentChanged, &$newAgenteId) {
             $originalStatus = $reclamo->status;
             $originalPagado = (bool) $reclamo->pagado;
 
@@ -249,6 +253,7 @@ class ReclamoController extends Controller
             $reclamo->save();
 
             $actorId = $validated['creatorId'] ?? $validated['agenteId'] ?? null;
+            $newAgenteId = $reclamo->agente_id;
 
             if ($originalStatus !== $reclamo->status) {
                 $this->recordStatusChange($reclamo, $originalStatus, $reclamo->status, $actorId);
@@ -262,6 +267,24 @@ class ReclamoController extends Controller
                         'old' => $originalPagado,
                         'new' => (bool) $reclamo->pagado,
                         'field' => 'pagado',
+                    ],
+                    $actorId
+                );
+            }
+
+            if ($originalAgente !== $reclamo->agente_id) {
+                $agentChanged = true;
+
+                $oldName = $originalAgente ? (User::query()->find($originalAgente)?->name ?? 'Sin asignar') : ($originalAgenteName ?? 'Sin asignar');
+                $newName = $reclamo->agente_id ? (User::query()->find($reclamo->agente_id)?->name ?? 'Sin asignar') : 'Sin asignar';
+
+                $this->recordComment(
+                    $reclamo,
+                    sprintf('Responsable actualizado de %s a %s', $oldName, $newName),
+                    [
+                        'old' => $originalAgente,
+                        'new' => $reclamo->agente_id,
+                        'field' => 'agente_id',
                     ],
                     $actorId
                 );
@@ -298,8 +321,8 @@ class ReclamoController extends Controller
             'logs.actor:id,name',
         ]);
 
-        if ($reclamo->agente_id) {
-            $this->createAssignmentNotification($reclamo, (int) $reclamo->agente_id);
+        if ($agentChanged && $newAgenteId) {
+            $this->createAssignmentNotification($reclamo, (int) $newAgenteId);
         }
 
         return response()->json([
@@ -437,6 +460,33 @@ class ReclamoController extends Controller
             'message' => 'Documento cargado correctamente.',
             'data' => $this->transformReclamo($reclamo, true),
         ], 201);
+    }
+
+    public function destroy(Reclamo $reclamo): JsonResponse
+    {
+        DB::transaction(function () use ($reclamo) {
+            $documents = $reclamo->documents()->get();
+
+            foreach ($documents as $documento) {
+                if ($documento->disk && $documento->path) {
+                    try {
+                        Storage::disk($documento->disk)->delete($documento->path);
+                    } catch (\Throwable $exception) {
+                        report($exception);
+                    }
+                }
+
+                $documento->delete();
+            }
+
+            $reclamo->comments()->delete();
+            $reclamo->logs()->delete();
+            $reclamo->delete();
+        });
+
+        return response()->json([
+            'message' => 'Reclamo eliminado correctamente.',
+        ]);
     }
 
     public function downloadDocument(Reclamo $reclamo, ReclamoDocument $documento)
@@ -639,19 +689,45 @@ class ReclamoController extends Controller
 
     protected function createAssignmentNotification(Reclamo $reclamo, int $userId): void
     {
+        $message = sprintf(
+            'Se te asignó como responsable del reclamo %s.',
+            $this->formatReclamoCodigo($reclamo)
+        );
+
+        $hasMessageColumn = Schema::hasColumn('notifications', 'message');
+        $hasDescriptionColumn = Schema::hasColumn('notifications', 'description');
+        $hasReclamoIdColumn = Schema::hasColumn('notifications', 'reclamo_id');
+        $hasEntityTypeColumn = Schema::hasColumn('notifications', 'entity_type');
+        $hasEntityIdColumn = Schema::hasColumn('notifications', 'entity_id');
+        $hasTypeColumn = Schema::hasColumn('notifications', 'type');
+        $hasMetadataColumn = Schema::hasColumn('notifications', 'metadata');
+
         $payload = [
             'user_id' => $userId,
-            'message' => sprintf(
-                'Se te asignó como responsable del reclamo %s.',
-                $this->formatReclamoCodigo($reclamo)
-            ),
         ];
 
-        if (Schema::hasColumn('notifications', 'reclamo_id')) {
-            $payload['reclamo_id'] = $reclamo->id;
+        if ($hasMessageColumn) {
+            $payload['message'] = $message;
+        } elseif ($hasDescriptionColumn) {
+            $payload['description'] = $message;
         }
 
-        if (Schema::hasColumn('notifications', 'metadata')) {
+        if ($hasTypeColumn) {
+            $payload['type'] = 'reclamo_responsable_actualizado';
+        }
+
+        if ($hasReclamoIdColumn) {
+            $payload['reclamo_id'] = $reclamo->id;
+        } else {
+            if ($hasEntityTypeColumn) {
+                $payload['entity_type'] = 'reclamo';
+            }
+            if ($hasEntityIdColumn) {
+                $payload['entity_id'] = $reclamo->id;
+            }
+        }
+
+        if ($hasMetadataColumn) {
             $payload['metadata'] = [
                 'reclamo_id' => $reclamo->id,
                 'status' => $reclamo->status,
@@ -663,15 +739,29 @@ class ReclamoController extends Controller
         } catch (QueryException $exception) {
             report($exception);
 
-            if (array_key_exists('reclamo_id', $payload)) {
-                unset($payload['reclamo_id']);
+            $fallbackPayload = [
+                'user_id' => $userId,
+            ];
+
+            if ($hasMessageColumn) {
+                $fallbackPayload['message'] = $message;
+            } elseif ($hasDescriptionColumn) {
+                $fallbackPayload['description'] = $message;
             }
-            if (array_key_exists('metadata', $payload)) {
-                unset($payload['metadata']);
+
+            if ($hasTypeColumn) {
+                $fallbackPayload['type'] = 'reclamo_responsable_actualizado';
+            }
+
+            if ($hasEntityTypeColumn) {
+                $fallbackPayload['entity_type'] = 'reclamo';
+            }
+            if ($hasEntityIdColumn) {
+                $fallbackPayload['entity_id'] = $reclamo->id;
             }
 
             try {
-                Notification::create($payload);
+                Notification::create($fallbackPayload);
             } catch (QueryException $retryException) {
                 report($retryException);
             }

@@ -12,7 +12,11 @@ class Notification extends Model
     protected $fillable = [
         'user_id',
         'reclamo_id',
+        'entity_type',
+        'entity_id',
+        'type',
         'message',
+        'description',
         'read_at',
         'metadata',
     ];
