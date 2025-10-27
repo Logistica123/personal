@@ -232,13 +232,9 @@ type EditableSucursal = {
 };
 
 const resolveApiBaseUrl = (): string => {
-  const envValue = process.env.REACT_APP_API_BASE_URL;
-  if (envValue && envValue.trim().length > 0) {
-    return envValue.replace(/\/$/, '');
-  }
-
-  return 'http://localhost:8000';
+  return process.env.REACT_APP_API_BASE || 'https://apibasepersonal.distriapp.com.ar';
 };
+
 
 const uniqueKey = () => Math.random().toString(36).slice(2);
 

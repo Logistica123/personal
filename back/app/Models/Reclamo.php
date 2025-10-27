@@ -23,9 +23,12 @@ class Reclamo extends Model
     ];
 
     protected $casts = [
-        'fecha_alta' => 'datetime',
-        'pagado' => 'boolean',
-    ];
+    'fecha_alta' => 'datetime',
+    'created_at' => 'datetime',
+    'updated_at' => 'datetime',
+    'pagado' => 'boolean',
+];
+
 
     public function persona()
     {
