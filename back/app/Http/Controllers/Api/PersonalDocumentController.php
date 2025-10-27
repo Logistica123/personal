@@ -60,6 +60,17 @@ class PersonalDocumentController extends Controller
         ]);
     }
 
+    public function show(FileType $tipo): JsonResponse
+    {
+        return response()->json([
+            'data' => [
+                'id' => $tipo->id,
+                'nombre' => $tipo->nombre,
+                'vence' => (bool) $tipo->vence,
+            ],
+        ]);
+    }
+
     public function store(Request $request, Persona $persona): JsonResponse
     {
         $validator = Validator::make($request->all(), [
@@ -129,5 +140,25 @@ class PersonalDocumentController extends Controller
             ],
         ], 201);
     }
-}
 
+    public function update(Request $request, FileType $tipo): JsonResponse
+    {
+        $validated = $request->validate([
+            'nombre' => ['required', 'string', 'max:255'],
+            'vence' => ['required', 'boolean'],
+        ]);
+
+        $tipo->nombre = $validated['nombre'];
+        $tipo->vence = $validated['vence'];
+        $tipo->save();
+
+        return response()->json([
+            'message' => 'Tipo de documento actualizado correctamente.',
+            'data' => [
+                'id' => $tipo->id,
+                'nombre' => $tipo->nombre,
+                'vence' => (bool) $tipo->vence,
+            ],
+        ]);
+    }
+}

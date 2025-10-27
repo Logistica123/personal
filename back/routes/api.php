@@ -11,6 +11,8 @@ use App\Http\Controllers\Api\PersonalDocumentController;
 use Illuminate\Support\Facades\Route;
 
 Route::get('/personal/documentos/tipos', [PersonalDocumentController::class, 'types']);
+Route::get('/personal/documentos/tipos/{tipo}', [PersonalDocumentController::class, 'show']);
+Route::put('/personal/documentos/tipos/{tipo}', [PersonalDocumentController::class, 'update']);
 Route::get('/personal/{persona}/documentos', [PersonalDocumentController::class, 'index']);
 Route::post('/personal/{persona}/documentos', [PersonalDocumentController::class, 'store']);
 Route::get('/personal-meta', [PersonalController::class, 'meta']);

@@ -5,6 +5,7 @@ import {
   NavLink,
   useNavigate,
   useParams,
+  useLocation,
   Navigate,
 } from 'react-router-dom';
 import './App.css';
@@ -635,9 +636,9 @@ const DashboardLayout: React.FC<{
           </a>
 
           <span className="sidebar-title">Sistema</span>
-          <a className="sidebar-link" href="#documentos" onClick={(event) => event.preventDefault()}>
+          <NavLink to="/documentos" className={({ isActive }) => `sidebar-link${isActive ? ' is-active' : ''}`}>
             Documentos
-          </a>
+          </NavLink>
           <a className="sidebar-link" href="#config" onClick={(event) => event.preventDefault()}>
             Configuración
           </a>
@@ -5349,6 +5350,350 @@ const PersonalCreatePage: React.FC = () => {
   );
 };
 
+const DocumentTypesPage: React.FC = () => {
+  const apiBaseUrl = useMemo(() => resolveApiBaseUrl(), []);
+  const navigate = useNavigate();
+  const location = useLocation();
+  const [types, setTypes] = useState<PersonalDocumentType[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [flashMessage, setFlashMessage] = useState<string | null>(null);
+
+  useEffect(() => {
+    const controller = new AbortController();
+
+    const fetchTypes = async () => {
+      try {
+        setLoading(true);
+        setError(null);
+
+        const response = await fetch(`${apiBaseUrl}/api/personal/documentos/tipos`, {
+          signal: controller.signal,
+        });
+
+        if (!response.ok) {
+          throw new Error(`Error ${response.status}: ${response.statusText}`);
+        }
+
+        const payload = (await response.json()) as { data: PersonalDocumentType[] };
+        setTypes(payload?.data ?? []);
+      } catch (err) {
+        if ((err as Error).name === 'AbortError') {
+          return;
+        }
+        setError((err as Error).message ?? 'No se pudieron cargar los tipos de documento.');
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchTypes();
+
+    return () => controller.abort();
+  }, [apiBaseUrl]);
+
+  useEffect(() => {
+    const state = location.state as { message?: string } | null;
+    if (state?.message) {
+      setFlashMessage(state.message);
+      navigate(location.pathname, { replace: true, state: null });
+    }
+  }, [location, navigate]);
+
+  const filtered = useMemo(() => {
+    const term = searchTerm.trim().toLowerCase();
+    if (!term) {
+      return types;
+    }
+    return types.filter((item) => (item.nombre ?? '').toLowerCase().includes(term));
+  }, [types, searchTerm]);
+
+  const handlePlaceholderAction = () => {
+    window.alert('Funcionalidad en construcción.');
+  };
+
+  const handleEditType = (tipo: PersonalDocumentType) => {
+    navigate(`/documentos/${tipo.id}/editar`);
+  };
+
+  const headerContent = (
+    <div className="filters-actions" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
+      <div className="search-wrapper" style={{ flex: '1 1 260px' }}>
+        <input
+          type="search"
+          placeholder="Buscar"
+          value={searchTerm}
+          onChange={(event) => setSearchTerm(event.target.value)}
+        />
+      </div>
+      <button className="primary-action" type="button" onClick={handlePlaceholderAction}>
+        Nuevo tipo
+      </button>
+    </div>
+  );
+
+  return (
+    <DashboardLayout title="Documentos" subtitle="Tipos de archivo" headerContent={headerContent}>
+      {flashMessage ? (
+        <div className="flash-message" role="alert">
+          <span>{flashMessage}</span>
+          <button type="button" onClick={() => setFlashMessage(null)} aria-label="Cerrar aviso">
+            ×
+          </button>
+        </div>
+      ) : null}
+      <div className="table-wrapper">
+        <table>
+          <thead>
+            <tr>
+              <th style={{ width: '80px' }}>ID</th>
+              <th>Nombre</th>
+              <th style={{ width: '120px' }}>Vence</th>
+              <th style={{ width: '150px' }}>Acciones</th>
+            </tr>
+          </thead>
+          <tbody>
+            {loading ? (
+              <tr>
+                <td colSpan={4}>Cargando tipos de documento...</td>
+              </tr>
+            ) : null}
+
+            {error && !loading ? (
+              <tr>
+                <td colSpan={4} className="error-cell">
+                  {error}
+                </td>
+              </tr>
+            ) : null}
+
+            {!loading && !error && filtered.length === 0 ? (
+              <tr>
+                <td colSpan={4}>No hay tipos de documento para mostrar.</td>
+              </tr>
+            ) : null}
+
+            {!loading && !error
+              ? filtered.map((tipo) => (
+                  <tr key={tipo.id}>
+                    <td>{tipo.id}</td>
+                    <td>{tipo.nombre ?? '—'}</td>
+                    <td>{tipo.vence ? 'Sí' : 'No'}</td>
+                    <td>
+                      <div className="action-buttons">
+                        <button type="button" aria-label={`Editar tipo ${tipo.nombre ?? ''}`} onClick={() => handleEditType(tipo)}>
+                          ✏️
+                        </button>
+                        <button type="button" aria-label={`Eliminar tipo ${tipo.nombre ?? ''}`} onClick={handlePlaceholderAction}>
+                          🗑️
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))
+              : null}
+          </tbody>
+        </table>
+      </div>
+    </DashboardLayout>
+  );
+};
+
+const DocumentTypeEditPage: React.FC = () => {
+  const { tipoId } = useParams<{ tipoId: string }>();
+  const navigate = useNavigate();
+  const apiBaseUrl = useMemo(() => resolveApiBaseUrl(), []);
+  const [nombre, setNombre] = useState('');
+  const [vence, setVence] = useState(true);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!tipoId) {
+      setLoadError('Identificador de tipo inválido.');
+      setLoading(false);
+      return;
+    }
+
+    const controller = new AbortController();
+
+    const fetchType = async () => {
+      try {
+        setLoading(true);
+        setLoadError(null);
+
+        const response = await fetch(`${apiBaseUrl}/api/personal/documentos/tipos/${tipoId}`, {
+          signal: controller.signal,
+        });
+
+        if (!response.ok) {
+          throw new Error(`Error ${response.status}: ${response.statusText}`);
+        }
+
+        const payload = (await response.json()) as { data: PersonalDocumentType };
+        if (!payload?.data) {
+          throw new Error('Formato de respuesta inesperado');
+        }
+
+        setNombre(payload.data.nombre ?? '');
+        setVence(Boolean(payload.data.vence));
+      } catch (err) {
+        if ((err as Error).name === 'AbortError') {
+          return;
+        }
+        setLoadError((err as Error).message ?? 'No se pudo cargar el tipo de documento.');
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchType();
+
+    return () => controller.abort();
+  }, [apiBaseUrl, tipoId]);
+
+  const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+
+    if (!tipoId) {
+      setSubmitError('Identificador de tipo inválido.');
+      return;
+    }
+
+    const trimmed = nombre.trim();
+    if (!trimmed) {
+      setSubmitError('Ingresá un nombre para el tipo.');
+      return;
+    }
+
+    try {
+      setSaving(true);
+      setSubmitError(null);
+
+      const response = await fetch(`${apiBaseUrl}/api/personal/documentos/tipos/${tipoId}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ nombre: trimmed, vence }),
+      });
+
+      if (!response.ok) {
+        let message = `Error ${response.status}: ${response.statusText}`;
+        try {
+          const payload = await response.json();
+          if (typeof payload?.message === 'string') {
+            message = payload.message;
+          } else if (payload?.errors) {
+            const firstError = Object.values(payload.errors)[0];
+            if (Array.isArray(firstError) && firstError[0]) {
+              message = firstError[0] as string;
+            }
+          }
+        } catch {
+          // ignore
+        }
+
+        throw new Error(message);
+      }
+
+      navigate('/documentos', {
+        state: {
+          message: 'Tipo de documento actualizado correctamente.',
+        },
+        replace: true,
+      });
+    } catch (err) {
+      setSubmitError((err as Error).message ?? 'No se pudo actualizar el tipo de documento.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const headerContent = (
+    <div className="card-header card-header--compact">
+      <button type="button" className="secondary-action" onClick={() => navigate('/documentos')}>
+        ← Volver a documentos
+      </button>
+    </div>
+  );
+
+  if (loading) {
+    return (
+      <DashboardLayout title="Editar tipo de archivo" subtitle="Editar tipo" headerContent={headerContent}>
+        <p className="form-info">Cargando información del tipo...</p>
+      </DashboardLayout>
+    );
+  }
+
+  if (loadError) {
+    return (
+      <DashboardLayout title="Editar tipo de archivo" subtitle="Editar tipo" headerContent={headerContent}>
+        <p className="form-info form-info--error">{loadError}</p>
+      </DashboardLayout>
+    );
+  }
+
+  return (
+    <DashboardLayout title="Editar tipo de archivo" subtitle="Editar tipo" headerContent={headerContent}>
+      <form className="edit-form" onSubmit={handleSubmit}>
+        <div className="form-grid">
+          <label className="input-control" style={{ gridColumn: '1 / -1' }}>
+            <span>Nombre</span>
+            <input
+              type="text"
+              value={nombre}
+              onChange={(event) => setNombre(event.target.value)}
+              placeholder="Ingresar nombre"
+              required
+            />
+          </label>
+        </div>
+
+        <div className="radio-group">
+          <span>Vence</span>
+          <div className="radio-options">
+            <label className={`radio-option${vence ? ' is-active' : ''}`}>
+              <input
+                type="radio"
+                name="vence"
+                value="true"
+                checked={vence === true}
+                onChange={() => setVence(true)}
+              />
+              Sí
+            </label>
+            <label className={`radio-option${!vence ? ' is-active' : ''}`}>
+              <input
+                type="radio"
+                name="vence"
+                value="false"
+                checked={vence === false}
+                onChange={() => setVence(false)}
+              />
+              No
+            </label>
+          </div>
+        </div>
+
+        {submitError ? <p className="form-info form-info--error">{submitError}</p> : null}
+
+        <div className="form-actions">
+          <button type="button" className="secondary-action" onClick={() => navigate('/documentos')}>
+            Cancelar
+          </button>
+          <button type="submit" className="primary-action" disabled={saving}>
+            {saving ? 'Actualizando...' : 'Actualizar'}
+          </button>
+        </div>
+      </form>
+    </DashboardLayout>
+  );
+};
+
 const CreateUnitPage: React.FC = () => {
   const navigate = useNavigate();
   const apiBaseUrl = useMemo(() => resolveApiBaseUrl(), []);
@@ -6273,6 +6618,8 @@ const App: React.FC = () => {
       <Route path="/personal" element={<PersonalPage />} />
       <Route path="/personal/nuevo" element={<PersonalCreatePage />} />
       <Route path="/personal/:personaId/editar" element={<PersonalEditPage />} />
+      <Route path="/documentos" element={<DocumentTypesPage />} />
+      <Route path="/documentos/:tipoId/editar" element={<DocumentTypeEditPage />} />
       <Route path="/usuarios" element={<UsersPage />} />
       <Route path="/usuarios/nuevo" element={<CreateUserPage />} />
       <Route path="/usuarios/:usuarioId/editar" element={<EditUserPage />} />
