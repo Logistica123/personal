@@ -26,7 +26,7 @@ class PersonalController extends Controller
                 'agente:id,name',
                 'estado:id,nombre',
             ])
-            ->orderBy('id')
+            ->orderByDesc('id')
             ->get()
             ->map(function (Persona $persona) {
                 $perfilMap = [
