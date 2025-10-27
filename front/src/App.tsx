@@ -109,6 +109,14 @@ type PersonalDocumentType = {
   vence: boolean;
 };
 
+type PendingPersonalUpload = {
+  id: string;
+  file: File;
+  typeId: number;
+  typeName: string | null;
+  fechaVencimiento: string | null;
+};
+
 type PersonalMeta = {
   perfiles: Array<{ value: number; label: string }>;
   clientes: Array<{ id: number; nombre: string | null }>;
@@ -4315,7 +4323,7 @@ const PersonalEditPage: React.FC = () => {
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saveSuccess, setSaveSuccess] = useState<string | null>(null);
   const [selectedDocumentId, setSelectedDocumentId] = useState<number | null>(null);
-  const [uploadFiles, setUploadFiles] = useState<FileList | null>(null);
+  const [pendingUploads, setPendingUploads] = useState<PendingPersonalUpload[]>([]);
   const [uploading, setUploading] = useState(false);
   const [uploadStatus, setUploadStatus] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
   const [documentTypes, setDocumentTypes] = useState<PersonalDocumentType[]>([]);
@@ -4342,6 +4350,49 @@ const PersonalEditPage: React.FC = () => {
 
     return detail.documents.find((doc) => doc.id === selectedDocumentId) ?? null;
   }, [detail, selectedDocumentId]);
+
+  const handleRemovePendingUpload = useCallback((id: string) => {
+    setPendingUploads((prev) => prev.filter((item) => item.id !== id));
+  }, []);
+
+  const handlePendingFilesSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const files = event.target.files;
+
+    if (!files || files.length === 0) {
+      return;
+    }
+
+    if (!selectedDocumentTypeId) {
+      setUploadStatus({ type: 'error', message: 'Seleccioná el tipo de documento antes de agregar archivos.' });
+      event.target.value = '';
+      return;
+    }
+
+    const tipo = selectedDocumentType;
+
+    if (tipo?.vence && !documentExpiry) {
+      setUploadStatus({ type: 'error', message: 'Este tipo de documento requiere fecha de vencimiento.' });
+      event.target.value = '';
+      return;
+    }
+
+    const newUploads: PendingPersonalUpload[] = Array.from(files).map((file) => ({
+      id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      file,
+      typeId: Number(selectedDocumentTypeId),
+      typeName: tipo?.nombre ?? null,
+      fechaVencimiento: tipo?.vence ? documentExpiry || null : null,
+    }));
+
+    setPendingUploads((prev) => [...prev, ...newUploads]);
+    setUploadStatus(null);
+
+    if (!tipo?.vence) {
+      setDocumentExpiry('');
+    }
+
+    event.target.value = '';
+  };
 
   const fetchDetail = useCallback(async () => {
     if (!personaId) {
@@ -4559,27 +4610,7 @@ const PersonalEditPage: React.FC = () => {
   };
 
   const handleUploadDocumentos = async () => {
-    if (!personaId || !uploadFiles || uploadFiles.length === 0) {
-      return;
-    }
-
-    if (!selectedDocumentTypeId) {
-      setUploadStatus({
-        type: 'error',
-        message: 'Seleccioná el tipo de documento antes de subir.',
-      });
-      return;
-    }
-
-    const tipoSeleccionado = documentTypes.find(
-      (tipo) => tipo.id === Number(selectedDocumentTypeId)
-    );
-
-    if (tipoSeleccionado?.vence && !documentExpiry) {
-      setUploadStatus({
-        type: 'error',
-        message: 'Este tipo de documento requiere una fecha de vencimiento.',
-      });
+    if (!personaId || pendingUploads.length === 0) {
       return;
     }
 
@@ -4587,13 +4618,13 @@ const PersonalEditPage: React.FC = () => {
       setUploading(true);
       setUploadStatus(null);
 
-      for (const file of Array.from(uploadFiles)) {
+      for (const item of pendingUploads) {
         const formData = new FormData();
-        formData.append('archivo', file);
-        formData.append('nombre', file.name);
-        formData.append('tipoArchivoId', selectedDocumentTypeId);
-        if (documentExpiry) {
-          formData.append('fechaVencimiento', documentExpiry);
+        formData.append('archivo', item.file);
+        formData.append('nombre', item.file.name);
+        formData.append('tipoArchivoId', String(item.typeId));
+        if (item.fechaVencimiento) {
+          formData.append('fechaVencimiento', item.fechaVencimiento);
         }
 
         const response = await fetch(`${apiBaseUrl}/api/personal/${personaId}/documentos`, {
@@ -4617,8 +4648,7 @@ const PersonalEditPage: React.FC = () => {
       }
 
       setUploadStatus({ type: 'success', message: 'Documentos cargados correctamente.' });
-      setUploadFiles(null);
-      setSelectedDocumentTypeId('');
+      setPendingUploads([]);
       setDocumentExpiry('');
       fetchDetail();
     } catch (err) {
@@ -4834,15 +4864,30 @@ const PersonalEditPage: React.FC = () => {
             <input
               type="file"
               multiple
-              onChange={(event) => {
-                setUploadFiles(event.target.files);
-                setUploadStatus(null);
-              }}
+              onChange={handlePendingFilesSelect}
               style={{ display: 'none' }}
             />
           </label>
-          {uploadFiles && uploadFiles.length > 0 ? (
-            <p className="form-info">{Array.from(uploadFiles).map((file) => file.name).join(', ')}</p>
+          {pendingUploads.length > 0 ? (
+            <ul className="pending-upload-list">
+              {pendingUploads.map((item) => (
+                <li key={item.id}>
+                  <div>
+                    <strong>{item.file.name}</strong>
+                    <span>{item.typeName ?? 'Sin tipo asignado'}</span>
+                    {item.fechaVencimiento ? <span>Vence: {item.fechaVencimiento}</span> : null}
+                  </div>
+                  <button
+                    type="button"
+                    className="pending-upload-remove"
+                    onClick={() => handleRemovePendingUpload(item.id)}
+                    aria-label={`Quitar ${item.file.name}`}
+                  >
+                    ×
+                  </button>
+                </li>
+              ))}
+            </ul>
           ) : null}
         </div>
         {uploadStatus ? (
@@ -4856,10 +4901,8 @@ const PersonalEditPage: React.FC = () => {
           onClick={handleUploadDocumentos}
           disabled={
             uploading ||
-            !uploadFiles ||
-            uploadFiles.length === 0 ||
-            documentTypesLoading ||
-            !selectedDocumentTypeId
+            pendingUploads.length === 0 ||
+            documentTypesLoading
           }
         >
           {uploading ? 'Subiendo...' : 'Subir documentos'}
