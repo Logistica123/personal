@@ -3529,7 +3529,7 @@ const PersonalPage: React.FC = () => {
         setLoading(true);
         setError(null);
 
-        const response = await fetch(`${apiBaseUrl}/api/personal`, {
+        const response = await fetch(`${apiBaseUrl}/api/personal?includePending=1`, {
           signal: options?.signal,
         });
 
