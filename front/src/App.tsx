@@ -3606,10 +3606,6 @@ const PersonalPage: React.FC = () => {
     const term = searchTerm.trim().toLowerCase();
 
     return personal.filter((registro) => {
-      if (registro.aprobado === false) {
-        return false;
-      }
-
       if (clienteFilter && registro.cliente !== clienteFilter) {
         return false;
       }
