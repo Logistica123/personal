@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\FileType;
 use App\Models\Persona;
+use App\Models\Archivo;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\UploadedFile;
@@ -21,10 +22,15 @@ class PersonalDocumentController extends Controller
             ->orderByDesc('created_at')
             ->get()
             ->map(function ($documento) {
+                $downloadUrl = route('personal.documentos.descargar', [
+                    'persona' => $documento->persona_id,
+                    'documento' => $documento->id,
+                ]);
+
                 return [
                     'id' => $documento->id,
                     'nombre' => $documento->nombre_original ?? basename($documento->ruta ?? ''),
-                    'downloadUrl' => $documento->download_url,
+                    'downloadUrl' => $downloadUrl,
                     'mime' => $documento->mime,
                     'size' => $documento->size,
                     'fechaVencimiento' => optional($documento->fecha_vencimiento)->format('Y-m-d'),
@@ -129,30 +135,38 @@ class PersonalDocumentController extends Controller
         $directory = 'personal/'.$persona->id;
         $storedPath = $file->store($directory, $disk);
 
-        $downloadUrl = Storage::disk($disk)->url($storedPath);
+        $fechaVencimiento = $validated['fechaVencimiento'] ?? null;
 
         $documento = $persona->documentos()->create([
             'carpeta' => $directory,
             'ruta' => $storedPath,
-            'download_url' => $downloadUrl,
+            'download_url' => null,
             'disk' => $disk,
             'nombre_original' => $validated['nombre'] ?? $file->getClientOriginalName(),
             'mime' => $file->getClientMimeType(),
             'size' => $file->getSize(),
             'tipo_archivo_id' => $validated['tipoArchivoId'],
-            'fecha_vencimiento' => $validated['fechaVencimiento']
-                ? Carbon::parse($validated['fechaVencimiento'])
+            'fecha_vencimiento' => $fechaVencimiento
+                ? Carbon::parse($fechaVencimiento)
                 : null,
         ]);
 
         $documento->loadMissing('tipo:id,nombre,vence');
+
+        $downloadUrl = route('personal.documentos.descargar', [
+            'persona' => $persona->id,
+            'documento' => $documento->id,
+        ]);
+
+        $documento->download_url = $downloadUrl;
+        $documento->save();
 
         return response()->json([
             'message' => 'Documento cargado correctamente.',
             'data' => [
                 'id' => $documento->id,
                 'nombre' => $documento->nombre_original,
-                'downloadUrl' => $documento->download_url,
+                'downloadUrl' => $downloadUrl,
                 'mime' => $documento->mime,
                 'size' => $documento->size,
                 'fechaVencimiento' => optional($documento->fecha_vencimiento)->format('Y-m-d'),
@@ -161,6 +175,23 @@ class PersonalDocumentController extends Controller
                 'requiereVencimiento' => (bool) $documento->tipo?->vence,
             ],
         ], 201);
+    }
+
+    public function download(Persona $persona, Archivo $documento)
+    {
+        if ($documento->persona_id !== $persona->id) {
+            abort(404);
+        }
+
+        $disk = $documento->disk ?? 'public';
+
+        if (! Storage::disk($disk)->exists($documento->ruta)) {
+            abort(404);
+        }
+
+        $nombre = $documento->nombre_original ?? basename($documento->ruta ?? 'documento');
+
+        return Storage::disk($disk)->download($documento->ruta, $nombre);
     }
 
     public function update(Request $request, FileType $tipo): JsonResponse

@@ -8,6 +8,7 @@ use App\Http\Controllers\Api\PersonalController;
 use App\Http\Controllers\Api\ReclamoController;
 use App\Http\Controllers\Api\NotificationController;
 use App\Http\Controllers\Api\PersonalDocumentController;
+use App\Http\Controllers\Api\PersonalCommentController;
 use Illuminate\Support\Facades\Route;
 
 Route::get('/personal/documentos/tipos', [PersonalDocumentController::class, 'types']);
@@ -16,6 +17,9 @@ Route::get('/personal/documentos/tipos/{tipo}', [PersonalDocumentController::cla
 Route::put('/personal/documentos/tipos/{tipo}', [PersonalDocumentController::class, 'update']);
 Route::get('/personal/{persona}/documentos', [PersonalDocumentController::class, 'index']);
 Route::post('/personal/{persona}/documentos', [PersonalDocumentController::class, 'store']);
+Route::get('/personal/{persona}/documentos/{documento}/descargar', [PersonalDocumentController::class, 'download'])->name('personal.documentos.descargar');
+Route::post('/personal/{persona}/comentarios', [PersonalCommentController::class, 'store']);
+Route::post('/personal/{persona}/aprobar', [PersonalController::class, 'approve']);
 Route::get('/personal-meta', [PersonalController::class, 'meta']);
 Route::get('/personal', [PersonalController::class, 'index']);
 Route::post('/personal', [PersonalController::class, 'store']);

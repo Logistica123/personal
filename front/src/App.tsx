@@ -40,6 +40,7 @@ type Usuario = {
   email: string | null;
   created_at: string | null;
   status?: string | null;
+  role?: string | null;
 };
 
 type PersonalRecord = {
@@ -61,6 +62,10 @@ type PersonalRecord = {
   combustibleValue: boolean;
   tarifaEspecial: string | null;
   tarifaEspecialValue: boolean;
+  aprobado: boolean;
+  aprobadoAt: string | null;
+  aprobadoPor: string | null;
+  esSolicitud: boolean;
 };
 
 type PersonalDetail = {
@@ -74,6 +79,8 @@ type PersonalDetail = {
   perfilValue: number | null;
   agente: string | null;
   agenteId: number | null;
+  agenteResponsable: string | null;
+  agenteResponsableId: number | null;
   cliente: string | null;
   clienteId: number | null;
   sucursal: string | null;
@@ -91,6 +98,11 @@ type PersonalDetail = {
   observacionTarifa: string | null;
   observaciones: string | null;
   fechaAlta: string | null;
+  aprobado: boolean;
+  aprobadoAt: string | null;
+  aprobadoPorId: number | null;
+  aprobadoPorNombre: string | null;
+  esSolicitud: boolean;
   documents: Array<{
     id: number;
     nombre: string | null;
@@ -101,6 +113,14 @@ type PersonalDetail = {
     tipoId: number | null;
     tipoNombre: string | null;
     requiereVencimiento: boolean;
+  }>;
+  comments: Array<{
+    id: number;
+    message: string | null;
+    userId: number | null;
+    userName: string | null;
+    createdAt: string | null;
+    createdAtLabel: string | null;
   }>;
 };
 
@@ -118,6 +138,15 @@ type PendingPersonalUpload = {
   fechaVencimiento: string | null;
 };
 
+type AltaAttachmentItem = {
+  id: string;
+  file: File;
+  typeId: string;
+  typeName: string;
+  vence: string | null;
+  positionLabel: string | null;
+};
+
 type PersonalMeta = {
   perfiles: Array<{ value: number; label: string }>;
   clientes: Array<{ id: number; nombre: string | null }>;
@@ -126,6 +155,102 @@ type PersonalMeta = {
   unidades: Array<{ id: number; matricula: string | null; marca: string | null; modelo: string | null }>;
   estados: Array<{ id: number; nombre: string | null }>;
   documentTypes?: PersonalDocumentType[];
+};
+
+type AltaRequestForm = {
+  perfilValue: number;
+  nombres: string;
+  apellidos: string;
+  telefono: string;
+  email: string;
+  tarifaEspecial: boolean;
+  observacionTarifa: string;
+  cuil: string;
+  cbuAlias: string;
+  pago: string;
+  combustible: boolean;
+  fechaAlta: string;
+  patente: string;
+  clienteId: string;
+  sucursalId: string;
+  agenteId: string;
+  agenteResponsableId: string;
+  unidadId: string;
+  estadoId: string;
+  fechaAltaVinculacion: string;
+  observaciones: string;
+  duenoNombre: string;
+  duenoFechaNacimiento: string;
+  duenoEmail: string;
+  duenoCuil: string;
+  duenoCuilCobrador: string;
+  duenoTelefono: string;
+  duenoObservaciones: string;
+};
+
+type CombustibleRequestForm = {
+  empresaId: string;
+  sucursalId: string;
+  nombreCompleto: string;
+  dni: string;
+  serviClubEmail: string;
+  patente: string;
+  marca: string;
+  modelo: string;
+  kilometraje: string;
+  observaciones: string;
+};
+
+type AdelantoRequestForm = {
+  empresaId: string;
+  sucursalId: string;
+  transportista: string;
+  monto: string;
+  fechaSolicitud: string;
+  motivo: string;
+  observaciones: string;
+};
+
+type AumentoCombustibleForm = {
+  empresaId: string;
+  sucursalId: string;
+  nombreCompleto: string;
+  dni: string;
+  serviClubEmail: string;
+  patente: string;
+  marca: string;
+  modelo: string;
+  kilometraje: string;
+  litrosActuales: string;
+  litrosSolicitados: string;
+  motivo: string;
+};
+
+type PolizaRequestForm = {
+  polizaFile: File | null;
+  comprobanteFile: File | null;
+  observaciones: string;
+};
+
+type AltaEditableField = Exclude<keyof AltaRequestForm, 'tarifaEspecial' | 'combustible' | 'perfilValue'>;
+
+type AttendanceRecord = {
+  status: 'entrada' | 'salida';
+  timestamp: string;
+  userId?: number | null;
+  userName?: string | null;
+  userKey?: string;
+};
+
+const formatRoleLabel = (role: string | null | undefined): string => {
+  const normalized = role?.trim().toLowerCase();
+  if (normalized === 'admin' || normalized === 'administrador') {
+    return 'Administrador';
+  }
+  if (normalized === 'operator' || normalized === 'operador') {
+    return 'Operador';
+  }
+  return 'Usuario';
 };
 
 type ReclamoRecord = {
@@ -238,6 +363,8 @@ type NotificationRecord = {
   reclamoId: number | null;
   reclamoCodigo: string | null;
   reclamoEstado: string | null;
+  personaId: number | null;
+  personaNombre: string | null;
   readAt: string | null;
   createdAt: string | null;
   createdAtLabel?: string | null;
@@ -272,6 +399,102 @@ const readAuthUserFromStorage = (): AuthUser | null => {
   } catch {
     return null;
   }
+};
+
+const useStoredAuthUser = (): AuthUser | null => {
+  const [authUser, setAuthUser] = useState<AuthUser | null>(() => readAuthUserFromStorage());
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    const syncAuthUser = () => {
+      setAuthUser(readAuthUserFromStorage());
+    };
+
+    const listener = syncAuthUser as EventListener;
+
+    window.addEventListener('storage', syncAuthUser);
+    window.addEventListener('auth:updated', listener);
+
+    return () => {
+      window.removeEventListener('storage', syncAuthUser);
+      window.removeEventListener('auth:updated', listener);
+    };
+  }, []);
+
+  return authUser;
+};
+
+const ATTENDANCE_RECORD_KEY = 'attendanceRecord';
+const ATTENDANCE_LOG_KEY = 'attendanceLog';
+
+const readAttendanceRecordFromStorage = (): AttendanceRecord | null => {
+  if (typeof window === 'undefined') {
+    return null;
+  }
+  const raw = window.localStorage.getItem(ATTENDANCE_RECORD_KEY);
+  if (!raw) {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(raw) as AttendanceRecord;
+    if (
+      parsed &&
+      (parsed.status === 'entrada' || parsed.status === 'salida') &&
+      typeof parsed.timestamp === 'string'
+    ) {
+      return {
+        ...parsed,
+        userKey: buildAttendanceUserKey(parsed),
+      };
+    }
+  } catch {
+    // ignore corrupted storage
+  }
+  return null;
+};
+
+const readAttendanceLogFromStorage = (): AttendanceRecord[] => {
+  if (typeof window === 'undefined') {
+    return [];
+  }
+  const raw = window.localStorage.getItem(ATTENDANCE_LOG_KEY);
+  if (!raw) {
+    return [];
+  }
+  try {
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) {
+      return parsed
+        .filter(
+          (item): item is AttendanceRecord =>
+            item && (item.status === 'entrada' || item.status === 'salida') && typeof item.timestamp === 'string'
+        )
+        .map((item) => ({
+          ...item,
+          userKey: buildAttendanceUserKey(item),
+        }));
+    }
+  } catch {
+    // ignore
+  }
+  return [];
+};
+
+const appendAttendanceLog = (record: AttendanceRecord) => {
+  if (typeof window === 'undefined') {
+    return;
+  }
+  const current = readAttendanceLogFromStorage();
+  const normalized: AttendanceRecord = {
+    ...record,
+    userKey: buildAttendanceUserKey(record),
+  };
+  current.push(normalized);
+  const trimmed = current.slice(-200);
+  window.localStorage.setItem(ATTENDANCE_LOG_KEY, JSON.stringify(trimmed));
 };
 
 const computeInitials = (value: string | null | undefined): string => {
@@ -343,6 +566,35 @@ const formatElapsedTime = (fromIso: string | null, toIso?: string | null): strin
   return parts.length > 0 ? parts.join(' ') : '0m';
 };
 
+const buildAttendanceUserKey = (record: AttendanceRecord): string => {
+  if (record.userKey && record.userKey.trim().length > 0) {
+    return record.userKey.trim();
+  }
+  if (record.userId != null) {
+    return `id-${record.userId}`;
+  }
+  const normalizedName = (record.userName ?? '').trim().toLowerCase();
+  if (normalizedName.length > 0) {
+    return `name-${normalizedName}`;
+  }
+  return 'anon';
+};
+
+const formatMonthValue = (date: Date): string => {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  return `${year}-${month}`;
+};
+
+const formatDurationFromMs = (ms: number): string => {
+  if (ms <= 0) {
+    return '0m';
+  }
+  const base = new Date(0).toISOString();
+  const target = new Date(ms).toISOString();
+  return formatElapsedTime(base, target);
+};
+
 const LoginPage: React.FC = () => {
   const navigate = useNavigate();
   const apiBaseUrl = useMemo(() => resolveApiBaseUrl(), []);
@@ -390,13 +642,21 @@ const LoginPage: React.FC = () => {
           id: number;
           name: string | null;
           email: string | null;
+          role?: string | null;
         };
       };
 
       const storage = rememberMe ? window.localStorage : window.sessionStorage;
       const otherStorage = rememberMe ? window.sessionStorage : window.localStorage;
-      storage.setItem('authUser', JSON.stringify(payload.data));
+      const authPayload: AuthUser = {
+        id: payload.data.id,
+        name: payload.data.name ?? null,
+        email: payload.data.email ?? null,
+        role: payload.data.role ?? null,
+      };
+      storage.setItem('authUser', JSON.stringify(authPayload));
       otherStorage.removeItem('authUser');
+      window.dispatchEvent(new CustomEvent('auth:updated'));
 
       navigate('/clientes', { replace: true });
     } catch (err) {
@@ -504,10 +764,99 @@ const DashboardLayout: React.FC<{
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
   const [notificationsVersion, setNotificationsVersion] = useState(0);
+  const [currentTime, setCurrentTime] = useState(() => new Date());
+  const [attendanceRecord, setAttendanceRecord] = useState<AttendanceRecord | null>(() =>
+    readAttendanceRecordFromStorage()
+  );
 
   useEffect(() => {
     setAuthUser(readAuthUserFromStorage());
   }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    const handleAuthUpdate = () => {
+      setAuthUser(readAuthUserFromStorage());
+    };
+
+    const listener = handleAuthUpdate as EventListener;
+
+    window.addEventListener('auth:updated', listener);
+    window.addEventListener('storage', listener);
+
+    return () => {
+      window.removeEventListener('auth:updated', listener);
+      window.removeEventListener('storage', listener);
+    };
+  }, []);
+
+  useEffect(() => {
+    const interval = window.setInterval(() => setCurrentTime(new Date()), 1000);
+    return () => window.clearInterval(interval);
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+    if (attendanceRecord) {
+      window.localStorage.setItem(ATTENDANCE_RECORD_KEY, JSON.stringify(attendanceRecord));
+    } else {
+      window.localStorage.removeItem(ATTENDANCE_RECORD_KEY);
+    }
+  }, [attendanceRecord]);
+
+  useEffect(() => {
+    const handler = (event: Event) => {
+      const custom = event as CustomEvent<AttendanceRecord | null | undefined>;
+      if (custom.detail !== undefined) {
+        setAttendanceRecord(custom.detail ?? null);
+        return;
+      }
+      setAttendanceRecord(readAttendanceRecordFromStorage());
+    };
+    window.addEventListener('attendance:updated', handler as EventListener);
+    return () => window.removeEventListener('attendance:updated', handler as EventListener);
+  }, []);
+
+  const formattedClock = useMemo(
+    () =>
+      currentTime.toLocaleTimeString('es-AR', {
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: false,
+      }),
+    [currentTime]
+  );
+
+  const formattedAttendance = useMemo(() => {
+    if (!attendanceRecord) {
+      return 'Fuera del horario laboral';
+    }
+
+    if (attendanceRecord.status === 'entrada') {
+      const workedTime = formatElapsedTime(attendanceRecord.timestamp, currentTime.toISOString());
+      return `En horario laboral · ${workedTime}`;
+    }
+
+    const timestamp = new Date(attendanceRecord.timestamp);
+    const dateLabel = timestamp.toLocaleDateString('es-AR', {
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    });
+    const timeLabel = timestamp.toLocaleTimeString('es-AR', {
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false,
+    });
+    return `Última salida registrada · ${dateLabel} ${timeLabel}`;
+  }, [attendanceRecord, currentTime]);
 
   const displayName = useMemo(() => {
     if (authUser?.name && authUser.name.trim().length > 0) {
@@ -522,12 +871,13 @@ const DashboardLayout: React.FC<{
   }, [authUser]);
 
   const roleLabel = useMemo(() => {
-    if (authUser?.role && authUser.role.trim().length > 0) {
-      return authUser.role.trim();
-    }
-
-    return 'Usuario';
+    return formatRoleLabel(authUser?.role);
   }, [authUser]);
+
+  const isAdmin = useMemo(() => {
+    const normalized = authUser?.role?.toLowerCase() ?? '';
+    return normalized.includes('admin');
+  }, [authUser?.role]);
 
   const avatarInitials = useMemo(
     () => computeInitials(authUser?.name ?? authUser?.email),
@@ -539,6 +889,70 @@ const DashboardLayout: React.FC<{
     window.addEventListener('notifications:updated', handler);
     return () => window.removeEventListener('notifications:updated', handler);
   }, []);
+
+  useEffect(() => {
+    const handler = (event: Event) => {
+      const custom = event as CustomEvent<AttendanceRecord | null | undefined>;
+      if (custom.detail !== undefined) {
+        setAttendanceRecord(custom.detail ?? null);
+        return;
+      }
+      setAttendanceRecord(readAttendanceRecordFromStorage());
+    };
+    window.addEventListener('attendance:updated', handler as EventListener);
+    return () => window.removeEventListener('attendance:updated', handler as EventListener);
+  }, []);
+
+  useEffect(() => {
+    if (!authUser?.id || authUser?.role) {
+      return;
+    }
+
+    const controller = new AbortController();
+
+    const fetchRole = async () => {
+      try {
+        const response = await fetch(`${apiBaseUrl}/api/usuarios/${authUser.id}`, {
+          signal: controller.signal,
+        });
+        if (!response.ok) {
+          return;
+        }
+        const payload = (await response.json()) as {
+          data?: { role?: string | null; name?: string | null; email?: string | null };
+        };
+        if (payload?.data?.role) {
+          const updated: AuthUser = {
+            id: authUser.id,
+            name: payload.data.name ?? authUser.name ?? null,
+            email: payload.data.email ?? authUser.email ?? null,
+            role: payload.data.role,
+          };
+          setAuthUser(updated);
+          try {
+            const serialized = JSON.stringify(updated);
+            const hasLocal = Boolean(window.localStorage.getItem('authUser'));
+            const hasSession = Boolean(window.sessionStorage.getItem('authUser'));
+            if (hasLocal) {
+              window.localStorage.setItem('authUser', serialized);
+            }
+            if (hasSession || (!hasLocal && !hasSession)) {
+              window.sessionStorage.setItem('authUser', serialized);
+            }
+            window.dispatchEvent(new CustomEvent('auth:updated'));
+          } catch {
+            // ignore storage errors
+          }
+        }
+      } catch {
+        // ignore network errors
+      }
+    };
+
+    fetchRole();
+
+    return () => controller.abort();
+  }, [apiBaseUrl, authUser?.id, authUser?.role]);
 
   useEffect(() => {
     if (!authUser?.id) {
@@ -595,7 +1009,38 @@ const DashboardLayout: React.FC<{
       setAuthUser(null);
     }
     window.dispatchEvent(new CustomEvent('notifications:updated'));
+    window.dispatchEvent(new CustomEvent('auth:updated'));
     window.location.href = '/';
+  };
+
+  const handleMarkAttendance = (status: AttendanceRecord['status']) => {
+    const confirmationMessage =
+      status === 'entrada'
+        ? '¿Estás seguro/a que querés registrar Entrada al horario laboral?'
+        : '¿Estás seguro/a que querés registrar Salida del horario laboral?';
+
+    if (!window.confirm(confirmationMessage)) {
+      return;
+    }
+
+    const operatorName =
+      authUser?.name && authUser.name.trim().length > 0
+        ? authUser.name.trim()
+        : authUser?.email ?? 'Usuario';
+
+    const record: AttendanceRecord = {
+      status,
+      timestamp: new Date().toISOString(),
+      userId: authUser?.id ?? null,
+      userName: operatorName,
+    };
+    const enrichedRecord: AttendanceRecord = {
+      ...record,
+      userKey: buildAttendanceUserKey(record),
+    };
+    setAttendanceRecord(enrichedRecord);
+    appendAttendanceLog(enrichedRecord);
+    window.dispatchEvent(new CustomEvent('attendance:updated', { detail: enrichedRecord }));
   };
 
   return (
@@ -613,9 +1058,11 @@ const DashboardLayout: React.FC<{
           <NavLink to="/unidades" className={({ isActive }) => `sidebar-link${isActive ? ' is-active' : ''}`}>
             Gestión de unidades
           </NavLink>
-          <NavLink to="/usuarios" className={({ isActive }) => `sidebar-link${isActive ? ' is-active' : ''}`}>
-            Gestión de usuarios
-          </NavLink>
+          {isAdmin ? (
+            <NavLink to="/usuarios" className={({ isActive }) => `sidebar-link${isActive ? ' is-active' : ''}`}>
+              Gestión de usuarios
+            </NavLink>
+          ) : null}
           <NavLink to="/personal" className={({ isActive }) => `sidebar-link${isActive ? ' is-active' : ''}`}>
             Personal
           </NavLink>
@@ -625,9 +1072,14 @@ const DashboardLayout: React.FC<{
           <NavLink to="/notificaciones" className={({ isActive }) => `sidebar-link${isActive ? ' is-active' : ''}`}>
             Notificaciones
           </NavLink>
-          <a className="sidebar-link" href="#aprobaciones" onClick={(event) => event.preventDefault()}>
+          {isAdmin ? (
+            <NavLink to="/control-horario" className={({ isActive }) => `sidebar-link${isActive ? ' is-active' : ''}`}>
+              Control horario
+            </NavLink>
+          ) : null}
+          <NavLink to="/aprobaciones" className={({ isActive }) => `sidebar-link${isActive ? ' is-active' : ''}`}>
             Aprobaciones/solicitudes
-          </a>
+          </NavLink>
           <a className="sidebar-link" href="#tarifas" onClick={(event) => event.preventDefault()}>
             Tarifas
           </a>
@@ -655,6 +1107,24 @@ const DashboardLayout: React.FC<{
             {subtitle ? <p>{subtitle}</p> : null}
           </div>
           <div className="topbar-actions">
+            <div className="time-tracker">
+              <div className="time-tracker__display">
+                <span className="time-tracker__clock">{formattedClock}</span>
+                <small className="time-tracker__last">{formattedAttendance}</small>
+              </div>
+              <div className="time-tracker__actions">
+                <button
+                  type="button"
+                  className="time-button time-button--in"
+                  onClick={() => handleMarkAttendance('entrada')}
+                >
+                  Entrada
+                </button>
+                <button type="button" className="time-button" onClick={() => handleMarkAttendance('salida')}>
+                  Salida
+                </button>
+              </div>
+            </div>
             <button
               className="topbar-button notification"
               type="button"
@@ -1693,6 +2163,12 @@ const CreateReclamoPage: React.FC = () => {
     pagado: 'false',
     fechaReclamo: '',
   });
+  const authUser = useStoredAuthUser();
+  const isAdmin = useMemo(() => {
+    const normalized = authUser?.role?.toLowerCase() ?? '';
+    return normalized.includes('admin');
+  }, [authUser?.role]);
+  const shouldRedirect = Boolean(authUser?.role && !isAdmin);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -1741,6 +2217,9 @@ const CreateReclamoPage: React.FC = () => {
     return () => controller.abort();
   }, [apiBaseUrl]);
 
+  if (authUser?.role && !isAdmin) {
+    return <Navigate to="/clientes" replace />;
+  }
   useEffect(() => {
     if (!meta) {
       return;
@@ -2035,6 +2514,10 @@ const CreateReclamoPage: React.FC = () => {
       </button>
     </div>
   );
+
+  if (shouldRedirect) {
+    return <Navigate to="/clientes" replace />;
+  }
 
   if (metaLoading) {
     return (
@@ -3043,16 +3526,14 @@ const PersonalPage: React.FC = () => {
   const [tarifaFilter, setTarifaFilter] = useState('');
   const [deletingPersonalId, setDeletingPersonalId] = useState<number | null>(null);
 
-  useEffect(() => {
-    const controller = new AbortController();
-
-    const fetchPersonal = async () => {
+  const fetchPersonal = useCallback(
+    async (options?: { signal?: AbortSignal }) => {
       try {
         setLoading(true);
         setError(null);
 
         const response = await fetch(`${apiBaseUrl}/api/personal`, {
-          signal: controller.signal,
+          signal: options?.signal,
         });
 
         if (!response.ok) {
@@ -3074,12 +3555,43 @@ const PersonalPage: React.FC = () => {
       } finally {
         setLoading(false);
       }
+    },
+    [apiBaseUrl]
+  );
+
+  useEffect(() => {
+    const controller = new AbortController();
+    fetchPersonal({ signal: controller.signal });
+    return () => controller.abort();
+  }, [fetchPersonal]);
+
+  useEffect(() => {
+    const handler = (event: Event) => {
+      const customEvent = event as CustomEvent<{ persona?: PersonalRecord }>;
+      const persona = customEvent.detail?.persona;
+
+      if (persona && persona.aprobado !== false) {
+        setPersonal((prev) => {
+          const existingIndex = prev.findIndex((item) => item.id === persona.id);
+          if (existingIndex >= 0) {
+            const updated = [...prev];
+            updated[existingIndex] = persona;
+            return updated;
+          }
+
+          return [persona, ...prev];
+        });
+        setError(null);
+        setLoading(false);
+        return;
+      }
+
+      fetchPersonal();
     };
 
-    fetchPersonal();
-
-    return () => controller.abort();
-  }, [apiBaseUrl]);
+    window.addEventListener('personal:updated', handler as EventListener);
+    return () => window.removeEventListener('personal:updated', handler as EventListener);
+  }, [fetchPersonal]);
 
   const perfilNames: Record<number, string> = useMemo(
     () => ({
@@ -3094,6 +3606,10 @@ const PersonalPage: React.FC = () => {
     const term = searchTerm.trim().toLowerCase();
 
     return personal.filter((registro) => {
+      if (registro.aprobado === false) {
+        return false;
+      }
+
       if (clienteFilter && registro.cliente !== clienteFilter) {
         return false;
       }
@@ -3592,8 +4108,18 @@ const UsersPage: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [deletingUsuarioId, setDeletingUsuarioId] = useState<number | null>(null);
+  const authUser = useStoredAuthUser();
+  const isAdmin = useMemo(() => {
+    const normalized = authUser?.role?.toLowerCase() ?? '';
+    return normalized.includes('admin');
+  }, [authUser?.role]);
 
   useEffect(() => {
+    if (!isAdmin) {
+      setLoading(false);
+      return;
+    }
+
     const controller = new AbortController();
 
     const fetchUsuarios = async () => {
@@ -3628,7 +4154,7 @@ const UsersPage: React.FC = () => {
     fetchUsuarios();
 
     return () => controller.abort();
-  }, [apiBaseUrl]);
+  }, [apiBaseUrl, isAdmin]);
 
   const filteredUsuarios = useMemo(() => {
     const term = searchTerm.trim().toLowerCase();
@@ -3637,7 +4163,13 @@ const UsersPage: React.FC = () => {
     }
 
     return usuarios.filter((usuario) => {
-      const fields = [usuario.name, usuario.email, usuario.created_at?.toString()];
+      const fields = [
+        usuario.name,
+        usuario.email,
+        usuario.created_at?.toString(),
+        formatRoleLabel(usuario.role ?? null),
+        usuario.role,
+      ];
       return fields.some((field) => field?.toLowerCase().includes(term));
     });
   }, [usuarios, searchTerm]);
@@ -3711,6 +4243,18 @@ const UsersPage: React.FC = () => {
     </div>
   );
 
+  if (!authUser?.role) {
+    return (
+      <DashboardLayout title="Gestionar usuarios" subtitle="Gestionar usuarios" headerContent={headerContent}>
+        <p className="form-info">Verificando permisos...</p>
+      </DashboardLayout>
+    );
+  }
+
+  if (!isAdmin) {
+    return <Navigate to="/clientes" replace />;
+  }
+
   return (
     <DashboardLayout title="Gestionar usuarios" subtitle="Gestionar usuarios" headerContent={headerContent}>
       <div className="table-wrapper">
@@ -3721,6 +4265,7 @@ const UsersPage: React.FC = () => {
               <th>Nombre</th>
               <th>Email</th>
               <th>Creado</th>
+              <th>Rol</th>
               <th>Estado</th>
               <th>Acciones</th>
             </tr>
@@ -3728,13 +4273,13 @@ const UsersPage: React.FC = () => {
           <tbody>
             {loading && (
               <tr>
-                <td colSpan={6}>Cargando usuarios...</td>
+                <td colSpan={7}>Cargando usuarios...</td>
               </tr>
             )}
 
             {error && !loading && (
               <tr>
-                <td colSpan={6} className="error-cell">
+                <td colSpan={7} className="error-cell">
                   {error}
                 </td>
               </tr>
@@ -3742,7 +4287,7 @@ const UsersPage: React.FC = () => {
 
             {!loading && !error && filteredUsuarios.length === 0 && (
               <tr>
-                <td colSpan={6}>No hay usuarios para mostrar.</td>
+                <td colSpan={7}>No hay usuarios para mostrar.</td>
               </tr>
             )}
 
@@ -3751,6 +4296,7 @@ const UsersPage: React.FC = () => {
               filteredUsuarios.map((usuario) => {
                 const statusValue = (usuario.status ?? 'activo').toLowerCase();
                 const statusLabel = statusValue === 'inactivo' ? 'Inactivo' : 'Activo';
+                const userRoleLabel = formatRoleLabel(usuario.role);
 
                 return (
                   <tr key={usuario.id}>
@@ -3758,6 +4304,7 @@ const UsersPage: React.FC = () => {
                     <td>{usuario.name ?? '—'}</td>
                     <td>{usuario.email ?? '—'}</td>
                     <td>{usuario.created_at ?? '—'}</td>
+                    <td>{userRoleLabel}</td>
                     <td>
                       <span className={`status-badge${statusValue === 'inactivo' ? ' is-inactive' : ''}`}>
                         {statusLabel}
@@ -3807,7 +4354,7 @@ const UsersPage: React.FC = () => {
 const NotificationsPage: React.FC = () => {
   const navigate = useNavigate();
   const apiBaseUrl = useMemo(() => resolveApiBaseUrl(), []);
-  const authUser = useMemo(() => readAuthUserFromStorage(), []);
+  const authUser = useStoredAuthUser();
   const [notifications, setNotifications] = useState<NotificationRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -3871,6 +4418,7 @@ const NotificationsPage: React.FC = () => {
 
       setRefreshTick((value) => value + 1);
       window.dispatchEvent(new CustomEvent('notifications:updated'));
+      window.dispatchEvent(new CustomEvent('personal:updated'));
     } catch (err) {
       window.alert((err as Error).message ?? 'No se pudo marcar la notificación.');
     }
@@ -3910,7 +4458,7 @@ const NotificationsPage: React.FC = () => {
               <tr>
                 <th>Fecha</th>
                 <th>Mensaje</th>
-                <th>Reclamo</th>
+                <th>Relacionado</th>
                 <th>Estado</th>
                 <th>Acciones</th>
               </tr>
@@ -3951,6 +4499,16 @@ const NotificationsPage: React.FC = () => {
                         >
                           {notification.reclamoCodigo ?? `Reclamo #${notification.reclamoId}`}
                         </button>
+                      ) : notification.personaId ? (
+                        <button
+                          type="button"
+                          className="secondary-action secondary-action--ghost"
+                          onClick={() => navigate(`/aprobaciones?personaId=${notification.personaId}`)}
+                        >
+                          {notification.personaNombre?.trim().length
+                            ? notification.personaNombre
+                            : `Personal #${notification.personaId}`}
+                        </button>
                       ) : (
                         '—'
                       )}
@@ -3978,6 +4536,2560 @@ const NotificationsPage: React.FC = () => {
   );
 };
 
+const AttendanceLogPage: React.FC = () => {
+  const authUser = useStoredAuthUser();
+  const isAdmin = useMemo(() => {
+    const normalized = authUser?.role?.toLowerCase() ?? '';
+    return normalized.includes('admin');
+  }, [authUser?.role]);
+  const [log, setLog] = useState<AttendanceRecord[]>(() => readAttendanceLogFromStorage());
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    const handler = () => setLog(readAttendanceLogFromStorage());
+    window.addEventListener('attendance:updated', handler);
+    return () => window.removeEventListener('attendance:updated', handler);
+  }, []);
+
+  const durationLookup = useMemo(() => {
+    const lookup = new Map<string, string>();
+    const chronological = [...log].sort(
+      (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+    );
+    const lastEntryByUser = new Map<string, AttendanceRecord>();
+
+    chronological.forEach((record) => {
+      const userKey = record.userKey ?? buildAttendanceUserKey(record);
+      if (record.status === 'entrada') {
+        lastEntryByUser.set(userKey, record);
+      } else {
+        const entry = lastEntryByUser.get(userKey);
+        if (entry) {
+          lookup.set(record.timestamp, formatElapsedTime(entry.timestamp, record.timestamp));
+          lastEntryByUser.delete(userKey);
+        } else {
+          lookup.set(record.timestamp, '—');
+        }
+      }
+    });
+
+    return lookup;
+  }, [log]);
+
+  const handleClearLog = () => {
+    if (!window.confirm('¿Seguro que deseas limpiar el registro de marcaciones?')) {
+      return;
+    }
+    if (typeof window !== 'undefined') {
+      window.localStorage.removeItem(ATTENDANCE_LOG_KEY);
+      window.localStorage.removeItem(ATTENDANCE_RECORD_KEY);
+    }
+    setLog([]);
+    window.dispatchEvent(new CustomEvent('attendance:updated', { detail: null }));
+  };
+
+  if (!isAdmin) {
+    return <Navigate to="/clientes" replace />;
+  }
+
+  const sortedLog = [...log].sort(
+    (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
+  );
+
+  const headerContent = (
+    <div className="card-header card-header--compact">
+      <button
+        type="button"
+        className="secondary-action"
+        onClick={handleClearLog}
+        disabled={sortedLog.length === 0}
+      >
+        Limpiar registro
+      </button>
+    </div>
+  );
+
+  return (
+    <DashboardLayout title="Control horario" subtitle="Registro de marcaciones" headerContent={headerContent}>
+      <div className="table-wrapper">
+        <table>
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Operador</th>
+              <th>Acción</th>
+              <th>Fecha</th>
+              <th>Hora</th>
+              <th>Horas trabajadas</th>
+            </tr>
+          </thead>
+          <tbody>
+            {sortedLog.length === 0 ? (
+              <tr>
+                <td colSpan={6}>No hay marcaciones registradas todavía.</td>
+              </tr>
+            ) : (
+              sortedLog.map((item, index) => {
+                const date = new Date(item.timestamp);
+                const dateLabel = date.toLocaleDateString('es-AR', {
+                  year: 'numeric',
+                  month: '2-digit',
+                  day: '2-digit',
+                });
+                const timeLabel = date.toLocaleTimeString('es-AR', {
+                  hour: '2-digit',
+                  minute: '2-digit',
+                  second: '2-digit',
+                  hour12: false,
+                });
+                const operatorLabel =
+                  item.userName && item.userName.trim().length > 0 ? item.userName.trim() : '—';
+                const userKey = item.userKey ?? buildAttendanceUserKey(item);
+                const hoursLabel =
+                  item.status === 'salida' ? durationLookup.get(item.timestamp) ?? '—' : '—';
+                return (
+                  <tr key={`${item.timestamp}-${index}`}>
+                    <td>{index + 1}</td>
+                    <td>
+                      {operatorLabel !== '—' ? (
+                        <button
+                          type="button"
+                          className="secondary-action secondary-action--ghost"
+                          onClick={() =>
+                            navigate(
+                              `/control-horario/${encodeURIComponent(userKey)}?nombre=${encodeURIComponent(
+                                operatorLabel
+                              )}`
+                            )
+                          }
+                        >
+                          {operatorLabel}
+                        </button>
+                      ) : (
+                        operatorLabel
+                      )}
+                    </td>
+                    <td>{item.status === 'entrada' ? 'Entrada' : 'Salida'}</td>
+                    <td>{dateLabel}</td>
+                    <td>{timeLabel}</td>
+                    <td>{hoursLabel}</td>
+                  </tr>
+                );
+              })
+            )}
+          </tbody>
+        </table>
+      </div>
+    </DashboardLayout>
+  );
+};
+
+const AttendanceUserDetailPage: React.FC = () => {
+  const { userKey: encodedUserKey } = useParams<{ userKey: string }>();
+  const navigate = useNavigate();
+  const location = useLocation();
+  const [log, setLog] = useState<AttendanceRecord[]>(() => readAttendanceLogFromStorage());
+  const [selectedMonth, setSelectedMonth] = useState(() => formatMonthValue(new Date()));
+
+  useEffect(() => {
+    const handler = () => setLog(readAttendanceLogFromStorage());
+    window.addEventListener('attendance:updated', handler);
+    return () => window.removeEventListener('attendance:updated', handler);
+  }, []);
+
+  const decodedUserKey = useMemo(() => {
+    if (!encodedUserKey) {
+      return '';
+    }
+    try {
+      return decodeURIComponent(encodedUserKey);
+    } catch {
+      return encodedUserKey;
+    }
+  }, [encodedUserKey]);
+
+  const searchParams = useMemo(() => new URLSearchParams(location.search), [location.search]);
+  const queryName = searchParams.get('nombre');
+
+  const userLog = useMemo(() => {
+    if (!decodedUserKey) {
+      return [] as AttendanceRecord[];
+    }
+    return log.filter((record) => (record.userKey ?? buildAttendanceUserKey(record)) === decodedUserKey);
+  }, [log, decodedUserKey]);
+
+  const displayName = useMemo(() => {
+    const fromQuery = queryName?.trim();
+    if (fromQuery && fromQuery.length > 0) {
+      return fromQuery;
+    }
+    const firstRecord = userLog.find((item) => item.userName && item.userName.trim().length > 0);
+    if (firstRecord?.userName) {
+      return firstRecord.userName.trim();
+    }
+    if (decodedUserKey.startsWith('id-')) {
+      return `Usuario #${decodedUserKey.replace('id-', '')}`;
+    }
+    return 'Operador';
+  }, [queryName, userLog, decodedUserKey]);
+
+  const monthRange = useMemo(() => {
+    if (!selectedMonth || !/^\d{4}-\d{2}$/.test(selectedMonth)) {
+      return null;
+    }
+    const [yearStr, monthStr] = selectedMonth.split('-');
+    const year = Number(yearStr);
+    const monthIndex = Number(monthStr) - 1;
+    if (Number.isNaN(year) || Number.isNaN(monthIndex)) {
+      return null;
+    }
+    const start = new Date(year, monthIndex, 1);
+    const end = new Date(year, monthIndex + 1, 1);
+    return { start, end };
+  }, [selectedMonth]);
+
+  const monthlySessions = useMemo(() => {
+    if (!monthRange) {
+      return [] as Array<{
+        entry: AttendanceRecord | null;
+        exit: AttendanceRecord | null;
+        durationMs: number;
+        effectiveStart: Date;
+        effectiveEnd: Date;
+      }>;
+    }
+
+    const chronological = [...userLog].sort(
+      (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+    );
+    const sessions: Array<{
+      entry: AttendanceRecord | null;
+      exit: AttendanceRecord | null;
+      durationMs: number;
+      effectiveStart: Date;
+      effectiveEnd: Date;
+    }> = [];
+    let pending: AttendanceRecord | null = null;
+
+    chronological.forEach((record) => {
+      const recordDate = new Date(record.timestamp);
+      if (Number.isNaN(recordDate.getTime())) {
+        return;
+      }
+      if (record.status === 'entrada') {
+        pending = record;
+        return;
+      }
+
+      if (record.status === 'salida') {
+        if (!pending) {
+          return;
+        }
+
+        const entryDate = new Date(pending.timestamp);
+        const exitDate = recordDate;
+        const effectiveStart =
+          monthRange.start > entryDate ? monthRange.start : entryDate;
+        const effectiveEnd = monthRange.end < exitDate ? monthRange.end : exitDate;
+
+        if (effectiveEnd > effectiveStart) {
+          sessions.push({
+            entry: pending,
+            exit: record,
+            durationMs: effectiveEnd.getTime() - effectiveStart.getTime(),
+            effectiveStart,
+            effectiveEnd,
+          });
+        }
+
+        pending = null;
+      }
+    });
+
+    return sessions;
+  }, [userLog, monthRange]);
+
+  const totalDurationMs = useMemo(
+    () => monthlySessions.reduce((acc, session) => acc + session.durationMs, 0),
+    [monthlySessions]
+  );
+
+  const headerContent = (
+    <div className="card-header card-header--compact">
+      <button type="button" className="secondary-action" onClick={() => navigate('/control-horario')}>
+        ← Volver al registro
+      </button>
+    </div>
+  );
+
+  if (!decodedUserKey) {
+    return (
+      <DashboardLayout title="Detalle de asistencia" subtitle="Control horario por operador" headerContent={headerContent}>
+        <p className="form-info form-info--error">Operador no válido.</p>
+      </DashboardLayout>
+    );
+  }
+
+  return (
+    <DashboardLayout
+      title="Detalle de asistencia"
+      subtitle={`Operador: ${displayName}`}
+      headerContent={headerContent}
+    >
+      <div className="attendance-detail">
+        <div className="attendance-detail__filters">
+          <label className="input-control">
+            <span>Mes</span>
+            <input
+              type="month"
+              value={selectedMonth}
+              onChange={(event) => setSelectedMonth(event.target.value)}
+            />
+          </label>
+          <div className="attendance-detail__summary">
+            <strong>Total registrado:</strong> {formatDurationFromMs(totalDurationMs)}
+          </div>
+        </div>
+
+        <div className="table-wrapper">
+          <table>
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Fecha</th>
+                <th>Entrada</th>
+                <th>Salida</th>
+                <th>Horas trabajadas</th>
+              </tr>
+            </thead>
+            <tbody>
+              {monthlySessions.length === 0 ? (
+                <tr>
+                  <td colSpan={5}>No hay marcaciones registradas en este mes para el operador.</td>
+                </tr>
+              ) : (
+                monthlySessions.map((session, index) => {
+                  const entryDate = session.entry ? new Date(session.entry.timestamp) : null;
+                  const exitDate = session.exit ? new Date(session.exit.timestamp) : null;
+                  const dateLabel = entryDate
+                    ? entryDate.toLocaleDateString('es-AR', {
+                        year: 'numeric',
+                        month: '2-digit',
+                        day: '2-digit',
+                      })
+                    : exitDate
+                    ? exitDate.toLocaleDateString('es-AR', {
+                        year: 'numeric',
+                        month: '2-digit',
+                        day: '2-digit',
+                      })
+                    : '—';
+
+                  const formatTime = (date: Date | null) =>
+                    date
+                      ? date.toLocaleTimeString('es-AR', {
+                          hour: '2-digit',
+                          minute: '2-digit',
+                          second: '2-digit',
+                          hour12: false,
+                        })
+                      : '—';
+
+                  return (
+                    <tr key={`${session.entry?.timestamp ?? session.exit?.timestamp ?? index}-${index}`}>
+                      <td>{index + 1}</td>
+                      <td>{dateLabel}</td>
+                      <td>{formatTime(entryDate)}</td>
+                      <td>{formatTime(exitDate)}</td>
+                      <td>{formatDurationFromMs(session.durationMs)}</td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </DashboardLayout>
+  );
+};
+
+const ApprovalsRequestsPage: React.FC = () => {
+  const navigate = useNavigate();
+  const location = useLocation();
+  const apiBaseUrl = useMemo(() => resolveApiBaseUrl(), []);
+  const authUser = useStoredAuthUser();
+  const [activeTab, setActiveTab] = useState<'altas' | 'combustible' | 'aumento_combustible' | 'adelanto' | 'poliza'>('altas');
+  const [meta, setMeta] = useState<PersonalMeta | null>(null);
+  const [loadingMeta, setLoadingMeta] = useState(true);
+  const [metaError, setMetaError] = useState<string | null>(null);
+  const [flash, setFlash] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  const [reviewPersonaDetail, setReviewPersonaDetail] = useState<PersonalDetail | null>(null);
+  const [reviewLoading, setReviewLoading] = useState(false);
+  const [reviewError, setReviewError] = useState<string | null>(null);
+  const [approveLoading, setApproveLoading] = useState(false);
+  const [approvalEstadoId, setApprovalEstadoId] = useState('');
+  const [reviewCommentText, setReviewCommentText] = useState('');
+  const [reviewCommentSaving, setReviewCommentSaving] = useState(false);
+  const [reviewCommentError, setReviewCommentError] = useState<string | null>(null);
+  const [reviewCommentInfo, setReviewCommentInfo] = useState<string | null>(null);
+  const personaIdFromQuery = useMemo(() => {
+    const searchParams = new URLSearchParams(location.search);
+    const value = searchParams.get('personaId');
+    return value && value.trim().length > 0 ? value : null;
+  }, [location.search]);
+  const [altaSubmitting, setAltaSubmitting] = useState(false);
+  const [combustibleSubmitting, setCombustibleSubmitting] = useState(false);
+  const [aumentoSubmitting, setAumentoSubmitting] = useState(false);
+  const [adelantoSubmitting, setAdelantoSubmitting] = useState(false);
+  const [polizaSubmitting, setPolizaSubmitting] = useState(false);
+  const [altaAttachments, setAltaAttachments] = useState<AltaAttachmentItem[]>([]);
+  const [altaFilesVersion, setAltaFilesVersion] = useState(0);
+  const [altaDocumentType, setAltaDocumentType] = useState('');
+  const [altaDocumentExpiry, setAltaDocumentExpiry] = useState('');
+  const altaSelectedDocumentType = useMemo(() => {
+    if (!meta?.documentTypes || !altaDocumentType) {
+      return null;
+    }
+
+    const numericId = Number(altaDocumentType);
+    if (!Number.isNaN(numericId)) {
+      const byId = meta.documentTypes.find((tipo) => tipo.id === numericId);
+      if (byId) {
+        return byId;
+      }
+    }
+
+    const normalizedTarget = altaDocumentType.trim().toLowerCase();
+    return (
+      meta.documentTypes.find((tipo) => (tipo.nombre ?? '').trim().toLowerCase() === normalizedTarget) ?? null
+    );
+  }, [meta?.documentTypes, altaDocumentType]);
+  const altaDocumentTypeId = useMemo(() => {
+    if (altaSelectedDocumentType?.id != null) {
+      return String(altaSelectedDocumentType.id);
+    }
+
+    if (!altaDocumentType) {
+      return '';
+    }
+
+    return altaDocumentType.trim().toLowerCase();
+  }, [altaDocumentType, altaSelectedDocumentType?.id]);
+  const altaDocumentTypeName = useMemo(() => {
+    if (altaSelectedDocumentType?.nombre) {
+      return altaSelectedDocumentType.nombre;
+    }
+
+    if (!altaDocumentType) {
+      return '';
+    }
+
+    if (!Number.isNaN(Number(altaDocumentType))) {
+      return `Documento #${altaDocumentType}`;
+    }
+
+    return altaDocumentType;
+  }, [altaDocumentType, altaSelectedDocumentType]);
+  const altaDocumentRequiresExpiry = altaSelectedDocumentType?.vence ?? false;
+  const isAltaCedulaVerde = useMemo(() => {
+    if (!altaDocumentTypeName) {
+      return false;
+    }
+
+    const normalized = altaDocumentTypeName
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase();
+
+    return normalized.includes('cedula verde');
+  }, [altaDocumentTypeName]);
+  const altaAttachmentsForCurrentType = useMemo(() => {
+    if (!altaDocumentTypeId) {
+      return [];
+    }
+
+    return altaAttachments.filter((item) => item.typeId === altaDocumentTypeId);
+  }, [altaAttachments, altaDocumentTypeId]);
+  const [combustibleAttachments, setCombustibleAttachments] = useState<File[]>([]);
+  const [combustibleFilesVersion, setCombustibleFilesVersion] = useState(0);
+  const [aumentoAttachments, setAumentoAttachments] = useState<File[]>([]);
+  const [aumentoFilesVersion, setAumentoFilesVersion] = useState(0);
+  const [adelantoAttachments, setAdelantoAttachments] = useState<File[]>([]);
+  const [adelantoFilesVersion, setAdelantoFilesVersion] = useState(0);
+  const [altaForm, setAltaForm] = useState<AltaRequestForm>(() => ({
+    perfilValue: 0,
+    nombres: '',
+    apellidos: '',
+    telefono: '',
+    email: '',
+    tarifaEspecial: false,
+    observacionTarifa: '',
+    cuil: '',
+    cbuAlias: '',
+    pago: '',
+    combustible: false,
+    fechaAlta: '',
+    patente: '',
+    clienteId: '',
+    sucursalId: '',
+    agenteId: '',
+    agenteResponsableId: '',
+    unidadId: '',
+    estadoId: '',
+    fechaAltaVinculacion: '',
+    observaciones: '',
+    duenoNombre: '',
+    duenoFechaNacimiento: '',
+    duenoEmail: '',
+    duenoCuil: '',
+    duenoCuilCobrador: '',
+    duenoTelefono: '',
+    duenoObservaciones: '',
+  }));
+  const [combustibleForm, setCombustibleForm] = useState<CombustibleRequestForm>(() => ({
+    empresaId: '',
+    sucursalId: '',
+    nombreCompleto: '',
+    dni: '',
+    serviClubEmail: '',
+    patente: '',
+    marca: '',
+    modelo: '',
+    kilometraje: '',
+    observaciones: '',
+  }));
+  const [aumentoCombustibleForm, setAumentoCombustibleForm] = useState<AumentoCombustibleForm>(() => ({
+    empresaId: '',
+    sucursalId: '',
+    nombreCompleto: '',
+    dni: '',
+    serviClubEmail: '',
+    patente: '',
+    marca: '',
+    modelo: '',
+    kilometraje: '',
+    litrosActuales: '',
+    litrosSolicitados: '',
+    motivo: '',
+  }));
+  const [polizaForm, setPolizaForm] = useState<PolizaRequestForm>(() => ({
+    polizaFile: null,
+    comprobanteFile: null,
+    observaciones: '',
+  }));
+  const [polizaInputsVersion, setPolizaInputsVersion] = useState(0);
+  const [adelantoForm, setAdelantoForm] = useState<AdelantoRequestForm>(() => ({
+    empresaId: '',
+    sucursalId: '',
+    transportista: '',
+    monto: '',
+    fechaSolicitud: '',
+    motivo: '',
+    observaciones: '',
+  }));
+
+  useEffect(() => {
+    if (!personaIdFromQuery) {
+      setReviewPersonaDetail(null);
+      setReviewError(null);
+      setApprovalEstadoId('');
+      setReviewCommentText('');
+      setReviewCommentError(null);
+      setReviewCommentInfo(null);
+      setReviewLoading(false);
+      return;
+    }
+
+    const personaIdNumeric = Number(personaIdFromQuery);
+    if (Number.isNaN(personaIdNumeric)) {
+      setReviewPersonaDetail(null);
+      setReviewError('Identificador de solicitud inválido.');
+      setApprovalEstadoId('');
+      setReviewCommentText('');
+      setReviewCommentError(null);
+      setReviewCommentInfo(null);
+      setReviewLoading(false);
+      return;
+    }
+
+    setActiveTab('altas');
+    const controller = new AbortController();
+
+    const fetchDetail = async () => {
+      try {
+        setReviewLoading(true);
+        setReviewError(null);
+
+        const response = await fetch(`${apiBaseUrl}/api/personal/${personaIdNumeric}`, {
+          signal: controller.signal,
+        });
+
+        if (!response.ok) {
+          throw new Error(`Error ${response.status}: ${response.statusText}`);
+        }
+
+        const payload = (await response.json()) as { data: PersonalDetail };
+        setReviewPersonaDetail({
+          ...payload.data,
+          comments: Array.isArray(payload.data.comments) ? payload.data.comments : [],
+        });
+        setApprovalEstadoId(payload.data.estadoId ? String(payload.data.estadoId) : '');
+        setReviewCommentText('');
+        setReviewCommentError(null);
+        setReviewCommentInfo(null);
+      } catch (err) {
+        if ((err as Error).name === 'AbortError') {
+          return;
+        }
+        setReviewPersonaDetail(null);
+        setReviewError((err as Error).message ?? 'No se pudo cargar la solicitud.');
+        setApprovalEstadoId('');
+        setReviewCommentText('');
+        setReviewCommentError(null);
+        setReviewCommentInfo(null);
+      } finally {
+        if (!controller.signal.aborted) {
+          setReviewLoading(false);
+        }
+      }
+    };
+
+    fetchDetail();
+
+    return () => controller.abort();
+  }, [apiBaseUrl, personaIdFromQuery]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+
+    const fetchMeta = async () => {
+      try {
+        setLoadingMeta(true);
+        setMetaError(null);
+
+        const response = await fetch(`${apiBaseUrl}/api/personal-meta`, {
+          signal: controller.signal,
+        });
+
+        if (!response.ok) {
+          throw new Error(`Error ${response.status}: ${response.statusText}`);
+        }
+
+        const payload = (await response.json()) as PersonalMeta;
+        setMeta(payload);
+        if (payload.perfiles.length > 0) {
+          setAltaForm((prev) => ({
+            ...prev,
+            perfilValue: prev.perfilValue !== 0 ? prev.perfilValue : payload.perfiles[0].value,
+          }));
+        }
+      } catch (err) {
+        if ((err as Error).name === 'AbortError') {
+          return;
+        }
+        setMetaError((err as Error).message ?? 'No se pudieron cargar los datos iniciales.');
+      } finally {
+        setLoadingMeta(false);
+      }
+    };
+
+    fetchMeta();
+
+    return () => controller.abort();
+  }, [apiBaseUrl]);
+
+  const headerContent = (
+    <div className="card-header card-header--compact">
+      <button type="button" className="secondary-action" onClick={() => navigate('/personal')}>
+        ← Volver a personal
+      </button>
+    </div>
+  );
+
+const sucursalOptions = useMemo(() => {
+  if (!meta) {
+    return [] as PersonalMeta['sucursales'];
+  }
+
+  if (!altaForm.clienteId) {
+    return meta.sucursales;
+  }
+
+  const clienteId = Number(altaForm.clienteId);
+  return meta.sucursales.filter((sucursal) => sucursal.cliente_id === clienteId);
+}, [meta, altaForm.clienteId]);
+
+  const combustibleSucursalOptions = useMemo(() => {
+    if (!meta) {
+      return [] as PersonalMeta['sucursales'];
+    }
+    if (!combustibleForm.empresaId) {
+      return meta.sucursales;
+    }
+    const empresaId = Number(combustibleForm.empresaId);
+    return meta.sucursales.filter((sucursal) => sucursal.cliente_id === empresaId);
+  }, [meta, combustibleForm.empresaId]);
+
+  const aumentoSucursalOptions = useMemo(() => {
+    if (!meta) {
+      return [] as PersonalMeta['sucursales'];
+    }
+    if (!aumentoCombustibleForm.empresaId) {
+      return meta.sucursales;
+    }
+    const empresaId = Number(aumentoCombustibleForm.empresaId);
+    return meta.sucursales.filter((sucursal) => sucursal.cliente_id === empresaId);
+  }, [meta, aumentoCombustibleForm.empresaId]);
+
+  const adelantoSucursalOptions = useMemo(() => {
+    if (!meta) {
+      return [] as PersonalMeta['sucursales'];
+    }
+    if (!adelantoForm.empresaId) {
+      return meta.sucursales;
+    }
+    const empresaId = Number(adelantoForm.empresaId);
+    return meta.sucursales.filter((sucursal) => sucursal.cliente_id === empresaId);
+  }, [meta, adelantoForm.empresaId]);
+
+  const handleAltaFieldChange =
+    (field: AltaEditableField) =>
+    (event: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
+      const { value } = event.target;
+      setAltaForm((prev) => ({
+        ...prev,
+        [field]: value,
+        ...(field === 'clienteId' ? { sucursalId: '' } : {}),
+      }));
+    };
+
+  const filesFromEvent = (fileList: FileList | null) => (fileList ? Array.from(fileList) : []);
+
+  const handleAltaFilesChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const files = filesFromEvent(event.target.files);
+
+    if (files.length === 0) {
+      return;
+    }
+
+    if (!altaDocumentTypeId) {
+      setFlash({
+        type: 'error',
+        message: 'Seleccioná el tipo de documento antes de adjuntar archivos.',
+      });
+      event.target.value = '';
+      return;
+    }
+
+    if (altaDocumentRequiresExpiry && !altaDocumentExpiry) {
+      setFlash({
+        type: 'error',
+        message: 'Este tipo de documento requiere fecha de vencimiento.',
+      });
+      event.target.value = '';
+      return;
+    }
+
+    const typeLabel = altaDocumentTypeName.trim().length > 0 ? altaDocumentTypeName.trim() : `Documento #${altaDocumentTypeId}`;
+
+    setAltaAttachments((prev) => {
+      const currentCount = prev.filter((item) => item.typeId === altaDocumentTypeId).length;
+
+      const newItems = files.map((file, index) => {
+        const absoluteIndex = currentCount + index;
+        let positionLabel: string | null = null;
+
+        if (isAltaCedulaVerde) {
+          if (absoluteIndex === 0) {
+            positionLabel = 'Frente';
+          } else if (absoluteIndex === 1) {
+            positionLabel = 'Dorso';
+          } else {
+            positionLabel = `Página ${absoluteIndex + 1}`;
+          }
+        }
+
+        return {
+          id: `${altaDocumentTypeId}-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+          file,
+          typeId: altaDocumentTypeId,
+          typeName: typeLabel,
+          vence: altaDocumentRequiresExpiry ? altaDocumentExpiry || null : null,
+          positionLabel,
+        } as AltaAttachmentItem;
+      });
+
+      return [...prev, ...newItems];
+    });
+
+    setFlash((prev) => (prev?.type === 'error' ? null : prev));
+    event.target.value = '';
+  };
+
+  const handleAltaCheckboxChange = (field: 'tarifaEspecial' | 'combustible') => (event: React.ChangeEvent<HTMLInputElement>) => {
+    const { checked } = event.target;
+    setAltaForm((prev) => ({ ...prev, [field]: checked }));
+  };
+
+  const handleAltaPerfilChange = (perfilValue: number) => {
+    setAltaForm((prev) => ({ ...prev, perfilValue }));
+  };
+
+  const handleAltaSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+
+    try {
+      setAltaSubmitting(true);
+      setFlash(null);
+
+      const requestPayload = {
+        perfilValue: altaForm.perfilValue,
+        nombres: altaForm.nombres.trim(),
+        apellidos: altaForm.apellidos.trim(),
+        telefono: altaForm.telefono.trim() || null,
+        email: altaForm.email.trim() || null,
+        tarifaEspecial: altaForm.tarifaEspecial,
+        observacionTarifa: altaForm.observacionTarifa.trim() || null,
+        cuil: altaForm.cuil.trim() || null,
+        cbuAlias: altaForm.cbuAlias.trim() || null,
+        pago: altaForm.pago ? Number(altaForm.pago) : null,
+        combustible: altaForm.combustible,
+        fechaAlta: altaForm.fechaAlta || null,
+        patente: altaForm.patente.trim() || null,
+        clienteId: altaForm.clienteId ? Number(altaForm.clienteId) : null,
+        sucursalId: altaForm.sucursalId ? Number(altaForm.sucursalId) : null,
+        agenteId: altaForm.agenteId ? Number(altaForm.agenteId) : null,
+        agenteResponsableId: altaForm.agenteResponsableId ? Number(altaForm.agenteResponsableId) : null,
+        unidadId: altaForm.unidadId ? Number(altaForm.unidadId) : null,
+        estadoId: altaForm.estadoId ? Number(altaForm.estadoId) : null,
+        observaciones: altaForm.observaciones.trim() || null,
+        duenoNombre: altaForm.duenoNombre.trim() || null,
+        duenoFechaNacimiento: altaForm.duenoFechaNacimiento || null,
+        duenoEmail: altaForm.duenoEmail.trim() || null,
+        duenoCuil: altaForm.duenoCuil.trim() || null,
+        duenoCuilCobrador: altaForm.duenoCuilCobrador.trim() || null,
+        duenoTelefono: altaForm.duenoTelefono.trim() || null,
+        duenoObservaciones: altaForm.duenoObservaciones.trim() || null,
+      };
+
+      const response = await fetch(`${apiBaseUrl}/api/personal`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(requestPayload),
+      });
+
+      if (!response.ok) {
+        let message = `Error ${response.status}: ${response.statusText}`;
+
+        try {
+          const errorPayload = await response.json();
+          if (typeof errorPayload?.message === 'string') {
+            message = errorPayload.message;
+          } else if (errorPayload?.errors) {
+            const firstError = Object.values(errorPayload.errors)[0];
+            if (Array.isArray(firstError) && firstError[0]) {
+              message = firstError[0] as string;
+            }
+          }
+        } catch {
+          // ignore
+        }
+
+        throw new Error(message);
+      }
+
+      const payload = (await response.json()) as { message?: string; data?: { id?: number } };
+      const personaId = payload.data?.id ?? null;
+
+      const uploadErrors: string[] = [];
+      const completedUploadIds: string[] = [];
+
+      if (personaId && altaAttachments.length > 0) {
+        for (const item of altaAttachments) {
+          const tipoArchivoId = Number(item.typeId);
+          if (Number.isNaN(tipoArchivoId)) {
+            uploadErrors.push(`${item.file.name}: el tipo de documento no es válido.`);
+            continue;
+          }
+
+          const formData = new FormData();
+          formData.append('archivo', item.file);
+          formData.append('tipoArchivoId', String(tipoArchivoId));
+
+          const nombrePartes: string[] = [];
+          if (item.typeName.trim().length > 0) {
+            nombrePartes.push(item.typeName.trim());
+          }
+          if (item.positionLabel) {
+            nombrePartes.push(item.positionLabel);
+          }
+          if (nombrePartes.length > 0) {
+            formData.append('nombre', nombrePartes.join(' – '));
+          }
+          if (item.vence) {
+            formData.append('fechaVencimiento', item.vence);
+          }
+
+          try {
+            const uploadResponse = await fetch(`${apiBaseUrl}/api/personal/${personaId}/documentos`, {
+              method: 'POST',
+              body: formData,
+            });
+
+            if (!uploadResponse.ok) {
+              let uploadMessage = `${item.file.name}: Error ${uploadResponse.status}`;
+              try {
+                const uploadPayload = await uploadResponse.json();
+                if (typeof uploadPayload?.message === 'string') {
+                  uploadMessage = `${item.file.name}: ${uploadPayload.message}`;
+                } else if (uploadPayload?.errors) {
+                  const firstUploadError = Object.values(uploadPayload.errors)[0];
+                  if (Array.isArray(firstUploadError) && firstUploadError[0]) {
+                    uploadMessage = `${item.file.name}: ${firstUploadError[0]}`;
+                  }
+                }
+              } catch {
+                // ignore
+              }
+
+              uploadErrors.push(uploadMessage);
+              continue;
+            }
+
+            completedUploadIds.push(item.id);
+          } catch (uploadErr) {
+            uploadErrors.push(
+              `${item.file.name}: ${(uploadErr as Error).message ?? 'No se pudo subir el archivo.'}`
+            );
+          }
+        }
+      }
+
+      if (uploadErrors.length > 0 && completedUploadIds.length > 0) {
+        setAltaAttachments((prev) => prev.filter((item) => !completedUploadIds.includes(item.id)));
+      }
+
+      if (uploadErrors.length > 0) {
+        setFlash({
+          type: 'error',
+          message: `${payload.message ?? 'La solicitud se registró.'} Sin embargo, no se pudieron subir algunos archivos: ${uploadErrors.join(
+            ' | '
+          )}.`,
+        });
+        return;
+      }
+
+      setFlash({
+        type: 'success',
+        message: payload.message ?? 'Solicitud de alta registrada correctamente.',
+      });
+
+      setAltaForm((prev) => ({
+        ...prev,
+        nombres: '',
+        apellidos: '',
+        telefono: '',
+        email: '',
+        tarifaEspecial: false,
+        observacionTarifa: '',
+        cuil: '',
+        cbuAlias: '',
+        pago: '',
+        combustible: false,
+        fechaAlta: '',
+        patente: '',
+        clienteId: '',
+        sucursalId: '',
+        agenteId: '',
+        agenteResponsableId: '',
+        unidadId: '',
+        estadoId: '',
+        fechaAltaVinculacion: '',
+        observaciones: '',
+        duenoNombre: '',
+        duenoFechaNacimiento: '',
+        duenoEmail: '',
+        duenoCuil: '',
+        duenoCuilCobrador: '',
+        duenoTelefono: '',
+        duenoObservaciones: '',
+      }));
+      setAltaAttachments([]);
+      setAltaFilesVersion((value) => value + 1);
+      setAltaDocumentType('');
+      setAltaDocumentExpiry('');
+    } catch (err) {
+      setFlash({
+        type: 'error',
+        message: (err as Error).message ?? 'No se pudo enviar la solicitud.',
+      });
+    } finally {
+      setAltaSubmitting(false);
+    }
+  };
+
+  const handleApproveSolicitud = async () => {
+    if (!reviewPersonaDetail) {
+      return;
+    }
+
+    try {
+      setApproveLoading(true);
+      setFlash(null);
+
+      const payloadBody: Record<string, unknown> = {
+        userId: authUser?.id ?? null,
+      };
+
+      if (approvalEstadoId) {
+        payloadBody.estadoId = Number(approvalEstadoId);
+      }
+
+      const response = await fetch(`${apiBaseUrl}/api/personal/${reviewPersonaDetail.id}/aprobar`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payloadBody),
+      });
+
+      if (!response.ok) {
+        let message = `Error ${response.status}: ${response.statusText}`;
+        try {
+          const payload = await response.json();
+          if (typeof payload?.message === 'string') {
+            message = payload.message;
+          }
+        } catch {
+          // ignore parsing error
+        }
+
+        throw new Error(message);
+      }
+
+      const payload = (await response.json()) as {
+        message?: string;
+        data?: {
+          aprobadoAt?: string | null;
+          aprobadoPorId?: number | null;
+          aprobadoPorNombre?: string | null;
+          esSolicitud?: boolean;
+          personalRecord?: PersonalRecord;
+        };
+      };
+
+      setReviewPersonaDetail((prev) => {
+        if (!prev) {
+          return prev;
+        }
+
+        const estadoActualizadoNombre = approvalEstadoId
+          ? meta?.estados?.find((estado) => String(estado.id) === approvalEstadoId)?.nombre ?? prev.estado
+          : prev.estado;
+
+        const resolvedAprobadoPorId =
+          payload.data?.aprobadoPorId ?? prev.aprobadoPorId ?? (authUser?.id ?? null);
+        const resolvedAprobadoPorNombre = payload.data?.aprobadoPorNombre
+          ?? (resolvedAprobadoPorId === authUser?.id && authUser?.name ? authUser.name : prev.aprobadoPorNombre);
+
+        return {
+          ...prev,
+          aprobado: true,
+          aprobadoAt: payload.data?.aprobadoAt ?? prev.aprobadoAt,
+          aprobadoPorId: resolvedAprobadoPorId,
+          aprobadoPorNombre: resolvedAprobadoPorNombre,
+          estadoId: approvalEstadoId ? Number(approvalEstadoId) : prev.estadoId,
+          estado: estadoActualizadoNombre,
+          comments: Array.isArray(prev.comments) ? prev.comments : [],
+          esSolicitud: false,
+        };
+      });
+
+      setFlash({
+        type: 'success',
+        message: payload.message ?? 'Solicitud aprobada correctamente.',
+      });
+
+      window.dispatchEvent(new CustomEvent('notifications:updated'));
+
+      window.dispatchEvent(
+        new CustomEvent('personal:updated', {
+          detail: { persona: payload.data?.personalRecord },
+        })
+      );
+    } catch (err) {
+      setFlash({
+        type: 'error',
+        message: (err as Error).message ?? 'No se pudo aprobar la solicitud.',
+      });
+    } finally {
+      setApproveLoading(false);
+    }
+  };
+
+  const handleReviewCommentSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+
+    if (!reviewPersonaDetail) {
+      return;
+    }
+
+    const trimmed = reviewCommentText.trim();
+    if (trimmed.length === 0) {
+      setReviewCommentError('Escribe un mensaje antes de enviarlo.');
+      return;
+    }
+
+    try {
+      setReviewCommentSaving(true);
+      setReviewCommentError(null);
+      setReviewCommentInfo(null);
+
+      const response = await fetch(`${apiBaseUrl}/api/personal/${reviewPersonaDetail.id}/comentarios`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          message: trimmed,
+          userId: authUser?.id ?? null,
+        }),
+      });
+
+      if (!response.ok) {
+        let message = `Error ${response.status}: ${response.statusText}`;
+        try {
+          const payload = await response.json();
+          if (typeof payload?.message === 'string') {
+            message = payload.message;
+          }
+        } catch {
+          // ignore
+        }
+
+        throw new Error(message);
+      }
+
+      const payload = (await response.json()) as {
+        message?: string;
+        data: {
+          id: number;
+          message: string | null;
+          userId: number | null;
+          userName: string | null;
+          createdAt: string | null;
+          createdAtLabel: string | null;
+        };
+      };
+
+      setReviewPersonaDetail((prev) => {
+        if (!prev) {
+          return prev;
+        }
+
+        const existing = Array.isArray(prev.comments) ? prev.comments : [];
+        return {
+          ...prev,
+          comments: [payload.data, ...existing],
+        };
+      });
+
+      setReviewCommentText('');
+      setReviewCommentInfo(payload.message ?? 'Comentario agregado.');
+      window.dispatchEvent(new CustomEvent('notifications:updated'));
+    } catch (err) {
+      setReviewCommentError((err as Error).message ?? 'No se pudo enviar el comentario.');
+    } finally {
+      setReviewCommentSaving(false);
+    }
+  };
+
+  const handleCombustibleFieldChange =
+    (field: keyof CombustibleRequestForm) =>
+    (event: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
+      const { value } = event.target;
+      setCombustibleForm((prev) => ({
+        ...prev,
+        [field]: value,
+        ...(field === 'empresaId' ? { sucursalId: '' } : {}),
+      }));
+    };
+
+  const handleCombustibleFilesChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    setCombustibleAttachments(filesFromEvent(event.target.files));
+  };
+
+  const handleCombustibleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+
+    try {
+      setCombustibleSubmitting(true);
+      setFlash(null);
+
+      console.log('Solicitud de combustible registrada', {
+        ...combustibleForm,
+        adjuntos: combustibleAttachments.map((file) => file.name),
+      });
+      await new Promise((resolve) => setTimeout(resolve, 250));
+
+      setFlash({
+        type: 'success',
+        message: 'Solicitud de combustible registrada (modo demostración).',
+      });
+
+      setCombustibleForm({
+        empresaId: '',
+        sucursalId: '',
+        nombreCompleto: '',
+        dni: '',
+        serviClubEmail: '',
+        patente: '',
+        marca: '',
+        modelo: '',
+        kilometraje: '',
+        observaciones: '',
+      });
+      setCombustibleAttachments([]);
+      setCombustibleFilesVersion((value) => value + 1);
+    } catch (err) {
+      setFlash({
+        type: 'error',
+        message: (err as Error).message ?? 'No se pudo registrar la solicitud de combustible.',
+      });
+    } finally {
+      setCombustibleSubmitting(false);
+    }
+  };
+
+  const handleAumentoFieldChange =
+    (field: keyof AumentoCombustibleForm) =>
+    (event: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
+      const { value } = event.target;
+      setAumentoCombustibleForm((prev) => ({
+        ...prev,
+        [field]: value,
+        ...(field === 'empresaId' ? { sucursalId: '' } : {}),
+      }));
+    };
+
+  const handleAumentoFilesChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    setAumentoAttachments(filesFromEvent(event.target.files));
+  };
+
+  const handleAumentoSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+
+    try {
+      setAumentoSubmitting(true);
+      setFlash(null);
+      console.log('Solicitud de aumento de combustible registrada', {
+        ...aumentoCombustibleForm,
+        adjuntos: aumentoAttachments.map((file) => file.name),
+      });
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      setFlash({
+        type: 'success',
+        message: 'Solicitud de aumento de combustible registrada (modo demostración).',
+      });
+      setAumentoCombustibleForm({
+        empresaId: '',
+        sucursalId: '',
+        nombreCompleto: '',
+        dni: '',
+        serviClubEmail: '',
+        patente: '',
+        marca: '',
+        modelo: '',
+        kilometraje: '',
+        litrosActuales: '',
+        litrosSolicitados: '',
+        motivo: '',
+      });
+      setAumentoAttachments([]);
+      setAumentoFilesVersion((value) => value + 1);
+    } catch (err) {
+      setFlash({
+        type: 'error',
+        message: (err as Error).message ?? 'No se pudo registrar el aumento de combustible.',
+      });
+    } finally {
+      setAumentoSubmitting(false);
+    }
+  };
+
+  const handlePolizaObservacionesChange = (event: React.ChangeEvent<HTMLTextAreaElement>) => {
+    const { value } = event.target;
+    setPolizaForm((prev) => ({ ...prev, observaciones: value }));
+  };
+
+  const handlePolizaFileChange =
+    (field: 'polizaFile' | 'comprobanteFile') => (event: React.ChangeEvent<HTMLInputElement>) => {
+      const file = event.target.files?.[0] ?? null;
+      setPolizaForm((prev) => ({ ...prev, [field]: file }));
+    };
+
+  const handlePolizaSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+
+    try {
+      setPolizaSubmitting(true);
+      setFlash(null);
+      console.log('Solicitud de póliza registrada', {
+        polizaArchivo: polizaForm.polizaFile?.name ?? null,
+        comprobanteArchivo: polizaForm.comprobanteFile?.name ?? null,
+        observaciones: polizaForm.observaciones,
+      });
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      setFlash({
+        type: 'success',
+        message: 'Solicitud de póliza registrada (modo demostración).',
+      });
+      setPolizaForm({
+        polizaFile: null,
+        comprobanteFile: null,
+        observaciones: '',
+      });
+      setPolizaInputsVersion((value) => value + 1);
+    } catch (err) {
+      setFlash({
+        type: 'error',
+        message: (err as Error).message ?? 'No se pudo registrar la solicitud de póliza.',
+      });
+    } finally {
+      setPolizaSubmitting(false);
+    }
+  };
+
+const handleAdelantoFieldChange =
+    (field: keyof AdelantoRequestForm) =>
+    (event: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
+      const { value } = event.target;
+      setAdelantoForm((prev) => ({
+        ...prev,
+        [field]: value,
+        ...(field === 'empresaId' ? { sucursalId: '' } : {}),
+      }));
+    };
+
+  const handleAdelantoFilesChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    setAdelantoAttachments(filesFromEvent(event.target.files));
+  };
+
+  const handleAdelantoSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+
+    try {
+      setAdelantoSubmitting(true);
+      setFlash(null);
+
+      console.log('Solicitud de adelanto registrada', {
+        ...adelantoForm,
+        adjuntos: adelantoAttachments.map((file) => file.name),
+      });
+      await new Promise((resolve) => setTimeout(resolve, 250));
+
+      setFlash({
+        type: 'success',
+        message: 'Solicitud de adelanto registrada (modo demostración).',
+      });
+
+      setAdelantoForm({
+        empresaId: '',
+        sucursalId: '',
+        transportista: '',
+        monto: '',
+        fechaSolicitud: '',
+        motivo: '',
+        observaciones: '',
+      });
+      setAdelantoAttachments([]);
+      setAdelantoFilesVersion((value) => value + 1);
+    } catch (err) {
+      setFlash({
+        type: 'error',
+        message: (err as Error).message ?? 'No se pudo registrar el adelanto de pago.',
+      });
+    } finally {
+      setAdelantoSubmitting(false);
+    }
+  };
+
+  const renderAltaInput = (
+    label: string,
+    field: AltaEditableField,
+    required = false,
+    type: 'text' | 'email' | 'number' | 'date' | 'tel' = 'text',
+    placeholder?: string
+  ) => {
+    const finalPlaceholder = placeholder ?? (type === 'date' ? 'dd/mm/aaaa' : 'Ingresar');
+    return (
+      <label className="input-control">
+        <span>{label}</span>
+        <input
+          type={type}
+          value={altaForm[field]}
+          onChange={handleAltaFieldChange(field)}
+          placeholder={finalPlaceholder}
+          required={required}
+        />
+      </label>
+    );
+  };
+
+  const renderAltaCheckbox = (label: string, field: 'tarifaEspecial' | 'combustible', text: string) => (
+    <label className="input-control">
+      <span>{label}</span>
+      <div className="checkbox-control">
+        <input type="checkbox" checked={altaForm[field]} onChange={handleAltaCheckboxChange(field)} />
+        {text}
+      </div>
+    </label>
+  );
+
+  const renderAltaDisabledInput = (label: string, type: 'text' | 'email' | 'date' | 'number' = 'text') => (
+    <label className="input-control">
+      <span>{label}</span>
+      <input type={type} disabled placeholder="—" />
+    </label>
+  );
+
+  const renderAttachmentList = (files: File[]) =>
+    files.length > 0 ? (
+      <ul className="file-list">
+        {files.map((file) => (
+          <li key={file.name}>{file.name}</li>
+        ))}
+      </ul>
+    ) : null;
+
+  const renderAltaAttachmentList = () => {
+    if (altaAttachments.length === 0) {
+      return null;
+    }
+
+    return (
+      <ul className="file-list">
+        {altaAttachments.map((item) => {
+          const parts: string[] = [];
+          const typeLabel = item.typeName.trim().length > 0 ? item.typeName : `Documento #${item.typeId}`;
+          parts.push(typeLabel);
+
+          if (item.positionLabel) {
+            parts.push(item.positionLabel);
+          }
+
+          let description = parts.length > 0 ? `${parts.join(' – ')} · ${item.file.name}` : item.file.name;
+
+          if (item.vence) {
+            description = `${description} · Vence: ${item.vence}`;
+          }
+
+          return <li key={item.id}>{description}</li>;
+        })}
+      </ul>
+    );
+  };
+
+  const renderAltaPerfilSection = () => {
+    switch (altaForm.perfilValue) {
+      case 1:
+        return (
+          <div className="personal-section">
+            <h3>Dueño y chofer</h3>
+            <div className="form-grid">
+              {renderAltaInput('Nombres', 'nombres', true)}
+              {renderAltaInput('Apellidos', 'apellidos', true)}
+              {renderAltaInput('Teléfono', 'telefono', false, 'tel')}
+              {renderAltaInput('Correo electrónico', 'email', false, 'email')}
+              {renderAltaCheckbox('Tarifa especial', 'tarifaEspecial', 'Tiene tarifa especial')}
+              {renderAltaInput('Observación tarifa', 'observacionTarifa')}
+              {renderAltaInput('CUIL', 'cuil')}
+              {renderAltaInput('CBU/Alias', 'cbuAlias')}
+              {renderAltaInput('Pago', 'pago', false, 'number')}
+              {renderAltaCheckbox('Combustible', 'combustible', 'Cuenta corrientes combustible')}
+              {renderAltaInput('Fecha de alta', 'fechaAlta', false, 'date')}
+              {renderAltaInput('Patente', 'patente')}
+            </div>
+          </div>
+        );
+      case 2:
+        return (
+          <div className="personal-section">
+            <h3>Chofer</h3>
+            <div className="form-grid">
+              {renderAltaInput('Nombre completo', 'nombres', true)}
+              {renderAltaInput('Correo electrónico', 'email', false, 'email')}
+              {renderAltaInput('Teléfono', 'telefono', false, 'tel')}
+              {renderAltaCheckbox('Tarifa especial', 'tarifaEspecial', 'Tiene tarifa especial')}
+              {renderAltaInput('Observación tarifa', 'observacionTarifa')}
+              {renderAltaInput('CUIL', 'cuil')}
+              {renderAltaInput('CBU/Alias', 'cbuAlias')}
+              {renderAltaCheckbox('Combustible', 'combustible', 'Cuenta corrientes combustible')}
+              {renderAltaInput('Pago', 'pago', false, 'number')}
+              {renderAltaInput('Fecha de alta', 'fechaAlta', false, 'date')}
+              {renderAltaInput('Patente', 'patente')}
+            </div>
+
+            <h3>Dueño de la unidad</h3>
+            <div className="form-grid">
+              {renderAltaInput('Nombre completo (Dueño)', 'duenoNombre')}
+              {renderAltaInput('Fecha de nacimiento', 'duenoFechaNacimiento', false, 'date')}
+              {renderAltaInput('Correo (Dueño)', 'duenoEmail', false, 'email')}
+              {renderAltaInput('CUIL (Dueño)', 'duenoCuil')}
+              {renderAltaInput('CUIL cobrador', 'duenoCuilCobrador')}
+              {renderAltaInput('Teléfono (Dueño)', 'duenoTelefono', false, 'tel')}
+              <label className="input-control" style={{ gridColumn: '1 / -1' }}>
+                <span>Observaciones</span>
+                <textarea
+                  rows={2}
+                  value={altaForm.duenoObservaciones}
+                  onChange={handleAltaFieldChange('duenoObservaciones')}
+                  placeholder="Agregar observaciones"
+                />
+              </label>
+            </div>
+          </div>
+        );
+      case 3:
+        return (
+          <div className="personal-section">
+            <h3>Transportista</h3>
+            <div className="form-grid">
+              {renderAltaInput('Nombres', 'nombres', true)}
+              {renderAltaInput('Apellidos', 'apellidos', true)}
+              {renderAltaInput('CUIL', 'cuil')}
+              {renderAltaInput('Correo electrónico', 'email', false, 'email')}
+              {renderAltaInput('Teléfono', 'telefono', false, 'tel')}
+              {renderAltaCheckbox('Combustible', 'combustible', 'Cuenta corrientes combustible')}
+              {renderAltaCheckbox('Tarifa especial', 'tarifaEspecial', 'Tiene tarifa especial')}
+              {renderAltaInput('Observación tarifa', 'observacionTarifa')}
+              {renderAltaInput('Fecha de alta', 'fechaAlta', false, 'date')}
+              {renderAltaInput('Patente', 'patente')}
+              {renderAltaInput('Pago', 'pago', false, 'number')}
+            </div>
+
+            <div className="placeholder-grid">
+              {renderAltaDisabledInput('Guía/Remito')}
+              {renderAltaDisabledInput('Valor del viaje', 'number')}
+              {renderAltaDisabledInput('Origen')}
+              {renderAltaDisabledInput('Destino')}
+              <label className="input-control" style={{ gridColumn: '1 / -1' }}>
+                <span>Observación</span>
+                <textarea disabled rows={2} placeholder="—" />
+              </label>
+            </div>
+          </div>
+        );
+      default:
+        return (
+          <div className="personal-section">
+            <h3>Perfil seleccionado</h3>
+            <div className="form-grid">
+              {renderAltaInput('Nombres', 'nombres')}
+              {renderAltaInput('Apellidos', 'apellidos')}
+              {renderAltaInput('Teléfono', 'telefono', false, 'tel')}
+              {renderAltaInput('Correo electrónico', 'email', false, 'email')}
+              {renderAltaCheckbox('Tarifa especial', 'tarifaEspecial', 'Tiene tarifa especial')}
+              {renderAltaInput('Observación tarifa', 'observacionTarifa')}
+              {renderAltaInput('CUIL', 'cuil')}
+              {renderAltaInput('CBU/Alias', 'cbuAlias')}
+              {renderAltaInput('Pago', 'pago', false, 'number')}
+              {renderAltaCheckbox('Combustible', 'combustible', 'Cuenta corrientes combustible')}
+              {renderAltaInput('Fecha de alta', 'fechaAlta', false, 'date')}
+              {renderAltaInput('Patente', 'patente')}
+            </div>
+          </div>
+        );
+    }
+  };
+
+  const renderReviewSection = () => {
+    if (!personaIdFromQuery) {
+      return null;
+    }
+
+    return (
+      <section className="approvals-section approvals-section--review">
+        <h2>Revisión de solicitud de alta</h2>
+        <div className="personal-section">
+          {reviewLoading ? (
+            <p className="form-info">Cargando detalles de la solicitud...</p>
+          ) : reviewError ? (
+            <p className="form-info form-info--error">{reviewError}</p>
+          ) : reviewPersonaDetail ? (
+            <>
+              <div className="review-summary-grid">
+                {(() => {
+                  const nombreCompleto = [reviewPersonaDetail.nombres, reviewPersonaDetail.apellidos]
+                    .filter(Boolean)
+                    .join(' ');
+                  const aprobadoLabel = reviewPersonaDetail.aprobadoAt
+                    ? new Date(reviewPersonaDetail.aprobadoAt).toLocaleString('es-AR', {
+                        year: 'numeric',
+                        month: '2-digit',
+                        day: '2-digit',
+                        hour: '2-digit',
+                        minute: '2-digit',
+                      })
+                    : null;
+
+                  return (
+                    <>
+                      <p><strong>Nombre completo:</strong> {nombreCompleto || '—'}</p>
+                      <p><strong>Correo:</strong> {reviewPersonaDetail.email || '—'}</p>
+                      <p><strong>Teléfono:</strong> {reviewPersonaDetail.telefono || '—'}</p>
+                      <p><strong>Cliente:</strong> {reviewPersonaDetail.cliente || '—'}</p>
+                      <p><strong>Sucursal:</strong> {reviewPersonaDetail.sucursal || '—'}</p>
+                      <p><strong>Estado actual:</strong> {reviewPersonaDetail.estado || 'Sin estado'}</p>
+                      <p><strong>Agente responsable:</strong> {reviewPersonaDetail.agenteResponsable || reviewPersonaDetail.agente || '—'}</p>
+                      <p><strong>Fecha de alta:</strong> {reviewPersonaDetail.fechaAlta || '—'}</p>
+                      {reviewPersonaDetail.aprobado ? (
+                        <p><strong>Aprobado el:</strong> {aprobadoLabel ?? 'Fecha no registrada'}</p>
+                      ) : null}
+                    </>
+                  );
+                })()}
+              </div>
+
+              {(reviewPersonaDetail.observaciones && reviewPersonaDetail.observaciones.trim().length > 0) ||
+              (reviewPersonaDetail.observacionTarifa && reviewPersonaDetail.observacionTarifa.trim().length > 0) ? (
+                <div className="review-text-group">
+                  {reviewPersonaDetail.observaciones && reviewPersonaDetail.observaciones.trim().length > 0 ? (
+                    <div className="review-text">
+                      <strong>Observaciones internas</strong>
+                      <p>{reviewPersonaDetail.observaciones}</p>
+                    </div>
+                  ) : null}
+                  {reviewPersonaDetail.observacionTarifa && reviewPersonaDetail.observacionTarifa.trim().length > 0 ? (
+                    <div className="review-text">
+                      <strong>Observación sobre tarifa</strong>
+                      <p>{reviewPersonaDetail.observacionTarifa}</p>
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
+
+              <div className="review-documents">
+                <h3>Documentación cargada</h3>
+                {reviewPersonaDetail.documents.length > 0 ? (
+                  <ul className="file-list">
+                    {reviewPersonaDetail.documents.map((documento) => {
+                      const labelParts = [documento.tipoNombre ?? `Documento #${documento.id}`];
+                      if (documento.nombre && documento.nombre !== labelParts[0]) {
+                        labelParts.push(documento.nombre);
+                      }
+                      const label = labelParts.join(' – ');
+                      return (
+                        <li key={documento.id}>
+                          {documento.downloadUrl ? (
+                            <a href={documento.downloadUrl} target="_blank" rel="noopener noreferrer">
+                              {label}
+                            </a>
+                          ) : (
+                            label
+                          )}
+                          {documento.fechaVencimiento ? ` · Vence: ${documento.fechaVencimiento}` : ''}
+                        </li>
+                      );
+                    })}
+                  </ul>
+                ) : (
+                  <p className="form-info">No hay documentos cargados para esta solicitud.</p>
+                )}
+              </div>
+
+              <div className="review-comments">
+                <h3>Chat interno</h3>
+                {Array.isArray(reviewPersonaDetail.comments) && reviewPersonaDetail.comments.length > 0 ? (
+                  <ul className="review-comment-list">
+                    {reviewPersonaDetail.comments.map((comment) => (
+                      <li key={comment.id} className="review-comment-item">
+                        <div className="review-comment-header">
+                          <span>{comment.userName ?? 'Usuario'}</span>
+                          <span>{comment.createdAtLabel ?? '—'}</span>
+                        </div>
+                        <p>{comment.message ?? ''}</p>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="form-info">Todavía no hay comentarios internos.</p>
+                )}
+
+                <form className="review-comment-form" onSubmit={handleReviewCommentSubmit}>
+                  <label className="input-control">
+                    <span>Agregar comentario</span>
+                    <textarea
+                      rows={3}
+                      value={reviewCommentText}
+                      onChange={(event) => {
+                        setReviewCommentText(event.target.value);
+                        if (reviewCommentError) {
+                          setReviewCommentError(null);
+                        }
+                      }}
+                      placeholder="Escribe un mensaje para tu equipo"
+                      disabled={reviewCommentSaving}
+                    />
+                  </label>
+                  <div className="form-actions">
+                    <button
+                      type="button"
+                      className="secondary-action"
+                      onClick={() => {
+                        setReviewCommentText('');
+                        setReviewCommentError(null);
+                        setReviewCommentInfo(null);
+                      }}
+                      disabled={reviewCommentSaving}
+                    >
+                      Cancelar
+                    </button>
+                    <button type="submit" className="primary-action" disabled={reviewCommentSaving}>
+                      {reviewCommentSaving ? 'Enviando...' : 'Enviar'}
+                    </button>
+                  </div>
+                  {reviewCommentError ? (
+                    <p className="form-info form-info--error">{reviewCommentError}</p>
+                  ) : null}
+                  {reviewCommentInfo ? (
+                    <p className="form-info form-info--success">{reviewCommentInfo}</p>
+                  ) : null}
+                </form>
+              </div>
+
+              <div className="review-actions">
+                <label className="input-control">
+                  <span>Actualizar estado</span>
+                  <select
+                    value={approvalEstadoId}
+                    onChange={(event) => setApprovalEstadoId(event.target.value)}
+                    disabled={reviewPersonaDetail.aprobado || (meta?.estados?.length ?? 0) === 0}
+                  >
+                    <option value="">Mantener estado actual</option>
+                    {(meta?.estados ?? []).map((estado) => (
+                      <option key={estado.id} value={estado.id}>
+                        {estado.nombre ?? `Estado #${estado.id}`}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <button
+                  type="button"
+                  className="primary-action"
+                  onClick={handleApproveSolicitud}
+                  disabled={approveLoading || reviewPersonaDetail.aprobado}
+                >
+                  {reviewPersonaDetail.aprobado
+                    ? 'Solicitud aprobada'
+                    : approveLoading
+                    ? 'Aprobando...'
+                    : 'Aprobar solicitud'}
+                </button>
+              </div>
+
+              {reviewPersonaDetail.aprobado && reviewPersonaDetail.aprobadoPorNombre ? (
+                <p className="form-info">Aprobada por {reviewPersonaDetail.aprobadoPorNombre}.</p>
+              ) : null}
+            </>
+          ) : (
+            <p className="form-info">No se encontró información para la solicitud indicada.</p>
+          )}
+        </div>
+      </section>
+    );
+  };
+
+  const renderAltasTab = () => (
+    <form className="approvals-form" onSubmit={handleAltaSubmit}>
+      {renderReviewSection()}
+      <section className="approvals-section">
+        <h2>Datos personales</h2>
+        <div className="radio-group">
+          <span>Seleccionar perfil</span>
+          <div className="radio-options">
+            {(meta?.perfiles ?? []).map((perfil) => (
+              <label
+                key={perfil.value}
+                className={`radio-option${altaForm.perfilValue === perfil.value ? ' is-active' : ''}`}
+              >
+                <input
+                  type="radio"
+                  name="perfil"
+                  value={perfil.value}
+                  checked={altaForm.perfilValue === perfil.value}
+                  onChange={() => handleAltaPerfilChange(perfil.value)}
+                />
+                {perfil.label}
+              </label>
+            ))}
+          </div>
+        </div>
+
+        {renderAltaPerfilSection()}
+      </section>
+
+      <section className="approvals-section">
+        <h2>Datos de vinculación</h2>
+        <div className="personal-section">
+          <div className="form-grid">
+            <label className="input-control">
+              <span>Cliente</span>
+              <select value={altaForm.clienteId} onChange={handleAltaFieldChange('clienteId')}>
+                <option value="">Seleccionar</option>
+                {(meta?.clientes ?? []).map((cliente) => (
+                  <option key={cliente.id} value={cliente.id}>
+                    {cliente.nombre ?? `Cliente #${cliente.id}`}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="input-control">
+              <span>Sucursal</span>
+              <select value={altaForm.sucursalId} onChange={handleAltaFieldChange('sucursalId')}>
+                <option value="">Seleccionar</option>
+                {sucursalOptions.map((sucursal) => (
+                  <option key={sucursal.id} value={sucursal.id}>
+                    {sucursal.nombre ?? `Sucursal #${sucursal.id}`}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="input-control">
+              <span>Agente</span>
+              <select value={altaForm.agenteId} onChange={handleAltaFieldChange('agenteId')}>
+                <option value="">Seleccionar</option>
+                {(meta?.agentes ?? []).map((agente) => (
+                  <option key={agente.id} value={agente.id}>
+                    {agente.name ?? `Agente #${agente.id}`}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="input-control">
+              <span>Agente responsable</span>
+              <select value={altaForm.agenteResponsableId} onChange={handleAltaFieldChange('agenteResponsableId')}>
+                <option value="">Seleccionar</option>
+                {(meta?.agentes ?? []).map((agente) => (
+                  <option key={agente.id} value={agente.id}>
+                    {agente.name ?? `Agente #${agente.id}`}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="input-control">
+              <span>Unidad</span>
+              <select value={altaForm.unidadId} onChange={handleAltaFieldChange('unidadId')}>
+                <option value="">Seleccionar</option>
+                {(meta?.unidades ?? []).map((unidad) => {
+                  const label = [unidad.matricula, unidad.marca, unidad.modelo].filter(Boolean).join(' · ');
+                  return (
+                    <option key={unidad.id} value={unidad.id}>
+                      {label.length > 0 ? label : `Unidad #${unidad.id}`}
+                    </option>
+                  );
+                })}
+              </select>
+            </label>
+            <label className="input-control">
+              <span>Estado</span>
+              <select value={altaForm.estadoId} onChange={handleAltaFieldChange('estadoId')}>
+                <option value="">Seleccionar</option>
+                {(meta?.estados ?? []).map((estado) => (
+                  <option key={estado.id} value={estado.id}>
+                    {estado.nombre ?? `Estado #${estado.id}`}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="input-control">
+              <span>Fecha de alta</span>
+              <input
+                type="date"
+                value={altaForm.fechaAltaVinculacion}
+                onChange={handleAltaFieldChange('fechaAltaVinculacion')}
+                placeholder="dd/mm/aaaa"
+              />
+            </label>
+          </div>
+          <label className="input-control">
+            <span>Observaciones</span>
+            <textarea
+              rows={4}
+              value={altaForm.observaciones}
+              onChange={handleAltaFieldChange('observaciones')}
+              placeholder="Agregar observaciones"
+            />
+          </label>
+        </div>
+      </section>
+
+      <section className="approvals-section">
+        <h2>Historial de sanciones</h2>
+        <div className="personal-section">
+          <p className="form-info">No hay historial disponible para esta solicitud.</p>
+        </div>
+      </section>
+
+      <section className="approvals-section">
+        <h2>Documentos</h2>
+        <div className="personal-section">
+          <div className="form-grid">
+            <label className="input-control">
+              <span>Documentos</span>
+              <select disabled>
+                <option value="">Seleccionar documento</option>
+              </select>
+            </label>
+          </div>
+          <p className="form-info">No hay documentos disponibles para esta solicitud.</p>
+        </div>
+      </section>
+
+      <section className="approvals-section">
+        <h2>Carga de documentos</h2>
+        <div className="personal-section">
+          <div className="form-grid">
+            <label className="input-control">
+              <span>Tipo de documento</span>
+              <select value={altaDocumentType} onChange={(event) => setAltaDocumentType(event.target.value)}>
+                <option value="">Seleccionar documento</option>
+                {(meta?.documentTypes ?? []).map((tipo) => (
+                  <option key={tipo.id} value={tipo.id ?? tipo.nombre ?? ''}>
+                    {tipo.nombre ?? `Documento #${tipo.id}`}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="input-control">
+              <span>Fecha de vencimiento</span>
+              <input
+                type="date"
+                value={altaDocumentExpiry}
+                onChange={(event) => setAltaDocumentExpiry(event.target.value)}
+                placeholder="dd/mm/aaaa"
+              />
+            </label>
+          </div>
+          <div className="file-dropzone">
+            <span className="file-dropzone__icon">📄</span>
+            <p className="file-dropzone__text">Arrastra y suelta archivos aquí o selecciona desde tu equipo.</p>
+            <label className="secondary-action secondary-action--ghost">
+              Seleccionar archivos
+              <input
+                key={`alta-files-${altaFilesVersion}`}
+                type="file"
+                multiple
+                onChange={handleAltaFilesChange}
+                style={{ display: 'none' }}
+              />
+            </label>
+            {renderAltaAttachmentList()}
+            {isAltaCedulaVerde && altaAttachmentsForCurrentType.length < 2 ? (
+              <p className="form-info">Recordá subir frente y dorso de la cédula verde.</p>
+            ) : null}
+          </div>
+        </div>
+      </section>
+
+      <div className="form-actions">
+        <button type="button" className="secondary-action" onClick={() => navigate('/personal')}>
+          Cancelar
+        </button>
+        <button type="submit" className="primary-action" disabled={altaSubmitting}>
+          {altaSubmitting ? 'Enviando...' : 'Enviar solicitud'}
+        </button>
+      </div>
+    </form>
+  );
+
+  const renderCombustibleTab = () => (
+    <form className="approvals-form" onSubmit={handleCombustibleSubmit}>
+      <section className="personal-section">
+        <h3>Solicitud de combustible</h3>
+        <div className="form-grid">
+          <label className="input-control">
+            <span>Empresa</span>
+            <select value={combustibleForm.empresaId} onChange={handleCombustibleFieldChange('empresaId')}>
+              <option value="">Seleccionar</option>
+              {(meta?.clientes ?? []).map((cliente) => (
+                <option key={cliente.id} value={cliente.id}>
+                  {cliente.nombre ?? `Cliente #${cliente.id}`}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="input-control">
+            <span>Sucursal</span>
+            <select value={combustibleForm.sucursalId} onChange={handleCombustibleFieldChange('sucursalId')}>
+              <option value="">Seleccionar</option>
+              {combustibleSucursalOptions.map((sucursal) => (
+                <option key={sucursal.id} value={sucursal.id}>
+                  {sucursal.nombre ?? `Sucursal #${sucursal.id}`}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="input-control">
+            <span>Nombre completo</span>
+            <input
+              type="text"
+              value={combustibleForm.nombreCompleto}
+              onChange={handleCombustibleFieldChange('nombreCompleto')}
+              placeholder="Ingresar"
+            />
+          </label>
+          <label className="input-control">
+            <span>DNI</span>
+            <input
+              type="text"
+              value={combustibleForm.dni}
+              onChange={handleCombustibleFieldChange('dni')}
+              placeholder="Ingresar"
+            />
+          </label>
+          <label className="input-control">
+            <span>Mail de Servi Club</span>
+            <input
+              type="email"
+              value={combustibleForm.serviClubEmail}
+              onChange={handleCombustibleFieldChange('serviClubEmail')}
+              placeholder="Ingresar"
+            />
+          </label>
+          <label className="input-control">
+            <span>Patente</span>
+            <input
+              type="text"
+              value={combustibleForm.patente}
+              onChange={handleCombustibleFieldChange('patente')}
+              placeholder="Ingresar"
+            />
+          </label>
+          <label className="input-control">
+            <span>Marca del vehículo</span>
+            <input
+              type="text"
+              value={combustibleForm.marca}
+              onChange={handleCombustibleFieldChange('marca')}
+              placeholder="Ingresar"
+            />
+          </label>
+          <label className="input-control">
+            <span>Modelo</span>
+            <input
+              type="text"
+              value={combustibleForm.modelo}
+              onChange={handleCombustibleFieldChange('modelo')}
+              placeholder="Ingresar"
+            />
+          </label>
+          <label className="input-control">
+            <span>Kilometraje aproximado</span>
+            <input
+              type="number"
+              min="0"
+              value={combustibleForm.kilometraje}
+              onChange={handleCombustibleFieldChange('kilometraje')}
+              placeholder="Ingresar"
+            />
+          </label>
+        </div>
+        <label className="input-control">
+          <span>Observaciones</span>
+          <textarea
+            rows={4}
+            value={combustibleForm.observaciones}
+            onChange={handleCombustibleFieldChange('observaciones')}
+            placeholder="Agregar observaciones"
+          />
+        </label>
+        <label className="input-control">
+          <span>Adjuntar archivos</span>
+          <input
+            key={`combustible-files-${combustibleFilesVersion}`}
+            type="file"
+            multiple
+            onChange={handleCombustibleFilesChange}
+          />
+          {renderAttachmentList(combustibleAttachments)}
+        </label>
+      </section>
+      <div className="form-actions">
+        <button
+          type="button"
+          className="secondary-action"
+          onClick={() => {
+            setCombustibleForm({
+              empresaId: '',
+              sucursalId: '',
+              nombreCompleto: '',
+              dni: '',
+              serviClubEmail: '',
+              patente: '',
+              marca: '',
+              modelo: '',
+              kilometraje: '',
+              observaciones: '',
+            });
+            setCombustibleAttachments([]);
+            setCombustibleFilesVersion((value) => value + 1);
+          }}
+        >
+          Limpiar
+        </button>
+        <button type="submit" className="primary-action" disabled={combustibleSubmitting}>
+          {combustibleSubmitting ? 'Enviando...' : 'Enviar solicitud'}
+        </button>
+      </div>
+    </form>
+  );
+
+  const renderAumentoCombustibleTab = () => (
+    <form className="approvals-form" onSubmit={handleAumentoSubmit}>
+      <section className="personal-section">
+        <h3>Aumento de combustible</h3>
+        <div className="form-grid">
+          <label className="input-control">
+            <span>Empresa</span>
+            <select value={aumentoCombustibleForm.empresaId} onChange={handleAumentoFieldChange('empresaId')}>
+              <option value="">Seleccionar</option>
+              {(meta?.clientes ?? []).map((cliente) => (
+                <option key={cliente.id} value={cliente.id}>
+                  {cliente.nombre ?? `Cliente #${cliente.id}`}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="input-control">
+            <span>Sucursal</span>
+            <select value={aumentoCombustibleForm.sucursalId} onChange={handleAumentoFieldChange('sucursalId')}>
+              <option value="">Seleccionar</option>
+              {aumentoSucursalOptions.map((sucursal) => (
+                <option key={sucursal.id} value={sucursal.id}>
+                  {sucursal.nombre ?? `Sucursal #${sucursal.id}`}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="input-control">
+            <span>Nombre completo</span>
+            <input
+              type="text"
+              value={aumentoCombustibleForm.nombreCompleto}
+              onChange={handleAumentoFieldChange('nombreCompleto')}
+              placeholder="Ingresar"
+            />
+          </label>
+          <label className="input-control">
+            <span>DNI</span>
+            <input
+              type="text"
+              value={aumentoCombustibleForm.dni}
+              onChange={handleAumentoFieldChange('dni')}
+              placeholder="Ingresar"
+            />
+          </label>
+          <label className="input-control">
+            <span>Mail de Servi Club</span>
+            <input
+              type="email"
+              value={aumentoCombustibleForm.serviClubEmail}
+              onChange={handleAumentoFieldChange('serviClubEmail')}
+              placeholder="Ingresar"
+            />
+          </label>
+          <label className="input-control">
+            <span>Patente</span>
+            <input
+              type="text"
+              value={aumentoCombustibleForm.patente}
+              onChange={handleAumentoFieldChange('patente')}
+              placeholder="Ingresar"
+            />
+          </label>
+          <label className="input-control">
+            <span>Marca del vehículo</span>
+            <input
+              type="text"
+              value={aumentoCombustibleForm.marca}
+              onChange={handleAumentoFieldChange('marca')}
+              placeholder="Ingresar"
+            />
+          </label>
+          <label className="input-control">
+            <span>Modelo</span>
+            <input
+              type="text"
+              value={aumentoCombustibleForm.modelo}
+              onChange={handleAumentoFieldChange('modelo')}
+              placeholder="Ingresar"
+            />
+          </label>
+          <label className="input-control">
+            <span>Kilometraje aproximado</span>
+            <input
+              type="number"
+              min="0"
+              value={aumentoCombustibleForm.kilometraje}
+              onChange={handleAumentoFieldChange('kilometraje')}
+              placeholder="Ingresar"
+            />
+          </label>
+          <label className="input-control">
+            <span>Litros actuales</span>
+            <input
+              type="number"
+              min="0"
+              value={aumentoCombustibleForm.litrosActuales}
+              onChange={handleAumentoFieldChange('litrosActuales')}
+              placeholder="Ingresar"
+            />
+          </label>
+          <label className="input-control">
+            <span>Litros solicitados</span>
+            <input
+              type="number"
+              min="0"
+              value={aumentoCombustibleForm.litrosSolicitados}
+              onChange={handleAumentoFieldChange('litrosSolicitados')}
+              placeholder="Ingresar"
+            />
+          </label>
+        </div>
+        <label className="input-control">
+          <span>Motivo del aumento</span>
+          <textarea
+            rows={4}
+            value={aumentoCombustibleForm.motivo}
+            onChange={handleAumentoFieldChange('motivo')}
+            placeholder="Explica el motivo del aumento solicitado"
+          />
+        </label>
+        <label className="input-control">
+          <span>Adjuntar archivos</span>
+          <input
+            key={`aumento-files-${aumentoFilesVersion}`}
+            type="file"
+            multiple
+            onChange={handleAumentoFilesChange}
+          />
+          {renderAttachmentList(aumentoAttachments)}
+        </label>
+      </section>
+      <div className="form-actions">
+        <button
+          type="button"
+          className="secondary-action"
+          disabled={aumentoSubmitting}
+          onClick={() => {
+            setAumentoCombustibleForm({
+              empresaId: '',
+              sucursalId: '',
+              nombreCompleto: '',
+              dni: '',
+              serviClubEmail: '',
+              patente: '',
+              marca: '',
+              modelo: '',
+              kilometraje: '',
+              litrosActuales: '',
+              litrosSolicitados: '',
+              motivo: '',
+            });
+            setAumentoAttachments([]);
+            setAumentoFilesVersion((value) => value + 1);
+          }}
+        >
+          Limpiar
+        </button>
+        <button type="submit" className="primary-action" disabled={aumentoSubmitting}>
+          {aumentoSubmitting ? 'Enviando...' : 'Enviar solicitud'}
+        </button>
+      </div>
+    </form>
+  );
+
+  const renderPolizaTab = () => (
+    <form className="approvals-form" onSubmit={handlePolizaSubmit}>
+      <section className="personal-section">
+        <h3>Solicitud de póliza</h3>
+        <p className="section-helper">
+          Adjunta la póliza vigente y el comprobante de pago para continuar con la validación.
+        </p>
+        <div className="form-grid">
+          <label className="input-control">
+            <span>Póliza actual</span>
+            <input
+              key={`poliza-${polizaInputsVersion}-file`}
+              type="file"
+              onChange={handlePolizaFileChange('polizaFile')}
+            />
+            <small className="form-hint">
+              {polizaForm.polizaFile ? polizaForm.polizaFile.name : 'Selecciona el archivo de la póliza vigente'}
+            </small>
+          </label>
+          <label className="input-control">
+            <span>Comprobante de pago</span>
+            <input
+              key={`poliza-${polizaInputsVersion}-comprobante`}
+              type="file"
+              onChange={handlePolizaFileChange('comprobanteFile')}
+            />
+            <small className="form-hint">
+              {polizaForm.comprobanteFile ? polizaForm.comprobanteFile.name : 'Adjunta el comprobante de pago vigente'}
+            </small>
+          </label>
+        </div>
+        <label className="input-control">
+          <span>Observaciones</span>
+          <textarea
+            rows={4}
+            value={polizaForm.observaciones}
+            onChange={handlePolizaObservacionesChange}
+            placeholder="Agregar observaciones relevantes"
+          />
+        </label>
+      </section>
+      <div className="form-actions">
+        <button
+          type="button"
+          className="secondary-action"
+          disabled={polizaSubmitting}
+          onClick={() => {
+            setPolizaForm({
+              polizaFile: null,
+              comprobanteFile: null,
+              observaciones: '',
+            });
+            setPolizaInputsVersion((value) => value + 1);
+          }}
+        >
+          Limpiar
+        </button>
+        <button type="submit" className="primary-action" disabled={polizaSubmitting}>
+          {polizaSubmitting ? 'Enviando...' : 'Enviar solicitud'}
+        </button>
+      </div>
+    </form>
+  );
+
+  const renderAdelantoTab = () => (
+    <form className="approvals-form" onSubmit={handleAdelantoSubmit}>
+      <section className="personal-section">
+        <h3>Adelanto de pago</h3>
+        <div className="form-grid">
+          <label className="input-control">
+            <span>Empresa</span>
+            <select value={adelantoForm.empresaId} onChange={handleAdelantoFieldChange('empresaId')}>
+              <option value="">Seleccionar</option>
+              {(meta?.clientes ?? []).map((cliente) => (
+                <option key={cliente.id} value={cliente.id}>
+                  {cliente.nombre ?? `Cliente #${cliente.id}`}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="input-control">
+            <span>Sucursal</span>
+            <select value={adelantoForm.sucursalId} onChange={handleAdelantoFieldChange('sucursalId')}>
+              <option value="">Seleccionar</option>
+              {adelantoSucursalOptions.map((sucursal) => (
+                <option key={sucursal.id} value={sucursal.id}>
+                  {sucursal.nombre ?? `Sucursal #${sucursal.id}`}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="input-control">
+            <span>Transportista</span>
+            <input
+              type="text"
+              value={adelantoForm.transportista}
+              onChange={handleAdelantoFieldChange('transportista')}
+              placeholder="Ingresar"
+            />
+          </label>
+          <label className="input-control">
+            <span>Monto solicitado</span>
+            <input
+              type="number"
+              value={adelantoForm.monto}
+              onChange={handleAdelantoFieldChange('monto')}
+              placeholder="Ingresar"
+              min="0"
+            />
+          </label>
+          <label className="input-control">
+            <span>Fecha de solicitud</span>
+            <input
+              type="date"
+              value={adelantoForm.fechaSolicitud}
+              onChange={handleAdelantoFieldChange('fechaSolicitud')}
+              placeholder="dd/mm/aaaa"
+            />
+          </label>
+          <label className="input-control">
+            <span>Motivo</span>
+            <input
+              type="text"
+              value={adelantoForm.motivo}
+              onChange={handleAdelantoFieldChange('motivo')}
+              placeholder="Ingresar"
+            />
+          </label>
+        </div>
+        <label className="input-control">
+          <span>Observaciones</span>
+          <textarea
+            rows={4}
+            value={adelantoForm.observaciones}
+            onChange={handleAdelantoFieldChange('observaciones')}
+            placeholder="Agregar observaciones adicionales"
+          />
+        </label>
+        <label className="input-control">
+          <span>Adjuntar archivos</span>
+          <input
+            key={`adelanto-files-${adelantoFilesVersion}`}
+            type="file"
+            multiple
+            onChange={handleAdelantoFilesChange}
+          />
+          {renderAttachmentList(adelantoAttachments)}
+        </label>
+      </section>
+      <div className="form-actions">
+        <button
+          type="button"
+          className="secondary-action"
+          onClick={() => {
+            setAdelantoForm({
+              empresaId: '',
+              sucursalId: '',
+              transportista: '',
+              monto: '',
+              fechaSolicitud: '',
+              motivo: '',
+              observaciones: '',
+            });
+            setAdelantoAttachments([]);
+            setAdelantoFilesVersion((value) => value + 1);
+          }}
+        >
+          Limpiar
+        </button>
+        <button type="submit" className="primary-action" disabled={adelantoSubmitting}>
+          {adelantoSubmitting ? 'Enviando...' : 'Enviar solicitud'}
+        </button>
+      </div>
+    </form>
+  );
+
+  const renderTabContent = () => {
+    switch (activeTab) {
+      case 'combustible':
+        return renderCombustibleTab();
+      case 'aumento_combustible':
+        return renderAumentoCombustibleTab();
+      case 'adelanto':
+        return renderAdelantoTab();
+      case 'poliza':
+        return renderPolizaTab();
+      case 'altas':
+      default:
+        return renderAltasTab();
+    }
+  };
+
+  if (loadingMeta) {
+    return (
+      <DashboardLayout
+        title="Aprobaciones y solicitudes"
+        subtitle="Gestiona las solicitudes pendientes"
+        headerContent={headerContent}
+      >
+        <p className="form-info">Cargando información necesaria...</p>
+      </DashboardLayout>
+    );
+  }
+
+  if (metaError) {
+    return (
+      <DashboardLayout
+        title="Aprobaciones y solicitudes"
+        subtitle="Gestiona las solicitudes pendientes"
+        headerContent={headerContent}
+      >
+        <p className="form-info form-info--error">{metaError}</p>
+      </DashboardLayout>
+    );
+  }
+
+  return (
+    <DashboardLayout
+      title="Aprobaciones y solicitudes"
+      subtitle="Gestiona las solicitudes pendientes"
+      headerContent={headerContent}
+    >
+      {flash ? (
+        <div
+          className={`flash-message${flash.type === 'error' ? ' flash-message--error' : ''}`}
+          role="alert"
+        >
+          <span>{flash.message}</span>
+          <button type="button" onClick={() => setFlash(null)} aria-label="Cerrar aviso">
+            ×
+          </button>
+        </div>
+      ) : null}
+
+      <div className="approvals-tabs">
+        <button
+          type="button"
+          className={`approvals-tab${activeTab === 'altas' ? ' is-active' : ''}`}
+          onClick={() => setActiveTab('altas')}
+        >
+          Solicitud de altas
+        </button>
+        <button
+          type="button"
+          className={`approvals-tab${activeTab === 'combustible' ? ' is-active' : ''}`}
+          onClick={() => setActiveTab('combustible')}
+        >
+          Solicitud de combustible
+        </button>
+        <button
+          type="button"
+          className={`approvals-tab${activeTab === 'aumento_combustible' ? ' is-active' : ''}`}
+          onClick={() => setActiveTab('aumento_combustible')}
+        >
+          Aumento de combustible
+        </button>
+        <button
+          type="button"
+          className={`approvals-tab${activeTab === 'adelanto' ? ' is-active' : ''}`}
+          onClick={() => setActiveTab('adelanto')}
+        >
+          Adelanto de pago
+        </button>
+        <button
+          type="button"
+          className={`approvals-tab${activeTab === 'poliza' ? ' is-active' : ''}`}
+          onClick={() => setActiveTab('poliza')}
+        >
+          Solicitud de póliza
+        </button>
+      </div>
+
+      <div className="approvals-panel">{renderTabContent()}</div>
+    </DashboardLayout>
+  );
+};
+
 const CreateUserPage: React.FC = () => {
   const navigate = useNavigate();
   const apiBaseUrl = useMemo(() => resolveApiBaseUrl(), []);
@@ -3986,11 +7098,16 @@ const CreateUserPage: React.FC = () => {
     email: '',
     password: '',
     password_confirmation: '',
-    role: '',
+    role: 'operator',
   });
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const authUser = useStoredAuthUser();
+  const isAdmin = useMemo(() => {
+    const normalized = authUser?.role?.toLowerCase() ?? '';
+    return normalized.includes('admin');
+  }, [authUser?.role]);
 
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -4010,6 +7127,7 @@ const CreateUserPage: React.FC = () => {
           email: formValues.email.trim(),
           password: formValues.password,
           password_confirmation: formValues.password_confirmation,
+          role: formValues.role || 'operator',
         }),
       });
 
@@ -4038,6 +7156,7 @@ const CreateUserPage: React.FC = () => {
         ...prev,
         password: '',
         password_confirmation: '',
+        role: 'operator',
       }));
     } catch (err) {
       setSubmitError((err as Error).message ?? 'No se pudo registrar el usuario.');
@@ -4053,6 +7172,18 @@ const CreateUserPage: React.FC = () => {
       </button>
     </div>
   );
+
+  if (!authUser?.role) {
+    return (
+      <DashboardLayout title="Crear usuario" subtitle="Registrar un nuevo usuario" headerContent={headerContent}>
+        <p className="form-info">Verificando permisos...</p>
+      </DashboardLayout>
+    );
+  }
+
+  if (!isAdmin) {
+    return <Navigate to="/clientes" replace />;
+  }
 
   return (
     <DashboardLayout title="Crear usuario" subtitle="Registrar un nuevo usuario" headerContent={headerContent}>
@@ -4103,14 +7234,13 @@ const CreateUserPage: React.FC = () => {
         </div>
 
         <label className="input-control">
-          <span>Roles</span>
+          <span>Rol</span>
           <select
             value={formValues.role}
             onChange={(event) => setFormValues((prev) => ({ ...prev, role: event.target.value }))}
           >
-            <option value="">Seleccionar roles</option>
+            <option value="operator">Operador</option>
             <option value="admin">Administrador</option>
-            <option value="operador">Operador</option>
           </select>
         </label>
 
@@ -4142,6 +7272,12 @@ const EditUserPage: React.FC = () => {
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [userName, setUserName] = useState<string | null>(null);
+  const [role, setRole] = useState<'admin' | 'operator'>('operator');
+  const authUser = useStoredAuthUser();
+  const isAdmin = useMemo(() => {
+    const normalized = authUser?.role?.toLowerCase() ?? '';
+    return normalized.includes('admin');
+  }, [authUser?.role]);
 
   useEffect(() => {
     if (!usuarioId) {
@@ -4172,6 +7308,7 @@ const EditUserPage: React.FC = () => {
         }
 
         setUserName(payload.data.name ?? payload.data.email ?? `Usuario #${usuarioId}`);
+        setRole((payload.data.role?.toLowerCase() === 'admin' ? 'admin' : 'operator'));
       } catch (err) {
         if ((err as Error).name === 'AbortError') {
           return;
@@ -4201,15 +7338,20 @@ const EditUserPage: React.FC = () => {
       setSuccessMessage(null);
       setSaving(true);
 
+      const payloadBody: Record<string, unknown> = {
+        role,
+      };
+      if (password.trim().length > 0) {
+        payloadBody.password = password;
+        payloadBody.password_confirmation = passwordConfirmation;
+      }
+
       const response = await fetch(`${apiBaseUrl}/api/usuarios/${usuarioId}`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({
-          password,
-          password_confirmation: passwordConfirmation,
-        }),
+        body: JSON.stringify(payloadBody),
       });
 
       if (!response.ok) {
@@ -4230,10 +7372,27 @@ const EditUserPage: React.FC = () => {
         throw new Error(message);
       }
 
-      const payload = (await response.json()) as { message?: string };
-      setSuccessMessage(payload.message ?? 'Contraseña actualizada correctamente.');
-      setPassword('');
-      setPasswordConfirmation('');
+      const payload = (await response.json()) as { message?: string; data?: Usuario };
+      const resolvedRoleRaw = payload.data?.role ?? null;
+      let normalizedRole: 'admin' | 'operator' = role;
+      if (resolvedRoleRaw) {
+        normalizedRole = resolvedRoleRaw.trim().toLowerCase() === 'admin' ? 'admin' : 'operator';
+      }
+
+      if (payload.data?.name || payload.data?.email) {
+        setUserName((prev) => payload.data?.name ?? payload.data?.email ?? prev);
+      }
+
+      setRole(normalizedRole);
+
+      const displayRoleLabel = formatRoleLabel(resolvedRoleRaw ?? normalizedRole);
+      const defaultSuccessMessage = `Usuario actualizado correctamente. Rol actual: ${displayRoleLabel}.`;
+      setSuccessMessage(payload.message ? `${payload.message} Rol actual: ${displayRoleLabel}.` : defaultSuccessMessage);
+
+      if (password.trim().length > 0) {
+        setPassword('');
+        setPasswordConfirmation('');
+      }
     } catch (err) {
       setSubmitError((err as Error).message ?? 'No se pudieron guardar los cambios.');
     } finally {
@@ -4248,6 +7407,18 @@ const EditUserPage: React.FC = () => {
       </button>
     </div>
   );
+
+  if (!authUser?.role) {
+    return (
+      <DashboardLayout title="Restablecer contraseña" subtitle={`Usuario #${usuarioId ?? ''}`} headerContent={headerContent}>
+        <p className="form-info">Verificando permisos...</p>
+      </DashboardLayout>
+    );
+  }
+
+  if (!isAdmin) {
+    return <Navigate to="/clientes" replace />;
+  }
 
   if (loading) {
     return (
@@ -4268,7 +7439,7 @@ const EditUserPage: React.FC = () => {
   return (
     <DashboardLayout
       title="Restablecer contraseña"
-      subtitle={userName ? `Usuario: ${userName}` : undefined}
+      subtitle={userName ? `Usuario: ${userName} · Rol actual: ${formatRoleLabel(role)}` : undefined}
       headerContent={headerContent}
     >
       <form className="edit-form" onSubmit={handleSubmit}>
@@ -4280,7 +7451,7 @@ const EditUserPage: React.FC = () => {
               value={password}
               onChange={(event) => setPassword(event.target.value)}
               placeholder="Nueva contraseña"
-              required
+              required={password.trim().length > 0}
             />
           </label>
           <label className="input-control">
@@ -4290,8 +7461,15 @@ const EditUserPage: React.FC = () => {
               value={passwordConfirmation}
               onChange={(event) => setPasswordConfirmation(event.target.value)}
               placeholder="Confirmar contraseña"
-              required
+              required={password.trim().length > 0}
             />
+          </label>
+          <label className="input-control">
+            <span>Rol</span>
+            <select value={role} onChange={(event) => setRole(event.target.value === 'admin' ? 'admin' : 'operator')}>
+              <option value="operator">Operador</option>
+              <option value="admin">Administrador</option>
+            </select>
           </label>
         </div>
 
@@ -4318,8 +7496,28 @@ const PersonalEditPage: React.FC = () => {
   const [detail, setDetail] = useState<PersonalDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [observacionTarifa, setObservacionTarifa] = useState('');
-  const [observaciones, setObservaciones] = useState('');
+  const [formValues, setFormValues] = useState({
+    nombres: '',
+    apellidos: '',
+    cuil: '',
+    telefono: '',
+    email: '',
+    perfilValue: 0,
+    agenteId: '',
+    agenteResponsableId: '',
+    clienteId: '',
+    sucursalId: '',
+    unidadId: '',
+    estadoId: '',
+    fechaAlta: '',
+    pago: '',
+    cbuAlias: '',
+    patente: '',
+    observacionTarifa: '',
+    observaciones: '',
+    combustible: false,
+    tarifaEspecial: false,
+  });
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saveSuccess, setSaveSuccess] = useState<string | null>(null);
@@ -4332,6 +7530,9 @@ const PersonalEditPage: React.FC = () => {
   const [documentTypesError, setDocumentTypesError] = useState<string | null>(null);
   const [selectedDocumentTypeId, setSelectedDocumentTypeId] = useState('');
   const [documentExpiry, setDocumentExpiry] = useState('');
+  const [meta, setMeta] = useState<PersonalMeta | null>(null);
+  const [metaLoading, setMetaLoading] = useState(true);
+  const [metaError, setMetaError] = useState<string | null>(null);
   const selectedDocumentType = useMemo(() => {
     if (!selectedDocumentTypeId) {
       return null;
@@ -4419,8 +7620,28 @@ const PersonalEditPage: React.FC = () => {
       }
 
       setDetail(payload.data);
-      setObservacionTarifa(payload.data.observacionTarifa ?? '');
-      setObservaciones(payload.data.observaciones ?? '');
+      setFormValues({
+        nombres: payload.data.nombres ?? '',
+        apellidos: payload.data.apellidos ?? '',
+        cuil: payload.data.cuil ?? '',
+        telefono: payload.data.telefono ?? '',
+        email: payload.data.email ?? '',
+        perfilValue: payload.data.perfilValue ?? 0,
+        agenteId: payload.data.agenteId ? String(payload.data.agenteId) : '',
+        agenteResponsableId: payload.data.agenteResponsableId ? String(payload.data.agenteResponsableId) : '',
+        clienteId: payload.data.clienteId ? String(payload.data.clienteId) : '',
+        sucursalId: payload.data.sucursalId ? String(payload.data.sucursalId) : '',
+        unidadId: payload.data.unidadId ? String(payload.data.unidadId) : '',
+        estadoId: payload.data.estadoId ? String(payload.data.estadoId) : '',
+        fechaAlta: payload.data.fechaAlta ?? '',
+        pago: payload.data.pago ?? '',
+        cbuAlias: payload.data.cbuAlias ?? '',
+        patente: payload.data.patente ?? '',
+        observacionTarifa: payload.data.observacionTarifa ?? '',
+        observaciones: payload.data.observaciones ?? '',
+        combustible: Boolean(payload.data.combustibleValue),
+        tarifaEspecial: Boolean(payload.data.tarifaEspecialValue),
+      });
       setSaveSuccess(null);
       setSaveError(null);
       if (payload.data.documents.length > 0) {
@@ -4438,6 +7659,39 @@ const PersonalEditPage: React.FC = () => {
   useEffect(() => {
     fetchDetail();
   }, [fetchDetail]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+
+    const fetchMeta = async () => {
+      try {
+        setMetaLoading(true);
+        setMetaError(null);
+
+        const response = await fetch(`${apiBaseUrl}/api/personal-meta`, {
+          signal: controller.signal,
+        });
+
+        if (!response.ok) {
+          throw new Error(`Error ${response.status}: ${response.statusText}`);
+        }
+
+        const payload = (await response.json()) as PersonalMeta;
+        setMeta(payload);
+      } catch (err) {
+        if ((err as Error).name === 'AbortError') {
+          return;
+        }
+        setMetaError((err as Error).message ?? 'No se pudieron cargar los datos de referencia.');
+      } finally {
+        setMetaLoading(false);
+      }
+    };
+
+    fetchMeta();
+
+    return () => controller.abort();
+  }, [apiBaseUrl]);
 
   useEffect(() => {
     if (!selectedDocumentType?.vence && documentExpiry) {
@@ -4493,6 +7747,32 @@ const PersonalEditPage: React.FC = () => {
     return () => controller.abort();
   }, [apiBaseUrl]);
 
+  const sucursalOptions = useMemo(() => {
+    if (!meta) {
+      return [] as PersonalMeta['sucursales'];
+    }
+
+    if (!formValues.clienteId) {
+      return meta.sucursales;
+    }
+
+    const clienteId = Number(formValues.clienteId);
+    if (Number.isNaN(clienteId)) {
+      return meta.sucursales;
+    }
+
+    return meta.sucursales.filter((sucursal) => sucursal.cliente_id === clienteId);
+  }, [meta, formValues.clienteId]);
+
+  const perfilLabel = useMemo(() => {
+    if (!meta) {
+      return detail?.perfil ?? '';
+    }
+
+    const perfil = meta.perfiles.find((item) => item.value === formValues.perfilValue);
+    return perfil?.label ?? (detail?.perfil ?? '');
+  }, [meta, formValues.perfilValue, detail?.perfil]);
+
   const handleDownloadFicha = useCallback((record: PersonalDetail) => {
     const lines = [
       ['Nombre', [record.nombres, record.apellidos].filter(Boolean).join(' ').trim()],
@@ -4511,8 +7791,8 @@ const PersonalEditPage: React.FC = () => {
       ['CBU / Alias', record.cbuAlias ?? ''],
       ['Combustible', record.combustibleValue ? 'Sí' : 'No'],
       ['Tarifa especial', record.tarifaEspecialValue ? 'Sí' : 'No'],
-      ['Observación tarifa', observacionTarifa],
-      ['Observaciones', observaciones],
+      ['Observación tarifa', formValues.observacionTarifa],
+      ['Observaciones', formValues.observaciones],
     ];
 
     const content = lines
@@ -4528,7 +7808,7 @@ const PersonalEditPage: React.FC = () => {
     link.click();
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
-  }, [observacionTarifa, observaciones]);
+  }, [formValues.observacionTarifa, formValues.observaciones]);
 
   const headerContent = (
     <div className="card-header card-header--compact">
@@ -4562,8 +7842,26 @@ const PersonalEditPage: React.FC = () => {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          observacionTarifa,
-          observaciones,
+          nombres: formValues.nombres.trim() || null,
+          apellidos: formValues.apellidos.trim() || null,
+          cuil: formValues.cuil.trim() || null,
+          telefono: formValues.telefono.trim() || null,
+          email: formValues.email.trim() || null,
+          perfilValue: formValues.perfilValue || null,
+          agenteId: formValues.agenteId ? Number(formValues.agenteId) : null,
+          agenteResponsableId: formValues.agenteResponsableId ? Number(formValues.agenteResponsableId) : null,
+          clienteId: formValues.clienteId ? Number(formValues.clienteId) : null,
+          sucursalId: formValues.sucursalId ? Number(formValues.sucursalId) : null,
+          unidadId: formValues.unidadId ? Number(formValues.unidadId) : null,
+          estadoId: formValues.estadoId ? Number(formValues.estadoId) : null,
+          fechaAlta: formValues.fechaAlta || null,
+          pago: formValues.pago ? Number(formValues.pago) : null,
+          cbuAlias: formValues.cbuAlias.trim() || null,
+          patente: formValues.patente.trim() || null,
+          observacionTarifa: formValues.observacionTarifa.trim() || null,
+          observaciones: formValues.observaciones.trim() || null,
+          combustible: formValues.combustible,
+          tarifaEspecial: formValues.tarifaEspecial,
         }),
       });
 
@@ -4586,9 +7884,34 @@ const PersonalEditPage: React.FC = () => {
         throw new Error(message);
       }
 
-      const payload = (await response.json()) as { message?: string };
+      const payload = (await response.json()) as { message?: string; data?: PersonalDetail };
       setSaveSuccess(payload.message ?? 'Información actualizada correctamente.');
-      setDetail((prev) => (prev ? { ...prev, observacionTarifa, observaciones } : prev));
+
+      if (payload.data) {
+        setDetail(payload.data);
+        setFormValues({
+          nombres: payload.data.nombres ?? '',
+          apellidos: payload.data.apellidos ?? '',
+          cuil: payload.data.cuil ?? '',
+          telefono: payload.data.telefono ?? '',
+          email: payload.data.email ?? '',
+          perfilValue: payload.data.perfilValue ?? 0,
+          agenteId: payload.data.agenteId ? String(payload.data.agenteId) : '',
+          agenteResponsableId: payload.data.agenteResponsableId ? String(payload.data.agenteResponsableId) : '',
+          clienteId: payload.data.clienteId ? String(payload.data.clienteId) : '',
+          sucursalId: payload.data.sucursalId ? String(payload.data.sucursalId) : '',
+          unidadId: payload.data.unidadId ? String(payload.data.unidadId) : '',
+          estadoId: payload.data.estadoId ? String(payload.data.estadoId) : '',
+          fechaAlta: payload.data.fechaAlta ?? '',
+          pago: payload.data.pago ?? '',
+          cbuAlias: payload.data.cbuAlias ?? '',
+          patente: payload.data.patente ?? '',
+          observacionTarifa: payload.data.observacionTarifa ?? '',
+          observaciones: payload.data.observaciones ?? '',
+          combustible: Boolean(payload.data.combustibleValue),
+          tarifaEspecial: Boolean(payload.data.tarifaEspecialValue),
+        });
+      }
     } catch (err) {
       setSaveError((err as Error).message ?? 'No se pudieron guardar los cambios.');
     } finally {
@@ -4678,85 +8001,133 @@ const PersonalEditPage: React.FC = () => {
 
   return (
     <DashboardLayout title="Editar personal" subtitle={fullName || `Registro #${detail.id}`} headerContent={headerContent}>
+      {metaError ? <p className="form-info form-info--error">{metaError}</p> : null}
+      {metaLoading ? <p className="form-info">Cargando datos de referencia...</p> : null}
       <section className="personal-edit-section">
         <h2>Datos personales</h2>
         <div className="form-grid">
           <label className="input-control">
             <span>Nombre</span>
-            <input type="text" value={detail.nombres ?? ''} readOnly />
+            <input
+              type="text"
+              value={formValues.nombres}
+              onChange={(event) => setFormValues((prev) => ({ ...prev, nombres: event.target.value }))}
+              placeholder="Ingresar"
+            />
           </label>
           <label className="input-control">
             <span>Apellido</span>
-            <input type="text" value={detail.apellidos ?? ''} readOnly />
+            <input
+              type="text"
+              value={formValues.apellidos}
+              onChange={(event) => setFormValues((prev) => ({ ...prev, apellidos: event.target.value }))}
+              placeholder="Ingresar"
+            />
           </label>
           <label className="input-control">
             <span>CUIL</span>
-            <input type="text" value={detail.cuil ?? ''} readOnly />
+            <input
+              type="text"
+              value={formValues.cuil}
+              onChange={(event) => setFormValues((prev) => ({ ...prev, cuil: event.target.value }))}
+              placeholder="Ingresar"
+            />
           </label>
           <label className="input-control">
             <span>Teléfono</span>
-            <input type="text" value={detail.telefono ?? ''} readOnly />
+            <input
+              type="text"
+              value={formValues.telefono}
+              onChange={(event) => setFormValues((prev) => ({ ...prev, telefono: event.target.value }))}
+              placeholder="Ingresar"
+            />
           </label>
           <label className="input-control">
             <span>Email</span>
-            <input type="email" value={detail.email ?? ''} readOnly />
+            <input
+              type="email"
+              value={formValues.email}
+              onChange={(event) => setFormValues((prev) => ({ ...prev, email: event.target.value }))}
+              placeholder="Ingresar"
+            />
           </label>
           <label className="input-control">
             <span>Perfil</span>
-            <input type="text" value={detail.perfil ?? ''} readOnly />
-          </label>
-          <label className="input-control">
-            <span>Agente</span>
-            <input type="text" value={detail.agente ?? ''} readOnly />
-          </label>
-          <label className="input-control">
-            <span>Estado</span>
-            <input type="text" value={detail.estado ?? ''} readOnly />
-          </label>
-          <label className="input-control">
-            <span>Cliente</span>
-            <input type="text" value={detail.cliente ?? ''} readOnly />
-          </label>
-          <label className="input-control">
-            <span>Sucursal</span>
-            <input type="text" value={detail.sucursal ?? ''} readOnly />
-          </label>
-          <label className="input-control">
-            <span>Unidad</span>
-            <input type="text" value={detail.unidadDetalle ?? detail.unidad ?? ''} readOnly />
-          </label>
-          <label className="input-control">
-            <span>Patente</span>
-            <input type="text" value={detail.patente ?? ''} readOnly />
+            <input type="text" value={perfilLabel} readOnly />
           </label>
           <label className="input-control">
             <span>Fecha de alta</span>
-            <input type="text" value={detail.fechaAlta ?? ''} readOnly />
+            <input
+              type="date"
+              value={formValues.fechaAlta}
+              onChange={(event) => setFormValues((prev) => ({ ...prev, fechaAlta: event.target.value }))}
+            />
           </label>
           <label className="input-control">
             <span>Pago pactado</span>
-            <input type="text" value={detail.pago ?? ''} readOnly />
+            <input
+              type="number"
+              value={formValues.pago}
+              onChange={(event) => setFormValues((prev) => ({ ...prev, pago: event.target.value }))}
+              placeholder="Ingresar"
+            />
           </label>
           <label className="input-control">
             <span>CBU / Alias</span>
-            <input type="text" value={detail.cbuAlias ?? ''} readOnly />
+            <input
+              type="text"
+              value={formValues.cbuAlias}
+              onChange={(event) => setFormValues((prev) => ({ ...prev, cbuAlias: event.target.value }))}
+              placeholder="Ingresar"
+            />
+          </label>
+          <label className="input-control">
+            <span>Patente</span>
+            <input
+              type="text"
+              value={formValues.patente}
+              onChange={(event) => setFormValues((prev) => ({ ...prev, patente: event.target.value }))}
+              placeholder="Ingresar"
+            />
           </label>
           <label className="input-control">
             <span>Combustible</span>
-            <input type="text" value={detail.combustibleValue ? 'Sí' : 'No'} readOnly />
+            <div className="checkbox-control">
+              <input
+                type="checkbox"
+                checked={formValues.combustible}
+                onChange={(event) => setFormValues((prev) => ({ ...prev, combustible: event.target.checked }))}
+              />
+              Cuenta corrientes combustible
+            </div>
           </label>
           <label className="input-control">
             <span>Tarifa especial</span>
-            <input type="text" value={detail.tarifaEspecialValue ? 'Sí' : 'No'} readOnly />
+            <div className="checkbox-control">
+              <input
+                type="checkbox"
+                checked={formValues.tarifaEspecial}
+                onChange={(event) => setFormValues((prev) => ({ ...prev, tarifaEspecial: event.target.checked }))}
+              />
+              Tiene tarifa especial
+            </div>
           </label>
         </div>
         <label className="input-control">
           <span>Observación tarifa</span>
-          <textarea value={observacionTarifa} onChange={(event) => setObservacionTarifa(event.target.value)} />
+          <textarea
+            value={formValues.observacionTarifa}
+            onChange={(event) => setFormValues((prev) => ({ ...prev, observacionTarifa: event.target.value }))}
+            rows={2}
+          />
         </label>
         <label className="input-control">
           <span>Observaciones</span>
-          <textarea value={observaciones} onChange={(event) => setObservaciones(event.target.value)} rows={3} />
+          <textarea
+            value={formValues.observaciones}
+            onChange={(event) => setFormValues((prev) => ({ ...prev, observaciones: event.target.value }))}
+            rows={3}
+          />
         </label>
         {saveError ? <p className="form-info form-info--error">{saveError}</p> : null}
         {saveSuccess ? <p className="form-info form-info--success">{saveSuccess}</p> : null}
@@ -4767,6 +8138,107 @@ const PersonalEditPage: React.FC = () => {
           <button type="button" className="primary-action" onClick={handleSave} disabled={saving}>
             {saving ? 'Guardando...' : 'Guardar'}
           </button>
+        </div>
+      </section>
+
+      <section className="personal-edit-section">
+        <h2>Datos de vinculación</h2>
+        <div className="form-grid">
+          <label className="input-control">
+            <span>Cliente</span>
+            <select
+              value={formValues.clienteId}
+              onChange={(event) =>
+                setFormValues((prev) => ({ ...prev, clienteId: event.target.value, sucursalId: '' }))
+              }
+              disabled={metaLoading || !meta}
+            >
+              <option value="">Seleccionar</option>
+              {(meta?.clientes ?? []).map((cliente) => (
+                <option key={cliente.id} value={cliente.id}>
+                  {cliente.nombre ?? `Cliente #${cliente.id}`}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="input-control">
+            <span>Sucursal</span>
+            <select
+              value={formValues.sucursalId}
+              onChange={(event) => setFormValues((prev) => ({ ...prev, sucursalId: event.target.value }))}
+              disabled={metaLoading || !meta}
+            >
+              <option value="">Seleccionar</option>
+              {sucursalOptions.map((sucursal) => (
+                <option key={sucursal.id} value={sucursal.id}>
+                  {sucursal.nombre ?? `Sucursal #${sucursal.id}`}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="input-control">
+            <span>Agente</span>
+            <select
+              value={formValues.agenteId}
+              onChange={(event) => setFormValues((prev) => ({ ...prev, agenteId: event.target.value }))}
+              disabled={metaLoading || !meta}
+            >
+              <option value="">Sin asignar</option>
+              {(meta?.agentes ?? []).map((agente) => (
+                <option key={agente.id} value={agente.id}>
+                  {agente.name ?? `Agente #${agente.id}`}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="input-control">
+            <span>Agente responsable</span>
+            <select
+              value={formValues.agenteResponsableId}
+              onChange={(event) => setFormValues((prev) => ({ ...prev, agenteResponsableId: event.target.value }))}
+              disabled={metaLoading || !meta}
+            >
+              <option value="">Sin asignar</option>
+              {(meta?.agentes ?? []).map((agente) => (
+                <option key={agente.id} value={agente.id}>
+                  {agente.name ?? `Agente #${agente.id}`}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="input-control">
+            <span>Unidad</span>
+            <select
+              value={formValues.unidadId}
+              onChange={(event) => setFormValues((prev) => ({ ...prev, unidadId: event.target.value }))}
+              disabled={metaLoading || !meta}
+            >
+              <option value="">Sin asignar</option>
+              {(meta?.unidades ?? []).map((unidad) => {
+                const label = [unidad.matricula, unidad.marca, unidad.modelo].filter(Boolean).join(' · ');
+                return (
+                  <option key={unidad.id} value={unidad.id}>
+                    {label || `Unidad #${unidad.id}`}
+                  </option>
+                );
+              })}
+            </select>
+          </label>
+          <label className="input-control">
+            <span>Estado</span>
+            <select
+              value={formValues.estadoId}
+              onChange={(event) => setFormValues((prev) => ({ ...prev, estadoId: event.target.value }))}
+              disabled={metaLoading || !meta}
+            >
+              <option value="">Sin estado</option>
+              {(meta?.estados ?? []).map((estado) => (
+                <option key={estado.id} value={estado.id}>
+                  {estado.nombre ?? `Estado #${estado.id}`}
+                </option>
+              ))}
+            </select>
+          </label>
         </div>
       </section>
 
@@ -4916,6 +8388,7 @@ const PersonalEditPage: React.FC = () => {
 const PersonalCreatePage: React.FC = () => {
   const navigate = useNavigate();
   const apiBaseUrl = useMemo(() => resolveApiBaseUrl(), []);
+  const authUser = useStoredAuthUser();
   const [meta, setMeta] = useState<PersonalMeta | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -5034,6 +8507,8 @@ const PersonalCreatePage: React.FC = () => {
           duenoCuilCobrador: formValues.duenoCuilCobrador.trim() || null,
           duenoTelefono: formValues.duenoTelefono.trim() || null,
           duenoObservaciones: formValues.duenoObservaciones.trim() || null,
+          autoApprove: true,
+          autoApproveUserId: authUser?.id ?? null,
         }),
       });
 
@@ -6750,6 +10225,9 @@ const App: React.FC = () => {
       <Route path="/usuarios" element={<UsersPage />} />
       <Route path="/usuarios/nuevo" element={<CreateUserPage />} />
       <Route path="/usuarios/:usuarioId/editar" element={<EditUserPage />} />
+      <Route path="/control-horario/:userKey" element={<AttendanceUserDetailPage />} />
+      <Route path="/control-horario" element={<AttendanceLogPage />} />
+      <Route path="/aprobaciones" element={<ApprovalsRequestsPage />} />
       <Route path="/clientes/nuevo" element={<CreateClientPage />} />
       <Route path="/clientes/:clienteId/editar" element={<EditClientPage />} />
       <Route path="*" element={<Navigate to="/" replace />} />

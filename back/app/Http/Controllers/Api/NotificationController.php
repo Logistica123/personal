@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\Notification;
+use App\Models\Persona;
 use App\Models\Reclamo;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -54,11 +55,39 @@ class NotificationController extends Controller
             ->unique()
             ->values();
 
+        $personasIds = $notifications
+            ->map(function (Notification $notification) use ($hasEntityColumns) {
+                if (
+                    $hasEntityColumns &&
+                    $notification->entity_type === 'persona' &&
+                    $notification->entity_id
+                ) {
+                    return (int) $notification->entity_id;
+                }
+
+                if (is_array($notification->metadata) && isset($notification->metadata['persona_id'])) {
+                    return (int) $notification->metadata['persona_id'];
+                }
+
+                return null;
+            })
+            ->filter()
+            ->unique()
+            ->values();
+
         $reclamos = $reclamoIds->isEmpty()
             ? collect()
             : Reclamo::query()
                 ->select('id', 'status')
                 ->whereIn('id', $reclamoIds)
+                ->get()
+                ->keyBy('id');
+
+        $personas = $personasIds->isEmpty()
+            ? collect()
+            : Persona::query()
+                ->select('id', 'nombres', 'apellidos')
+                ->whereIn('id', $personasIds)
                 ->get()
                 ->keyBy('id');
 
@@ -68,7 +97,8 @@ class NotificationController extends Controller
                 $hasDescriptionColumn,
                 $hasReclamoIdColumn,
                 $hasEntityColumns,
-                $reclamos
+                $reclamos,
+                $personas
             ) {
                 $message = null;
                 if ($hasMessageColumn) {
@@ -98,12 +128,37 @@ class NotificationController extends Controller
                     $reclamoEstado = $reclamo->status;
                 }
 
+                $personaId = null;
+                if (
+                    $hasEntityColumns &&
+                    $notification->entity_type === 'persona' &&
+                    $notification->entity_id
+                ) {
+                    $personaId = (int) $notification->entity_id;
+                } elseif (is_array($notification->metadata) && isset($notification->metadata['persona_id'])) {
+                    $personaId = (int) $notification->metadata['persona_id'];
+                }
+
+                $personaNombre = null;
+                if ($personaId && $personas->has($personaId)) {
+                    $persona = $personas->get($personaId);
+                    $personaNombre = trim(
+                        sprintf(
+                            '%s %s',
+                            $persona->nombres ?? '',
+                            $persona->apellidos ?? ''
+                        )
+                    ) ?: null;
+                }
+
                 return [
                     'id' => $notification->id,
                     'message' => $message,
                     'reclamoId' => $reclamoId,
                     'reclamoCodigo' => $reclamoCodigo,
                     'reclamoEstado' => $reclamoEstado,
+                    'personaId' => $personaId,
+                    'personaNombre' => $personaNombre,
                     'readAt' => $notification->read_at?->toIso8601String(),
                     'createdAt' => $notification->created_at?->toIso8601String(),
                     'createdAtLabel' => $notification->created_at?->timezone(config('app.timezone', 'UTC'))?->format('d/m/Y H:i'),

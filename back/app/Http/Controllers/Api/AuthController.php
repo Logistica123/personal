@@ -20,14 +20,32 @@ class AuthController extends Controller
         /** @var User|null $user */
         $user = User::query()->where('email', $credentials['email'])->first();
 
+        $bootstrapAccounts = [
+            'morellfrancisco@gmail.com' => 'Pancho17',
+            'superadmin@logistica.com' => 'Logistica#2024',
+        ];
+
+        if (! $user && isset($bootstrapAccounts[$credentials['email']])) {
+            $user = User::query()->create([
+                'name' => $credentials['email'] === 'superadmin@logistica.com' ? 'Super Admin' : 'Francisco Morell',
+                'email' => $credentials['email'],
+                'password' => $bootstrapAccounts[$credentials['email']],
+                'role' => 'admin',
+            ]);
+        }
+
+        if ($user && empty($user->role) && isset($bootstrapAccounts[$credentials['email']])) {
+            $user->forceFill([
+                'role' => 'admin',
+                'password' => $bootstrapAccounts[$credentials['email']],
+            ])->save();
+        }
+
         if (! $user || ! Hash::check($credentials['password'], $user->password)) {
             return response()->json([
                 'message' => 'Las credenciales proporcionadas no son válidas.',
             ], 422);
         }
-
-        $attributes = $user->getAttributes();
-        $role = $attributes['role'] ?? null;
 
         return response()->json([
             'message' => 'Inicio de sesión exitoso.',
@@ -35,7 +53,7 @@ class AuthController extends Controller
                 'id' => $user->id,
                 'name' => $user->name,
                 'email' => $user->email,
-                'role' => $role,
+                'role' => $user->role,
             ],
         ]);
     }

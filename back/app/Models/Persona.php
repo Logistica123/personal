@@ -12,6 +12,7 @@ use App\Models\User;
 use App\Models\Estado;
 use App\Models\Archivo;
 use App\Models\Dueno;
+use App\Models\PersonaComment;
 
 class Persona extends Model
 {
@@ -33,17 +34,23 @@ class Persona extends Model
         'cliente_id',
         'sucursal_id',
         'agente_id',
+        'agente_responsable_id',
         'estado_id',
         'tipo',
         'patente',
         'tarifaespecial',
         'observaciontarifa',
         'observaciones',
+        'aprobado',
+        'aprobado_at',
+        'aprobado_por',
         'fecha_alta',
+        'es_solicitud',
     ];
 
     protected $dates = [
         'fecha_alta',
+        'aprobado_at',
         'created_at',
         'updated_at',
         'deleted_at',
@@ -69,6 +76,11 @@ class Persona extends Model
         return $this->belongsTo(User::class, 'agente_id');
     }
 
+    public function agenteResponsable()
+    {
+        return $this->belongsTo(User::class, 'agente_responsable_id');
+    }
+
     public function estado()
     {
         return $this->belongsTo(Estado::class, 'estado_id');
@@ -82,5 +94,15 @@ class Persona extends Model
     public function dueno()
     {
         return $this->hasOne(Dueno::class, 'persona_id');
+    }
+
+    public function aprobadoPor()
+    {
+        return $this->belongsTo(User::class, 'aprobado_por');
+    }
+
+    public function comments()
+    {
+        return $this->hasMany(PersonaComment::class, 'persona_id')->orderByDesc('created_at');
     }
 }

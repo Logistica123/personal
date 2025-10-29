@@ -21,6 +21,7 @@ class UserController extends Controller
                 'email' => $user->email,
                 'created_at' => optional($user->created_at)->format('Y-m-d'),
                 'status' => $user->status ?? 'activo',
+                'role' => $user->role ?? null,
             ])
             ->values();
 
@@ -33,12 +34,17 @@ class UserController extends Controller
             'name' => ['required', 'string', 'max:255'],
             'email' => ['required', 'string', 'email', 'max:255', 'unique:users,email'],
             'password' => ['required', 'string', 'min:6', 'confirmed'],
+            'role' => ['nullable', 'in:admin,operator'],
         ]);
+
+        $role = $validated['role'] ?? 'operator';
+        unset($validated['role']);
 
         $user = User::create([
             'name' => $validated['name'],
             'email' => $validated['email'],
             'password' => Hash::make($validated['password']),
+            'role' => $role,
         ]);
 
         return response()->json([
@@ -49,6 +55,7 @@ class UserController extends Controller
                 'email' => $user->email,
                 'created_at' => optional($user->created_at)->format('Y-m-d'),
                 'status' => $user->status ?? 'activo',
+                'role' => $user->role ?? null,
             ],
         ], 201);
     }
@@ -62,6 +69,7 @@ class UserController extends Controller
                 'email' => $usuario->email,
                 'created_at' => optional($usuario->created_at)->format('Y-m-d'),
                 'status' => $usuario->status ?? 'activo',
+                'role' => $usuario->role ?? null,
             ],
         ]);
     }
@@ -69,14 +77,36 @@ class UserController extends Controller
     public function update(Request $request, User $usuario): JsonResponse
     {
         $validated = $request->validate([
-            'password' => ['required', 'string', 'min:6', 'confirmed'],
+            'password' => ['nullable', 'string', 'min:6', 'confirmed'],
+            'role' => ['nullable', 'in:admin,operator'],
         ]);
 
-        $usuario->password = Hash::make($validated['password']);
-        $usuario->save();
+        $updated = false;
+
+        if (isset($validated['role'])) {
+            $usuario->role = $validated['role'];
+            $updated = true;
+        }
+
+        if (!empty($validated['password'])) {
+            $usuario->password = Hash::make($validated['password']);
+            $updated = true;
+        }
+
+        if ($updated) {
+            $usuario->save();
+        }
 
         return response()->json([
-            'message' => 'Contraseña actualizada correctamente.',
+            'message' => $updated ? 'Usuario actualizado correctamente.' : 'No se realizaron cambios.',
+            'data' => [
+                'id' => $usuario->id,
+                'name' => $usuario->name,
+                'email' => $usuario->email,
+                'created_at' => optional($usuario->created_at)->format('Y-m-d'),
+                'status' => $usuario->status ?? 'activo',
+                'role' => $usuario->role ?? null,
+            ],
         ]);
     }
 
