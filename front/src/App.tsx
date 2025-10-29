@@ -2217,9 +2217,6 @@ const CreateReclamoPage: React.FC = () => {
     return () => controller.abort();
   }, [apiBaseUrl]);
 
-  if (authUser?.role && !isAdmin) {
-    return <Navigate to="/clientes" replace />;
-  }
   useEffect(() => {
     if (!meta) {
       return;
