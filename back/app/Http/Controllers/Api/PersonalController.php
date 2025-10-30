@@ -32,6 +32,25 @@ class PersonalController extends Controller
         ])
             ->orderByDesc('id');
 
+        if ($request->has('esSolicitud')) {
+            $rawValue = $request->input('esSolicitud');
+            $truthy = [true, 1, '1', 'true', 'on', 'yes', 'si', 'sí'];
+            $falsy = [false, 0, '0', 'false', 'off', 'no'];
+
+            if (in_array($rawValue, $truthy, true)) {
+                $query->where('es_solicitud', true);
+            } elseif (in_array($rawValue, $falsy, true)) {
+                $query->where(function ($inner) {
+                    $inner
+                        ->where('es_solicitud', false)
+                        ->orWhereNull('es_solicitud');
+                });
+            }
+        }
+
+        if ($request->filled('perfilValue')) {
+            $query->where('tipo', $request->input('perfilValue'));
+        }
 
         $personas = $query
             ->get()
@@ -567,6 +586,7 @@ class PersonalController extends Controller
             'aprobadoPorId' => $persona->aprobado_por,
             'aprobadoPorNombre' => $persona->aprobadoPor?->name,
             'esSolicitud' => (bool) $persona->es_solicitud,
+            'solicitudTipo' => $persona->es_solicitud ? 'alta' : null,
             'documents' => $persona->documentos->map(function ($documento) {
                 $downloadUrl = route('personal.documentos.descargar', [
                     'persona' => $documento->persona_id,
@@ -635,6 +655,7 @@ class PersonalController extends Controller
             'aprobadoAt' => optional($persona->aprobado_at)->format('Y-m-d H:i:s'),
             'aprobadoPor' => $persona->aprobadoPor?->name,
             'esSolicitud' => (bool) $persona->es_solicitud,
+            'solicitudTipo' => $persona->es_solicitud ? 'alta' : null,
         ];
     }
 

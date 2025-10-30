@@ -66,6 +66,8 @@ type PersonalRecord = {
   aprobadoAt: string | null;
   aprobadoPor: string | null;
   esSolicitud: boolean;
+  solicitudTipo?: 'alta' | 'combustible' | 'aumento_combustible' | 'adelanto' | 'poliza';
+  solicitudData?: unknown;
 };
 
 type PersonalDetail = {
@@ -199,6 +201,7 @@ type CombustibleRequestForm = {
   modelo: string;
   kilometraje: string;
   observaciones: string;
+  agenteId: string;
 };
 
 type AdelantoRequestForm = {
@@ -209,6 +212,7 @@ type AdelantoRequestForm = {
   fechaSolicitud: string;
   motivo: string;
   observaciones: string;
+  agenteId: string;
 };
 
 type AumentoCombustibleForm = {
@@ -224,12 +228,14 @@ type AumentoCombustibleForm = {
   litrosActuales: string;
   litrosSolicitados: string;
   motivo: string;
+  agenteId: string;
 };
 
 type PolizaRequestForm = {
   polizaFile: File | null;
   comprobanteFile: File | null;
   observaciones: string;
+  agenteId: string;
 };
 
 type AltaEditableField = Exclude<keyof AltaRequestForm, 'tarifaEspecial' | 'combustible' | 'perfilValue'>;
@@ -429,6 +435,7 @@ const useStoredAuthUser = (): AuthUser | null => {
 
 const ATTENDANCE_RECORD_KEY = 'attendanceRecord';
 const ATTENDANCE_LOG_KEY = 'attendanceLog';
+const LOCAL_SOLICITUDES_STORAGE_KEY = 'approvals:localSolicitudes';
 
 const deriveAttendanceUserKey = (authUser: AuthUser | null): string | null => {
   if (!authUser) {
@@ -2295,11 +2302,13 @@ const CreateReclamoPage: React.FC = () => {
     fechaReclamo: '',
   });
   const authUser = useStoredAuthUser();
-  const isAdmin = useMemo(() => {
-    const normalized = authUser?.role?.toLowerCase() ?? '';
-    return normalized.includes('admin');
-  }, [authUser?.role]);
-  const shouldRedirect = Boolean(authUser?.role && !isAdmin);
+  const normalizedRole = useMemo(() => authUser?.role?.toLowerCase().trim() ?? '', [authUser?.role]);
+  const isAdmin = useMemo(() => normalizedRole.includes('admin'), [normalizedRole]);
+  const isOperator = useMemo(
+    () => normalizedRole.includes('operador') || normalizedRole.includes('operator'),
+    [normalizedRole]
+  );
+  const shouldRedirect = Boolean(authUser?.role && !isAdmin && !isOperator);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -5043,11 +5052,82 @@ const ApprovalsRequestsPage: React.FC = () => {
   const location = useLocation();
   const apiBaseUrl = useMemo(() => resolveApiBaseUrl(), []);
   const authUser = useStoredAuthUser();
-  const [activeTab, setActiveTab] = useState<'altas' | 'combustible' | 'aumento_combustible' | 'adelanto' | 'poliza'>('altas');
+  const [activeTab, setActiveTab] = useState<'list' | 'altas' | 'combustible' | 'aumento_combustible' | 'adelanto' | 'poliza'>('list');
   const [meta, setMeta] = useState<PersonalMeta | null>(null);
   const [loadingMeta, setLoadingMeta] = useState(true);
   const [metaError, setMetaError] = useState<string | null>(null);
+  const [backendSolicitudes, setBackendSolicitudes] = useState<PersonalRecord[]>([]);
+  const [localSolicitudes, setLocalSolicitudes] = useState<PersonalRecord[]>(() => {
+    if (typeof window === 'undefined') {
+      return [];
+    }
+
+    try {
+      const raw = window.localStorage.getItem(LOCAL_SOLICITUDES_STORAGE_KEY);
+      if (!raw) {
+        return [];
+      }
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        return parsed.filter((item) => typeof item === 'object' && item !== null) as PersonalRecord[];
+      }
+    } catch {
+      // ignore parse errors
+    }
+
+    return [];
+  });
+  const [solicitudesLoading, setSolicitudesLoading] = useState(true);
+  const [solicitudesError, setSolicitudesError] = useState<string | null>(null);
+  const [solicitudesSearchTerm, setSolicitudesSearchTerm] = useState('');
+  const [solicitudesPerfilFilter, setSolicitudesPerfilFilter] = useState('');
+  const [solicitudesAgenteFilter, setSolicitudesAgenteFilter] = useState('');
+  const [solicitudesEstadoFilter, setSolicitudesEstadoFilter] = useState('');
   const [flash, setFlash] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  const perfilNames: Record<number, string> = useMemo(
+    () => ({
+      1: 'Dueño y chofer',
+      2: 'Chofer',
+      3: 'Transportista',
+    }),
+    []
+  );
+  const createSyntheticId = () => -Math.floor(Date.now() + Math.random() * 1000);
+  const appendLocalSolicitud = (record: PersonalRecord) => {
+    setLocalSolicitudes((prev) => [record, ...prev]);
+  };
+
+  const agentesPorId = useMemo(() => {
+    const map = new Map<number, string>();
+    (meta?.agentes ?? []).forEach((agente) => {
+      map.set(agente.id, agente.name ?? `Agente #${agente.id}`);
+    });
+    return map;
+  }, [meta?.agentes]);
+
+  const resolveAgenteNombre = (value: string | null | undefined) => {
+    if (!value) {
+      return null;
+    }
+    const numeric = Number(value);
+    if (Number.isNaN(numeric)) {
+      return null;
+    }
+    return agentesPorId.get(numeric) ?? null;
+  };
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    try {
+      window.localStorage.setItem(LOCAL_SOLICITUDES_STORAGE_KEY, JSON.stringify(localSolicitudes));
+    } catch {
+      // ignore storage errors
+    }
+  }, [localSolicitudes]);
+
   const [reviewPersonaDetail, setReviewPersonaDetail] = useState<PersonalDetail | null>(null);
   const [reviewLoading, setReviewLoading] = useState(false);
   const [reviewError, setReviewError] = useState<string | null>(null);
@@ -5182,6 +5262,7 @@ const ApprovalsRequestsPage: React.FC = () => {
     modelo: '',
     kilometraje: '',
     observaciones: '',
+    agenteId: '',
   }));
   const [aumentoCombustibleForm, setAumentoCombustibleForm] = useState<AumentoCombustibleForm>(() => ({
     empresaId: '',
@@ -5196,11 +5277,13 @@ const ApprovalsRequestsPage: React.FC = () => {
     litrosActuales: '',
     litrosSolicitados: '',
     motivo: '',
+    agenteId: '',
   }));
   const [polizaForm, setPolizaForm] = useState<PolizaRequestForm>(() => ({
     polizaFile: null,
     comprobanteFile: null,
     observaciones: '',
+    agenteId: '',
   }));
   const [polizaInputsVersion, setPolizaInputsVersion] = useState(0);
   const [adelantoForm, setAdelantoForm] = useState<AdelantoRequestForm>(() => ({
@@ -5211,6 +5294,7 @@ const ApprovalsRequestsPage: React.FC = () => {
     fechaSolicitud: '',
     motivo: '',
     observaciones: '',
+    agenteId: '',
   }));
 
   useEffect(() => {
@@ -5322,6 +5406,67 @@ const ApprovalsRequestsPage: React.FC = () => {
 
     return () => controller.abort();
   }, [apiBaseUrl]);
+
+  const fetchSolicitudes = useCallback(
+    async (options?: { signal?: AbortSignal }) => {
+      try {
+        setSolicitudesLoading(true);
+        setSolicitudesError(null);
+
+        const response = await fetch(`${apiBaseUrl}/api/personal?esSolicitud=1`, {
+          signal: options?.signal,
+        });
+
+        if (!response.ok) {
+          throw new Error(`Error ${response.status}: ${response.statusText}`);
+        }
+
+        const payload = (await response.json()) as { data: PersonalRecord[] };
+        if (!payload || !Array.isArray(payload.data)) {
+          throw new Error('Formato de respuesta inesperado');
+        }
+
+        setBackendSolicitudes(payload.data);
+      } catch (err) {
+        if ((err as Error).name === 'AbortError') {
+          return;
+        }
+        setSolicitudesError((err as Error).message ?? 'No se pudieron cargar las solicitudes.');
+      } finally {
+        setSolicitudesLoading(false);
+      }
+    },
+    [apiBaseUrl]
+  );
+
+  useEffect(() => {
+    const controller = new AbortController();
+    fetchSolicitudes({ signal: controller.signal });
+    return () => controller.abort();
+  }, [fetchSolicitudes]);
+
+  useEffect(() => {
+    const handler = (event: Event) => {
+      const customEvent = event as CustomEvent<{ persona?: PersonalRecord }>;
+      const persona = customEvent.detail?.persona;
+
+      if (persona) {
+        setBackendSolicitudes((prev) => {
+          const withoutPersona = prev.filter((item) => item.id !== persona.id);
+          if (persona.esSolicitud) {
+            return [persona, ...withoutPersona];
+          }
+          return withoutPersona;
+        });
+        return;
+      }
+
+      fetchSolicitudes();
+    };
+
+    window.addEventListener('personal:updated', handler as EventListener);
+    return () => window.removeEventListener('personal:updated', handler as EventListener);
+  }, [fetchSolicitudes]);
 
   const headerContent = (
     <div className="card-header card-header--compact">
@@ -5645,6 +5790,9 @@ const sucursalOptions = useMemo(() => {
       setAltaFilesVersion((value) => value + 1);
       setAltaDocumentType('');
       setAltaDocumentExpiry('');
+      window.dispatchEvent(new CustomEvent('personal:updated'));
+      handleGoToList();
+      fetchSolicitudes();
     } catch (err) {
       setFlash({
         type: 'error',
@@ -5853,11 +6001,51 @@ const sucursalOptions = useMemo(() => {
       setCombustibleSubmitting(true);
       setFlash(null);
 
-      console.log('Solicitud de combustible registrada', {
-        ...combustibleForm,
-        adjuntos: combustibleAttachments.map((file) => file.name),
-      });
-      await new Promise((resolve) => setTimeout(resolve, 250));
+      const formSnapshot = { ...combustibleForm };
+      const attachmentNames = combustibleAttachments.map((file) => file.name);
+      const clienteNombre =
+        formSnapshot.empresaId && meta?.clientes
+          ? meta.clientes.find((cliente) => cliente.id === Number(formSnapshot.empresaId))?.nombre ?? null
+          : null;
+      const sucursalNombre =
+        formSnapshot.sucursalId && meta?.sucursales
+          ? meta.sucursales.find((sucursal) => sucursal.id === Number(formSnapshot.sucursalId))?.nombre ?? null
+          : null;
+      const unidadDetalle = [formSnapshot.marca, formSnapshot.modelo].filter(Boolean).join(' · ') || null;
+      const todayLabel = new Date().toISOString().slice(0, 10);
+
+      const agenteNombre = resolveAgenteNombre(formSnapshot.agenteId);
+
+      const newRecord: PersonalRecord = {
+        id: createSyntheticId(),
+        nombre: formSnapshot.nombreCompleto || null,
+        cuil: null,
+        telefono: null,
+        email: formSnapshot.serviClubEmail || null,
+        cliente: clienteNombre,
+        unidad: formSnapshot.patente || null,
+        unidadDetalle,
+        sucursal: sucursalNombre,
+        fechaAlta: todayLabel,
+        perfil: 'Solicitud de combustible',
+        perfilValue: null,
+        agente: agenteNombre,
+        estado: 'Pendiente',
+        combustible: null,
+        combustibleValue: false,
+        tarifaEspecial: null,
+        tarifaEspecialValue: false,
+        aprobado: false,
+        aprobadoAt: null,
+        aprobadoPor: null,
+        esSolicitud: true,
+        solicitudTipo: 'combustible',
+        solicitudData: {
+          form: formSnapshot,
+          adjuntos: attachmentNames,
+        },
+      };
+      appendLocalSolicitud(newRecord);
 
       setFlash({
         type: 'success',
@@ -5875,9 +6063,11 @@ const sucursalOptions = useMemo(() => {
         modelo: '',
         kilometraje: '',
         observaciones: '',
+        agenteId: '',
       });
       setCombustibleAttachments([]);
       setCombustibleFilesVersion((value) => value + 1);
+      handleGoToList();
     } catch (err) {
       setFlash({
         type: 'error',
@@ -5909,11 +6099,52 @@ const sucursalOptions = useMemo(() => {
     try {
       setAumentoSubmitting(true);
       setFlash(null);
-      console.log('Solicitud de aumento de combustible registrada', {
-        ...aumentoCombustibleForm,
-        adjuntos: aumentoAttachments.map((file) => file.name),
-      });
-      await new Promise((resolve) => setTimeout(resolve, 250));
+
+      const formSnapshot = { ...aumentoCombustibleForm };
+      const attachmentNames = aumentoAttachments.map((file) => file.name);
+      const clienteNombre =
+        formSnapshot.empresaId && meta?.clientes
+          ? meta.clientes.find((cliente) => cliente.id === Number(formSnapshot.empresaId))?.nombre ?? null
+          : null;
+      const sucursalNombre =
+        formSnapshot.sucursalId && meta?.sucursales
+          ? meta.sucursales.find((sucursal) => sucursal.id === Number(formSnapshot.sucursalId))?.nombre ?? null
+          : null;
+      const unidadDetalle = [formSnapshot.marca, formSnapshot.modelo].filter(Boolean).join(' · ') || null;
+      const agenteNombre = resolveAgenteNombre(formSnapshot.agenteId);
+
+      const newRecord: PersonalRecord = {
+        id: createSyntheticId(),
+        nombre: formSnapshot.nombreCompleto || null,
+        cuil: null,
+        telefono: null,
+        email: formSnapshot.serviClubEmail || null,
+        cliente: clienteNombre,
+        unidad: formSnapshot.patente || null,
+        unidadDetalle,
+        sucursal: sucursalNombre,
+        fechaAlta: null,
+        perfil: 'Aumento de combustible',
+        perfilValue: null,
+        agente: agenteNombre,
+        estado: 'Pendiente',
+        combustible: null,
+        combustibleValue: false,
+        tarifaEspecial: null,
+        tarifaEspecialValue: false,
+        aprobado: false,
+        aprobadoAt: null,
+        aprobadoPor: null,
+        esSolicitud: true,
+        solicitudTipo: 'aumento_combustible',
+        solicitudData: {
+          form: formSnapshot,
+          adjuntos: attachmentNames,
+        },
+      };
+
+      appendLocalSolicitud(newRecord);
+
       setFlash({
         type: 'success',
         message: 'Solicitud de aumento de combustible registrada (modo demostración).',
@@ -5931,9 +6162,11 @@ const sucursalOptions = useMemo(() => {
         litrosActuales: '',
         litrosSolicitados: '',
         motivo: '',
+        agenteId: '',
       });
       setAumentoAttachments([]);
       setAumentoFilesVersion((value) => value + 1);
+      handleGoToList();
     } catch (err) {
       setFlash({
         type: 'error',
@@ -5961,12 +6194,47 @@ const sucursalOptions = useMemo(() => {
     try {
       setPolizaSubmitting(true);
       setFlash(null);
-      console.log('Solicitud de póliza registrada', {
+
+      const formSnapshot = {
+        observaciones: polizaForm.observaciones,
         polizaArchivo: polizaForm.polizaFile?.name ?? null,
         comprobanteArchivo: polizaForm.comprobanteFile?.name ?? null,
-        observaciones: polizaForm.observaciones,
-      });
-      await new Promise((resolve) => setTimeout(resolve, 250));
+        agenteId: polizaForm.agenteId,
+      };
+
+      const agenteNombre = resolveAgenteNombre(polizaForm.agenteId);
+
+      const newRecord: PersonalRecord = {
+        id: createSyntheticId(),
+        nombre: 'Solicitud de póliza',
+        cuil: null,
+        telefono: null,
+        email: null,
+        cliente: null,
+        unidad: null,
+        unidadDetalle: null,
+        sucursal: null,
+        fechaAlta: new Date().toISOString().slice(0, 10),
+        perfil: 'Solicitud de póliza',
+        perfilValue: null,
+        agente: agenteNombre,
+        estado: 'Pendiente',
+        combustible: null,
+        combustibleValue: false,
+        tarifaEspecial: null,
+        tarifaEspecialValue: false,
+        aprobado: false,
+        aprobadoAt: null,
+        aprobadoPor: null,
+        esSolicitud: true,
+        solicitudTipo: 'poliza',
+        solicitudData: {
+          form: formSnapshot,
+        },
+      };
+
+      appendLocalSolicitud(newRecord);
+
       setFlash({
         type: 'success',
         message: 'Solicitud de póliza registrada (modo demostración).',
@@ -5975,8 +6243,10 @@ const sucursalOptions = useMemo(() => {
         polizaFile: null,
         comprobanteFile: null,
         observaciones: '',
+        agenteId: '',
       });
       setPolizaInputsVersion((value) => value + 1);
+      handleGoToList();
     } catch (err) {
       setFlash({
         type: 'error',
@@ -6009,11 +6279,49 @@ const handleAdelantoFieldChange =
       setAdelantoSubmitting(true);
       setFlash(null);
 
-      console.log('Solicitud de adelanto registrada', {
-        ...adelantoForm,
-        adjuntos: adelantoAttachments.map((file) => file.name),
-      });
-      await new Promise((resolve) => setTimeout(resolve, 250));
+      const formSnapshot = { ...adelantoForm };
+      const attachmentNames = adelantoAttachments.map((file) => file.name);
+      const clienteNombre =
+        formSnapshot.empresaId && meta?.clientes
+          ? meta.clientes.find((cliente) => cliente.id === Number(formSnapshot.empresaId))?.nombre ?? null
+          : null;
+      const sucursalNombre =
+        formSnapshot.sucursalId && meta?.sucursales
+          ? meta.sucursales.find((sucursal) => sucursal.id === Number(formSnapshot.sucursalId))?.nombre ?? null
+          : null;
+      const agenteNombre = resolveAgenteNombre(formSnapshot.agenteId);
+
+      const newRecord: PersonalRecord = {
+        id: createSyntheticId(),
+        nombre: formSnapshot.transportista || null,
+        cuil: null,
+        telefono: null,
+        email: null,
+        cliente: clienteNombre,
+        unidad: null,
+        unidadDetalle: null,
+        sucursal: sucursalNombre,
+        fechaAlta: formSnapshot.fechaSolicitud || null,
+        perfil: 'Adelanto de pago',
+        perfilValue: null,
+        agente: agenteNombre,
+        estado: 'Pendiente',
+        combustible: null,
+        combustibleValue: false,
+        tarifaEspecial: null,
+        tarifaEspecialValue: false,
+        aprobado: false,
+        aprobadoAt: null,
+        aprobadoPor: null,
+        esSolicitud: true,
+        solicitudTipo: 'adelanto',
+        solicitudData: {
+          form: formSnapshot,
+          adjuntos: attachmentNames,
+        },
+      };
+
+      appendLocalSolicitud(newRecord);
 
       setFlash({
         type: 'success',
@@ -6028,9 +6336,11 @@ const handleAdelantoFieldChange =
         fechaSolicitud: '',
         motivo: '',
         observaciones: '',
+        agenteId: '',
       });
       setAdelantoAttachments([]);
       setAdelantoFilesVersion((value) => value + 1);
+      handleGoToList();
     } catch (err) {
       setFlash({
         type: 'error',
@@ -6116,6 +6426,337 @@ const handleAdelantoFieldChange =
       </ul>
     );
   };
+
+  const combinedSolicitudes = useMemo(
+    () => [...localSolicitudes, ...backendSolicitudes],
+    [localSolicitudes, backendSolicitudes]
+  );
+
+  const solicitudesPerfilOptions = useMemo(() => {
+    const labels = new Set<string>();
+    combinedSolicitudes.forEach((registro) => {
+      const label = perfilNames[registro.perfilValue ?? 0] ?? registro.perfil ?? '';
+      if (label) {
+        labels.add(label);
+      }
+    });
+    return Array.from(labels).sort((a, b) => a.localeCompare(b));
+  }, [combinedSolicitudes, perfilNames]);
+
+  const solicitudesAgenteOptions = useMemo(() => {
+    const labels = new Set<string>();
+    combinedSolicitudes.forEach((registro) => {
+      if (registro.agente) {
+        labels.add(registro.agente);
+      }
+    });
+    return Array.from(labels).sort((a, b) => a.localeCompare(b));
+  }, [combinedSolicitudes]);
+
+  const solicitudesEstadoOptions = useMemo(() => {
+    const labels = new Set<string>();
+    combinedSolicitudes.forEach((registro) => {
+      if (registro.estado) {
+        labels.add(registro.estado);
+      }
+    });
+    return Array.from(labels).sort((a, b) => a.localeCompare(b));
+  }, [combinedSolicitudes]);
+
+  const filteredSolicitudes = useMemo(() => {
+    const term = solicitudesSearchTerm.trim().toLowerCase();
+
+    return combinedSolicitudes.filter((registro) => {
+      const perfilLabel = perfilNames[registro.perfilValue ?? 0] ?? registro.perfil ?? '';
+
+      if (solicitudesPerfilFilter && perfilLabel !== solicitudesPerfilFilter) {
+        return false;
+      }
+
+      if (solicitudesAgenteFilter && registro.agente !== solicitudesAgenteFilter) {
+        return false;
+      }
+
+      if (solicitudesEstadoFilter && registro.estado !== solicitudesEstadoFilter) {
+        return false;
+      }
+
+      if (term.length === 0) {
+        return true;
+      }
+
+      const fields = [
+        registro.nombre,
+        registro.cuil,
+        registro.telefono,
+        registro.email,
+        registro.cliente,
+        registro.sucursal,
+        registro.unidadDetalle,
+        registro.unidad,
+        perfilLabel,
+        registro.agente,
+        registro.estado,
+      ];
+
+      return fields.some((field) => field?.toLowerCase().includes(term));
+    });
+  }, [
+    combinedSolicitudes,
+    solicitudesSearchTerm,
+    solicitudesPerfilFilter,
+    solicitudesAgenteFilter,
+    solicitudesEstadoFilter,
+    perfilNames,
+  ]);
+
+  const solicitudesFooterLabel = useMemo(() => {
+    if (solicitudesLoading) {
+      return 'Cargando solicitudes...';
+    }
+
+    if (solicitudesError) {
+      return 'No se pudieron cargar las solicitudes';
+    }
+
+    if (filteredSolicitudes.length === 0) {
+      return 'No hay solicitudes pendientes.';
+    }
+
+    if (filteredSolicitudes.length === combinedSolicitudes.length) {
+      return `Mostrando ${combinedSolicitudes.length} solicitud${combinedSolicitudes.length === 1 ? '' : 'es'}`;
+    }
+
+    return `Mostrando ${filteredSolicitudes.length} de ${combinedSolicitudes.length} solicitudes`;
+  }, [filteredSolicitudes.length, combinedSolicitudes.length, solicitudesLoading, solicitudesError]);
+
+  const handleSolicitudesReset = () => {
+    setSolicitudesSearchTerm('');
+    setSolicitudesPerfilFilter('');
+    setSolicitudesAgenteFilter('');
+    setSolicitudesEstadoFilter('');
+  };
+
+  const handleGoToList = () => {
+    setActiveTab('list');
+    setReviewPersonaDetail(null);
+    setReviewError(null);
+    setApprovalEstadoId('');
+    setReviewCommentText('');
+    setReviewCommentError(null);
+    setReviewCommentInfo(null);
+    setReviewLoading(false);
+    if (personaIdFromQuery) {
+      navigate('/aprobaciones', { replace: true });
+    }
+  };
+
+  const handleOpenSolicitud = (registro: PersonalRecord) => {
+    setReviewPersonaDetail(null);
+    setReviewError(null);
+    setApprovalEstadoId('');
+    setReviewCommentText('');
+    setReviewCommentError(null);
+    setReviewCommentInfo(null);
+
+    switch (registro.solicitudTipo) {
+      case 'combustible': {
+        setActiveTab('combustible');
+        const data = (registro.solicitudData as { form?: CombustibleRequestForm }) ?? {};
+        if (data.form) {
+          setCombustibleForm(data.form);
+        }
+        setCombustibleAttachments([]);
+        setCombustibleFilesVersion((value) => value + 1);
+        return;
+      }
+      case 'aumento_combustible': {
+        setActiveTab('aumento_combustible');
+        const data = (registro.solicitudData as { form?: AumentoCombustibleForm }) ?? {};
+        if (data.form) {
+          setAumentoCombustibleForm(data.form);
+        }
+        setAumentoAttachments([]);
+        setAumentoFilesVersion((value) => value + 1);
+        return;
+      }
+      case 'adelanto': {
+        setActiveTab('adelanto');
+        const data = (registro.solicitudData as { form?: AdelantoRequestForm }) ?? {};
+        if (data.form) {
+          setAdelantoForm(data.form);
+        }
+        setAdelantoAttachments([]);
+        setAdelantoFilesVersion((value) => value + 1);
+        return;
+      }
+      case 'poliza': {
+        setActiveTab('poliza');
+        const data = (registro.solicitudData as { form?: { observaciones?: string; agenteId?: string } }) ?? {};
+        setPolizaForm({
+          polizaFile: null,
+          comprobanteFile: null,
+          observaciones: data.form?.observaciones ?? '',
+          agenteId: data.form?.agenteId ?? '',
+        });
+        setPolizaInputsVersion((value) => value + 1);
+        return;
+      }
+      case 'alta':
+      default: {
+        setActiveTab('altas');
+        if (registro.id > 0) {
+          if (personaIdFromQuery !== String(registro.id)) {
+            navigate(`/aprobaciones?personaId=${registro.id}`);
+          }
+        }
+      }
+    }
+  };
+
+  const renderSolicitudesList = () => (
+    <div className="approvals-list">
+      <div className="card-header card-header--compact">
+        <div className="search-wrapper">
+          <input
+            type="search"
+            placeholder="Buscar"
+            value={solicitudesSearchTerm}
+            onChange={(event) => setSolicitudesSearchTerm(event.target.value)}
+          />
+        </div>
+        <div className="filters-actions">
+          <button type="button" className="secondary-action" onClick={() => fetchSolicitudes()}>
+            Actualizar
+          </button>
+          <button type="button" className="secondary-action" onClick={handleSolicitudesReset}>
+            Limpiar
+          </button>
+        </div>
+      </div>
+
+      <div className="filters-bar filters-bar--reclamos">
+        <div className="filters-grid filters-grid--reclamos">
+          <label className="filter-field">
+            <span>Perfil</span>
+            <select
+              value={solicitudesPerfilFilter}
+              onChange={(event) => setSolicitudesPerfilFilter(event.target.value)}
+            >
+              <option value="">Perfil</option>
+              {solicitudesPerfilOptions.map((option) => (
+                <option key={option} value={option}>
+                  {option}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="filter-field">
+            <span>Agente</span>
+            <select
+              value={solicitudesAgenteFilter}
+              onChange={(event) => setSolicitudesAgenteFilter(event.target.value)}
+            >
+              <option value="">Agente</option>
+              {solicitudesAgenteOptions.map((option) => (
+                <option key={option} value={option}>
+                  {option}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="filter-field">
+            <span>Estado</span>
+            <select
+              value={solicitudesEstadoFilter}
+              onChange={(event) => setSolicitudesEstadoFilter(event.target.value)}
+            >
+              <option value="">Estado</option>
+              {solicitudesEstadoOptions.map((option) => (
+                <option key={option} value={option}>
+                  {option}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+      </div>
+
+      <div className="table-wrapper">
+        <table>
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>Nombre</th>
+              <th>Perfil</th>
+              <th>Cliente</th>
+              <th>Sucursal</th>
+              <th>Agente</th>
+              <th>Estado</th>
+              <th>Fecha alta</th>
+              <th>Acciones</th>
+            </tr>
+          </thead>
+          <tbody>
+            {solicitudesLoading ? (
+              <tr>
+                <td colSpan={9}>Cargando solicitudes...</td>
+              </tr>
+            ) : solicitudesError ? (
+              <tr>
+                <td colSpan={9} className="error-cell">
+                  {solicitudesError}
+                </td>
+              </tr>
+            ) : filteredSolicitudes.length === 0 ? (
+              <tr>
+                <td colSpan={9}>No hay solicitudes pendientes.</td>
+              </tr>
+            ) : (
+              filteredSolicitudes.map((registro) => {
+                const perfilLabel = perfilNames[registro.perfilValue ?? 0] ?? registro.perfil ?? '—';
+                return (
+                  <tr key={registro.id}>
+                    <td>{registro.id}</td>
+                    <td>{registro.nombre ?? '—'}</td>
+                    <td>{perfilLabel}</td>
+                    <td>{registro.cliente ?? '—'}</td>
+                    <td>{registro.sucursal ?? '—'}</td>
+                    <td>{registro.agente ?? '—'}</td>
+                  <td>{registro.estado ?? '—'}</td>
+                  <td>{registro.fechaAlta ?? '—'}</td>
+                  <td>
+                    <div className="action-buttons">
+                      <button
+                        type="button"
+                        aria-label={`Abrir solicitud ${registro.nombre ?? registro.id}`}
+                        onClick={() => handleOpenSolicitud(registro)}
+                      >
+                        {registro.solicitudTipo && registro.solicitudTipo !== 'alta' ? '↗' : '👁️'}
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              );
+              })
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      <footer className="table-footer">
+        <span>{solicitudesFooterLabel}</span>
+        <div className="pagination">
+          <button disabled aria-label="Anterior">
+            ‹
+          </button>
+          <button disabled aria-label="Siguiente">
+            ›
+          </button>
+        </div>
+      </footer>
+    </div>
+  );
 
   const renderAltaPerfilSection = () => {
     switch (altaForm.perfilValue) {
@@ -6658,6 +7299,17 @@ const handleAdelantoFieldChange =
             </select>
           </label>
           <label className="input-control">
+            <span>Agente responsable</span>
+            <select value={combustibleForm.agenteId} onChange={handleCombustibleFieldChange('agenteId')}>
+              <option value="">Seleccionar</option>
+              {(meta?.agentes ?? []).map((agente) => (
+                <option key={agente.id} value={agente.id}>
+                  {agente.name ?? `Agente #${agente.id}`}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="input-control">
             <span>Nombre completo</span>
             <input
               type="text"
@@ -6758,6 +7410,7 @@ const handleAdelantoFieldChange =
               modelo: '',
               kilometraje: '',
               observaciones: '',
+              agenteId: '',
             });
             setCombustibleAttachments([]);
             setCombustibleFilesVersion((value) => value + 1);
@@ -6795,6 +7448,17 @@ const handleAdelantoFieldChange =
               {aumentoSucursalOptions.map((sucursal) => (
                 <option key={sucursal.id} value={sucursal.id}>
                   {sucursal.nombre ?? `Sucursal #${sucursal.id}`}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="input-control">
+            <span>Agente responsable</span>
+            <select value={aumentoCombustibleForm.agenteId} onChange={handleAumentoFieldChange('agenteId')}>
+              <option value="">Seleccionar</option>
+              {(meta?.agentes ?? []).map((agente) => (
+                <option key={agente.id} value={agente.id}>
+                  {agente.name ?? `Agente #${agente.id}`}
                 </option>
               ))}
             </select>
@@ -6923,6 +7587,7 @@ const handleAdelantoFieldChange =
               litrosActuales: '',
               litrosSolicitados: '',
               motivo: '',
+              agenteId: '',
             });
             setAumentoAttachments([]);
             setAumentoFilesVersion((value) => value + 1);
@@ -6967,6 +7632,22 @@ const handleAdelantoFieldChange =
               {polizaForm.comprobanteFile ? polizaForm.comprobanteFile.name : 'Adjunta el comprobante de pago vigente'}
             </small>
           </label>
+          <label className="input-control">
+            <span>Agente responsable</span>
+            <select
+              value={polizaForm.agenteId}
+              onChange={(event) =>
+                setPolizaForm((prev) => ({ ...prev, agenteId: event.target.value }))
+              }
+            >
+              <option value="">Seleccionar</option>
+              {(meta?.agentes ?? []).map((agente) => (
+                <option key={agente.id} value={agente.id}>
+                  {agente.name ?? `Agente #${agente.id}`}
+                </option>
+              ))}
+            </select>
+          </label>
         </div>
         <label className="input-control">
           <span>Observaciones</span>
@@ -6988,6 +7669,7 @@ const handleAdelantoFieldChange =
               polizaFile: null,
               comprobanteFile: null,
               observaciones: '',
+              agenteId: '',
             });
             setPolizaInputsVersion((value) => value + 1);
           }}
@@ -7024,6 +7706,17 @@ const handleAdelantoFieldChange =
               {adelantoSucursalOptions.map((sucursal) => (
                 <option key={sucursal.id} value={sucursal.id}>
                   {sucursal.nombre ?? `Sucursal #${sucursal.id}`}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="input-control">
+            <span>Agente responsable</span>
+            <select value={adelantoForm.agenteId} onChange={handleAdelantoFieldChange('agenteId')}>
+              <option value="">Seleccionar</option>
+              {(meta?.agentes ?? []).map((agente) => (
+                <option key={agente.id} value={agente.id}>
+                  {agente.name ?? `Agente #${agente.id}`}
                 </option>
               ))}
             </select>
@@ -7099,6 +7792,7 @@ const handleAdelantoFieldChange =
               fechaSolicitud: '',
               motivo: '',
               observaciones: '',
+              agenteId: '',
             });
             setAdelantoAttachments([]);
             setAdelantoFilesVersion((value) => value + 1);
@@ -7115,6 +7809,8 @@ const handleAdelantoFieldChange =
 
   const renderTabContent = () => {
     switch (activeTab) {
+      case 'list':
+        return renderSolicitudesList();
       case 'combustible':
         return renderCombustibleTab();
       case 'aumento_combustible':
@@ -7172,6 +7868,13 @@ const handleAdelantoFieldChange =
       ) : null}
 
       <div className="approvals-tabs">
+        <button
+          type="button"
+          className={`approvals-tab${activeTab === 'list' ? ' is-active' : ''}`}
+          onClick={handleGoToList}
+        >
+          Solicitudes pendientes
+        </button>
         <button
           type="button"
           className={`approvals-tab${activeTab === 'altas' ? ' is-active' : ''}`}
