@@ -121,7 +121,6 @@ class ReclamoController extends Controller
         ]);
 
         $reclamo = DB::transaction(function () use ($request, $validated) {
-            /** @var \App\Models\User|null $authenticated */
             $authenticated = $request->user();
             $creatorId = $validated['creatorId'] ?? $authenticated?->id ?? null;
 
@@ -188,38 +187,47 @@ class ReclamoController extends Controller
         ], 201);
     }
 
-    public function show(Reclamo $reclamo): JsonResponse
+    // NUEVO MÉTODO SHOW con soporte SoftDeletes
+    public function show($id): JsonResponse
     {
-        $reclamo->loadMissing([
-            'creator:id,name',
-            'agente:id,name',
-            'tipo:id,nombre',
-            'persona' => fn ($query) => $query->select(
-                'id',
-                'nombres',
-                'apellidos',
-                'cliente_id',
-                'cuil',
-                'telefono',
-                'email',
-                'patente',
-                'fecha_alta',
-                'sucursal_id',
-                'unidad_id',
-                'agente_id'
-            ),
-            'persona.cliente:id,nombre',
-            'persona.sucursal:id,nombre',
-            'persona.unidad:id,matricula,marca,modelo',
-            'persona.agente:id,name',
-            'comments' => fn ($query) => $query->orderBy('created_at'),
-            'comments.creator:id,name',
-            'comments.senderUser:id,name',
-            'comments.senderPersona:id,nombres,apellidos',
-            'logs' => fn ($query) => $query->orderBy('created_at'),
-            'logs.actor:id,name',
-            'documents' => fn ($query) => $query->orderByDesc('created_at'),
-        ]);
+        $reclamo = Reclamo::withTrashed()
+            ->with([
+                'creator:id,name',
+                'agente:id,name',
+                'tipo:id,nombre',
+                'persona' => fn ($query) => $query->select(
+                    'id',
+                    'nombres',
+                    'apellidos',
+                    'cliente_id',
+                    'cuil',
+                    'telefono',
+                    'email',
+                    'patente',
+                    'fecha_alta',
+                    'sucursal_id',
+                    'unidad_id',
+                    'agente_id'
+                ),
+                'persona.cliente:id,nombre',
+                'persona.sucursal:id,nombre',
+                'persona.unidad:id,matricula,marca,modelo',
+                'persona.agente:id,name',
+                'comments' => fn ($query) => $query->orderBy('created_at'),
+                'comments.creator:id,name',
+                'comments.senderUser:id,name',
+                'comments.senderPersona:id,nombres,apellidos',
+                'logs' => fn ($query) => $query->orderBy('created_at'),
+                'logs.actor:id,name',
+                'documents' => fn ($query) => $query->orderByDesc('created_at'),
+            ])
+            ->find($id);
+
+        if (! $reclamo) {
+            return response()->json([
+                'message' => 'El reclamo solicitado no existe o fue eliminado permanentemente.'
+            ], 404);
+        }
 
         return response()->json([
             'data' => $this->transformReclamo($reclamo, true),
@@ -643,9 +651,6 @@ class ReclamoController extends Controller
         return $base;
     }
 
-    /**
-     * @return array<string, string>
-     */
     protected function statusLabels(): array
     {
         return [
