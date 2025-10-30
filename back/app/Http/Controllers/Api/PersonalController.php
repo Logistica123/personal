@@ -32,13 +32,6 @@ class PersonalController extends Controller
         ])
             ->orderByDesc('id');
 
-        if (! $request->boolean('includePending')) {
-            $query->where(function ($builder) {
-                $builder
-                    ->where('aprobado', true)
-                    ->orWhereNull('aprobado');
-            });
-        }
 
         $personas = $query
             ->get()
@@ -48,9 +41,10 @@ class PersonalController extends Controller
         return response()->json(['data' => $personas]);
     }
 
-    public function show(Persona $persona): JsonResponse
-    {
-        $persona->load([
+    public function show($id): JsonResponse
+{
+    $persona = Persona::withTrashed()
+        ->with([
             'cliente:id,nombre',
             'unidad:id,matricula,marca,modelo',
             'sucursal:id,nombre',
@@ -59,12 +53,20 @@ class PersonalController extends Controller
             'estado:id,nombre',
             'documentos' => fn ($query) => $query->with('tipo:id,nombre,vence')->orderByDesc('created_at'),
             'comments.user:id,name',
-        ]);
+        ])
+        ->find($id);
 
+    if (! $persona) {
         return response()->json([
-            'data' => $this->buildPersonaDetail($persona),
-        ]);
+            'message' => 'El personal solicitado no existe o fue eliminado permanentemente.',
+        ], 404);
     }
+
+    return response()->json([
+        'data' => $this->buildPersonaDetail($persona),
+    ]);
+}
+
 
     public function update(Request $request, Persona $persona): JsonResponse
     {
@@ -85,6 +87,7 @@ class PersonalController extends Controller
             'cbuAlias' => ['nullable', 'string', 'max:255'],
             'patente' => ['nullable', 'string', 'max:100'],
             'fechaAlta' => ['nullable', 'date'],
+            'fechaAltaVinculacion' => ['nullable', 'date'],
             'observacionTarifa' => ['nullable', 'string'],
             'observaciones' => ['nullable', 'string'],
             'combustible' => ['nullable', 'boolean'],
@@ -142,6 +145,10 @@ class PersonalController extends Controller
 
         if (array_key_exists('fechaAlta', $validated)) {
             $persona->fecha_alta = $validated['fechaAlta'] ? Carbon::parse($validated['fechaAlta']) : null;
+        } elseif (array_key_exists('fechaAltaVinculacion', $validated)) {
+            $persona->fecha_alta = $validated['fechaAltaVinculacion']
+                ? Carbon::parse($validated['fechaAltaVinculacion'])
+                : null;
         }
 
         if (array_key_exists('combustible', $validated)) {
@@ -243,9 +250,18 @@ class PersonalController extends Controller
 
     public function store(Request $request): JsonResponse
     {
+        $perfilValue = (int) $request->input('perfilValue', 0);
+        $apellidosRules = ['string', 'max:255'];
+
+        if ($perfilValue === 2) {
+            array_unshift($apellidosRules, 'nullable');
+        } else {
+            array_unshift($apellidosRules, 'required');
+        }
+
         $validated = $request->validate([
             'nombres' => ['required', 'string', 'max:255'],
-            'apellidos' => ['required', 'string', 'max:255'],
+            'apellidos' => $apellidosRules,
             'cuil' => ['nullable', 'string', 'max:255'],
             'telefono' => ['nullable', 'string', 'max:255'],
             'email' => ['nullable', 'email', 'max:255'],
@@ -260,6 +276,7 @@ class PersonalController extends Controller
             'cbuAlias' => ['nullable', 'string', 'max:255'],
             'patente' => ['nullable', 'string', 'max:100'],
             'fechaAlta' => ['nullable', 'date'],
+            'fechaAltaVinculacion' => ['nullable', 'date'],
             'observacionTarifa' => ['nullable', 'string'],
             'observaciones' => ['nullable', 'string'],
             'combustible' => ['required', 'boolean'],
@@ -278,10 +295,12 @@ class PersonalController extends Controller
 
         $autoApprove = array_key_exists('autoApprove', $validated) ? (bool) $validated['autoApprove'] : false;
         $autoApproveUserId = $validated['autoApproveUserId'] ?? null;
+        $fechaAltaInput = $validated['fechaAlta'] ?? $validated['fechaAltaVinculacion'] ?? null;
+        $fechaAltaValue = $fechaAltaInput ? Carbon::parse($fechaAltaInput) : null;
 
         $persona = Persona::create([
             'nombres' => $validated['nombres'],
-            'apellidos' => $validated['apellidos'],
+            'apellidos' => $validated['apellidos'] ?? null,
             'cuil' => $validated['cuil'] ?? null,
             'telefono' => $validated['telefono'] ?? null,
             'email' => $validated['email'] ?? null,
@@ -295,7 +314,7 @@ class PersonalController extends Controller
             'pago' => $validated['pago'] ?? null,
             'cbu_alias' => $validated['cbuAlias'] ?? null,
             'patente' => $validated['patente'] ?? null,
-            'fecha_alta' => $validated['fechaAlta'] ?? null,
+            'fecha_alta' => $fechaAltaValue,
             'observaciontarifa' => $validated['observacionTarifa'] ?? null,
             'observaciones' => $validated['observaciones'] ?? null,
             'combustible' => $validated['combustible'],
@@ -542,7 +561,7 @@ class PersonalController extends Controller
             'patente' => $persona->patente,
             'observacionTarifa' => $persona->observaciontarifa,
             'observaciones' => $persona->observaciones,
-            'fechaAlta' => optional($persona->fecha_alta)->format('Y-m-d'),
+            'fechaAlta' => $this->formatFechaAlta($persona->fecha_alta),
             'aprobado' => $persona->aprobado === null ? true : (bool) $persona->aprobado,
             'aprobadoAt' => optional($persona->aprobado_at)->toIso8601String(),
             'aprobadoPorId' => $persona->aprobado_por,
@@ -599,7 +618,7 @@ class PersonalController extends Controller
             'cliente' => $persona->cliente?->nombre,
             'unidad' => $persona->unidad?->matricula,
             'unidadDetalle' => $persona->unidad ? trim(($persona->unidad->marca ?? '') . ' ' . ($persona->unidad->modelo ?? '')) ?: null : null,
-            'fechaAlta' => optional($persona->fecha_alta)->format('Y-m-d'),
+            'fechaAlta' => $this->formatFechaAlta($persona->fecha_alta),
             'sucursal' => $persona->sucursal?->nombre,
             'perfil' => $perfil,
             'perfilValue' => $persona->tipo,
@@ -617,5 +636,23 @@ class PersonalController extends Controller
             'aprobadoPor' => $persona->aprobadoPor?->name,
             'esSolicitud' => (bool) $persona->es_solicitud,
         ];
+    }
+
+    protected function formatFechaAlta($value): ?string
+    {
+        if (! $value) {
+            return null;
+        }
+
+        if ($value instanceof Carbon) {
+            return $value->format('Y-m-d');
+        }
+
+        try {
+            return Carbon::parse($value)->format('Y-m-d');
+        } catch (\Throwable $exception) {
+            report($exception);
+            return null;
+        }
     }
 }

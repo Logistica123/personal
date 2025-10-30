@@ -390,6 +390,28 @@
   box-shadow: 0 6px 12px rgba(29, 116, 245, 0.18);
 }
 
+.time-button--active-in {
+  border: none;
+  background: linear-gradient(135deg, #2fba5d, #1a9443);
+  color: #ffffff;
+  box-shadow: 0 6px 12px rgba(47, 186, 93, 0.18);
+}
+
+.time-button--active-in:hover {
+  box-shadow: 0 8px 18px rgba(47, 186, 93, 0.25);
+}
+
+.time-button--active-out {
+  border: none;
+  background: linear-gradient(135deg, #ff6b6b, #d93a3a);
+  color: #ffffff;
+  box-shadow: 0 6px 12px rgba(217, 58, 58, 0.18);
+}
+
+.time-button--active-out:hover {
+  box-shadow: 0 8px 18px rgba(217, 58, 58, 0.25);
+}
+
 .topbar-button {
   width: 42px;
   height: 42px;

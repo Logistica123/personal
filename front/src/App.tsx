@@ -430,30 +430,135 @@ const useStoredAuthUser = (): AuthUser | null => {
 const ATTENDANCE_RECORD_KEY = 'attendanceRecord';
 const ATTENDANCE_LOG_KEY = 'attendanceLog';
 
-const readAttendanceRecordFromStorage = (): AttendanceRecord | null => {
-  if (typeof window === 'undefined') {
+const deriveAttendanceUserKey = (authUser: AuthUser | null): string | null => {
+  if (!authUser) {
     return null;
+  }
+
+  if (authUser.id != null) {
+    return `id-${authUser.id}`;
+  }
+
+  const normalizedName = authUser.name?.trim().toLowerCase();
+  if (normalizedName && normalizedName.length > 0) {
+    return `name-${normalizedName}`;
+  }
+
+  const normalizedEmail = authUser.email?.trim().toLowerCase();
+  if (normalizedEmail && normalizedEmail.length > 0) {
+    return `email-${normalizedEmail}`;
+  }
+
+  return null;
+};
+
+const readAttendanceStore = (): Record<string, AttendanceRecord> => {
+  if (typeof window === 'undefined') {
+    return {};
   }
   const raw = window.localStorage.getItem(ATTENDANCE_RECORD_KEY);
   if (!raw) {
-    return null;
+    return {};
   }
   try {
-    const parsed = JSON.parse(raw) as AttendanceRecord;
-    if (
-      parsed &&
-      (parsed.status === 'entrada' || parsed.status === 'salida') &&
-      typeof parsed.timestamp === 'string'
-    ) {
-      return {
-        ...parsed,
-        userKey: buildAttendanceUserKey(parsed),
-      };
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object') {
+      return {};
     }
+    const entries = Object.entries(parsed)
+      .filter((entry): entry is [string, AttendanceRecord] => {
+        if (!Array.isArray(entry) || entry.length !== 2) {
+          return false;
+        }
+
+        const value = entry[1] as Partial<AttendanceRecord> | undefined;
+        if (!value) {
+          return false;
+        }
+
+        const { status, timestamp } = value;
+
+        return (
+          (status === 'entrada' || status === 'salida') &&
+          typeof timestamp === 'string'
+        );
+      })
+      .map(([key, record]) => {
+        const normalized: AttendanceRecord = {
+          ...record,
+          userKey: buildAttendanceUserKey(record),
+        };
+        return [key, normalized] as [string, AttendanceRecord];
+      });
+    return Object.fromEntries(entries);
   } catch {
     // ignore corrupted storage
   }
-  return null;
+  return {};
+};
+
+const writeAttendanceStore = (store: Record<string, AttendanceRecord>) => {
+  if (typeof window === 'undefined') {
+    return;
+  }
+  const keys = Object.keys(store);
+  if (keys.length === 0) {
+    window.localStorage.removeItem(ATTENDANCE_RECORD_KEY);
+    return;
+  }
+  const payload = keys.reduce<Record<string, AttendanceRecord>>((acc, key) => {
+    const record = store[key];
+    acc[key] = {
+      ...record,
+      userKey: buildAttendanceUserKey(record),
+    };
+    return acc;
+  }, {});
+  window.localStorage.setItem(ATTENDANCE_RECORD_KEY, JSON.stringify(payload));
+};
+
+const removeAttendanceRecordFromStorage = (userKey: string | null | undefined) => {
+  if (!userKey) {
+    return;
+  }
+  const store = readAttendanceStore();
+  if (!store[userKey]) {
+    return;
+  }
+  delete store[userKey];
+  writeAttendanceStore(store);
+};
+
+const persistAttendanceRecord = (record: AttendanceRecord) => {
+  const userKey = record.userKey ?? buildAttendanceUserKey(record);
+  const store = readAttendanceStore();
+  store[userKey] = {
+    ...record,
+    userKey,
+  };
+  writeAttendanceStore(store);
+};
+
+const readAttendanceRecordFromStorage = (expectedUserKey?: string | null): AttendanceRecord | null => {
+  if (!expectedUserKey) {
+    return null;
+  }
+  const store = readAttendanceStore();
+  const record = store[expectedUserKey];
+  if (!record) {
+    return null;
+  }
+  return {
+    ...record,
+    userKey: buildAttendanceUserKey(record),
+  };
+};
+
+const clearAttendanceStore = () => {
+  if (typeof window === 'undefined') {
+    return;
+  }
+  window.localStorage.removeItem(ATTENDANCE_RECORD_KEY);
 };
 
 const readAttendanceLogFromStorage = (): AttendanceRecord[] => {
@@ -765,10 +870,11 @@ const DashboardLayout: React.FC<{
   const [unreadCount, setUnreadCount] = useState(0);
   const [notificationsVersion, setNotificationsVersion] = useState(0);
   const [currentTime, setCurrentTime] = useState(() => new Date());
-  const [attendanceRecord, setAttendanceRecord] = useState<AttendanceRecord | null>(() =>
-    readAttendanceRecordFromStorage()
-  );
-
+  const [attendanceRecord, setAttendanceRecord] = useState<AttendanceRecord | null>(() => {
+    const storedUser = readAuthUserFromStorage();
+    return readAttendanceRecordFromStorage(deriveAttendanceUserKey(storedUser));
+  });
+  const currentUserKey = useMemo(() => deriveAttendanceUserKey(authUser), [authUser]);
   useEffect(() => {
     setAuthUser(readAuthUserFromStorage());
   }, []);
@@ -799,28 +905,18 @@ const DashboardLayout: React.FC<{
   }, []);
 
   useEffect(() => {
-    if (typeof window === 'undefined') {
+    if (!currentUserKey) {
       return;
     }
     if (attendanceRecord) {
-      window.localStorage.setItem(ATTENDANCE_RECORD_KEY, JSON.stringify(attendanceRecord));
+      persistAttendanceRecord({
+        ...attendanceRecord,
+        userKey: currentUserKey,
+      });
     } else {
-      window.localStorage.removeItem(ATTENDANCE_RECORD_KEY);
+      removeAttendanceRecordFromStorage(currentUserKey);
     }
-  }, [attendanceRecord]);
-
-  useEffect(() => {
-    const handler = (event: Event) => {
-      const custom = event as CustomEvent<AttendanceRecord | null | undefined>;
-      if (custom.detail !== undefined) {
-        setAttendanceRecord(custom.detail ?? null);
-        return;
-      }
-      setAttendanceRecord(readAttendanceRecordFromStorage());
-    };
-    window.addEventListener('attendance:updated', handler as EventListener);
-    return () => window.removeEventListener('attendance:updated', handler as EventListener);
-  }, []);
+  }, [attendanceRecord, currentUserKey]);
 
   const formattedClock = useMemo(
     () =>
@@ -858,6 +954,10 @@ const DashboardLayout: React.FC<{
     return `Última salida registrada · ${dateLabel} ${timeLabel}`;
   }, [attendanceRecord, currentTime]);
 
+  const isWorking = attendanceRecord?.status === 'entrada';
+  const entryButtonClassName = isWorking ? 'time-button time-button--active-in' : 'time-button time-button--in';
+  const exitButtonClassName = isWorking ? 'time-button time-button--active-out' : 'time-button';
+
   const displayName = useMemo(() => {
     if (authUser?.name && authUser.name.trim().length > 0) {
       return authUser.name.trim();
@@ -885,6 +985,15 @@ const DashboardLayout: React.FC<{
   );
 
   useEffect(() => {
+    if (!currentUserKey) {
+      setAttendanceRecord(null);
+      return;
+    }
+
+    setAttendanceRecord(readAttendanceRecordFromStorage(currentUserKey));
+  }, [currentUserKey]);
+
+  useEffect(() => {
     const handler = () => setNotificationsVersion((value) => value + 1);
     window.addEventListener('notifications:updated', handler);
     return () => window.removeEventListener('notifications:updated', handler);
@@ -894,14 +1003,31 @@ const DashboardLayout: React.FC<{
     const handler = (event: Event) => {
       const custom = event as CustomEvent<AttendanceRecord | null | undefined>;
       if (custom.detail !== undefined) {
-        setAttendanceRecord(custom.detail ?? null);
+        if (custom.detail === null) {
+          setAttendanceRecord(null);
+          removeAttendanceRecordFromStorage(currentUserKey);
+          return;
+        }
+
+        if (!currentUserKey || custom.detail.userKey !== currentUserKey) {
+          return;
+        }
+
+        setAttendanceRecord(custom.detail);
         return;
       }
-      setAttendanceRecord(readAttendanceRecordFromStorage());
+
+      if (!currentUserKey) {
+        setAttendanceRecord(null);
+        return;
+      }
+
+      setAttendanceRecord(readAttendanceRecordFromStorage(currentUserKey));
     };
+
     window.addEventListener('attendance:updated', handler as EventListener);
     return () => window.removeEventListener('attendance:updated', handler as EventListener);
-  }, []);
+  }, [currentUserKey]);
 
   useEffect(() => {
     if (!authUser?.id || authUser?.role) {
@@ -1006,14 +1132,22 @@ const DashboardLayout: React.FC<{
     if (typeof window !== 'undefined') {
       window.localStorage.removeItem('authUser');
       window.sessionStorage.removeItem('authUser');
-      setAuthUser(null);
     }
+    removeAttendanceRecordFromStorage(currentUserKey);
+    setAttendanceRecord(null);
+    setAuthUser(null);
+    window.dispatchEvent(new CustomEvent('attendance:updated', { detail: null }));
     window.dispatchEvent(new CustomEvent('notifications:updated'));
     window.dispatchEvent(new CustomEvent('auth:updated'));
     window.location.href = '/';
   };
 
   const handleMarkAttendance = (status: AttendanceRecord['status']) => {
+    if (!currentUserKey) {
+      window.alert('No se pudo identificar al usuario actual.');
+      return;
+    }
+
     const confirmationMessage =
       status === 'entrada'
         ? '¿Estás seguro/a que querés registrar Entrada al horario laboral?'
@@ -1033,14 +1167,11 @@ const DashboardLayout: React.FC<{
       timestamp: new Date().toISOString(),
       userId: authUser?.id ?? null,
       userName: operatorName,
+      userKey: currentUserKey,
     };
-    const enrichedRecord: AttendanceRecord = {
-      ...record,
-      userKey: buildAttendanceUserKey(record),
-    };
-    setAttendanceRecord(enrichedRecord);
-    appendAttendanceLog(enrichedRecord);
-    window.dispatchEvent(new CustomEvent('attendance:updated', { detail: enrichedRecord }));
+    setAttendanceRecord(record);
+    appendAttendanceLog(record);
+    window.dispatchEvent(new CustomEvent('attendance:updated', { detail: record }));
   };
 
   return (
@@ -1115,12 +1246,12 @@ const DashboardLayout: React.FC<{
               <div className="time-tracker__actions">
                 <button
                   type="button"
-                  className="time-button time-button--in"
+                  className={entryButtonClassName}
                   onClick={() => handleMarkAttendance('entrada')}
                 >
                   Entrada
                 </button>
-                <button type="button" className="time-button" onClick={() => handleMarkAttendance('salida')}>
+                <button type="button" className={exitButtonClassName} onClick={() => handleMarkAttendance('salida')}>
                   Salida
                 </button>
               </div>
@@ -4575,7 +4706,7 @@ const AttendanceLogPage: React.FC = () => {
     }
     if (typeof window !== 'undefined') {
       window.localStorage.removeItem(ATTENDANCE_LOG_KEY);
-      window.localStorage.removeItem(ATTENDANCE_RECORD_KEY);
+      clearAttendanceStore();
     }
     setLog([]);
     window.dispatchEvent(new CustomEvent('attendance:updated', { detail: null }));

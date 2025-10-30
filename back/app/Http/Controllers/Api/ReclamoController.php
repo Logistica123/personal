@@ -60,7 +60,16 @@ class ReclamoController extends Controller
 
         $transportistas = Persona::query()
             ->select('id', 'nombres', 'apellidos')
-            ->where('aprobado', true)
+            ->where(function ($query) {
+                $query
+                    ->where('aprobado', true)
+                    ->orWhereNull('aprobado');
+            })
+            ->where(function ($query) {
+                $query
+                    ->whereNull('es_solicitud')
+                    ->orWhere('es_solicitud', false);
+            })
             ->orderBy('apellidos')
             ->orderBy('nombres')
             ->get()
