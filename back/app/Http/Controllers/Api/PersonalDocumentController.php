@@ -183,15 +183,33 @@ class PersonalDocumentController extends Controller
             abort(404);
         }
 
-        $disk = $documento->disk ?? 'public';
+        $disk = $documento->disk ?: config('filesystems.default', 'public');
+        $disks = config('filesystems.disks', []);
+        $hasDisk = $disk && array_key_exists($disk, $disks);
+        $downloadUrl = $documento->download_url;
 
-        if (! Storage::disk($disk)->exists($documento->ruta)) {
-            abort(404);
+        if (! $hasDisk) {
+            return $this->redirectToExternalUrl($downloadUrl);
+        }
+
+        $path = $documento->ruta;
+
+        if (! $path || ! Storage::disk($disk)->exists($path)) {
+            return $this->redirectToExternalUrl($downloadUrl);
         }
 
         $nombre = $documento->nombre_original ?? basename($documento->ruta ?? 'documento');
 
-        return Storage::disk($disk)->download($documento->ruta, $nombre);
+        return Storage::disk($disk)->download($path, $nombre);
+    }
+
+    protected function redirectToExternalUrl(?string $url)
+    {
+        if ($url && preg_match('/^https?:\/\//i', $url)) {
+            return redirect()->away($url);
+        }
+
+        abort(404, 'El archivo solicitado no está disponible.');
     }
 
     public function update(Request $request, FileType $tipo): JsonResponse
