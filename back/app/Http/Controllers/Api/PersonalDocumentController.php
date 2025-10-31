@@ -10,6 +10,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Validator;
 
@@ -183,33 +184,128 @@ class PersonalDocumentController extends Controller
             abort(404);
         }
 
+        $documento->loadMissing('tipo:id,nombre');
+
         $disk = $documento->disk ?: config('filesystems.default', 'public');
         $disks = config('filesystems.disks', []);
         $hasDisk = $disk && array_key_exists($disk, $disks);
         $downloadUrl = $documento->download_url;
+        $fileName = $this->buildDownloadFileName($documento, $downloadUrl);
 
         if (! $hasDisk) {
-            return $this->redirectToExternalUrl($downloadUrl);
+            return $this->streamExternalFile($downloadUrl, $fileName, $documento->mime);
         }
 
         $path = $documento->ruta;
 
         if (! $path || ! Storage::disk($disk)->exists($path)) {
-            return $this->redirectToExternalUrl($downloadUrl);
+            return $this->streamExternalFile($downloadUrl, $fileName, $documento->mime);
         }
 
-        $nombre = $documento->nombre_original ?? basename($documento->ruta ?? 'documento');
-
-        return Storage::disk($disk)->download($path, $nombre);
+        return Storage::disk($disk)->download($path, $fileName);
     }
 
-    protected function redirectToExternalUrl(?string $url)
+    protected function streamExternalFile(?string $url, string $fileName, ?string $mime = null)
     {
-        if ($url && preg_match('/^https?:\/\//i', $url)) {
-            return redirect()->away($url);
+        if (! $url || ! preg_match('/^https?:\/\//i', $url)) {
+            abort(404, 'El archivo solicitado no está disponible.');
         }
 
-        abort(404, 'El archivo solicitado no está disponible.');
+        try {
+            $response = Http::withOptions(['stream' => true])->get($url);
+        } catch (\Throwable $exception) {
+            report($exception);
+            abort(404, 'No se pudo acceder al archivo solicitado.');
+        }
+
+        if ($response->failed()) {
+            abort(404, 'El archivo solicitado no está disponible.');
+        }
+
+        $psrResponse = $response->toPsrResponse();
+        $stream = $psrResponse->getBody();
+
+        $contentType = $mime ?: $response->header('Content-Type') ?: 'application/octet-stream';
+
+        return response()->streamDownload(function () use ($stream) {
+            while (! $stream->eof()) {
+                echo $stream->read(8192);
+            }
+            $stream->close();
+        }, $fileName, [
+            'Content-Type' => $contentType,
+        ]);
+    }
+
+    protected function buildDownloadFileName(Archivo $documento, ?string $downloadUrl): string
+    {
+        $tipoNombre = $documento->tipo?->nombre;
+        $nombreArchivo = $documento->nombre_original;
+
+        if ($tipoNombre && $nombreArchivo) {
+            $baseName = trim($tipoNombre).' - '.trim($nombreArchivo);
+        } elseif ($tipoNombre) {
+            $baseName = trim($tipoNombre);
+        } elseif ($nombreArchivo) {
+            $baseName = trim($nombreArchivo);
+        } else {
+            $baseName = basename($documento->ruta ?? '') ?: 'documento';
+        }
+
+        $baseName = trim($baseName);
+
+        $extension = $this->resolveExtension($documento, $downloadUrl);
+
+        if ($extension) {
+            $extension = ltrim($extension, '.');
+
+            // Si el nombre compuesto ya termina con la extensión, no la duplicamos
+            if (! str_ends_with(strtolower($baseName), '.'.strtolower($extension))) {
+                return sprintf('%s.%s', $baseName, $extension);
+            }
+        }
+
+        return $baseName;
+    }
+
+    protected function resolveExtension(Archivo $documento, ?string $downloadUrl): ?string
+    {
+        $candidates = [
+            $documento->nombre_original,
+            $documento->ruta,
+        ];
+
+        if ($downloadUrl) {
+            $parsed = parse_url($downloadUrl, PHP_URL_PATH);
+            if ($parsed) {
+                $candidates[] = $parsed;
+            }
+        }
+
+        foreach ($candidates as $candidate) {
+            if (! $candidate) {
+                continue;
+            }
+
+            $extension = pathinfo($candidate, PATHINFO_EXTENSION);
+            if ($extension) {
+                return $extension;
+            }
+        }
+
+        if ($documento->mime) {
+            $map = [
+                'image/jpeg' => 'jpg',
+                'image/jpg' => 'jpg',
+                'image/png' => 'png',
+                'image/gif' => 'gif',
+                'application/pdf' => 'pdf',
+            ];
+
+            return $map[strtolower($documento->mime)] ?? null;
+        }
+
+        return null;
     }
 
     public function update(Request $request, FileType $tipo): JsonResponse
