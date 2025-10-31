@@ -29,6 +29,8 @@ class PersonalController extends Controller
             'agente:id,name',
             'agenteResponsable:id,name',
             'estado:id,nombre',
+            'dueno:id,persona_id,nombreapellido,fecha_nacimiento,email,telefono,cuil,cuil_cobrador,cbu_alias,observaciones',
+            'aprobadoPor:id,name',
         ])
             ->orderByDesc('id');
 
@@ -72,6 +74,7 @@ class PersonalController extends Controller
             'estado:id,nombre',
             'documentos' => fn ($query) => $query->with('tipo:id,nombre,vence')->orderByDesc('created_at'),
             'comments.user:id,name',
+            'histories.user:id,name',
         ])
         ->find($id);
 
@@ -119,6 +122,11 @@ class PersonalController extends Controller
             'duenoTelefono' => ['nullable', 'string', 'max:255'],
             'duenoObservaciones' => ['nullable', 'string'],
         ]);
+
+        $personaHistoryDefinitions = $this->getPersonaHistoryFieldDefinitions();
+        $ownerHistoryDefinitions = $this->getPersonaOwnerHistoryFieldDefinitions();
+        $originalPersonaSnapshot = $this->capturePersonaHistorySnapshot($persona, $personaHistoryDefinitions);
+        $originalOwnerSnapshot = $this->capturePersonaOwnerHistorySnapshot($persona->dueno, $ownerHistoryDefinitions);
 
         $stringAssignments = [
             'nombres' => 'nombres',
@@ -214,6 +222,24 @@ class PersonalController extends Controller
             }
         }
 
+        $persona->loadMissing('dueno');
+
+        $updatedPersonaSnapshot = $this->capturePersonaHistorySnapshot($persona, $personaHistoryDefinitions);
+        $updatedOwnerSnapshot = $this->capturePersonaOwnerHistorySnapshot($persona->dueno, $ownerHistoryDefinitions);
+
+        $historyChanges = array_merge(
+            $this->computeHistoryChanges($personaHistoryDefinitions, $originalPersonaSnapshot, $updatedPersonaSnapshot),
+            $this->computeHistoryChanges($ownerHistoryDefinitions, $originalOwnerSnapshot, $updatedOwnerSnapshot)
+        );
+
+        if (! empty($historyChanges)) {
+            $persona->histories()->create([
+                'user_id' => $request->user()?->id,
+                'description' => 'Actualización de datos del personal',
+                'changes' => $historyChanges,
+            ]);
+        }
+
         $persona->refresh();
         $persona->load([
             'cliente:id,nombre',
@@ -224,6 +250,7 @@ class PersonalController extends Controller
             'estado:id,nombre',
             'documentos' => fn ($query) => $query->with('tipo:id,nombre,vence')->orderByDesc('created_at'),
             'comments.user:id,name',
+            'histories.user:id,name',
         ]);
 
         return response()->json([
@@ -591,7 +618,7 @@ class PersonalController extends Controller
                 $downloadUrl = route('personal.documentos.descargar', [
                     'persona' => $documento->persona_id,
                     'documento' => $documento->id,
-                ]);
+                ], false);
 
                 return [
                     'id' => $documento->id,
@@ -615,6 +642,28 @@ class PersonalController extends Controller
                     'createdAtLabel' => $comment->created_at?->timezone(config('app.timezone', 'UTC'))?->format('d/m/Y H:i'),
                 ];
             })->values(),
+            'history' => $persona->histories->map(function ($history) {
+                $changes = collect($history->changes ?? [])
+                    ->map(function ($change) {
+                        return [
+                            'field' => $change['field'] ?? null,
+                            'label' => $change['label'] ?? ($change['field'] ?? null),
+                            'oldValue' => $change['oldValue'] ?? null,
+                            'newValue' => $change['newValue'] ?? null,
+                        ];
+                    })
+                    ->values();
+
+                return [
+                    'id' => $history->id,
+                    'authorId' => $history->user_id,
+                    'authorName' => $history->user?->name,
+                    'description' => $history->description,
+                    'createdAt' => $history->created_at?->toIso8601String(),
+                    'createdAtLabel' => $history->created_at?->timezone(config('app.timezone', 'UTC'))?->format('d/m/Y H:i'),
+                    'changes' => $changes,
+                ];
+            })->values(),
         ];
     }
 
@@ -632,14 +681,19 @@ class PersonalController extends Controller
         return [
             'id' => $persona->id,
             'nombre' => trim(($persona->nombres ?? '') . ' ' . ($persona->apellidos ?? '')) ?: null,
+            'nombres' => $persona->nombres,
+            'apellidos' => $persona->apellidos,
             'cuil' => $persona->cuil,
             'telefono' => $persona->telefono,
             'email' => $persona->email,
             'cliente' => $persona->cliente?->nombre,
+            'clienteId' => $persona->cliente_id,
             'unidad' => $persona->unidad?->matricula,
             'unidadDetalle' => $persona->unidad ? trim(($persona->unidad->marca ?? '') . ' ' . ($persona->unidad->modelo ?? '')) ?: null : null,
+            'unidadId' => $persona->unidad_id,
             'fechaAlta' => $this->formatFechaAlta($persona->fecha_alta),
             'sucursal' => $persona->sucursal?->nombre,
+            'sucursalId' => $persona->sucursal_id,
             'perfil' => $perfil,
             'perfilValue' => $persona->tipo,
             'agente' => $persona->agente?->name,
@@ -647,15 +701,30 @@ class PersonalController extends Controller
             'agenteResponsable' => $persona->agenteResponsable?->name,
             'agenteResponsableId' => $persona->agente_responsable_id,
             'estado' => $persona->estado?->nombre,
+            'estadoId' => $persona->estado_id,
             'combustible' => $persona->combustible ? 'Sí' : 'No',
             'combustibleValue' => (bool) $persona->combustible,
             'tarifaEspecial' => $persona->tarifaespecial ? 'Sí' : 'No',
             'tarifaEspecialValue' => (bool) $persona->tarifaespecial,
+            'pago' => $persona->pago !== null ? (string) $persona->pago : null,
+            'cbuAlias' => $persona->cbu_alias,
+            'patente' => $persona->patente,
+            'observacionTarifa' => $persona->observaciontarifa,
+            'observaciones' => $persona->observaciones,
             'aprobado' => $aprobado,
             'aprobadoAt' => optional($persona->aprobado_at)->format('Y-m-d H:i:s'),
             'aprobadoPor' => $persona->aprobadoPor?->name,
+            'aprobadoPorId' => $persona->aprobado_por,
             'esSolicitud' => (bool) $persona->es_solicitud,
             'solicitudTipo' => $persona->es_solicitud ? 'alta' : null,
+            'duenoNombre' => $persona->dueno?->nombreapellido,
+            'duenoFechaNacimiento' => optional($persona->dueno?->fecha_nacimiento)->format('Y-m-d'),
+            'duenoEmail' => $persona->dueno?->email,
+            'duenoTelefono' => $persona->dueno?->telefono,
+            'duenoCuil' => $persona->dueno?->cuil,
+            'duenoCuilCobrador' => $persona->dueno?->cuil_cobrador,
+            'duenoCbuAlias' => $persona->dueno?->cbu_alias,
+            'duenoObservaciones' => $persona->dueno?->observaciones,
         ];
     }
 
@@ -675,5 +744,339 @@ class PersonalController extends Controller
             report($exception);
             return null;
         }
+    }
+
+    protected function getPersonaHistoryFieldDefinitions(): array
+    {
+        return [
+            'nombres' => ['label' => 'Nombre'],
+            'apellidos' => ['label' => 'Apellido'],
+            'cuil' => ['label' => 'CUIL'],
+            'telefono' => ['label' => 'Teléfono'],
+            'email' => ['label' => 'Email'],
+            'tipo' => [
+                'label' => 'Perfil',
+                'formatter' => fn ($value) => $this->resolvePerfilLabel($value),
+                'normalizer' => function ($value) {
+                    return $value === null || $value === '' ? null : (int) $value;
+                },
+            ],
+            'agente_id' => [
+                'label' => 'Agente',
+                'formatter' => fn ($value) => $this->resolveUserName($value),
+            ],
+            'agente_responsable_id' => [
+                'label' => 'Agente responsable',
+                'formatter' => fn ($value) => $this->resolveUserName($value),
+            ],
+            'cliente_id' => [
+                'label' => 'Cliente',
+                'formatter' => fn ($value) => $this->resolveClienteName($value),
+            ],
+            'sucursal_id' => [
+                'label' => 'Sucursal',
+                'formatter' => fn ($value) => $this->resolveSucursalName($value),
+            ],
+            'unidad_id' => [
+                'label' => 'Unidad',
+                'formatter' => fn ($value) => $this->resolveUnidadLabel($value),
+            ],
+            'estado_id' => [
+                'label' => 'Estado',
+                'formatter' => fn ($value) => $this->resolveEstadoName($value),
+            ],
+            'pago' => ['label' => 'Pago pactado'],
+            'cbu_alias' => ['label' => 'CBU / Alias'],
+            'patente' => ['label' => 'Patente'],
+            'observaciontarifa' => ['label' => 'Observación tarifa'],
+            'observaciones' => ['label' => 'Observaciones'],
+            'fecha_alta' => [
+                'label' => 'Fecha de alta',
+                'type' => 'date',
+            ],
+            'combustible' => [
+                'label' => 'Combustible',
+                'type' => 'boolean',
+            ],
+            'tarifaespecial' => [
+                'label' => 'Tarifa especial',
+                'type' => 'boolean',
+            ],
+        ];
+    }
+
+    protected function getPersonaOwnerHistoryFieldDefinitions(): array
+    {
+        return [
+            'nombreapellido' => ['label' => 'Dueño nombre'],
+            'fecha_nacimiento' => [
+                'label' => 'Dueño fecha de nacimiento',
+                'type' => 'date',
+            ],
+            'email' => ['label' => 'Dueño correo'],
+            'telefono' => ['label' => 'Dueño teléfono'],
+            'cuil' => ['label' => 'Dueño CUIL'],
+            'cuil_cobrador' => ['label' => 'Dueño CUIL cobrador'],
+            'cbu_alias' => ['label' => 'Dueño CBU alias'],
+            'observaciones' => ['label' => 'Dueño observaciones'],
+        ];
+    }
+
+    protected function capturePersonaHistorySnapshot(Persona $persona, array $definitions): array
+    {
+        $snapshot = [];
+
+        foreach (array_keys($definitions) as $attribute) {
+            $snapshot[$attribute] = $persona->{$attribute};
+        }
+
+        return $snapshot;
+    }
+
+    protected function capturePersonaOwnerHistorySnapshot($owner, array $definitions): array
+    {
+        $snapshot = [];
+
+        foreach (array_keys($definitions) as $attribute) {
+            $snapshot[$attribute] = $owner ? $owner->{$attribute} : null;
+        }
+
+        return $snapshot;
+    }
+
+    protected function computeHistoryChanges(array $definitions, array $original, array $current): array
+    {
+        $changes = [];
+
+        foreach ($definitions as $attribute => $definition) {
+            $label = $definition['label'] ?? ucfirst(str_replace('_', ' ', $attribute));
+            $previousValue = $original[$attribute] ?? null;
+            $currentValue = $current[$attribute] ?? null;
+
+            if ($this->historyValuesAreEqual($previousValue, $currentValue, $definition)) {
+                continue;
+            }
+
+            $changes[] = [
+                'field' => $attribute,
+                'label' => $label,
+                'oldValue' => $this->formatHistoryValue($previousValue, $definition),
+                'newValue' => $this->formatHistoryValue($currentValue, $definition),
+            ];
+        }
+
+        return array_values($changes);
+    }
+
+    protected function historyValuesAreEqual($oldValue, $newValue, array $definition): bool
+    {
+        $normalizedOld = $this->normalizeHistoryValue($oldValue, $definition);
+        $normalizedNew = $this->normalizeHistoryValue($newValue, $definition);
+
+        if ($normalizedOld === $normalizedNew) {
+            return true;
+        }
+
+        return $normalizedOld === null && $normalizedNew === null;
+    }
+
+    protected function normalizeHistoryValue($value, array $definition)
+    {
+        if (array_key_exists('normalizer', $definition) && is_callable($definition['normalizer'])) {
+            return $definition['normalizer']($value);
+        }
+
+        if (($definition['type'] ?? null) === 'boolean') {
+            return $value ? 1 : 0;
+        }
+
+        if (($definition['type'] ?? null) === 'date') {
+            if (! $value) {
+                return null;
+            }
+
+            try {
+                return Carbon::parse($value)->format('Y-m-d');
+            } catch (\Throwable $exception) {
+                return (string) $value;
+            }
+        }
+
+        if ($value === null) {
+            return null;
+        }
+
+        if (is_numeric($value)) {
+            return (string) (0 + $value);
+        }
+
+        if ($value instanceof Carbon) {
+            return $value->format('Y-m-d H:i:s');
+        }
+
+        if (is_string($value)) {
+            $trimmed = trim($value);
+            return $trimmed === '' ? null : $trimmed;
+        }
+
+        return (string) $value;
+    }
+
+    protected function formatHistoryValue($value, array $definition): ?string
+    {
+        if ($value === null || $value === '') {
+            return null;
+        }
+
+        if (array_key_exists('formatter', $definition) && is_callable($definition['formatter'])) {
+            $formatted = $definition['formatter']($value);
+            if ($formatted !== null && $formatted !== '') {
+                return $formatted;
+            }
+        }
+
+        if (($definition['type'] ?? null) === 'boolean') {
+            return in_array($value, [true, 1, '1'], true) ? 'Sí' : 'No';
+        }
+
+        if (($definition['type'] ?? null) === 'date') {
+            try {
+                return Carbon::parse($value)->format('Y-m-d');
+            } catch (\Throwable $exception) {
+                return (string) $value;
+            }
+        }
+
+        if (is_numeric($value)) {
+            return (string) (0 + $value);
+        }
+
+        if ($value instanceof Carbon) {
+            return $value->format('Y-m-d H:i:s');
+        }
+
+        if (is_string($value)) {
+            $trimmed = trim($value);
+            return $trimmed === '' ? null : $trimmed;
+        }
+
+        return (string) $value;
+    }
+
+    protected function resolvePerfilLabel($value): ?string
+    {
+        if ($value === null || $value === '') {
+            return null;
+        }
+
+        $perfilMap = [
+            1 => 'Dueño y chofer',
+            2 => 'Chofer',
+            3 => 'Transportista',
+        ];
+
+        $intValue = (int) $value;
+
+        return $perfilMap[$intValue] ?? ('Perfil '.$intValue);
+    }
+
+    protected function resolveUserName(?int $id): ?string
+    {
+        if (! $id) {
+            return null;
+        }
+
+        static $cache = [];
+
+        if (array_key_exists($id, $cache)) {
+            return $cache[$id];
+        }
+
+        $cache[$id] = User::query()->select('id', 'name')->find($id)?->name;
+
+        return $cache[$id];
+    }
+
+    protected function resolveClienteName(?int $id): ?string
+    {
+        if (! $id) {
+            return null;
+        }
+
+        static $cache = [];
+
+        if (array_key_exists($id, $cache)) {
+            return $cache[$id];
+        }
+
+        $cache[$id] = Cliente::query()->select('id', 'nombre')->find($id)?->nombre;
+
+        return $cache[$id] ?? sprintf('Cliente #%d', $id);
+    }
+
+    protected function resolveSucursalName(?int $id): ?string
+    {
+        if (! $id) {
+            return null;
+        }
+
+        static $cache = [];
+
+        if (array_key_exists($id, $cache)) {
+            return $cache[$id];
+        }
+
+        $cache[$id] = Sucursal::query()->select('id', 'nombre')->find($id)?->nombre;
+
+        return $cache[$id] ?? sprintf('Sucursal #%d', $id);
+    }
+
+    protected function resolveUnidadLabel(?int $id): ?string
+    {
+        if (! $id) {
+            return null;
+        }
+
+        static $cache = [];
+
+        if (array_key_exists($id, $cache)) {
+            return $cache[$id];
+        }
+
+        $unidad = Unidad::query()->select('id', 'matricula', 'marca', 'modelo')->find($id);
+
+        if (! $unidad) {
+            $cache[$id] = sprintf('Unidad #%d', $id);
+            return $cache[$id];
+        }
+
+        $parts = array_filter([
+            $unidad->matricula,
+            $unidad->marca,
+            $unidad->modelo,
+        ], fn ($value) => $value !== null && $value !== '');
+
+        $label = $parts ? implode(' · ', $parts) : sprintf('Unidad #%d', $unidad->id);
+
+        $cache[$id] = $label;
+
+        return $cache[$id];
+    }
+
+    protected function resolveEstadoName(?int $id): ?string
+    {
+        if (! $id) {
+            return null;
+        }
+
+        static $cache = [];
+
+        if (array_key_exists($id, $cache)) {
+            return $cache[$id];
+        }
+
+        $cache[$id] = Estado::query()->select('id', 'nombre')->find($id)?->nombre;
+
+        return $cache[$id] ?? sprintf('Estado #%d', $id);
     }
 }

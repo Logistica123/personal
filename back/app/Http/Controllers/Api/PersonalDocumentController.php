@@ -25,7 +25,7 @@ class PersonalDocumentController extends Controller
                 $downloadUrl = route('personal.documentos.descargar', [
                     'persona' => $documento->persona_id,
                     'documento' => $documento->id,
-                ]);
+                ], false);
 
                 return [
                     'id' => $documento->id,
@@ -156,7 +156,7 @@ class PersonalDocumentController extends Controller
         $downloadUrl = route('personal.documentos.descargar', [
             'persona' => $persona->id,
             'documento' => $documento->id,
-        ]);
+        ], false);
 
         $documento->download_url = $downloadUrl;
         $documento->save();

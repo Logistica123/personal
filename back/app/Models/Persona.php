@@ -13,6 +13,7 @@ use App\Models\Estado;
 use App\Models\Archivo;
 use App\Models\Dueno;
 use App\Models\PersonaComment;
+use App\Models\PersonaHistory;
 
 class Persona extends Model
 {
@@ -104,5 +105,12 @@ class Persona extends Model
     public function comments()
     {
         return $this->hasMany(PersonaComment::class, 'persona_id')->orderByDesc('created_at');
+    }
+
+    public function histories()
+    {
+        return $this
+            ->hasMany(PersonaHistory::class, 'persona_id')
+            ->orderByDesc('created_at');
     }
 }

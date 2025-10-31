@@ -10,6 +10,20 @@ import {
 } from 'react-router-dom';
 import './App.css';
 
+const resolveApiUrl = (baseUrl: string, target?: string | null): string | null => {
+  if (!target) {
+    return null;
+  }
+
+  try {
+    return new URL(target).toString();
+  } catch {
+    const normalizedBase = baseUrl.replace(/\/+$/, '');
+    const normalizedTarget = target.startsWith('/') ? target : `/${target}`;
+    return `${normalizedBase}${normalizedTarget}`;
+  }
+};
+
 type Sucursal = {
   id: number | null;
   nombre: string | null;
@@ -43,31 +57,71 @@ type Usuario = {
   role?: string | null;
 };
 
+type PersonalHistoryChange = {
+  field: string | null;
+  label: string | null;
+  oldValue: string | null;
+  newValue: string | null;
+};
+
+type PersonalHistoryEntry = {
+  id: number;
+  authorId: number | null;
+  authorName: string | null;
+  description: string | null;
+  createdAt: string | null;
+  createdAtLabel: string | null;
+  changes: PersonalHistoryChange[];
+};
+
 type PersonalRecord = {
   id: number;
   nombre: string | null;
+  nombres?: string | null;
+  apellidos?: string | null;
   cuil: string | null;
   telefono: string | null;
   email: string | null;
   cliente: string | null;
+  clienteId?: number | null;
   unidad: string | null;
   unidadDetalle: string | null;
+  unidadId?: number | null;
   sucursal: string | null;
+  sucursalId?: number | null;
   fechaAlta: string | null;
   perfil: string | null;
   perfilValue: number | null;
   agente: string | null;
+  agenteId?: number | null;
+  agenteResponsable?: string | null;
+  agenteResponsableId?: number | null;
   estado: string | null;
+  estadoId?: number | null;
   combustible: string | null;
   combustibleValue: boolean;
   tarifaEspecial: string | null;
   tarifaEspecialValue: boolean;
+  pago?: string | null;
+  cbuAlias?: string | null;
+  patente?: string | null;
+  observacionTarifa?: string | null;
+  observaciones?: string | null;
   aprobado: boolean;
   aprobadoAt: string | null;
   aprobadoPor: string | null;
+  aprobadoPorId?: number | null;
   esSolicitud: boolean;
   solicitudTipo?: 'alta' | 'combustible' | 'aumento_combustible' | 'adelanto' | 'poliza';
   solicitudData?: unknown;
+  duenoNombre?: string | null;
+  duenoFechaNacimiento?: string | null;
+  duenoEmail?: string | null;
+  duenoTelefono?: string | null;
+  duenoCuil?: string | null;
+  duenoCuilCobrador?: string | null;
+  duenoCbuAlias?: string | null;
+  duenoObservaciones?: string | null;
 };
 
 type PersonalDetail = {
@@ -124,6 +178,7 @@ type PersonalDetail = {
     createdAt: string | null;
     createdAtLabel: string | null;
   }>;
+  history: PersonalHistoryEntry[];
 };
 
 type PersonalDocumentType = {
@@ -3800,9 +3855,22 @@ const PersonalPage: React.FC = () => {
         registro.fechaAlta,
         registro.perfil,
         registro.agente,
+        registro.agenteResponsable,
         registro.estado,
         registro.combustible,
         registro.tarifaEspecial,
+        registro.pago,
+        registro.cbuAlias,
+        registro.patente,
+        registro.observaciones,
+        registro.observacionTarifa,
+        registro.duenoNombre,
+        registro.duenoCuil,
+        registro.duenoCuilCobrador,
+        registro.duenoCbuAlias,
+        registro.duenoEmail,
+        registro.duenoTelefono,
+        registro.duenoObservaciones,
       ];
 
       return fields.some((field) => field?.toLowerCase().includes(term));
@@ -3938,50 +4006,88 @@ const PersonalPage: React.FC = () => {
   };
 
   const handleExportCsv = () => {
-    const rows = [
-      [
-        'ID',
-        'Nombre',
-        'CUIL',
-        'Teléfono',
-        'Email',
-        'Perfil',
-        'Agente',
-        'Estado',
-        'Combustible',
-        'Tarifa especial',
-        'Unidad',
-        'Cliente',
-        'Sucursal',
-        'Fecha alta',
-      ],
-      ...filteredPersonal.map((registro) => [
-        registro.id,
-        registro.nombre ?? '',
-        registro.cuil ?? '',
-        registro.telefono ?? '',
-        registro.email ?? '',
-        registro.perfil ?? '',
-        registro.agente ?? '',
-        registro.estado ?? '',
-        registro.combustible ?? '',
-        registro.tarifaEspecial ?? '',
-        registro.unidadDetalle ?? registro.unidad ?? '',
-        registro.cliente ?? '',
-        registro.sucursal ?? '',
-        registro.fechaAlta ?? '',
-      ]),
+    const dataset = filteredPersonal.length > 0 ? filteredPersonal : personal;
+
+    if (dataset.length === 0) {
+      window.alert('No hay registros para exportar.');
+      return;
+    }
+
+    const booleanLabel = (value: boolean | null | undefined) => {
+      if (value === true) {
+        return 'Sí';
+      }
+
+      if (value === false) {
+        return 'No';
+      }
+
+      return '';
+    };
+
+    const columns: Array<{ header: string; resolve: (registro: PersonalRecord) => string | number | null | undefined }> = [
+      { header: 'ID', resolve: (registro) => registro.id },
+      { header: 'Nombre completo', resolve: (registro) => registro.nombre ?? '' },
+      { header: 'Nombres', resolve: (registro) => registro.nombres ?? '' },
+      { header: 'Apellidos', resolve: (registro) => registro.apellidos ?? '' },
+      { header: 'CUIL', resolve: (registro) => registro.cuil ?? '' },
+      { header: 'Teléfono', resolve: (registro) => registro.telefono ?? '' },
+      { header: 'Email', resolve: (registro) => registro.email ?? '' },
+      { header: 'Perfil', resolve: (registro) => registro.perfil ?? '' },
+      { header: 'Perfil ID', resolve: (registro) => registro.perfilValue ?? '' },
+      { header: 'Agente', resolve: (registro) => registro.agente ?? '' },
+      { header: 'Agente ID', resolve: (registro) => registro.agenteId ?? '' },
+      { header: 'Agente responsable', resolve: (registro) => registro.agenteResponsable ?? '' },
+      { header: 'Agente responsable ID', resolve: (registro) => registro.agenteResponsableId ?? '' },
+      { header: 'Estado', resolve: (registro) => registro.estado ?? '' },
+      { header: 'Estado ID', resolve: (registro) => registro.estadoId ?? '' },
+      { header: 'Cliente', resolve: (registro) => registro.cliente ?? '' },
+      { header: 'Cliente ID', resolve: (registro) => registro.clienteId ?? '' },
+      { header: 'Sucursal', resolve: (registro) => registro.sucursal ?? '' },
+      { header: 'Sucursal ID', resolve: (registro) => registro.sucursalId ?? '' },
+      { header: 'Unidad', resolve: (registro) => registro.unidad ?? '' },
+      { header: 'Unidad ID', resolve: (registro) => registro.unidadId ?? '' },
+      { header: 'Unidad detalle', resolve: (registro) => registro.unidadDetalle ?? '' },
+      { header: 'Fecha alta', resolve: (registro) => registro.fechaAlta ?? '' },
+      { header: 'Combustible', resolve: (registro) => booleanLabel(registro.combustibleValue) },
+      { header: 'Tarifa especial', resolve: (registro) => booleanLabel(registro.tarifaEspecialValue) },
+      { header: 'Pago', resolve: (registro) => registro.pago ?? '' },
+      { header: 'CBU alias', resolve: (registro) => registro.cbuAlias ?? '' },
+      { header: 'Patente', resolve: (registro) => registro.patente ?? '' },
+      { header: 'Observación tarifa', resolve: (registro) => registro.observacionTarifa ?? '' },
+      { header: 'Observaciones', resolve: (registro) => registro.observaciones ?? '' },
+      { header: 'Aprobado', resolve: (registro) => booleanLabel(registro.aprobado) },
+      { header: 'Aprobado el', resolve: (registro) => registro.aprobadoAt ?? '' },
+      { header: 'Aprobado por', resolve: (registro) => registro.aprobadoPor ?? '' },
+      { header: 'Aprobado por ID', resolve: (registro) => registro.aprobadoPorId ?? '' },
+      { header: 'Es solicitud', resolve: (registro) => booleanLabel(registro.esSolicitud) },
+      { header: 'Tipo de solicitud', resolve: (registro) => registro.solicitudTipo ?? '' },
+      { header: 'Dueño nombre', resolve: (registro) => registro.duenoNombre ?? '' },
+      { header: 'Dueño fecha nacimiento', resolve: (registro) => registro.duenoFechaNacimiento ?? '' },
+      { header: 'Dueño CUIL', resolve: (registro) => registro.duenoCuil ?? '' },
+      { header: 'Dueño CUIL cobrador', resolve: (registro) => registro.duenoCuilCobrador ?? '' },
+      { header: 'Dueño CBU alias', resolve: (registro) => registro.duenoCbuAlias ?? '' },
+      { header: 'Dueño correo', resolve: (registro) => registro.duenoEmail ?? '' },
+      { header: 'Dueño teléfono', resolve: (registro) => registro.duenoTelefono ?? '' },
+      { header: 'Dueño observaciones', resolve: (registro) => registro.duenoObservaciones ?? '' },
     ];
 
-    const csv = rows
+    const headerRow = columns.map((column) => column.header);
+    const valueRows = dataset.map((registro) =>
+      columns.map((column) => {
+        const value = column.resolve(registro);
+        return value === null || value === undefined ? '' : String(value);
+      })
+    );
+
+    const csv = [headerRow, ...valueRows]
       .map((row) =>
         row
           .map((cell) => {
-            const value = String(cell ?? '');
-            if (value.includes('"') || value.includes(',') || value.includes('\n')) {
-              return `"${value.replace(/"/g, '""')}"`;
+            if (cell.includes('"') || cell.includes(',') || cell.includes('\n') || cell.includes('\r')) {
+              return `"${cell.replace(/"/g, '""')}"`;
             }
-            return value;
+            return cell;
           })
           .join(',')
       )
@@ -6947,10 +7053,14 @@ const handleAdelantoFieldChange =
                         labelParts.push(documento.nombre);
                       }
                       const label = labelParts.join(' – ');
+                      const fallbackPath = reviewPersonaDetail
+                        ? `/api/personal/${reviewPersonaDetail.id}/documentos/${documento.id}/descargar`
+                        : null;
+                      const resolvedDownloadUrl = resolveApiUrl(apiBaseUrl, documento.downloadUrl ?? fallbackPath ?? null);
                       return (
                         <li key={documento.id}>
-                          {documento.downloadUrl ? (
-                            <a href={documento.downloadUrl} target="_blank" rel="noopener noreferrer">
+                          {resolvedDownloadUrl ? (
+                            <a href={resolvedDownloadUrl} target="_blank" rel="noopener noreferrer">
                               {label}
                             </a>
                           ) : (
@@ -8446,7 +8556,10 @@ const PersonalEditPage: React.FC = () => {
         throw new Error('Formato de respuesta inesperado');
       }
 
-      setDetail(payload.data);
+      setDetail({
+        ...payload.data,
+        history: payload.data.history ?? [],
+      });
       setFormValues({
         nombres: payload.data.nombres ?? '',
         apellidos: payload.data.apellidos ?? '',
@@ -8715,7 +8828,10 @@ const PersonalEditPage: React.FC = () => {
       setSaveSuccess(payload.message ?? 'Información actualizada correctamente.');
 
       if (payload.data) {
-        setDetail(payload.data);
+        setDetail({
+          ...payload.data,
+          history: payload.data.history ?? [],
+        });
         setFormValues({
           nombres: payload.data.nombres ?? '',
           apellidos: payload.data.apellidos ?? '',
@@ -8752,12 +8868,20 @@ const PersonalEditPage: React.FC = () => {
     }
 
     const documento = detail.documents.find((doc) => doc.id === selectedDocumentId);
-    if (!documento?.downloadUrl) {
-      window.alert('Este documento no tiene una URL de descarga disponible.');
+    if (!documento) {
+      window.alert('Seleccioná un documento para descargar.');
       return;
     }
 
-    window.open(documento.downloadUrl, '_blank', 'noopener');
+    const fallbackPath = `/api/personal/${detail.id}/documentos/${documento.id}/descargar`;
+    const resolvedUrl = resolveApiUrl(apiBaseUrl, documento.downloadUrl ?? fallbackPath);
+
+    if (!resolvedUrl) {
+      window.alert('No se pudo determinar la URL de descarga para este documento.');
+      return;
+    }
+
+    window.open(resolvedUrl, '_blank', 'noopener');
   };
 
   const handleUploadDocumentos = async () => {
@@ -8825,6 +8949,7 @@ const PersonalEditPage: React.FC = () => {
   }
 
   const fullName = [detail.nombres, detail.apellidos].filter(Boolean).join(' ').trim();
+  const historyEntries = detail.history ?? [];
 
   return (
     <DashboardLayout title="Editar personal" subtitle={fullName || `Registro #${detail.id}`} headerContent={headerContent}>
@@ -9072,7 +9197,36 @@ const PersonalEditPage: React.FC = () => {
       <section className="personal-edit-section">
         <h2>Historial de cambios</h2>
         <div className="history-list">
-          <p>No hay historial disponible para este registro.</p>
+          {historyEntries.length === 0 ? (
+            <p>No hay historial disponible para este registro.</p>
+          ) : (
+            historyEntries.map((entry) => (
+              <div key={entry.id} className="history-entry">
+                <div className="history-entry__header">
+                  <span className="history-entry__author">{entry.authorName ?? 'Sistema'}</span>
+                  <span className="history-entry__time">{entry.createdAtLabel ?? ''}</span>
+                </div>
+                {entry.description ? <p className="history-entry__description">{entry.description}</p> : null}
+                {entry.changes.length > 0 ? (
+                  <ul className="history-entry__changes">
+                    {entry.changes.map((change, index) => {
+                      const key = change.field ?? `change-${entry.id}-${index}`;
+                      return (
+                        <li key={key}>
+                          <span className="history-entry__change-label">{change.label ?? change.field ?? 'Campo'}</span>
+                          <span className="history-entry__change-values">
+                            <span className="history-entry__change-old">{change.oldValue ?? '—'}</span>
+                            <span className="history-entry__change-arrow">→</span>
+                            <span className="history-entry__change-new">{change.newValue ?? '—'}</span>
+                          </span>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                ) : null}
+              </div>
+            ))
+          )}
         </div>
       </section>
 
