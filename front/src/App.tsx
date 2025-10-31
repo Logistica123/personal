@@ -2372,7 +2372,20 @@ const CreateReclamoPage: React.FC = () => {
   const [transportistaDetailLoading, setTransportistaDetailLoading] = useState(false);
   const [transportistaDetailError, setTransportistaDetailError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const [attachmentName, setAttachmentName] = useState<string | null>(null);
+  const [attachments, setAttachments] = useState<File[]>([]);
+  const attachmentSummary = useMemo(() => {
+    if (attachments.length === 0) {
+      return null;
+    }
+    if (attachments.length === 1) {
+      return attachments[0].name;
+    }
+    if (attachments.length <= 3) {
+      return attachments.map((file) => file.name).join(', ');
+    }
+
+    return `${attachments.length} archivos seleccionados`;
+  }, [attachments]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -2596,11 +2609,34 @@ const CreateReclamoPage: React.FC = () => {
   };
 
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (file) {
-      setAttachmentName(file.name);
-    } else {
-      setAttachmentName(null);
+    const selectedFiles = event.target.files ? Array.from(event.target.files) : [];
+
+    if (selectedFiles.length > 0) {
+      setAttachments((prev) => {
+        const existingKeys = new Set(prev.map((file) => `${file.name}-${file.size}-${file.lastModified}`));
+        const merged = [...prev];
+
+        selectedFiles.forEach((file) => {
+          const key = `${file.name}-${file.size}-${file.lastModified}`;
+          if (!existingKeys.has(key)) {
+            merged.push(file);
+            existingKeys.add(key);
+          }
+        });
+
+        return merged;
+      });
+    }
+
+    if (event.target) {
+      event.target.value = '';
+    }
+  };
+
+  const handleClearAttachments = () => {
+    setAttachments([]);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
     }
   };
 
@@ -2655,13 +2691,85 @@ const CreateReclamoPage: React.FC = () => {
       }
 
       const payload = (await response.json()) as { message?: string; data: ReclamoRecord };
+      const createdReclamo = payload.data;
+      const newReclamoId = createdReclamo?.id ?? null;
+      const currentAttachments = attachments.length > 0 ? [...attachments] : [];
+
+      if (currentAttachments.length > 0) {
+        if (!newReclamoId) {
+          setSubmitError('El reclamo se creó, pero no fue posible adjuntar los archivos automáticamente.');
+          window.dispatchEvent(new CustomEvent('notifications:updated'));
+          navigate('/reclamos');
+          return;
+        }
+
+        try {
+          const formData = new FormData();
+          currentAttachments.forEach((file) => {
+            formData.append('archivos[]', file);
+            formData.append('nombres[]', file.name);
+          });
+
+          const attachmentActorId = formValues.creatorId
+            ? Number(formValues.creatorId)
+            : formValues.agenteId
+              ? Number(formValues.agenteId)
+              : authUser?.id ?? null;
+
+          if (attachmentActorId) {
+            formData.append('creatorId', String(attachmentActorId));
+          }
+
+          const uploadResponse = await fetch(`${apiBaseUrl}/api/reclamos/${newReclamoId}/documentos`, {
+            method: 'POST',
+            body: formData,
+          });
+
+          if (!uploadResponse.ok) {
+            let message = `Error ${uploadResponse.status}: ${uploadResponse.statusText}`;
+
+            try {
+              const errorPayload = await uploadResponse.json();
+              if (typeof errorPayload?.message === 'string') {
+                message = errorPayload.message;
+              } else if (errorPayload?.errors) {
+                const firstError = Object.values(errorPayload.errors)[0];
+                if (Array.isArray(firstError) && firstError[0]) {
+                  message = firstError[0] as string;
+                }
+              }
+            } catch {
+              // ignore
+            }
+
+            throw new Error(message);
+          }
+        } catch (uploadError) {
+          const baseMessage =
+            'El reclamo se creó correctamente, pero no se pudieron subir los archivos seleccionados.';
+          const extraMessage =
+            (uploadError as Error).message && (uploadError as Error).message !== baseMessage
+              ? ` ${(uploadError as Error).message}`
+              : '';
+
+          setSubmitError(`${baseMessage}${extraMessage}`);
+          setSuccessMessage(null);
+          window.dispatchEvent(new CustomEvent('notifications:updated'));
+          navigate(`/reclamos/${newReclamoId}`);
+          return;
+        }
+      }
 
       const successText = payload.message ?? 'Reclamo creado correctamente.';
+      const attachmentsNote =
+        currentAttachments.length > 0
+          ? ` Se adjuntaron ${currentAttachments.length} archivo${currentAttachments.length === 1 ? '' : 's'}.`
+          : '';
       const flashPayload = {
-        message: `${successText} Responsable: ${payload.data.agente ?? 'Sin asignar'}. Creador: ${
-          payload.data.creator ?? 'Sin asignar'
+        message: `${successText}${attachmentsNote} Responsable: ${createdReclamo.agente ?? 'Sin asignar'}. Creador: ${
+          createdReclamo.creator ?? 'Sin asignar'
         }.`,
-        reclamo: payload.data,
+        reclamo: createdReclamo,
       };
 
       try {
@@ -2670,7 +2778,7 @@ const CreateReclamoPage: React.FC = () => {
         // ignore storage failures
       }
 
-      setSuccessMessage(successText);
+      setSuccessMessage(`${successText}${attachmentsNote}`);
 
       const defaultStatus =
         meta?.estados.find((estado) => estado.value === 'creado')?.value ??
@@ -2689,7 +2797,10 @@ const CreateReclamoPage: React.FC = () => {
       });
       setTransportistaSearch('');
       setTransportistaDetail(null);
-      setAttachmentName(null);
+      setAttachments([]);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
       window.dispatchEvent(new CustomEvent('notifications:updated'));
       navigate('/reclamos');
     } catch (err) {
@@ -2989,21 +3100,40 @@ const CreateReclamoPage: React.FC = () => {
               📎
             </div>
             <p className="file-dropzone__text">
-              Arrastra y suelta tu archivo aquí o haz clic para seleccionar un archivo
+              Arrastra y suelta tus archivos aquí o haz clic para seleccionarlos desde tu equipo
             </p>
-            {attachmentName ? (
-              <span className="file-dropzone__filename">{attachmentName}</span>
+            {attachmentSummary ? (
+              <>
+                <span className="file-dropzone__filename">{attachmentSummary}</span>
+                {attachments.length > 1 ? (
+                  <ul className="file-dropzone__list">
+                    {attachments.map((file) => (
+                      <li key={`${file.name}-${file.size}-${file.lastModified}`}>{file.name}</li>
+                    ))}
+                  </ul>
+                ) : null}
+              </>
             ) : (
               <span className="file-dropzone__hint">
-                Formatos soportados: .pdf, .jpg, .jpeg, .png, .docx (máx. 2MB)
+                Formatos soportados: .pdf, .jpg, .jpeg, .png, .docx (máx. 2MB por archivo)
               </span>
             )}
             <button type="button" className="primary-action" onClick={handleFilePicker}>
-              Seleccionar archivo
+              Seleccionar archivos
             </button>
+            {attachments.length > 0 ? (
+              <button
+                type="button"
+                className="secondary-action secondary-action--ghost"
+                onClick={handleClearAttachments}
+              >
+                Quitar archivos
+              </button>
+            ) : null}
             <input
               ref={fileInputRef}
               type="file"
+              multiple
               onChange={handleFileChange}
               style={{ display: 'none' }}
             />
@@ -3269,8 +3399,8 @@ const ReclamoDetailPage: React.FC = () => {
       return;
     }
 
-    const file = event.target.files?.[0];
-    if (!file) {
+    const files = event.target.files ? Array.from(event.target.files) : [];
+    if (files.length === 0) {
       return;
     }
 
@@ -3280,8 +3410,10 @@ const ReclamoDetailPage: React.FC = () => {
       setDocumentMessage(null);
 
       const formData = new FormData();
-      formData.append('archivo', file);
-      formData.append('nombre', file.name);
+      files.forEach((file) => {
+        formData.append('archivos[]', file);
+        formData.append('nombres[]', file.name);
+      });
       const actorId = detail.agenteId ?? detail.creatorId;
       if (actorId) {
         formData.append('creatorId', String(actorId));
@@ -3313,7 +3445,10 @@ const ReclamoDetailPage: React.FC = () => {
 
       const payload = (await response.json()) as { message?: string; data: ReclamoDetail };
       applyDetail(payload.data, { refreshForm: false });
-      setDocumentMessage(payload.message ?? 'Documento cargado correctamente.');
+      const successMessage =
+        payload.message ??
+        (files.length === 1 ? 'Documento cargado correctamente.' : 'Documentos cargados correctamente.');
+      setDocumentMessage(successMessage);
     } catch (err) {
       setDocumentError((err as Error).message ?? 'No se pudo subir el documento.');
     } finally {
@@ -3531,20 +3666,21 @@ const ReclamoDetailPage: React.FC = () => {
           <section className="reclamo-card">
             <div className="reclamo-card-header">
               <h3>Carga de documentos</h3>
-              <button
-                type="button"
-                className="primary-action"
-                onClick={handleDocumentButtonClick}
-                disabled={documentUploading}
-              >
-                {documentUploading ? 'Subiendo...' : 'Subir archivo'}
-              </button>
-              <input
-                ref={fileUploadInputRef}
-                type="file"
-                onChange={handleDocumentChange}
-                style={{ display: 'none' }}
-              />
+          <button
+            type="button"
+            className="primary-action"
+            onClick={handleDocumentButtonClick}
+            disabled={documentUploading}
+          >
+            {documentUploading ? 'Subiendo...' : 'Subir archivos'}
+          </button>
+          <input
+            ref={fileUploadInputRef}
+            type="file"
+            multiple
+            onChange={handleDocumentChange}
+            style={{ display: 'none' }}
+          />
             </div>
             {documentMessage ? <p className="form-info form-info--success">{documentMessage}</p> : null}
             {documentError ? <p className="form-info form-info--error">{documentError}</p> : null}

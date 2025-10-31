@@ -1539,6 +1539,24 @@ tbody tr:nth-child(even) {
   color: #1d74f5;
 }
 
+.file-dropzone__list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  font-size: 0.85rem;
+  color: #516277;
+  width: 100%;
+  align-items: center;
+}
+
+.file-dropzone__list li {
+  max-width: 100%;
+  word-break: break-word;
+}
+
 .file-dropzone .secondary-action {
   margin-top: 0.75rem;
 }

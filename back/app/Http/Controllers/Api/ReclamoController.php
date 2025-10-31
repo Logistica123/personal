@@ -13,10 +13,12 @@ use Illuminate\Database\QueryException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Arr;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
 
@@ -398,37 +400,117 @@ class ReclamoController extends Controller
 
     public function storeDocument(Request $request, Reclamo $reclamo): JsonResponse
     {
-        $validated = $request->validate([
-            'archivo' => ['required', 'file', 'max:5120'],
+        $validator = Validator::make($request->all(), [
+            'archivo' => ['nullable', 'file', 'max:5120'],
+            'archivos' => ['nullable', 'array'],
+            'archivos.*' => ['file', 'max:5120'],
             'nombre' => ['nullable', 'string', 'max:255'],
+            'nombres' => ['nullable', 'array'],
+            'nombres.*' => ['nullable', 'string', 'max:255'],
             'creatorId' => ['nullable', 'integer', 'exists:users,id'],
+        ], [
+            'archivos.*.file' => 'Cada elemento debe ser un archivo válido.',
+            'archivos.*.max' => 'Cada archivo debe pesar como máximo 5MB.',
         ]);
 
-        /** @var UploadedFile $file */
-        $file = $validated['archivo'];
-        $disk = 'public';
-        $directory = 'reclamos/'.$reclamo->id;
-        $storedPath = $file->store($directory, $disk);
-        $downloadUrl = Storage::disk($disk)->url($storedPath);
+        $validator->after(function ($validator) use ($request) {
+            $single = $request->file('archivo');
+            $multiple = $request->file('archivos');
 
-        $document = $reclamo->documents()->create([
-            'nombre_original' => $validated['nombre'] ?? $file->getClientOriginalName(),
-            'disk' => $disk,
-            'path' => $storedPath,
-            'download_url' => $downloadUrl,
-            'mime' => $file->getClientMimeType(),
-            'size' => $file->getSize(),
-        ]);
+            $multipleFiles = [];
+            if ($multiple instanceof UploadedFile) {
+                $multipleFiles = [$multiple];
+            } elseif (is_array($multiple)) {
+                $multipleFiles = array_filter($multiple);
+            }
 
-        $this->recordComment(
-            $reclamo,
-            sprintf('Documento "%s" agregado.', $document->nombre_original ?? basename($document->path)),
-            [
-                'document_id' => $document->id,
-                'path' => $document->path,
-            ],
-            $validated['creatorId'] ?? null
-        );
+            if (! $single && empty($multipleFiles)) {
+                $validator->errors()->add('archivo', 'Selecciona al menos un archivo.');
+            }
+        });
+
+        $validated = $validator->validate();
+
+        $files = [];
+        $multipleFiles = $request->file('archivos');
+
+        if ($multipleFiles instanceof UploadedFile) {
+            $multipleFiles = [$multipleFiles];
+        }
+
+        if (is_array($multipleFiles)) {
+            $names = Arr::wrap($validated['nombres'] ?? []);
+
+            foreach ($multipleFiles as $index => $file) {
+                if (! $file instanceof UploadedFile) {
+                    continue;
+                }
+
+                $customName = $names[$index] ?? null;
+                if (is_string($customName)) {
+                    $customName = trim($customName) !== '' ? trim($customName) : null;
+                } else {
+                    $customName = null;
+                }
+
+                $files[] = [
+                    'file' => $file,
+                    'name' => $customName,
+                ];
+            }
+        }
+
+        if ($request->file('archivo') instanceof UploadedFile) {
+            $singleName = isset($validated['nombre']) && is_string($validated['nombre'])
+                ? (trim($validated['nombre']) !== '' ? trim($validated['nombre']) : null)
+                : null;
+
+            $files[] = [
+                'file' => $request->file('archivo'),
+                'name' => $singleName,
+            ];
+        }
+
+        if (empty($files)) {
+            return response()->json([
+                'message' => 'Selecciona al menos un archivo.',
+            ], 422);
+        }
+
+        $documents = [];
+
+        DB::transaction(function () use ($files, $reclamo, $validated, &$documents) {
+            foreach ($files as $fileData) {
+                /** @var UploadedFile $file */
+                $file = $fileData['file'];
+                $disk = 'public';
+                $directory = 'reclamos/'.$reclamo->id;
+                $storedPath = $file->store($directory, $disk);
+                $downloadUrl = Storage::disk($disk)->url($storedPath);
+                $originalName = $fileData['name'] ?? $file->getClientOriginalName();
+
+                $document = $reclamo->documents()->create([
+                    'nombre_original' => $originalName,
+                    'disk' => $disk,
+                    'path' => $storedPath,
+                    'download_url' => $downloadUrl,
+                    'mime' => $file->getClientMimeType(),
+                    'size' => $file->getSize(),
+                ]);
+
+                $documents[] = $document;
+
+                $this->recordComment(
+                    $reclamo,
+                    sprintf('Documento "%s" agregado.', $document->nombre_original ?? basename($document->path)),
+                    [
+                        'document_id' => $document->id,
+                        'path' => $document->path,
+                    ],
+                    $validated['creatorId'] ?? null
+                );
+            }
+        });
 
         $reclamo->refresh()->loadMissing([
             'creator:id,name',
@@ -461,8 +543,12 @@ class ReclamoController extends Controller
             'documents' => fn ($query) => $query->orderByDesc('created_at'),
         ]);
 
+        $message = count($documents) > 1
+            ? 'Documentos cargados correctamente.'
+            : 'Documento cargado correctamente.';
+
         return response()->json([
-            'message' => 'Documento cargado correctamente.',
+            'message' => $message,
             'data' => $this->transformReclamo($reclamo, true),
         ], 201);
     }
