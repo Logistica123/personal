@@ -8131,6 +8131,7 @@ const handleAdelantoFieldChange =
         <table>
           <thead>
             <tr>
+              <th>Tipo</th>
               <th>ID</th>
               <th>Nombre</th>
               <th>Perfil</th>
@@ -8145,23 +8146,43 @@ const handleAdelantoFieldChange =
           <tbody>
             {solicitudesLoading ? (
               <tr>
-                <td colSpan={9}>Cargando solicitudes...</td>
+                <td colSpan={10}>Cargando solicitudes...</td>
               </tr>
             ) : solicitudesError ? (
               <tr>
-                <td colSpan={9} className="error-cell">
+                <td colSpan={10} className="error-cell">
                   {solicitudesError}
                 </td>
               </tr>
             ) : filteredSolicitudes.length === 0 ? (
               <tr>
-                <td colSpan={9}>No hay solicitudes pendientes.</td>
+                <td colSpan={10}>No hay solicitudes pendientes.</td>
               </tr>
             ) : (
               filteredSolicitudes.map((registro) => {
                 const perfilLabel = perfilNames[registro.perfilValue ?? 0] ?? registro.perfil ?? '—';
+                const solicitudTipoLabel = (() => {
+                  if (!registro.esSolicitud) {
+                    return 'Registro de personal';
+                  }
+                  switch (registro.solicitudTipo) {
+                    case 'alta':
+                      return 'Solicitud de alta';
+                    case 'combustible':
+                      return 'Solicitud de combustible';
+                    case 'aumento_combustible':
+                      return 'Aumento de combustible';
+                    case 'adelanto':
+                      return 'Adelanto de pago';
+                    case 'poliza':
+                      return 'Solicitud de póliza';
+                    default:
+                      return 'Solicitud registrada';
+                  }
+                })();
                 return (
                   <tr key={registro.id}>
+                    <td>{solicitudTipoLabel}</td>
                     <td>{registro.id}</td>
                     <td>{registro.nombre ?? '—'}</td>
                     <td>{perfilLabel}</td>
