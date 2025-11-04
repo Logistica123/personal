@@ -950,6 +950,8 @@ const DashboardLayout: React.FC<{
   const [notificationsVersion, setNotificationsVersion] = useState(0);
   const [notificationToast, setNotificationToast] = useState<{ id: number; message: string } | null>(null);
   const notificationToastTimeoutRef = useRef<number | null>(null);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const lastToastIdRef = useRef<number | null>(null);
   const unreadInitializedRef = useRef(false);
   const previousUnreadCountRef = useRef(0);
   const previousLatestNotificationIdRef = useRef<number | null>(null);
@@ -1012,34 +1014,53 @@ const DashboardLayout: React.FC<{
 
   const playNotificationTone = useCallback(() => {
     try {
-      const AudioContextConstructor =
-        window.AudioContext ||
-        (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-      if (!AudioContextConstructor) {
+      if (!audioContextRef.current) {
+        const AudioContextConstructor =
+          window.AudioContext ||
+          (window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+        if (!AudioContextConstructor) {
+          return;
+        }
+        audioContextRef.current = new AudioContextConstructor();
+      }
+
+      const context = audioContextRef.current;
+      if (!context) {
         return;
       }
-      const context = new AudioContextConstructor();
-      if (context.state === 'suspended') {
-        context.resume().catch(() => {
-          /* ignore resume errors */
-        });
-      }
-      const oscillator = context.createOscillator();
-      const gain = context.createGain();
-      oscillator.type = 'triangle';
-      oscillator.frequency.setValueAtTime(880, context.currentTime);
-      gain.gain.setValueAtTime(0.0001, context.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.08, context.currentTime + 0.02);
-      gain.gain.exponentialRampToValueAtTime(0.0001, context.currentTime + 0.6);
-      oscillator.connect(gain);
-      gain.connect(context.destination);
-      oscillator.start();
-      oscillator.stop(context.currentTime + 0.6);
-      oscillator.onended = () => {
-        context.close().catch(() => {
-          /* ignore */
-        });
+
+      const startTone = () => {
+        const now = context.currentTime;
+        const oscillator = context.createOscillator();
+        const gain = context.createGain();
+        oscillator.type = 'triangle';
+        oscillator.frequency.setValueAtTime(880, now);
+        gain.gain.setValueAtTime(0.0001, now);
+        gain.gain.exponentialRampToValueAtTime(0.1, now + 0.02);
+        gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.65);
+        oscillator.connect(gain);
+        gain.connect(context.destination);
+        oscillator.start(now);
+        oscillator.stop(now + 0.65);
+        oscillator.onended = () => {
+          oscillator.disconnect();
+          gain.disconnect();
+        };
       };
+
+      if (context.state === 'suspended') {
+        context
+          .resume()
+          .then(() => {
+            startTone();
+          })
+          .catch(() => {
+            // ignore resume errors (likely due to missing user gesture)
+          });
+        return;
+      }
+
+      startTone();
     } catch {
       // ignore audio playback issues
     }
@@ -1047,17 +1068,23 @@ const DashboardLayout: React.FC<{
 
   const showNotificationToast = useCallback(
     async (record: NotificationRecord) => {
-      let agentLabel: string | null = null;
+      if (lastToastIdRef.current === record.id) {
+        return;
+      }
 
-      if (record.personaId) {
+      let personaLabel = record.personaNombre?.trim().length ? record.personaNombre?.trim() ?? null : null;
+
+      if ((!personaLabel || personaLabel.length === 0) && record.personaId) {
         try {
           const response = await fetch(`${apiBaseUrl}/api/personal/${record.personaId}`);
           if (response.ok) {
             const payload = (await response.json()) as {
-              data?: { agenteResponsable?: string | null; agente?: string | null };
+              data?: { nombres?: string | null; apellidos?: string | null };
             };
-            const candidate = payload.data?.agenteResponsable ?? payload.data?.agente ?? null;
-            agentLabel = candidate && candidate.trim().length > 0 ? candidate.trim() : null;
+            const nombres = payload.data?.nombres?.trim() ?? '';
+            const apellidos = payload.data?.apellidos?.trim() ?? '';
+            const combined = [nombres, apellidos].filter(Boolean).join(' ');
+            personaLabel = combined.length > 0 ? combined : null;
           }
         } catch {
           // ignore lookup errors
@@ -1065,10 +1092,11 @@ const DashboardLayout: React.FC<{
       }
 
       const baseMessage = record.message?.trim().length ? record.message.trim() : null;
-      const finalMessage = agentLabel
-        ? `Llegó una notificación del agente ${agentLabel}.`
+      const finalMessage = personaLabel
+        ? `Llegó una notificación de ${personaLabel}.`
         : baseMessage ?? 'Llegó una nueva notificación.';
 
+      lastToastIdRef.current = record.id;
       setNotificationToast({ id: record.id, message: finalMessage });
       playNotificationTone();
       if (notificationToastTimeoutRef.current) {
@@ -1158,9 +1186,83 @@ const DashboardLayout: React.FC<{
   }, [currentUserKey]);
 
   useEffect(() => {
-    const handler = () => setNotificationsVersion((value) => value + 1);
-    window.addEventListener('notifications:updated', handler);
-    return () => window.removeEventListener('notifications:updated', handler);
+    const handler = (event: Event) => {
+      setNotificationsVersion((value) => value + 1);
+      const custom = event as CustomEvent<{ notification?: NotificationRecord | null }>;
+      if (custom.detail?.notification) {
+        void showNotificationToast(custom.detail.notification);
+      }
+    };
+    window.addEventListener('notifications:updated', handler as EventListener);
+    return () => window.removeEventListener('notifications:updated', handler as EventListener);
+  }, [showNotificationToast]);
+
+  useEffect(() => {
+    const AudioContextConstructor =
+      window.AudioContext ||
+      (window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+
+    if (!AudioContextConstructor) {
+      return;
+    }
+
+    let disposed = false;
+
+    const ensureAudioContext = () => {
+      if (disposed) {
+        return;
+      }
+
+      if (!audioContextRef.current) {
+        try {
+          audioContextRef.current = new AudioContextConstructor();
+        } catch {
+          return;
+        }
+      }
+
+      const context = audioContextRef.current;
+      if (!context) {
+        return;
+      }
+
+      if (context.state === 'suspended') {
+        context
+          .resume()
+          .then(() => {
+            if (disposed) {
+              return;
+            }
+            document.removeEventListener('pointerdown', ensureAudioContext);
+            document.removeEventListener('keydown', ensureAudioContext);
+          })
+          .catch(() => {
+            // keep listeners to retry on next user interaction
+          });
+        return;
+      }
+
+      document.removeEventListener('pointerdown', ensureAudioContext);
+      document.removeEventListener('keydown', ensureAudioContext);
+    };
+
+    document.addEventListener('pointerdown', ensureAudioContext);
+    document.addEventListener('keydown', ensureAudioContext);
+
+    // Attempt initialization for browsers that do not require a user gesture.
+    ensureAudioContext();
+
+    return () => {
+      disposed = true;
+      document.removeEventListener('pointerdown', ensureAudioContext);
+      document.removeEventListener('keydown', ensureAudioContext);
+      if (audioContextRef.current) {
+        audioContextRef.current.close().catch(() => {
+          /* ignore close errors */
+        });
+        audioContextRef.current = null;
+      }
+    };
   }, []);
 
   useEffect(() => {
@@ -1251,19 +1353,16 @@ const DashboardLayout: React.FC<{
       previousUnreadCountRef.current = 0;
       setNotificationToast(null);
       previousLatestNotificationIdRef.current = null;
+      lastToastIdRef.current = null;
       return;
     }
 
-    const controller = new AbortController();
+    let cancelled = false;
+    let pollIntervalId: number | null = null;
 
     const fetchUnread = async () => {
       try {
-        const response = await fetch(
-          `${apiBaseUrl}/api/notificaciones?userId=${authUser.id}&onlyUnread=1`,
-          {
-            signal: controller.signal,
-          }
-        );
+        const response = await fetch(`${apiBaseUrl}/api/notificaciones?userId=${authUser.id}&onlyUnread=1`);
 
         if (!response.ok) {
           throw new Error(response.statusText);
@@ -1275,6 +1374,10 @@ const DashboardLayout: React.FC<{
           const bTime = b.createdAt ? Date.parse(b.createdAt) : 0;
           return bTime - aTime;
         });
+
+        if (cancelled) {
+          return;
+        }
 
         const count = sorted.length;
         setUnreadCount(count);
@@ -1299,13 +1402,26 @@ const DashboardLayout: React.FC<{
         previousUnreadCountRef.current = count;
         previousLatestNotificationIdRef.current = latestId;
       } catch {
+        if (cancelled) {
+          return;
+        }
         // ignore errors on header badge
       }
     };
 
-    fetchUnread();
+    const runFetch = () => {
+      void fetchUnread();
+    };
 
-    return () => controller.abort();
+    runFetch();
+    pollIntervalId = window.setInterval(runFetch, 15000);
+
+    return () => {
+      cancelled = true;
+      if (pollIntervalId !== null) {
+        window.clearInterval(pollIntervalId);
+      }
+    };
   }, [apiBaseUrl, authUser?.id, notificationsVersion, showNotificationToast]);
 
   useEffect(() => {
@@ -1436,29 +1552,6 @@ const DashboardLayout: React.FC<{
             {subtitle ? <p>{subtitle}</p> : null}
           </div>
           <div className="topbar-actions">
-            {notificationToast ? (
-              <div className="notification-toast" role="status" aria-live="polite">
-                <span className="notification-toast__icon" aria-hidden="true">🔔</span>
-                <div className="notification-toast__content">
-                  <strong>Nueva notificación</strong>
-                  <p>{notificationToast.message}</p>
-                </div>
-                <button
-                  type="button"
-                  className="notification-toast__close"
-                  onClick={() => {
-                    if (notificationToastTimeoutRef.current) {
-                      window.clearTimeout(notificationToastTimeoutRef.current);
-                      notificationToastTimeoutRef.current = null;
-                    }
-                    setNotificationToast(null);
-                  }}
-                  aria-label="Cerrar notificación"
-                >
-                  ×
-                </button>
-              </div>
-            ) : null}
             <div className="time-tracker">
               <div className="time-tracker__display">
                 <span className="time-tracker__clock">{formattedClock}</span>
@@ -1477,17 +1570,42 @@ const DashboardLayout: React.FC<{
                 </button>
               </div>
             </div>
-            <button
-              className="topbar-button notification"
-              type="button"
-              aria-label="Notificaciones"
-              onClick={() => navigate('/notificaciones')}
-            >
-              🔔
-              {unreadCount > 0 ? (
-                <span className="notification-count">{Math.min(unreadCount, 99)}</span>
+            <div className="notification-anchor">
+              <button
+                className="topbar-button notification"
+                type="button"
+                aria-label="Notificaciones"
+                onClick={() => navigate('/notificaciones')}
+              >
+                🔔
+                {unreadCount > 0 ? (
+                  <span className="notification-count">{Math.min(unreadCount, 99)}</span>
+                ) : null}
+              </button>
+              {notificationToast ? (
+                <div className="notification-toast" role="status" aria-live="polite">
+                  <span className="notification-toast__icon" aria-hidden="true">🔔</span>
+                  <div className="notification-toast__content">
+                    <strong>Nueva notificación</strong>
+                    <p>{notificationToast.message}</p>
+                  </div>
+                  <button
+                    type="button"
+                    className="notification-toast__close"
+                    onClick={() => {
+                      if (notificationToastTimeoutRef.current) {
+                        window.clearTimeout(notificationToastTimeoutRef.current);
+                        notificationToastTimeoutRef.current = null;
+                      }
+                      setNotificationToast(null);
+                    }}
+                    aria-label="Cerrar notificación"
+                  >
+                    ×
+                  </button>
+                </div>
               ) : null}
-            </button>
+            </div>
             <button
               type="button"
               className={`user-chip${showUserMenu ? ' is-open' : ''}`}
@@ -5883,12 +6001,9 @@ const NotificationsPage: React.FC = () => {
         setLoading(true);
         setError(null);
 
-        const response = await fetch(
-          `${apiBaseUrl}/api/notificaciones?userId=${authUser.id}`,
-          {
-            signal: controller.signal,
-          }
-        );
+        const response = await fetch(`${apiBaseUrl}/api/notificaciones?userId=${authUser.id}`, {
+          signal: controller.signal,
+        });
 
         if (!response.ok) {
           throw new Error(`Error ${response.status}: ${response.statusText}`);
