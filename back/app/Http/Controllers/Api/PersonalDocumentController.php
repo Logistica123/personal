@@ -13,6 +13,7 @@ use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Validator;
+use Illuminate\Support\Str;
 
 class PersonalDocumentController extends Controller
 {
@@ -67,6 +68,68 @@ class PersonalDocumentController extends Controller
         ]);
     }
 
+    public function liquidaciones(Persona $persona): JsonResponse
+    {
+        $liquidacionTypeIds = FileType::query()
+            ->select('id', 'nombre')
+            ->get()
+            ->filter(function (FileType $tipo) {
+                $nombre = Str::lower($tipo->nombre ?? '');
+                return $nombre !== '' && Str::contains($nombre, 'liquid');
+            })
+            ->pluck('id');
+
+        $documentos = $persona->documentos()
+            ->with(['tipo:id,nombre,vence'])
+            ->when($liquidacionTypeIds->isNotEmpty(), function ($query) use ($liquidacionTypeIds) {
+                $query->whereIn('tipo_archivo_id', $liquidacionTypeIds);
+            }, function ($query) {
+                $query->where(function ($inner) {
+                    $inner
+                        ->whereRaw('LOWER(nombre_original) LIKE ?', ['%liquid%'])
+                        ->orWhereRaw('LOWER(ruta) LIKE ?', ['%liquid%']);
+                });
+            })
+            ->orderByDesc('created_at')
+            ->get()
+            ->map(function (Archivo $documento) use ($persona) {
+                $relativeDownloadUrl = route('personal.documentos.descargar', [
+                    'persona' => $persona->id,
+                    'documento' => $documento->id,
+                ], false);
+
+                $absoluteDownloadUrl = route('personal.documentos.descargar', [
+                    'persona' => $persona->id,
+                    'documento' => $documento->id,
+                ], true);
+
+                $nombre = $documento->nombre_original
+                    ?? $documento->tipo?->nombre
+                    ?? basename($documento->ruta ?? '') ?: 'Liquidación';
+
+                return [
+                    'id' => $documento->id,
+                    'nombre' => $nombre,
+                    'downloadUrl' => $relativeDownloadUrl,
+                    'absoluteDownloadUrl' => $absoluteDownloadUrl,
+                    'mime' => $documento->mime,
+                    'size' => $documento->size,
+                    'sizeLabel' => $this->formatFileSize($documento->size),
+                    'fechaCarga' => optional($documento->created_at)->format('Y-m-d'),
+                    'fechaCargaIso' => optional($documento->created_at)->toIso8601String(),
+                    'fechaVencimiento' => optional($documento->fecha_vencimiento)->format('Y-m-d'),
+                    'tipoId' => $documento->tipo_archivo_id,
+                    'tipoNombre' => $documento->tipo?->nombre,
+                    'requiereVencimiento' => (bool) $documento->tipo?->vence,
+                ];
+            })
+            ->values();
+
+        return response()->json([
+            'data' => $documentos,
+        ]);
+    }
+
     public function storeType(Request $request): JsonResponse
     {
         $validated = $request->validate([
@@ -102,6 +165,17 @@ class PersonalDocumentController extends Controller
 
     public function store(Request $request, Persona $persona): JsonResponse
     {
+        if ($request->boolean('esLiquidacion')) {
+            $liquidacionType = FileType::query()->firstOrCreate(
+                ['nombre' => 'Liquidación'],
+                ['vence' => false]
+            );
+
+            $request->merge([
+                'tipoArchivoId' => $liquidacionType->id,
+            ]);
+        }
+
         $validator = Validator::make($request->all(), [
             'archivo' => ['required', 'file', 'max:5120'],
             'nombre' => ['nullable', 'string'],
@@ -306,6 +380,26 @@ class PersonalDocumentController extends Controller
         }
 
         return null;
+    }
+
+    protected function formatFileSize(?int $bytes): string
+    {
+        if (! $bytes || $bytes <= 0) {
+            return '—';
+        }
+
+        $units = ['B', 'KB', 'MB', 'GB', 'TB'];
+        $index = 0;
+        $size = (float) $bytes;
+
+        while ($size >= 1024 && $index < count($units) - 1) {
+            $size /= 1024;
+            $index++;
+        }
+
+        $formatted = $index === 0 ? (string) round($size) : number_format($size, 1, ',', '.');
+
+        return sprintf('%s %s', $formatted, $units[$index]);
     }
 
     public function update(Request $request, FileType $tipo): JsonResponse

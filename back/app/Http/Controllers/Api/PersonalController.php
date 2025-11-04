@@ -54,6 +54,18 @@ class PersonalController extends Controller
             $query->where('tipo', $request->input('perfilValue'));
         }
 
+        if ($request->filled('email')) {
+            $email = strtolower(trim($request->input('email')));
+
+            $query->where(function ($inner) use ($email) {
+                $inner
+                    ->whereRaw('LOWER(email) = ?', [$email])
+                    ->orWhereHas('dueno', function ($ownerQuery) use ($email) {
+                        $ownerQuery->whereRaw('LOWER(email) = ?', [$email]);
+                    });
+            });
+        }
+
         $personas = $query
             ->get()
             ->map(fn (Persona $persona) => $this->transformPersonaListItem($persona))
@@ -72,6 +84,7 @@ class PersonalController extends Controller
             'agente:id,name',
             'agenteResponsable:id,name',
             'estado:id,nombre',
+            'dueno:id,persona_id,nombreapellido,fecha_nacimiento,email,telefono,cuil,cuil_cobrador,cbu_alias,observaciones',
             'documentos' => fn ($query) => $query->with('tipo:id,nombre,vence')->orderByDesc('created_at'),
             'comments.user:id,name',
             'histories.user:id,name',
@@ -195,6 +208,7 @@ class PersonalController extends Controller
             'telefono' => $validated['duenoTelefono'] ?? null,
             'cuil' => $validated['duenoCuil'] ?? null,
             'cuil_cobrador' => $validated['duenoCuilCobrador'] ?? null,
+            'cbu_alias' => $validated['duenoCbuAlias'] ?? null,
             'observaciones' => $validated['duenoObservaciones'] ?? null,
         ];
 
@@ -211,6 +225,7 @@ class PersonalController extends Controller
                 'telefono' => $ownerPayload['telefono'] ?: null,
                 'cuil' => $ownerPayload['cuil'] ?: null,
                 'cuil_cobrador' => $ownerPayload['cuil_cobrador'] ?: null,
+                'cbu_alias' => $ownerPayload['cbu_alias'] ?: null,
                 'observaciones' => $ownerPayload['observaciones'] ?: null,
             ];
 
@@ -608,12 +623,21 @@ class PersonalController extends Controller
             'observacionTarifa' => $persona->observaciontarifa,
             'observaciones' => $persona->observaciones,
             'fechaAlta' => $this->formatFechaAlta($persona->fecha_alta),
-            'aprobado' => $persona->aprobado === null ? true : (bool) $persona->aprobado,
+            'fechaAltaVinculacion' => $this->formatFechaAlta($persona->fecha_alta),
+            'aprobado' => $persona->aprobado === null ? false : (bool) $persona->aprobado,
             'aprobadoAt' => optional($persona->aprobado_at)->toIso8601String(),
             'aprobadoPorId' => $persona->aprobado_por,
             'aprobadoPorNombre' => $persona->aprobadoPor?->name,
             'esSolicitud' => (bool) $persona->es_solicitud,
             'solicitudTipo' => $persona->es_solicitud ? 'alta' : null,
+            'duenoNombre' => $persona->dueno?->nombreapellido,
+            'duenoFechaNacimiento' => optional($persona->dueno?->fecha_nacimiento)->format('Y-m-d'),
+            'duenoEmail' => $persona->dueno?->email,
+            'duenoTelefono' => $persona->dueno?->telefono,
+            'duenoCuil' => $persona->dueno?->cuil,
+            'duenoCuilCobrador' => $persona->dueno?->cuil_cobrador,
+            'duenoCbuAlias' => $persona->dueno?->cbu_alias,
+            'duenoObservaciones' => $persona->dueno?->observaciones,
             'documents' => $persona->documentos->map(function ($documento) {
                 $downloadUrl = route('personal.documentos.descargar', [
                     'persona' => $documento->persona_id,
@@ -676,7 +700,7 @@ class PersonalController extends Controller
         ];
         $perfil = $persona->tipo !== null ? ($perfilMap[$persona->tipo] ?? 'Perfil '.$persona->tipo) : null;
         $aprobadoValor = $persona->aprobado;
-        $aprobado = $aprobadoValor === null ? true : (bool) $aprobadoValor;
+        $aprobado = $aprobadoValor === null ? false : (bool) $aprobadoValor;
 
         return [
             'id' => $persona->id,
@@ -692,6 +716,7 @@ class PersonalController extends Controller
             'unidadDetalle' => $persona->unidad ? trim(($persona->unidad->marca ?? '') . ' ' . ($persona->unidad->modelo ?? '')) ?: null : null,
             'unidadId' => $persona->unidad_id,
             'fechaAlta' => $this->formatFechaAlta($persona->fecha_alta),
+            'fechaAltaVinculacion' => $this->formatFechaAlta($persona->fecha_alta),
             'sucursal' => $persona->sucursal?->nombre,
             'sucursalId' => $persona->sucursal_id,
             'perfil' => $perfil,

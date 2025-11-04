@@ -87,6 +87,7 @@ type PersonalRecord = {
   unidad: string | null;
   unidadDetalle: string | null;
   unidadId?: number | null;
+  fechaAltaVinculacion?: string | null;
   sucursal: string | null;
   sucursalId?: number | null;
   fechaAlta: string | null;
@@ -154,11 +155,20 @@ type PersonalDetail = {
   observacionTarifa: string | null;
   observaciones: string | null;
   fechaAlta: string | null;
+  fechaAltaVinculacion: string | null;
   aprobado: boolean;
   aprobadoAt: string | null;
   aprobadoPorId: number | null;
   aprobadoPorNombre: string | null;
   esSolicitud: boolean;
+  duenoNombre: string | null;
+  duenoFechaNacimiento: string | null;
+  duenoEmail: string | null;
+  duenoTelefono: string | null;
+  duenoCuil: string | null;
+  duenoCuilCobrador: string | null;
+  duenoCbuAlias: string | null;
+  duenoObservaciones: string | null;
   documents: Array<{
     id: number;
     nombre: string | null;
@@ -241,8 +251,15 @@ type AltaRequestForm = {
   duenoEmail: string;
   duenoCuil: string;
   duenoCuilCobrador: string;
+  duenoCbuAlias: string;
   duenoTelefono: string;
   duenoObservaciones: string;
+};
+
+type AltaSelectOption = {
+  value: string;
+  label: string;
+  disabled?: boolean;
 };
 
 type CombustibleRequestForm = {
@@ -931,6 +948,11 @@ const DashboardLayout: React.FC<{
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
   const [notificationsVersion, setNotificationsVersion] = useState(0);
+  const [notificationToast, setNotificationToast] = useState<{ id: number; message: string } | null>(null);
+  const notificationToastTimeoutRef = useRef<number | null>(null);
+  const unreadInitializedRef = useRef(false);
+  const previousUnreadCountRef = useRef(0);
+  const previousLatestNotificationIdRef = useRef<number | null>(null);
   const [currentTime, setCurrentTime] = useState(() => new Date());
   const [attendanceRecord, setAttendanceRecord] = useState<AttendanceRecord | null>(() => {
     const storedUser = readAuthUserFromStorage();
@@ -967,6 +989,14 @@ const DashboardLayout: React.FC<{
   }, []);
 
   useEffect(() => {
+    return () => {
+      if (notificationToastTimeoutRef.current) {
+        window.clearTimeout(notificationToastTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
     if (!currentUserKey) {
       return;
     }
@@ -979,6 +1009,78 @@ const DashboardLayout: React.FC<{
       removeAttendanceRecordFromStorage(currentUserKey);
     }
   }, [attendanceRecord, currentUserKey]);
+
+  const playNotificationTone = useCallback(() => {
+    try {
+      const AudioContextConstructor =
+        window.AudioContext ||
+        (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+      if (!AudioContextConstructor) {
+        return;
+      }
+      const context = new AudioContextConstructor();
+      if (context.state === 'suspended') {
+        context.resume().catch(() => {
+          /* ignore resume errors */
+        });
+      }
+      const oscillator = context.createOscillator();
+      const gain = context.createGain();
+      oscillator.type = 'triangle';
+      oscillator.frequency.setValueAtTime(880, context.currentTime);
+      gain.gain.setValueAtTime(0.0001, context.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.08, context.currentTime + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, context.currentTime + 0.6);
+      oscillator.connect(gain);
+      gain.connect(context.destination);
+      oscillator.start();
+      oscillator.stop(context.currentTime + 0.6);
+      oscillator.onended = () => {
+        context.close().catch(() => {
+          /* ignore */
+        });
+      };
+    } catch {
+      // ignore audio playback issues
+    }
+  }, []);
+
+  const showNotificationToast = useCallback(
+    async (record: NotificationRecord) => {
+      let agentLabel: string | null = null;
+
+      if (record.personaId) {
+        try {
+          const response = await fetch(`${apiBaseUrl}/api/personal/${record.personaId}`);
+          if (response.ok) {
+            const payload = (await response.json()) as {
+              data?: { agenteResponsable?: string | null; agente?: string | null };
+            };
+            const candidate = payload.data?.agenteResponsable ?? payload.data?.agente ?? null;
+            agentLabel = candidate && candidate.trim().length > 0 ? candidate.trim() : null;
+          }
+        } catch {
+          // ignore lookup errors
+        }
+      }
+
+      const baseMessage = record.message?.trim().length ? record.message.trim() : null;
+      const finalMessage = agentLabel
+        ? `Llegó una notificación del agente ${agentLabel}.`
+        : baseMessage ?? 'Llegó una nueva notificación.';
+
+      setNotificationToast({ id: record.id, message: finalMessage });
+      playNotificationTone();
+      if (notificationToastTimeoutRef.current) {
+        window.clearTimeout(notificationToastTimeoutRef.current);
+      }
+      notificationToastTimeoutRef.current = window.setTimeout(() => {
+        setNotificationToast(null);
+        notificationToastTimeoutRef.current = null;
+      }, 6000);
+    },
+    [apiBaseUrl, playNotificationTone]
+  );
 
   const formattedClock = useMemo(
     () =>
@@ -1145,6 +1247,10 @@ const DashboardLayout: React.FC<{
   useEffect(() => {
     if (!authUser?.id) {
       setUnreadCount(0);
+      unreadInitializedRef.current = false;
+      previousUnreadCountRef.current = 0;
+      setNotificationToast(null);
+      previousLatestNotificationIdRef.current = null;
       return;
     }
 
@@ -1164,7 +1270,34 @@ const DashboardLayout: React.FC<{
         }
 
         const payload = (await response.json()) as { data: NotificationRecord[] };
-        setUnreadCount(payload.data.length);
+        const sorted = [...payload.data].sort((a, b) => {
+          const aTime = a.createdAt ? Date.parse(a.createdAt) : 0;
+          const bTime = b.createdAt ? Date.parse(b.createdAt) : 0;
+          return bTime - aTime;
+        });
+
+        const count = sorted.length;
+        setUnreadCount(count);
+
+        const latestId = sorted.length > 0 ? sorted[0].id : null;
+
+        if (!unreadInitializedRef.current) {
+          unreadInitializedRef.current = true;
+          previousUnreadCountRef.current = count;
+          previousLatestNotificationIdRef.current = latestId;
+          return;
+        }
+
+        const hasNew =
+          (count > previousUnreadCountRef.current && sorted.length > 0) ||
+          (latestId !== null && latestId !== previousLatestNotificationIdRef.current);
+
+        if (hasNew && sorted.length > 0) {
+          await showNotificationToast(sorted[0]);
+        }
+
+        previousUnreadCountRef.current = count;
+        previousLatestNotificationIdRef.current = latestId;
       } catch {
         // ignore errors on header badge
       }
@@ -1173,7 +1306,7 @@ const DashboardLayout: React.FC<{
     fetchUnread();
 
     return () => controller.abort();
-  }, [apiBaseUrl, authUser?.id, notificationsVersion]);
+  }, [apiBaseUrl, authUser?.id, notificationsVersion, showNotificationToast]);
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -1273,6 +1406,9 @@ const DashboardLayout: React.FC<{
           <NavLink to="/aprobaciones" className={({ isActive }) => `sidebar-link${isActive ? ' is-active' : ''}`}>
             Aprobaciones/solicitudes
           </NavLink>
+          <NavLink to="/liquidaciones" className={({ isActive }) => `sidebar-link${isActive ? ' is-active' : ''}`}>
+            Liquidaciones
+          </NavLink>
           <a className="sidebar-link" href="#tarifas" onClick={(event) => event.preventDefault()}>
             Tarifas
           </a>
@@ -1300,6 +1436,29 @@ const DashboardLayout: React.FC<{
             {subtitle ? <p>{subtitle}</p> : null}
           </div>
           <div className="topbar-actions">
+            {notificationToast ? (
+              <div className="notification-toast" role="status" aria-live="polite">
+                <span className="notification-toast__icon" aria-hidden="true">🔔</span>
+                <div className="notification-toast__content">
+                  <strong>Nueva notificación</strong>
+                  <p>{notificationToast.message}</p>
+                </div>
+                <button
+                  type="button"
+                  className="notification-toast__close"
+                  onClick={() => {
+                    if (notificationToastTimeoutRef.current) {
+                      window.clearTimeout(notificationToastTimeoutRef.current);
+                      notificationToastTimeoutRef.current = null;
+                    }
+                    setNotificationToast(null);
+                  }}
+                  aria-label="Cerrar notificación"
+                >
+                  ×
+                </button>
+              </div>
+            ) : null}
             <div className="time-tracker">
               <div className="time-tracker__display">
                 <span className="time-tracker__clock">{formattedClock}</span>
@@ -3934,6 +4093,9 @@ const PersonalPage: React.FC = () => {
     const term = searchTerm.trim().toLowerCase();
 
     return personal.filter((registro) => {
+      if (registro.esSolicitud) {
+        return false;
+      }
       if (clienteFilter && registro.cliente !== clienteFilter) {
         return false;
       }
@@ -4471,6 +4633,978 @@ const PersonalPage: React.FC = () => {
           </button>
         </div>
       </footer>
+    </DashboardLayout>
+  );
+};
+
+const LiquidacionesPage: React.FC = () => {
+  const navigate = useNavigate();
+  const apiBaseUrl = useMemo(() => resolveApiBaseUrl(), []);
+  const [personal, setPersonal] = useState<PersonalRecord[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [currentPage, setCurrentPage] = useState(1);
+  const itemsPerPage = 50;
+  const [clienteFilter, setClienteFilter] = useState('');
+  const [sucursalFilter, setSucursalFilter] = useState('');
+  const [perfilFilter, setPerfilFilter] = useState('');
+  const [agenteFilter, setAgenteFilter] = useState('');
+  const [unidadFilter, setUnidadFilter] = useState('');
+  const [estadoFilter, setEstadoFilter] = useState('');
+  const [combustibleFilter, setCombustibleFilter] = useState('');
+  const [tarifaFilter, setTarifaFilter] = useState('');
+  const [selectedPersonaId, setSelectedPersonaId] = useState<number | null>(null);
+  const [detail, setDetail] = useState<PersonalDetail | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [detailError, setDetailError] = useState<string | null>(null);
+  const [pendingUploads, setPendingUploads] = useState<PendingPersonalUpload[]>([]);
+  const [uploading, setUploading] = useState(false);
+  const [uploadStatus, setUploadStatus] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  const [documentTypes, setDocumentTypes] = useState<PersonalDocumentType[]>([]);
+  const [documentTypesLoading, setDocumentTypesLoading] = useState(true);
+  const [documentTypesError, setDocumentTypesError] = useState<string | null>(null);
+  const [selectedDocumentTypeId, setSelectedDocumentTypeId] = useState('');
+  const [documentExpiry, setDocumentExpiry] = useState('');
+
+  const selectedDocumentType = useMemo(() => {
+    if (!selectedDocumentTypeId) {
+      return null;
+    }
+    const targetId = Number(selectedDocumentTypeId);
+    if (Number.isNaN(targetId)) {
+      return null;
+    }
+    return documentTypes.find((tipo) => tipo.id === targetId) ?? null;
+  }, [documentTypes, selectedDocumentTypeId]);
+  const liquidacionType = useMemo(() => {
+    return documentTypes.find((tipo) => (tipo.nombre ?? '').toLowerCase().includes('liquid'));
+  }, [documentTypes]);
+
+  const formatFileSize = (size: number | null | undefined): string => {
+    if (!size || size <= 0) {
+      return '—';
+    }
+    if (size < 1024) {
+      return `${size} B`;
+    }
+    if (size < 1024 * 1024) {
+      return `${(size / 1024).toFixed(1)} KB`;
+    }
+    return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+  };
+
+  const fetchPersonal = useCallback(
+    async (options?: { signal?: AbortSignal }) => {
+      try {
+        setLoading(true);
+        setError(null);
+
+        const response = await fetch(`${apiBaseUrl}/api/personal?includePending=1`, {
+          signal: options?.signal,
+        });
+
+        if (!response.ok) {
+          throw new Error(`Error ${response.status}: ${response.statusText}`);
+        }
+
+        const payload = (await response.json()) as { data: PersonalRecord[] };
+        if (!payload || !Array.isArray(payload.data)) {
+          throw new Error('Formato de respuesta inesperado');
+        }
+
+        setPersonal(payload.data);
+      } catch (err) {
+        if ((err as Error).name === 'AbortError') {
+          return;
+        }
+
+        setError((err as Error).message ?? 'Error desconocido');
+      } finally {
+        setLoading(false);
+      }
+    },
+    [apiBaseUrl]
+  );
+
+  const refreshPersonaDetail = useCallback(
+    async (options?: { signal?: AbortSignal }) => {
+      if (!selectedPersonaId) {
+        return;
+      }
+
+      try {
+        setDetailLoading(true);
+        setDetailError(null);
+
+        const response = await fetch(`${apiBaseUrl}/api/personal/${selectedPersonaId}`, {
+          signal: options?.signal,
+        });
+
+        if (!response.ok) {
+          throw new Error(`Error ${response.status}: ${response.statusText}`);
+        }
+
+        const payload = (await response.json()) as { data: PersonalDetail };
+
+        if (!payload?.data) {
+          throw new Error('Formato de respuesta inesperado');
+        }
+
+        setDetail({
+          ...payload.data,
+          documents: payload.data.documents ?? [],
+        });
+      } catch (err) {
+        if ((err as Error).name === 'AbortError') {
+          return;
+        }
+        setDetailError((err as Error).message ?? 'No se pudo cargar la información del personal.');
+        setDetail(null);
+      } finally {
+        setDetailLoading(false);
+      }
+    },
+    [apiBaseUrl, selectedPersonaId]
+  );
+
+  useEffect(() => {
+    const controller = new AbortController();
+    fetchPersonal({ signal: controller.signal });
+    return () => controller.abort();
+  }, [fetchPersonal]);
+
+  useEffect(() => {
+    const handler = (event: Event) => {
+      const customEvent = event as CustomEvent<{ persona?: PersonalRecord }>;
+      const persona = customEvent.detail?.persona;
+
+      if (persona && persona.aprobado !== false) {
+        setPersonal((prev) => {
+          const existingIndex = prev.findIndex((item) => item.id === persona.id);
+          if (existingIndex >= 0) {
+            const updated = [...prev];
+            updated[existingIndex] = persona;
+            return updated;
+          }
+
+          return [persona, ...prev];
+        });
+        if (selectedPersonaId && persona.id === selectedPersonaId) {
+          refreshPersonaDetail();
+        }
+        setError(null);
+        setLoading(false);
+        return;
+      }
+
+      fetchPersonal();
+    };
+
+    window.addEventListener('personal:updated', handler as EventListener);
+    return () => window.removeEventListener('personal:updated', handler as EventListener);
+  }, [fetchPersonal, refreshPersonaDetail, selectedPersonaId]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+
+    const fetchDocumentTypes = async () => {
+      try {
+        setDocumentTypesLoading(true);
+        setDocumentTypesError(null);
+
+        const response = await fetch(`${apiBaseUrl}/api/personal/documentos/tipos`, {
+          signal: controller.signal,
+        });
+
+        if (!response.ok) {
+          throw new Error(`Error ${response.status}: ${response.statusText}`);
+        }
+
+        const payload = (await response.json()) as { data: PersonalDocumentType[] };
+        setDocumentTypes(payload?.data ?? []);
+      } catch (err) {
+        if ((err as Error).name === 'AbortError') {
+          return;
+        }
+        setDocumentTypesError((err as Error).message ?? 'No se pudieron cargar los tipos de documento.');
+      } finally {
+        setDocumentTypesLoading(false);
+      }
+    };
+
+    fetchDocumentTypes();
+
+    return () => controller.abort();
+  }, [apiBaseUrl]);
+
+  useEffect(() => {
+    if (!selectedPersonaId) {
+      setDetail(null);
+      setDetailError(null);
+      setDetailLoading(false);
+      return;
+    }
+
+    const controller = new AbortController();
+    refreshPersonaDetail({ signal: controller.signal });
+    return () => controller.abort();
+  }, [refreshPersonaDetail, selectedPersonaId]);
+
+  useEffect(() => {
+    if (documentTypes.length === 0) {
+      setSelectedDocumentTypeId('');
+      return;
+    }
+
+    if (liquidacionType) {
+      const typeId = String(liquidacionType.id);
+      if (typeId !== selectedDocumentTypeId) {
+        setSelectedDocumentTypeId(typeId);
+      }
+      return;
+    }
+
+    const alreadySelected = documentTypes.some((tipo) => String(tipo.id) === selectedDocumentTypeId);
+    if (!alreadySelected) {
+      setSelectedDocumentTypeId(String(documentTypes[0].id));
+    }
+  }, [documentTypes, liquidacionType, selectedDocumentTypeId]);
+
+  const perfilNames: Record<number, string> = useMemo(
+    () => ({
+      1: 'Dueño y chofer',
+      2: 'Chofer',
+      3: 'Transportista',
+    }),
+    []
+  );
+
+  const filteredPersonal = useMemo(() => {
+    const term = searchTerm.trim().toLowerCase();
+
+    return personal.filter((registro) => {
+      if (clienteFilter && registro.cliente !== clienteFilter) {
+        return false;
+      }
+
+      if (sucursalFilter && registro.sucursal !== sucursalFilter) {
+        return false;
+      }
+
+      if (perfilFilter) {
+        const nombre = perfilNames[registro.perfilValue ?? 0] ?? registro.perfil;
+        if (nombre !== perfilFilter) {
+          return false;
+        }
+      }
+
+      if (agenteFilter && registro.agente !== agenteFilter) {
+        return false;
+      }
+
+      if (unidadFilter && registro.unidad !== unidadFilter) {
+        return false;
+      }
+
+      if (estadoFilter && registro.estado !== estadoFilter) {
+        return false;
+      }
+
+      if (combustibleFilter) {
+        const target = combustibleFilter === 'true';
+        if (registro.combustibleValue !== target) {
+          return false;
+        }
+      }
+
+      if (tarifaFilter) {
+        const target = tarifaFilter === 'true';
+        if (registro.tarifaEspecialValue !== target) {
+          return false;
+        }
+      }
+
+      if (term.length === 0) {
+        return true;
+      }
+
+      const fields = [
+        registro.nombre,
+        registro.cuil,
+        registro.telefono,
+        registro.email,
+        registro.cliente,
+        registro.unidad,
+        registro.unidadDetalle,
+        registro.sucursal,
+        registro.fechaAlta,
+        registro.perfil,
+        registro.agente,
+        registro.agenteResponsable,
+        registro.estado,
+        registro.combustible,
+        registro.tarifaEspecial,
+        registro.pago,
+        registro.cbuAlias,
+        registro.patente,
+        registro.observaciones,
+        registro.observacionTarifa,
+        registro.duenoNombre,
+        registro.duenoCuil,
+        registro.duenoCuilCobrador,
+        registro.duenoCbuAlias,
+        registro.duenoEmail,
+        registro.duenoTelefono,
+        registro.duenoObservaciones,
+      ];
+
+      return fields.some((field) => field?.toLowerCase().includes(term));
+    });
+  }, [
+    personal,
+    searchTerm,
+    clienteFilter,
+    sucursalFilter,
+    perfilFilter,
+    agenteFilter,
+    unidadFilter,
+    estadoFilter,
+    combustibleFilter,
+    tarifaFilter,
+    perfilNames,
+  ]);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [
+    searchTerm,
+    clienteFilter,
+    sucursalFilter,
+    perfilFilter,
+    agenteFilter,
+    unidadFilter,
+    estadoFilter,
+    combustibleFilter,
+    tarifaFilter,
+  ]);
+
+  useEffect(() => {
+    const totalPages = Math.max(1, Math.ceil(filteredPersonal.length / itemsPerPage));
+    if (currentPage > totalPages) {
+      setCurrentPage(totalPages);
+    }
+  }, [filteredPersonal.length, currentPage, itemsPerPage]);
+
+  const totalRecords = filteredPersonal.length;
+  const totalPages = Math.max(1, Math.ceil(totalRecords / itemsPerPage));
+  const safePage = Math.min(currentPage, totalPages);
+  const startIndex = (safePage - 1) * itemsPerPage;
+  const pageRecords = filteredPersonal.slice(startIndex, startIndex + itemsPerPage);
+
+  const clienteOptions = useMemo(
+    () =>
+      Array.from(new Set(personal.map((registro) => registro.cliente).filter((value): value is string => Boolean(value)))).sort(),
+    [personal]
+  );
+  const sucursalOptions = useMemo(
+    () =>
+      Array.from(new Set(personal.map((registro) => registro.sucursal).filter((value): value is string => Boolean(value)))).sort(),
+    [personal]
+  );
+  const perfilOptions = useMemo(() => {
+    const namesFromData = personal
+      .map((registro) => perfilNames[registro.perfilValue ?? 0] ?? registro.perfil)
+      .filter((value): value is string => Boolean(value));
+    const all = [...namesFromData, ...Object.values(perfilNames)];
+    return Array.from(new Set(all)).sort();
+  }, [personal, perfilNames]);
+  const agenteOptions = useMemo(
+    () =>
+      Array.from(new Set(personal.map((registro) => registro.agente).filter((value): value is string => Boolean(value)))).sort(),
+    [personal]
+  );
+  const unidadOptions = useMemo(
+    () =>
+      Array.from(new Set(personal.map((registro) => registro.unidad).filter((value): value is string => Boolean(value)))).sort(),
+    [personal]
+  );
+  const estadoOptions = useMemo(
+    () =>
+      Array.from(new Set(personal.map((registro) => registro.estado).filter((value): value is string => Boolean(value)))).sort(),
+    [personal]
+  );
+
+  const clearFilters = () => {
+    setClienteFilter('');
+    setSucursalFilter('');
+    setPerfilFilter('');
+    setAgenteFilter('');
+    setUnidadFilter('');
+    setEstadoFilter('');
+    setCombustibleFilter('');
+    setTarifaFilter('');
+    setSearchTerm('');
+    setCurrentPage(1);
+  };
+
+  const footerLabel = useMemo(() => {
+    if (loading) {
+      return 'Cargando personal...';
+    }
+
+    if (error) {
+      return 'No se pudieron cargar los registros.';
+    }
+
+    if (filteredPersonal.length === 0) {
+      return 'No hay registros para mostrar.';
+    }
+
+    if (filteredPersonal.length === personal.length) {
+      return `Mostrando ${personal.length} registro${personal.length === 1 ? '' : 's'}`;
+    }
+
+    return `Mostrando ${filteredPersonal.length} de ${personal.length} registros`;
+  }, [loading, error, filteredPersonal.length, personal.length]);
+
+  const liquidacionDocuments = useMemo(() => {
+    if (!detail) {
+      return [] as PersonalDetail['documents'];
+    }
+
+    const matches = detail.documents.filter((doc) => (doc.tipoNombre ?? '').toLowerCase().includes('liquid'));
+    if (matches.length > 0) {
+      return matches;
+    }
+    return detail.documents;
+  }, [detail]);
+
+  const handleSelectPersona = (registro: PersonalRecord) => {
+    setSelectedPersonaId(registro.id);
+    setPendingUploads([]);
+    setUploadStatus(null);
+    setDocumentExpiry('');
+  };
+
+  const handleRemovePendingUpload = useCallback((id: string) => {
+    setPendingUploads((prev) => prev.filter((item) => item.id !== id));
+  }, []);
+
+  const handlePendingFilesSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const files = event.target.files;
+
+    if (!files || files.length === 0) {
+      return;
+    }
+
+    if (!selectedPersonaId) {
+      setUploadStatus({ type: 'error', message: 'Seleccioná un registro antes de agregar archivos.' });
+      event.target.value = '';
+      return;
+    }
+
+    if (!selectedDocumentTypeId) {
+      setUploadStatus({ type: 'error', message: 'Seleccioná el tipo de documento antes de agregar archivos.' });
+      event.target.value = '';
+      return;
+    }
+
+    const tipo = selectedDocumentType;
+
+    if (tipo?.vence && !documentExpiry) {
+      setUploadStatus({ type: 'error', message: 'Este tipo de documento requiere fecha de vencimiento.' });
+      event.target.value = '';
+      return;
+    }
+
+    const effectiveTypeId = liquidacionType ? liquidacionType.id : Number(selectedDocumentTypeId);
+    if (!effectiveTypeId || Number.isNaN(effectiveTypeId)) {
+      setUploadStatus({ type: 'error', message: 'No se pudo determinar el tipo de documento para la liquidación.' });
+      event.target.value = '';
+      return;
+    }
+
+    const newUploads: PendingPersonalUpload[] = Array.from(files).map((file) => ({
+      id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      file,
+      typeId: effectiveTypeId,
+      typeName: (liquidacionType ?? tipo)?.nombre ?? null,
+      fechaVencimiento: tipo?.vence ? documentExpiry || null : null,
+    }));
+
+    setPendingUploads((prev) => [...prev, ...newUploads]);
+    setUploadStatus(null);
+
+    if (!tipo?.vence) {
+      setDocumentExpiry('');
+    }
+
+    event.target.value = '';
+  };
+
+  const handleUploadDocumentos = async () => {
+    if (!selectedPersonaId || pendingUploads.length === 0) {
+      return;
+    }
+
+    try {
+      setUploading(true);
+      setUploadStatus(null);
+
+      for (const item of pendingUploads) {
+        const formData = new FormData();
+        formData.append('archivo', item.file);
+        const rawName = item.file.name.trim();
+        const hasLiquidKeyword = /liquid/i.test(rawName);
+        const friendlyName = hasLiquidKeyword ? rawName : `Liquidación - ${rawName}`;
+        formData.append('nombre', friendlyName);
+        formData.append('tipoArchivoId', String(item.typeId));
+        if (item.fechaVencimiento) {
+          formData.append('fechaVencimiento', item.fechaVencimiento);
+        }
+        formData.append('esLiquidacion', '1');
+
+        const response = await fetch(`${apiBaseUrl}/api/personal/${selectedPersonaId}/documentos`, {
+          method: 'POST',
+          body: formData,
+        });
+
+        if (!response.ok) {
+          let message = `Error ${response.status}: ${response.statusText}`;
+          try {
+            const payload = await response.json();
+            if (typeof payload?.message === 'string') {
+              message = payload.message;
+            } else if (payload?.errors) {
+              const firstError = Object.values(payload.errors)[0];
+              if (Array.isArray(firstError) && typeof firstError[0] === 'string') {
+                message = firstError[0];
+              }
+            }
+          } catch {
+            // ignore
+          }
+
+          throw new Error(message);
+        }
+      }
+
+      setUploadStatus({ type: 'success', message: 'Liquidaciones cargadas correctamente.' });
+      setPendingUploads([]);
+      setDocumentExpiry('');
+      refreshPersonaDetail();
+    } catch (err) {
+      setUploadStatus({ type: 'error', message: (err as Error).message ?? 'No se pudieron subir los archivos.' });
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const handleDownloadDocumento = (documento: PersonalDetail['documents'][number]) => {
+    if (!detail) {
+      return;
+    }
+
+    const fallbackPath = `/api/personal/${detail.id}/documentos/${documento.id}/descargar`;
+    const resolvedUrl = resolveApiUrl(apiBaseUrl, documento.downloadUrl ?? fallbackPath);
+
+    if (!resolvedUrl) {
+      window.alert('No se pudo determinar la URL de descarga para este documento.');
+      return;
+    }
+
+    window.open(resolvedUrl, '_blank', 'noopener');
+  };
+
+  const handleClearSelection = () => {
+    setSelectedPersonaId(null);
+    setDetail(null);
+    setDetailError(null);
+    setPendingUploads([]);
+    setUploadStatus(null);
+    setDocumentExpiry('');
+  };
+
+  const headerContent = (
+    <div className="filters-bar">
+      <div className="filters-grid">
+        <label className="filter-field">
+          <span>Cliente</span>
+          <select value={clienteFilter} onChange={(event) => setClienteFilter(event.target.value)}>
+            <option value="">Cliente</option>
+            {clienteOptions.map((option) => (
+              <option key={option} value={option}>
+                {option}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="filter-field">
+          <span>Sucursal</span>
+          <select value={sucursalFilter} onChange={(event) => setSucursalFilter(event.target.value)}>
+            <option value="">Sucursal</option>
+            {sucursalOptions.map((option) => (
+              <option key={option} value={option}>
+                {option}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="filter-field">
+          <span>Perfil</span>
+          <select value={perfilFilter} onChange={(event) => setPerfilFilter(event.target.value)}>
+            <option value="">Perfil</option>
+            {perfilOptions.map((option) => (
+              <option key={option} value={option}>
+                {option}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="filter-field">
+          <span>Agente</span>
+          <select value={agenteFilter} onChange={(event) => setAgenteFilter(event.target.value)}>
+            <option value="">Agente</option>
+            {agenteOptions.map((option) => (
+              <option key={option} value={option}>
+                {option}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="filter-field">
+          <span>Unidad</span>
+          <select value={unidadFilter} onChange={(event) => setUnidadFilter(event.target.value)}>
+            <option value="">Unidad</option>
+            {unidadOptions.map((option) => (
+              <option key={option} value={option}>
+                {option}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="filter-field">
+          <span>Estado</span>
+          <select value={estadoFilter} onChange={(event) => setEstadoFilter(event.target.value)}>
+            <option value="">Estado</option>
+            {estadoOptions.map((option) => (
+              <option key={option} value={option}>
+                {option}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="filter-field">
+          <span>Combustible</span>
+          <select value={combustibleFilter} onChange={(event) => setCombustibleFilter(event.target.value)}>
+            <option value="">Combustible</option>
+            <option value="true">Sí</option>
+            <option value="false">No</option>
+          </select>
+        </label>
+        <label className="filter-field">
+          <span>Tarifa especial</span>
+          <select value={tarifaFilter} onChange={(event) => setTarifaFilter(event.target.value)}>
+            <option value="">Tarifa especial</option>
+            <option value="true">Sí</option>
+            <option value="false">No</option>
+          </select>
+        </label>
+      </div>
+
+      <div className="filters-actions">
+        <div className="search-wrapper">
+          <input
+            type="search"
+            placeholder="Buscar"
+            value={searchTerm}
+            onChange={(event) => setSearchTerm(event.target.value)}
+          />
+        </div>
+        <button type="button" className="secondary-action" onClick={clearFilters}>
+          Limpiar
+        </button>
+        <button type="button" className="secondary-action" onClick={() => navigate('/personal')}>
+          Ir a personal
+        </button>
+      </div>
+    </div>
+  );
+
+  const selectedPersonaLabel = useMemo(() => {
+    if (!detail) {
+      return '';
+    }
+
+    const fullName = [detail.nombres, detail.apellidos].filter(Boolean).join(' ').trim();
+    if (fullName.length > 0) {
+      return fullName;
+    }
+
+    return detail.email ?? `Registro #${detail.id}`;
+  }, [detail]);
+
+  return (
+    <DashboardLayout title="Liquidaciones" subtitle="Gestión de liquidaciones del personal" headerContent={headerContent}>
+      <div className="table-wrapper">
+        <table>
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>Nombre</th>
+              <th>CUIL</th>
+              <th>Teléfono</th>
+              <th>Email</th>
+              <th>Perfil</th>
+              <th>Agente</th>
+              <th>Estado</th>
+              <th>Combustible</th>
+              <th>Tarifa especial</th>
+              <th>Cliente</th>
+              <th>Unidad</th>
+              <th>Sucursal</th>
+              <th>Fecha alta</th>
+              <th>Acciones</th>
+            </tr>
+          </thead>
+          <tbody>
+            {loading && (
+              <tr>
+                <td colSpan={15}>Cargando personal...</td>
+              </tr>
+            )}
+
+            {error && !loading && (
+              <tr>
+                <td colSpan={15} className="error-cell">
+                  {error}
+                </td>
+              </tr>
+            )}
+
+            {!loading && !error && filteredPersonal.length === 0 && (
+              <tr>
+                <td colSpan={15}>No hay registros para mostrar.</td>
+              </tr>
+            )}
+
+            {!loading &&
+              !error &&
+              pageRecords.map((registro) => {
+                const isSelected = selectedPersonaId === registro.id;
+                return (
+                  <tr key={registro.id} className={isSelected ? 'is-selected-row' : undefined}>
+                    <td>{registro.id}</td>
+                    <td>{registro.nombre ?? '—'}</td>
+                    <td>{registro.cuil ?? '—'}</td>
+                    <td>{registro.telefono ?? '—'}</td>
+                    <td>{registro.email ?? '—'}</td>
+                    <td>{registro.perfil ?? '—'}</td>
+                    <td>{registro.agente ?? '—'}</td>
+                    <td>{registro.estado ?? '—'}</td>
+                    <td>{registro.combustible ?? '—'}</td>
+                    <td>{registro.tarifaEspecial ?? '—'}</td>
+                    <td>{registro.cliente ?? '—'}</td>
+                    <td>{registro.unidad ?? '—'}</td>
+                    <td>{registro.sucursal ?? '—'}</td>
+                    <td>{registro.fechaAlta ?? '—'}</td>
+                    <td>
+                      <button
+                        type="button"
+                        className="secondary-action"
+                        onClick={() => handleSelectPersona(registro)}
+                      >
+                        {isSelected ? 'Gestionando' : 'Gestionar'}
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
+          </tbody>
+        </table>
+      </div>
+
+      <footer className="table-footer">
+        <span>{footerLabel}</span>
+        <div className="pagination">
+          <button
+            aria-label="Anterior"
+            onClick={() => setCurrentPage((page) => Math.max(1, page - 1))}
+            disabled={safePage <= 1}
+          >
+            ‹
+          </button>
+          <button
+            aria-label="Siguiente"
+            onClick={() => setCurrentPage((page) => Math.min(totalPages, page + 1))}
+            disabled={safePage >= totalPages}
+          >
+            ›
+          </button>
+        </div>
+      </footer>
+
+      <section className="personal-edit-section">
+        <div className="card-header card-header--compact">
+          <h2>Liquidaciones</h2>
+          {selectedPersonaId ? (
+            <div className="filters-actions" style={{ gap: '0.5rem' }}>
+              <button type="button" className="secondary-action" onClick={handleClearSelection}>
+                Limpiar selección
+              </button>
+            </div>
+          ) : null}
+        </div>
+        {selectedPersonaId ? (
+          <>
+            <p className="form-info">
+              {detailLoading
+                ? 'Cargando información del personal seleccionado...'
+                : `Gestioná las liquidaciones de ${selectedPersonaLabel}.`}
+            </p>
+            {detailError ? <p className="form-info form-info--error">{detailError}</p> : null}
+
+            {!detailLoading && !detailError && (!detail || liquidacionDocuments.length === 0) ? (
+              <p className="form-info">
+                No hay liquidaciones cargadas para este personal. Podés subir nuevas utilizando el formulario inferior.
+              </p>
+            ) : null}
+
+            {detail && liquidacionDocuments.length > 0 ? (
+              <div className="table-wrapper">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Nombre</th>
+                      <th>Tipo</th>
+                      <th>Fecha</th>
+                      <th>Peso</th>
+                      <th style={{ width: '140px' }}>Acciones</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {liquidacionDocuments.map((doc) => (
+                      <tr key={doc.id}>
+                        <td>{doc.nombre ?? `Documento #${doc.id}`}</td>
+                        <td>{doc.tipoNombre ?? '—'}</td>
+                        <td>
+                          {doc.fechaVencimiento
+                            ? doc.fechaVencimiento
+                            : doc.requiereVencimiento
+                              ? 'Requiere fecha'
+                              : '—'}
+                        </td>
+                        <td>{formatFileSize(doc.size)}</td>
+                        <td>
+                          <button
+                            type="button"
+                            className="secondary-action"
+                            onClick={() => handleDownloadDocumento(doc)}
+                          >
+                            Descargar
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : null}
+
+            <div className="form-grid" style={{ marginTop: '1.5rem' }}>
+              <label className="input-control">
+                <span>Tipo de documento</span>
+                <input
+                  type="text"
+                  value={
+                    liquidacionType?.nombre
+                      ?? selectedDocumentType?.nombre
+                      ?? 'Liquidación'
+                  }
+                  readOnly
+                />
+              </label>
+              {selectedDocumentType?.vence ? (
+                <label className="input-control">
+                  <span>Fecha de vencimiento</span>
+                  <input
+                    type="date"
+                    value={documentExpiry}
+                    onChange={(event) => setDocumentExpiry(event.target.value)}
+                  />
+                </label>
+              ) : null}
+            </div>
+
+            {documentTypesError ? (
+              <p className="form-info form-info--error">{documentTypesError}</p>
+            ) : null}
+
+            <div className="upload-dropzone" role="presentation">
+              <div className="upload-dropzone__icon">📄</div>
+              <p>Arrastra y suelta liquidaciones aquí</p>
+              <label className="secondary-action" style={{ cursor: 'pointer' }}>
+                Seleccionar archivos
+                <input
+                  type="file"
+                  multiple
+                  onChange={handlePendingFilesSelect}
+                  style={{ display: 'none' }}
+                />
+              </label>
+              {pendingUploads.length > 0 ? (
+                <ul className="pending-upload-list">
+                  {pendingUploads.map((item) => (
+                    <li key={item.id}>
+                      <div>
+                        <strong>{item.file.name}</strong>
+                        <span>{item.typeName ?? 'Sin tipo asignado'}</span>
+                        {item.fechaVencimiento ? <span>Vence: {item.fechaVencimiento}</span> : null}
+                      </div>
+                      <button
+                        type="button"
+                        className="pending-upload-remove"
+                        onClick={() => handleRemovePendingUpload(item.id)}
+                        aria-label={`Quitar ${item.file.name}`}
+                      >
+                        ×
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+            </div>
+
+            {uploadStatus ? (
+              <p
+                className={
+                  uploadStatus.type === 'error' ? 'form-info form-info--error' : 'form-info form-info--success'
+                }
+              >
+                {uploadStatus.message}
+              </p>
+            ) : null}
+
+            <button
+              type="button"
+              className="primary-action"
+              onClick={handleUploadDocumentos}
+              disabled={
+                uploading ||
+                pendingUploads.length === 0 ||
+                documentTypesLoading ||
+                !selectedPersonaId ||
+                !selectedDocumentTypeId
+              }
+            >
+              {uploading ? 'Subiendo...' : 'Subir liquidaciones'}
+            </button>
+          </>
+        ) : (
+          <p className="form-info">Seleccioná un registro de la lista para ver y cargar liquidaciones.</p>
+        )}
+      </section>
     </DashboardLayout>
   );
 };
@@ -5490,6 +6624,7 @@ const ApprovalsRequestsPage: React.FC = () => {
     duenoEmail: '',
     duenoCuil: '',
     duenoCuilCobrador: '',
+    duenoCbuAlias: '',
     duenoTelefono: '',
     duenoObservaciones: '',
   }));
@@ -5710,6 +6845,48 @@ const ApprovalsRequestsPage: React.FC = () => {
     return () => window.removeEventListener('personal:updated', handler as EventListener);
   }, [fetchSolicitudes]);
 
+  useEffect(() => {
+    if (!reviewPersonaDetail) {
+      return;
+    }
+
+    setAltaForm((prev) => ({
+      ...prev,
+      perfilValue: reviewPersonaDetail.perfilValue ?? prev.perfilValue,
+      nombres: reviewPersonaDetail.nombres ?? '',
+      apellidos: reviewPersonaDetail.apellidos ?? '',
+      telefono: reviewPersonaDetail.telefono ?? '',
+      email: reviewPersonaDetail.email ?? '',
+      tarifaEspecial: Boolean(reviewPersonaDetail.tarifaEspecialValue),
+      observacionTarifa: reviewPersonaDetail.observacionTarifa ?? '',
+      cuil: reviewPersonaDetail.cuil ?? '',
+      cbuAlias: reviewPersonaDetail.cbuAlias ?? '',
+      pago: reviewPersonaDetail.pago ?? '',
+      combustible: Boolean(reviewPersonaDetail.combustibleValue),
+      fechaAlta: reviewPersonaDetail.fechaAlta ?? '',
+      fechaAltaVinculacion:
+        reviewPersonaDetail.fechaAltaVinculacion ?? reviewPersonaDetail.fechaAlta ?? '',
+      patente: reviewPersonaDetail.patente ?? '',
+      clienteId: reviewPersonaDetail.clienteId ? String(reviewPersonaDetail.clienteId) : '',
+      sucursalId: reviewPersonaDetail.sucursalId ? String(reviewPersonaDetail.sucursalId) : '',
+      agenteId: reviewPersonaDetail.agenteId ? String(reviewPersonaDetail.agenteId) : '',
+      agenteResponsableId: reviewPersonaDetail.agenteResponsableId
+        ? String(reviewPersonaDetail.agenteResponsableId)
+        : '',
+      unidadId: reviewPersonaDetail.unidadId ? String(reviewPersonaDetail.unidadId) : '',
+      estadoId: reviewPersonaDetail.estadoId ? String(reviewPersonaDetail.estadoId) : '',
+      observaciones: reviewPersonaDetail.observaciones ?? '',
+      duenoNombre: reviewPersonaDetail.duenoNombre ?? '',
+      duenoFechaNacimiento: reviewPersonaDetail.duenoFechaNacimiento ?? '',
+      duenoEmail: reviewPersonaDetail.duenoEmail ?? '',
+      duenoCuil: reviewPersonaDetail.duenoCuil ?? '',
+      duenoCuilCobrador: reviewPersonaDetail.duenoCuilCobrador ?? '',
+      duenoCbuAlias: reviewPersonaDetail.duenoCbuAlias ?? '',
+      duenoTelefono: reviewPersonaDetail.duenoTelefono ?? '',
+      duenoObservaciones: reviewPersonaDetail.duenoObservaciones ?? '',
+    }));
+  }, [reviewPersonaDetail]);
+
   const headerContent = (
     <div className="card-header card-header--compact">
       <button type="button" className="secondary-action" onClick={() => navigate('/personal')}>
@@ -5867,6 +7044,7 @@ const sucursalOptions = useMemo(() => {
         pago: altaForm.pago ? Number(altaForm.pago) : null,
         combustible: altaForm.combustible,
         fechaAlta: altaForm.fechaAlta || null,
+        fechaAltaVinculacion: altaForm.fechaAltaVinculacion || null,
         patente: altaForm.patente.trim() || null,
         clienteId: altaForm.clienteId ? Number(altaForm.clienteId) : null,
         sucursalId: altaForm.sucursalId ? Number(altaForm.sucursalId) : null,
@@ -5880,6 +7058,7 @@ const sucursalOptions = useMemo(() => {
         duenoEmail: altaForm.duenoEmail.trim() || null,
         duenoCuil: altaForm.duenoCuil.trim() || null,
         duenoCuilCobrador: altaForm.duenoCuilCobrador.trim() || null,
+        duenoCbuAlias: altaForm.duenoCbuAlias.trim() || null,
         duenoTelefono: altaForm.duenoTelefono.trim() || null,
         duenoObservaciones: altaForm.duenoObservaciones.trim() || null,
       };
@@ -5998,8 +7177,10 @@ const sucursalOptions = useMemo(() => {
         message: payload.message ?? 'Solicitud de alta registrada correctamente.',
       });
 
+      const defaultPerfilValue = meta?.perfiles?.[0]?.value ?? 0;
+
       setAltaForm((prev) => ({
-        ...prev,
+        perfilValue: defaultPerfilValue,
         nombres: '',
         apellidos: '',
         telefono: '',
@@ -6025,6 +7206,7 @@ const sucursalOptions = useMemo(() => {
         duenoEmail: '',
         duenoCuil: '',
         duenoCuilCobrador: '',
+        duenoCbuAlias: '',
         duenoTelefono: '',
         duenoObservaciones: '',
       }));
@@ -6032,8 +7214,12 @@ const sucursalOptions = useMemo(() => {
       setAltaFilesVersion((value) => value + 1);
       setAltaDocumentType('');
       setAltaDocumentExpiry('');
-      window.dispatchEvent(new CustomEvent('personal:updated'));
-      handleGoToList();
+      setReviewPersonaDetail(null);
+      setApprovalEstadoId('');
+      setReviewCommentText('');
+      setReviewCommentError(null);
+      setReviewCommentInfo(null);
+      setActiveTab('altas');
       fetchSolicitudes();
     } catch (err) {
       setFlash({
@@ -6144,9 +7330,7 @@ const sucursalOptions = useMemo(() => {
     }
   };
 
-  const handleReviewCommentSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-
+  const handleReviewCommentSubmit = async () => {
     if (!reviewPersonaDetail) {
       return;
     }
@@ -6625,6 +7809,25 @@ const handleAdelantoFieldChange =
     </label>
   );
 
+  const renderAltaSelect = (
+    label: string,
+    field: AltaEditableField,
+    options: AltaSelectOption[],
+    { placeholder = 'Seleccionar', disabled = false }: { placeholder?: string; disabled?: boolean } = {}
+  ) => (
+    <label className="input-control">
+      <span>{label}</span>
+      <select value={altaForm[field]} onChange={handleAltaFieldChange(field)} disabled={disabled}>
+        <option value="">{placeholder}</option>
+        {options.map((option) => (
+          <option key={option.value} value={option.value} disabled={option.disabled}>
+            {option.label}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+
   const renderAltaDisabledInput = (label: string, type: 'text' | 'email' | 'date' | 'number' = 'text') => (
     <label className="input-control">
       <span>{label}</span>
@@ -7024,9 +8227,9 @@ const handleAdelantoFieldChange =
         );
       case 2:
         return (
-          <div className="personal-section">
+          <div className="personal-section personal-section--chofer">
             <h3>Chofer</h3>
-            <div className="form-grid">
+            <div className="form-grid form-grid--chofer">
               {renderAltaInput('Nombre completo', 'nombres', true)}
               {renderAltaInput('Correo electrónico', 'email', false, 'email')}
               {renderAltaInput('Teléfono', 'telefono', false, 'tel')}
@@ -7035,18 +8238,80 @@ const handleAdelantoFieldChange =
               {renderAltaInput('CUIL', 'cuil')}
               {renderAltaInput('CBU/Alias', 'cbuAlias')}
               {renderAltaCheckbox('Combustible', 'combustible', 'Cuenta corrientes combustible')}
-              {renderAltaInput('Pago', 'pago', false, 'number')}
+              {renderAltaInput('Pago', 'pago', false, 'number', '0.00')}
               {renderAltaInput('Fecha de alta', 'fechaAlta', false, 'date')}
               {renderAltaInput('Patente', 'patente')}
+              {renderAltaSelect(
+                'Cliente',
+                'clienteId',
+                (meta?.clientes ?? []).map((cliente) => ({
+                  value: String(cliente.id),
+                  label: cliente.nombre ?? `Cliente #${cliente.id}`,
+                }))
+              )}
+              {renderAltaSelect(
+                'Sucursal',
+                'sucursalId',
+                sucursalOptions.map((sucursal) => ({
+                  value: String(sucursal.id),
+                  label: sucursal.nombre ?? `Sucursal #${sucursal.id}`,
+                })),
+                { disabled: sucursalOptions.length === 0 }
+              )}
+              {renderAltaSelect(
+                'Agente',
+                'agenteId',
+                (meta?.agentes ?? []).map((agente) => ({
+                  value: String(agente.id),
+                  label: agente.name ?? `Agente #${agente.id}`,
+                }))
+              )}
+              {renderAltaSelect(
+                'Agente responsable',
+                'agenteResponsableId',
+                (meta?.agentes ?? []).map((agente) => ({
+                  value: String(agente.id),
+                  label: agente.name ?? `Agente #${agente.id}`,
+                }))
+              )}
+              {renderAltaSelect(
+                'Unidad',
+                'unidadId',
+                (meta?.unidades ?? []).map((unidad) => ({
+                  value: String(unidad.id),
+                  label:
+                    [unidad.matricula, unidad.marca, unidad.modelo].filter(Boolean).join(' · ') ||
+                    `Unidad #${unidad.id}`,
+                }))
+              )}
+              {renderAltaSelect(
+                'Estado',
+                'estadoId',
+                (meta?.estados ?? []).map((estado) => ({
+                  value: String(estado.id),
+                  label: estado.nombre ?? `Estado #${estado.id}`,
+                }))
+              )}
+              {renderAltaInput('Fecha de alta vinculación', 'fechaAltaVinculacion', false, 'date')}
+              <label className="input-control" style={{ gridColumn: '1 / -1' }}>
+                <span>Observaciones</span>
+                <textarea
+                  rows={4}
+                  value={altaForm.observaciones}
+                  onChange={handleAltaFieldChange('observaciones')}
+                  placeholder="Agregar observaciones"
+                />
+              </label>
             </div>
 
             <h3>Dueño de la unidad</h3>
-            <div className="form-grid">
+            <div className="form-grid form-grid--chofer">
               {renderAltaInput('Nombre completo (Dueño)', 'duenoNombre')}
               {renderAltaInput('Fecha de nacimiento', 'duenoFechaNacimiento', false, 'date')}
               {renderAltaInput('Correo (Dueño)', 'duenoEmail', false, 'email')}
               {renderAltaInput('CUIL (Dueño)', 'duenoCuil')}
               {renderAltaInput('CUIL cobrador', 'duenoCuilCobrador')}
+              {renderAltaInput('CBU/Alias (Dueño)', 'duenoCbuAlias')}
               {renderAltaInput('Teléfono (Dueño)', 'duenoTelefono', false, 'tel')}
               <label className="input-control" style={{ gridColumn: '1 / -1' }}>
                 <span>Observaciones</span>
@@ -7118,6 +8383,106 @@ const handleAdelantoFieldChange =
       return null;
     }
 
+    const normalizeReviewValue = (value: string | null | undefined): string | null => {
+      if (value === null || value === undefined) {
+        return null;
+      }
+      const trimmed = String(value).trim();
+      return trimmed.length > 0 ? trimmed : null;
+    };
+
+    const formatReviewBoolean = (value: boolean | null | undefined): string | null => {
+      if (value === null || value === undefined) {
+        return null;
+      }
+      return value ? 'Sí' : 'No';
+    };
+
+    const renderReviewProfileGroup = (
+      title: string,
+      fields: Array<{ label: string; value: string | null | undefined }>
+    ) => {
+      const visibleFields = fields
+        .map(({ label, value }) => {
+          const normalized = normalizeReviewValue(value);
+          return normalized ? { label, value: normalized } : null;
+        })
+        .filter((item): item is { label: string; value: string } => Boolean(item));
+
+      if (visibleFields.length === 0) {
+        return null;
+      }
+
+      return (
+        <div className="review-profile-section">
+          <h3>{title}</h3>
+          <div className="review-profile-grid">
+            {visibleFields.map(({ label, value }) => (
+              <div key={label} className="review-profile-field">
+                <span className="review-profile-label">{label}</span>
+                <span className="review-profile-value">{value}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      );
+    };
+
+    const renderReviewProfileDetails = () => {
+      if (!reviewPersonaDetail) {
+        return null;
+      }
+
+      const commonFields = [
+        { label: 'Nombres', value: reviewPersonaDetail.nombres },
+        { label: 'Apellidos', value: reviewPersonaDetail.apellidos },
+        { label: 'CUIL', value: reviewPersonaDetail.cuil },
+        { label: 'Teléfono', value: reviewPersonaDetail.telefono },
+        { label: 'Correo electrónico', value: reviewPersonaDetail.email },
+        { label: 'Pago', value: reviewPersonaDetail.pago },
+        { label: 'CBU/Alias', value: reviewPersonaDetail.cbuAlias },
+        { label: 'Patente', value: reviewPersonaDetail.patente },
+        {
+          label: 'Tarifa especial',
+          value: formatReviewBoolean(reviewPersonaDetail.tarifaEspecialValue),
+        },
+        {
+          label: 'Combustible',
+          value: formatReviewBoolean(reviewPersonaDetail.combustibleValue),
+        },
+        { label: 'Observación tarifa', value: reviewPersonaDetail.observacionTarifa },
+        { label: 'Fecha de alta', value: reviewPersonaDetail.fechaAlta },
+        { label: 'Fecha de alta vinculación', value: reviewPersonaDetail.fechaAltaVinculacion },
+      ];
+
+      const ownerFields = [
+        { label: 'Nombre completo (Dueño)', value: reviewPersonaDetail.duenoNombre },
+        { label: 'Fecha de nacimiento', value: reviewPersonaDetail.duenoFechaNacimiento },
+        { label: 'Correo (Dueño)', value: reviewPersonaDetail.duenoEmail },
+        { label: 'Teléfono (Dueño)', value: reviewPersonaDetail.duenoTelefono },
+        { label: 'CUIL (Dueño)', value: reviewPersonaDetail.duenoCuil },
+        { label: 'CUIL cobrador', value: reviewPersonaDetail.duenoCuilCobrador },
+        { label: 'CBU/Alias (Dueño)', value: reviewPersonaDetail.duenoCbuAlias },
+        { label: 'Observaciones (Dueño)', value: reviewPersonaDetail.duenoObservaciones },
+      ];
+
+      switch (reviewPersonaDetail.perfilValue) {
+        case 1:
+          return renderReviewProfileGroup('Datos del titular', commonFields);
+        case 2:
+          return (
+            <>
+              {renderReviewProfileGroup('Datos del chofer', commonFields)}
+              {renderReviewProfileGroup('Dueño de la unidad', ownerFields)}
+            </>
+          );
+        case 3:
+          return renderReviewProfileGroup('Datos del transportista', commonFields);
+        default:
+          return renderReviewProfileGroup('Datos del perfil', commonFields);
+      }
+    };
+
     return (
       <section className="approvals-section approvals-section--review">
         <h2>Revisión de solicitud de alta</h2>
@@ -7127,11 +8492,11 @@ const handleAdelantoFieldChange =
           ) : reviewError ? (
             <p className="form-info form-info--error">{reviewError}</p>
           ) : reviewPersonaDetail ? (
-            <>
-              <div className="review-summary-grid">
-                {(() => {
-                  const nombreCompleto = [reviewPersonaDetail.nombres, reviewPersonaDetail.apellidos]
-                    .filter(Boolean)
+              <>
+                <div className="review-summary-grid">
+                  {(() => {
+                    const nombreCompleto = [reviewPersonaDetail.nombres, reviewPersonaDetail.apellidos]
+                      .filter(Boolean)
                     .join(' ');
                   const aprobadoLabel = reviewPersonaDetail.aprobadoAt
                     ? new Date(reviewPersonaDetail.aprobadoAt).toLocaleString('es-AR', {
@@ -7159,12 +8524,14 @@ const handleAdelantoFieldChange =
                     </>
                   );
                 })()}
-              </div>
+                </div>
 
-              {(reviewPersonaDetail.observaciones && reviewPersonaDetail.observaciones.trim().length > 0) ||
-              (reviewPersonaDetail.observacionTarifa && reviewPersonaDetail.observacionTarifa.trim().length > 0) ? (
-                <div className="review-text-group">
-                  {reviewPersonaDetail.observaciones && reviewPersonaDetail.observaciones.trim().length > 0 ? (
+                {renderReviewProfileDetails()}
+
+                {(reviewPersonaDetail.observaciones && reviewPersonaDetail.observaciones.trim().length > 0) ||
+                (reviewPersonaDetail.observacionTarifa && reviewPersonaDetail.observacionTarifa.trim().length > 0) ? (
+                  <div className="review-text-group">
+                    {reviewPersonaDetail.observaciones && reviewPersonaDetail.observaciones.trim().length > 0 ? (
                     <div className="review-text">
                       <strong>Observaciones internas</strong>
                       <p>{reviewPersonaDetail.observaciones}</p>
@@ -7230,7 +8597,7 @@ const handleAdelantoFieldChange =
                   <p className="form-info">Todavía no hay comentarios internos.</p>
                 )}
 
-                <form className="review-comment-form" onSubmit={handleReviewCommentSubmit}>
+                <div className="review-comment-form">
                   <label className="input-control">
                     <span>Agregar comentario</span>
                     <textarea
@@ -7259,7 +8626,12 @@ const handleAdelantoFieldChange =
                     >
                       Cancelar
                     </button>
-                    <button type="submit" className="primary-action" disabled={reviewCommentSaving}>
+                    <button
+                      type="button"
+                      className="primary-action"
+                      onClick={handleReviewCommentSubmit}
+                      disabled={reviewCommentSaving}
+                    >
                       {reviewCommentSaving ? 'Enviando...' : 'Enviar'}
                     </button>
                   </div>
@@ -7269,7 +8641,7 @@ const handleAdelantoFieldChange =
                   {reviewCommentInfo ? (
                     <p className="form-info form-info--success">{reviewCommentInfo}</p>
                   ) : null}
-                </form>
+                </div>
               </div>
 
               <div className="review-actions">
@@ -7314,10 +8686,21 @@ const handleAdelantoFieldChange =
     );
   };
 
-  const renderAltasTab = () => (
-    <form className="approvals-form" onSubmit={handleAltaSubmit}>
-      {renderReviewSection()}
-      <section className="approvals-section">
+  const isReviewMode = Boolean(reviewPersonaDetail);
+
+  const renderAltasTab = () => {
+    if (isReviewMode) {
+      return (
+        <form className="approvals-form" onSubmit={handleAltaSubmit}>
+          {renderReviewSection()}
+        </form>
+      );
+    }
+
+    return (
+      <form className="approvals-form" onSubmit={handleAltaSubmit}>
+        {renderReviewSection()}
+        <section className="approvals-section">
         <h2>Datos personales</h2>
         <div className="radio-group">
           <span>Seleccionar perfil</span>
@@ -7343,100 +8726,102 @@ const handleAdelantoFieldChange =
         {renderAltaPerfilSection()}
       </section>
 
-      <section className="approvals-section">
-        <h2>Datos de vinculación</h2>
-        <div className="personal-section">
-          <div className="form-grid">
-            <label className="input-control">
-              <span>Cliente</span>
-              <select value={altaForm.clienteId} onChange={handleAltaFieldChange('clienteId')}>
-                <option value="">Seleccionar</option>
-                {(meta?.clientes ?? []).map((cliente) => (
-                  <option key={cliente.id} value={cliente.id}>
-                    {cliente.nombre ?? `Cliente #${cliente.id}`}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="input-control">
-              <span>Sucursal</span>
-              <select value={altaForm.sucursalId} onChange={handleAltaFieldChange('sucursalId')}>
-                <option value="">Seleccionar</option>
-                {sucursalOptions.map((sucursal) => (
-                  <option key={sucursal.id} value={sucursal.id}>
-                    {sucursal.nombre ?? `Sucursal #${sucursal.id}`}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="input-control">
-              <span>Agente</span>
-              <select value={altaForm.agenteId} onChange={handleAltaFieldChange('agenteId')}>
-                <option value="">Seleccionar</option>
-                {(meta?.agentes ?? []).map((agente) => (
-                  <option key={agente.id} value={agente.id}>
-                    {agente.name ?? `Agente #${agente.id}`}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="input-control">
-              <span>Agente responsable</span>
-              <select value={altaForm.agenteResponsableId} onChange={handleAltaFieldChange('agenteResponsableId')}>
-                <option value="">Seleccionar</option>
-                {(meta?.agentes ?? []).map((agente) => (
-                  <option key={agente.id} value={agente.id}>
-                    {agente.name ?? `Agente #${agente.id}`}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="input-control">
-              <span>Unidad</span>
-              <select value={altaForm.unidadId} onChange={handleAltaFieldChange('unidadId')}>
-                <option value="">Seleccionar</option>
-                {(meta?.unidades ?? []).map((unidad) => {
-                  const label = [unidad.matricula, unidad.marca, unidad.modelo].filter(Boolean).join(' · ');
-                  return (
-                    <option key={unidad.id} value={unidad.id}>
-                      {label.length > 0 ? label : `Unidad #${unidad.id}`}
+      {altaForm.perfilValue !== 2 && (
+        <section className="approvals-section">
+          <h2>Datos de vinculación</h2>
+          <div className="personal-section">
+            <div className="form-grid">
+              <label className="input-control">
+                <span>Cliente</span>
+                <select value={altaForm.clienteId} onChange={handleAltaFieldChange('clienteId')}>
+                  <option value="">Seleccionar</option>
+                  {(meta?.clientes ?? []).map((cliente) => (
+                    <option key={cliente.id} value={cliente.id}>
+                      {cliente.nombre ?? `Cliente #${cliente.id}`}
                     </option>
-                  );
-                })}
-              </select>
-            </label>
+                  ))}
+                </select>
+              </label>
+              <label className="input-control">
+                <span>Sucursal</span>
+                <select value={altaForm.sucursalId} onChange={handleAltaFieldChange('sucursalId')}>
+                  <option value="">Seleccionar</option>
+                  {sucursalOptions.map((sucursal) => (
+                    <option key={sucursal.id} value={sucursal.id}>
+                      {sucursal.nombre ?? `Sucursal #${sucursal.id}`}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="input-control">
+                <span>Agente</span>
+                <select value={altaForm.agenteId} onChange={handleAltaFieldChange('agenteId')}>
+                  <option value="">Seleccionar</option>
+                  {(meta?.agentes ?? []).map((agente) => (
+                    <option key={agente.id} value={agente.id}>
+                      {agente.name ?? `Agente #${agente.id}`}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="input-control">
+                <span>Agente responsable</span>
+                <select value={altaForm.agenteResponsableId} onChange={handleAltaFieldChange('agenteResponsableId')}>
+                  <option value="">Seleccionar</option>
+                  {(meta?.agentes ?? []).map((agente) => (
+                    <option key={agente.id} value={agente.id}>
+                      {agente.name ?? `Agente #${agente.id}`}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="input-control">
+                <span>Unidad</span>
+                <select value={altaForm.unidadId} onChange={handleAltaFieldChange('unidadId')}>
+                  <option value="">Seleccionar</option>
+                  {(meta?.unidades ?? []).map((unidad) => {
+                    const label = [unidad.matricula, unidad.marca, unidad.modelo].filter(Boolean).join(' · ');
+                    return (
+                      <option key={unidad.id} value={unidad.id}>
+                        {label.length > 0 ? label : `Unidad #${unidad.id}`}
+                      </option>
+                    );
+                  })}
+                </select>
+              </label>
+              <label className="input-control">
+                <span>Estado</span>
+                <select value={altaForm.estadoId} onChange={handleAltaFieldChange('estadoId')}>
+                  <option value="">Seleccionar</option>
+                  {(meta?.estados ?? []).map((estado) => (
+                    <option key={estado.id} value={estado.id}>
+                      {estado.nombre ?? `Estado #${estado.id}`}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="input-control">
+                <span>Fecha de alta</span>
+                <input
+                  type="date"
+                  value={altaForm.fechaAltaVinculacion}
+                  onChange={handleAltaFieldChange('fechaAltaVinculacion')}
+                  placeholder="dd/mm/aaaa"
+                />
+              </label>
+            </div>
             <label className="input-control">
-              <span>Estado</span>
-              <select value={altaForm.estadoId} onChange={handleAltaFieldChange('estadoId')}>
-                <option value="">Seleccionar</option>
-                {(meta?.estados ?? []).map((estado) => (
-                  <option key={estado.id} value={estado.id}>
-                    {estado.nombre ?? `Estado #${estado.id}`}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="input-control">
-              <span>Fecha de alta</span>
-              <input
-                type="date"
-                value={altaForm.fechaAltaVinculacion}
-                onChange={handleAltaFieldChange('fechaAltaVinculacion')}
-                placeholder="dd/mm/aaaa"
+              <span>Observaciones</span>
+              <textarea
+                rows={4}
+                value={altaForm.observaciones}
+                onChange={handleAltaFieldChange('observaciones')}
+                placeholder="Agregar observaciones"
               />
             </label>
           </div>
-          <label className="input-control">
-            <span>Observaciones</span>
-            <textarea
-              rows={4}
-              value={altaForm.observaciones}
-              onChange={handleAltaFieldChange('observaciones')}
-              placeholder="Agregar observaciones"
-            />
-          </label>
-        </div>
-      </section>
+        </section>
+      )}
 
       <section className="approvals-section">
         <h2>Historial de sanciones</h2>
@@ -7516,6 +8901,7 @@ const handleAdelantoFieldChange =
       </div>
     </form>
   );
+  };
 
   const renderCombustibleTab = () => (
     <form className="approvals-form" onSubmit={handleCombustibleSubmit}>
@@ -9537,6 +10923,7 @@ const PersonalCreatePage: React.FC = () => {
     duenoEmail: '',
     duenoCuil: '',
     duenoCuilCobrador: '',
+    duenoCbuAlias: '',
     duenoTelefono: '',
     duenoObservaciones: '',
   });
@@ -9622,6 +11009,7 @@ const PersonalCreatePage: React.FC = () => {
           duenoEmail: formValues.duenoEmail.trim() || null,
           duenoCuil: formValues.duenoCuil.trim() || null,
           duenoCuilCobrador: formValues.duenoCuilCobrador.trim() || null,
+          duenoCbuAlias: formValues.duenoCbuAlias.trim() || null,
           duenoTelefono: formValues.duenoTelefono.trim() || null,
           duenoObservaciones: formValues.duenoObservaciones.trim() || null,
           autoApprove: true,
@@ -9718,6 +11106,7 @@ const PersonalCreatePage: React.FC = () => {
               {renderInput('Correo (Dueño)', 'duenoEmail', false, 'email')}
               {renderInput('CUIL (Dueño)', 'duenoCuil')}
               {renderInput('CUIL cobrador', 'duenoCuilCobrador')}
+              {renderInput('CBU/Alias (Dueño)', 'duenoCbuAlias')}
               {renderInput('Teléfono (Dueño)', 'duenoTelefono')}
               <label className="input-control" style={{ gridColumn: '1 / -1' }}>
                 <span>Observaciones</span>
@@ -11336,6 +12725,7 @@ const App: React.FC = () => {
       <Route path="/personal" element={<PersonalPage />} />
       <Route path="/personal/nuevo" element={<PersonalCreatePage />} />
       <Route path="/personal/:personaId/editar" element={<PersonalEditPage />} />
+      <Route path="/liquidaciones" element={<LiquidacionesPage />} />
       <Route path="/documentos" element={<DocumentTypesPage />} />
       <Route path="/documentos/nuevo" element={<DocumentTypeCreatePage />} />
       <Route path="/documentos/:tipoId/editar" element={<DocumentTypeEditPage />} />

@@ -15,6 +15,7 @@ Route::get('/personal/documentos/tipos', [PersonalDocumentController::class, 'ty
 Route::post('/personal/documentos/tipos', [PersonalDocumentController::class, 'storeType']);
 Route::get('/personal/documentos/tipos/{tipo}', [PersonalDocumentController::class, 'show']);
 Route::put('/personal/documentos/tipos/{tipo}', [PersonalDocumentController::class, 'update']);
+Route::get('/personal/{persona}/liquidaciones', [PersonalDocumentController::class, 'liquidaciones']);
 Route::get('/personal/{persona}/documentos', [PersonalDocumentController::class, 'index']);
 Route::post('/personal/{persona}/documentos', [PersonalDocumentController::class, 'store']);
 Route::get('/personal/{persona}/documentos/{documento}/descargar', [PersonalDocumentController::class, 'download'])->name('personal.documentos.descargar');
