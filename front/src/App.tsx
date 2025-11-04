@@ -6513,6 +6513,7 @@ const ApprovalsRequestsPage: React.FC = () => {
   const [reviewCommentSaving, setReviewCommentSaving] = useState(false);
   const [reviewCommentError, setReviewCommentError] = useState<string | null>(null);
   const [reviewCommentInfo, setReviewCommentInfo] = useState<string | null>(null);
+  const [reviewEditMode, setReviewEditMode] = useState(false);
   const personaIdFromQuery = useMemo(() => {
     const searchParams = new URLSearchParams(location.search);
     const value = searchParams.get('personaId');
@@ -6683,6 +6684,7 @@ const ApprovalsRequestsPage: React.FC = () => {
       setReviewCommentError(null);
       setReviewCommentInfo(null);
       setReviewLoading(false);
+      setReviewEditMode(false);
       return;
     }
 
@@ -6695,10 +6697,12 @@ const ApprovalsRequestsPage: React.FC = () => {
       setReviewCommentError(null);
       setReviewCommentInfo(null);
       setReviewLoading(false);
+      setReviewEditMode(false);
       return;
     }
 
     setActiveTab('altas');
+    setReviewEditMode(false);
     const controller = new AbortController();
 
     const fetchDetail = async () => {
@@ -6723,6 +6727,7 @@ const ApprovalsRequestsPage: React.FC = () => {
         setReviewCommentText('');
         setReviewCommentError(null);
         setReviewCommentInfo(null);
+        setReviewEditMode(false);
       } catch (err) {
         if ((err as Error).name === 'AbortError') {
           return;
@@ -6733,6 +6738,7 @@ const ApprovalsRequestsPage: React.FC = () => {
         setReviewCommentText('');
         setReviewCommentError(null);
         setReviewCommentInfo(null);
+        setReviewEditMode(false);
       } finally {
         if (!controller.signal.aborted) {
           setReviewLoading(false);
@@ -6845,7 +6851,7 @@ const ApprovalsRequestsPage: React.FC = () => {
     return () => window.removeEventListener('personal:updated', handler as EventListener);
   }, [fetchSolicitudes]);
 
-  useEffect(() => {
+  const populateAltaFormFromReview = useCallback(() => {
     if (!reviewPersonaDetail) {
       return;
     }
@@ -6886,6 +6892,10 @@ const ApprovalsRequestsPage: React.FC = () => {
       duenoObservaciones: reviewPersonaDetail.duenoObservaciones ?? '',
     }));
   }, [reviewPersonaDetail]);
+
+  useEffect(() => {
+    populateAltaFormFromReview();
+  }, [populateAltaFormFromReview]);
 
   const headerContent = (
     <div className="card-header card-header--compact">
@@ -7024,6 +7034,38 @@ const sucursalOptions = useMemo(() => {
     setAltaForm((prev) => ({ ...prev, perfilValue }));
   };
 
+  const buildAltaRequestPayload = (form: AltaRequestForm) => ({
+    perfilValue: form.perfilValue,
+    nombres: form.nombres.trim(),
+    apellidos: form.apellidos.trim(),
+    telefono: form.telefono.trim() || null,
+    email: form.email.trim() || null,
+    tarifaEspecial: form.tarifaEspecial,
+    observacionTarifa: form.observacionTarifa.trim() || null,
+    cuil: form.cuil.trim() || null,
+    cbuAlias: form.cbuAlias.trim() || null,
+    pago: form.pago ? Number(form.pago) : null,
+    combustible: form.combustible,
+    fechaAlta: form.fechaAlta || null,
+    fechaAltaVinculacion: form.fechaAltaVinculacion || null,
+    patente: form.patente.trim() || null,
+    clienteId: form.clienteId ? Number(form.clienteId) : null,
+    sucursalId: form.sucursalId ? Number(form.sucursalId) : null,
+    agenteId: form.agenteId ? Number(form.agenteId) : null,
+    agenteResponsableId: form.agenteResponsableId ? Number(form.agenteResponsableId) : null,
+    unidadId: form.unidadId ? Number(form.unidadId) : null,
+    estadoId: form.estadoId ? Number(form.estadoId) : null,
+    observaciones: form.observaciones.trim() || null,
+    duenoNombre: form.duenoNombre.trim() || null,
+    duenoFechaNacimiento: form.duenoFechaNacimiento || null,
+    duenoEmail: form.duenoEmail.trim() || null,
+    duenoCuil: form.duenoCuil.trim() || null,
+    duenoCuilCobrador: form.duenoCuilCobrador.trim() || null,
+    duenoCbuAlias: form.duenoCbuAlias.trim() || null,
+    duenoTelefono: form.duenoTelefono.trim() || null,
+    duenoObservaciones: form.duenoObservaciones.trim() || null,
+  });
+
   const handleAltaSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
 
@@ -7031,37 +7073,7 @@ const sucursalOptions = useMemo(() => {
       setAltaSubmitting(true);
       setFlash(null);
 
-      const requestPayload = {
-        perfilValue: altaForm.perfilValue,
-        nombres: altaForm.nombres.trim(),
-        apellidos: altaForm.apellidos.trim(),
-        telefono: altaForm.telefono.trim() || null,
-        email: altaForm.email.trim() || null,
-        tarifaEspecial: altaForm.tarifaEspecial,
-        observacionTarifa: altaForm.observacionTarifa.trim() || null,
-        cuil: altaForm.cuil.trim() || null,
-        cbuAlias: altaForm.cbuAlias.trim() || null,
-        pago: altaForm.pago ? Number(altaForm.pago) : null,
-        combustible: altaForm.combustible,
-        fechaAlta: altaForm.fechaAlta || null,
-        fechaAltaVinculacion: altaForm.fechaAltaVinculacion || null,
-        patente: altaForm.patente.trim() || null,
-        clienteId: altaForm.clienteId ? Number(altaForm.clienteId) : null,
-        sucursalId: altaForm.sucursalId ? Number(altaForm.sucursalId) : null,
-        agenteId: altaForm.agenteId ? Number(altaForm.agenteId) : null,
-        agenteResponsableId: altaForm.agenteResponsableId ? Number(altaForm.agenteResponsableId) : null,
-        unidadId: altaForm.unidadId ? Number(altaForm.unidadId) : null,
-        estadoId: altaForm.estadoId ? Number(altaForm.estadoId) : null,
-        observaciones: altaForm.observaciones.trim() || null,
-        duenoNombre: altaForm.duenoNombre.trim() || null,
-        duenoFechaNacimiento: altaForm.duenoFechaNacimiento || null,
-        duenoEmail: altaForm.duenoEmail.trim() || null,
-        duenoCuil: altaForm.duenoCuil.trim() || null,
-        duenoCuilCobrador: altaForm.duenoCuilCobrador.trim() || null,
-        duenoCbuAlias: altaForm.duenoCbuAlias.trim() || null,
-        duenoTelefono: altaForm.duenoTelefono.trim() || null,
-        duenoObservaciones: altaForm.duenoObservaciones.trim() || null,
-      };
+      const requestPayload = buildAltaRequestPayload(altaForm);
 
       const response = await fetch(`${apiBaseUrl}/api/personal`, {
         method: 'POST',
@@ -7225,6 +7237,157 @@ const sucursalOptions = useMemo(() => {
       setFlash({
         type: 'error',
         message: (err as Error).message ?? 'No se pudo enviar la solicitud.',
+      });
+    } finally {
+      setAltaSubmitting(false);
+    }
+  };
+
+  const handleAltaUpdateSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+
+    if (!reviewPersonaDetail) {
+      return;
+    }
+
+    try {
+      setAltaSubmitting(true);
+      setFlash(null);
+
+      const requestPayload = buildAltaRequestPayload(altaForm);
+
+      const response = await fetch(`${apiBaseUrl}/api/personal/${reviewPersonaDetail.id}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(requestPayload),
+      });
+
+      if (!response.ok) {
+        let message = `Error ${response.status}: ${response.statusText}`;
+        try {
+          const payload = await response.json();
+          if (typeof payload?.message === 'string') {
+            message = payload.message;
+          }
+        } catch {
+          // ignore parse errors
+        }
+        throw new Error(message);
+      }
+
+      const payload = (await response.json()) as {
+        message?: string;
+        data?: PersonalDetail;
+      };
+
+      if (payload.data) {
+        setReviewPersonaDetail({
+          ...payload.data,
+          comments: Array.isArray(payload.data.comments)
+            ? payload.data.comments
+            : reviewPersonaDetail.comments ?? [],
+        });
+      } else {
+        populateAltaFormFromReview();
+      }
+
+      const personaId = payload.data?.id ?? reviewPersonaDetail.id;
+
+      if (personaId && altaAttachments.length > 0) {
+        const uploadErrors: string[] = [];
+        const completedUploadIds: string[] = [];
+
+        for (const item of altaAttachments) {
+          const tipoArchivoId = Number(item.typeId);
+          if (Number.isNaN(tipoArchivoId)) {
+            uploadErrors.push(`${item.file.name}: el tipo de documento no es válido.`);
+            continue;
+          }
+
+          const formData = new FormData();
+          formData.append('archivo', item.file);
+          formData.append('tipoArchivoId', String(tipoArchivoId));
+
+          const nombrePartes: string[] = [];
+          if (item.typeName.trim().length > 0) {
+            nombrePartes.push(item.typeName.trim());
+          }
+          if (item.positionLabel) {
+            nombrePartes.push(item.positionLabel);
+          }
+          if (nombrePartes.length > 0) {
+            formData.append('nombre', nombrePartes.join(' – '));
+          }
+          if (item.vence) {
+            formData.append('fechaVencimiento', item.vence);
+          }
+
+          try {
+            const uploadResponse = await fetch(`${apiBaseUrl}/api/personal/${personaId}/documentos`, {
+              method: 'POST',
+              body: formData,
+            });
+
+            if (!uploadResponse.ok) {
+              let uploadMessage = `${item.file.name}: Error ${uploadResponse.status}`;
+              try {
+                const uploadPayload = await uploadResponse.json();
+                if (typeof uploadPayload?.message === 'string') {
+                  uploadMessage = `${item.file.name}: ${uploadPayload.message}`;
+                } else if (uploadPayload?.errors) {
+                  const firstUploadError = Object.values(uploadPayload.errors)[0];
+                  if (Array.isArray(firstUploadError) && firstUploadError[0]) {
+                    uploadMessage = `${item.file.name}: ${firstUploadError[0]}`;
+                  }
+                }
+              } catch {
+                // ignore
+              }
+
+              uploadErrors.push(uploadMessage);
+              continue;
+            }
+
+            completedUploadIds.push(item.id);
+          } catch (uploadErr) {
+            uploadErrors.push(
+              `${item.file.name}: ${(uploadErr as Error).message ?? 'No se pudo subir el archivo.'}`
+            );
+          }
+        }
+
+        if (uploadErrors.length > 0 && completedUploadIds.length > 0) {
+          setAltaAttachments((prev) => prev.filter((item) => !completedUploadIds.includes(item.id)));
+        }
+
+        if (uploadErrors.length > 0) {
+          setFlash({
+            type: 'error',
+            message: `${payload.message ?? 'Los datos se guardaron.'} Sin embargo, no se pudieron subir algunos archivos: ${uploadErrors.join(
+              ' | '
+            )}.`,
+          });
+          return;
+        }
+      }
+
+      setFlash({
+        type: 'success',
+        message: payload.message ?? 'Cambios guardados correctamente.',
+      });
+
+      setReviewEditMode(false);
+      setAltaAttachments([]);
+      setAltaFilesVersion((value) => value + 1);
+      setAltaDocumentType('');
+      setAltaDocumentExpiry('');
+      fetchSolicitudes();
+    } catch (err) {
+      setFlash({
+        type: 'error',
+        message: (err as Error).message ?? 'No se pudieron guardar los cambios.',
       });
     } finally {
       setAltaSubmitting(false);
@@ -7991,6 +8154,7 @@ const handleAdelantoFieldChange =
     setReviewCommentError(null);
     setReviewCommentInfo(null);
     setReviewLoading(false);
+    setReviewEditMode(false);
     if (personaIdFromQuery) {
       navigate('/aprobaciones', { replace: true });
     }
@@ -8666,12 +8830,26 @@ const handleAdelantoFieldChange =
               </div>
 
               <div className="review-actions">
+                {!reviewEditMode ? (
+                  <button
+                    type="button"
+                    className="secondary-action"
+                    onClick={() => {
+                      populateAltaFormFromReview();
+                      setReviewEditMode(true);
+                    }}
+                  >
+                    Editar datos
+                  </button>
+                ) : null}
                 <label className="input-control">
                   <span>Actualizar estado</span>
                   <select
                     value={approvalEstadoId}
                     onChange={(event) => setApprovalEstadoId(event.target.value)}
-                    disabled={reviewPersonaDetail.aprobado || (meta?.estados?.length ?? 0) === 0}
+                    disabled={
+                      reviewPersonaDetail.aprobado || reviewEditMode || (meta?.estados?.length ?? 0) === 0
+                    }
                   >
                     <option value="">Mantener estado actual</option>
                     {(meta?.estados ?? []).map((estado) => (
@@ -8685,7 +8863,7 @@ const handleAdelantoFieldChange =
                   type="button"
                   className="primary-action"
                   onClick={handleApproveSolicitud}
-                  disabled={approveLoading || reviewPersonaDetail.aprobado}
+                  disabled={approveLoading || reviewPersonaDetail.aprobado || reviewEditMode}
                 >
                   {reviewPersonaDetail.aprobado
                     ? 'Solicitud aprobada'
@@ -8707,21 +8885,11 @@ const handleAdelantoFieldChange =
     );
   };
 
-  const isReviewMode = Boolean(reviewPersonaDetail);
+  const isReviewMode = Boolean(personaIdFromQuery);
 
-  const renderAltasTab = () => {
-    if (isReviewMode) {
-      return (
-        <form className="approvals-form" onSubmit={handleAltaSubmit}>
-          {renderReviewSection()}
-        </form>
-      );
-    }
-
-    return (
-      <form className="approvals-form" onSubmit={handleAltaSubmit}>
-        {renderReviewSection()}
-        <section className="approvals-section">
+  const renderAltaEditorSections = () => (
+    <>
+      <section className="approvals-section">
         <h2>Datos personales</h2>
         <div className="radio-group">
           <span>Seleccionar perfil</span>
@@ -8911,17 +9079,52 @@ const handleAdelantoFieldChange =
           </div>
         </div>
       </section>
-
-      <div className="form-actions">
-        <button type="button" className="secondary-action" onClick={() => navigate('/personal')}>
-          Cancelar
-        </button>
-        <button type="submit" className="primary-action" disabled={altaSubmitting}>
-          {altaSubmitting ? 'Enviando...' : 'Enviar solicitud'}
-        </button>
-      </div>
-    </form>
+    </>
   );
+
+  const handleCancelAltaEdit = () => {
+    populateAltaFormFromReview();
+    setAltaAttachments([]);
+    setAltaFilesVersion((value) => value + 1);
+    setAltaDocumentType('');
+    setAltaDocumentExpiry('');
+    setReviewEditMode(false);
+  };
+
+  const renderAltasTab = () => {
+    if (isReviewMode) {
+      if (reviewEditMode && reviewPersonaDetail) {
+        return (
+          <form className="approvals-form" onSubmit={handleAltaUpdateSubmit}>
+            {renderAltaEditorSections()}
+            <div className="form-actions">
+              <button type="button" className="secondary-action" onClick={handleCancelAltaEdit} disabled={altaSubmitting}>
+                Cancelar
+              </button>
+              <button type="submit" className="primary-action" disabled={altaSubmitting}>
+                {altaSubmitting ? 'Guardando...' : 'Guardar cambios'}
+              </button>
+            </div>
+          </form>
+        );
+      }
+
+      return <div className="approvals-form">{renderReviewSection()}</div>;
+    }
+
+    return (
+      <form className="approvals-form" onSubmit={handleAltaSubmit}>
+        {renderAltaEditorSections()}
+        <div className="form-actions">
+          <button type="button" className="secondary-action" onClick={() => navigate('/personal')} disabled={altaSubmitting}>
+            Cancelar
+          </button>
+          <button type="submit" className="primary-action" disabled={altaSubmitting}>
+            {altaSubmitting ? 'Enviando...' : 'Enviar solicitud'}
+          </button>
+        </div>
+      </form>
+    );
   };
 
   const renderCombustibleTab = () => (
