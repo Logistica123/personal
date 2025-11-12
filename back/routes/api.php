@@ -9,6 +9,8 @@ use App\Http\Controllers\Api\ReclamoController;
 use App\Http\Controllers\Api\NotificationController;
 use App\Http\Controllers\Api\PersonalDocumentController;
 use App\Http\Controllers\Api\PersonalCommentController;
+use App\Http\Controllers\Api\AttendanceController;
+use App\Http\Controllers\Api\WorkflowTaskController;
 use Illuminate\Support\Facades\Route;
 
 Route::get('/personal/documentos/tipos', [PersonalDocumentController::class, 'types']);
@@ -18,6 +20,10 @@ Route::put('/personal/documentos/tipos/{tipo}', [PersonalDocumentController::cla
 Route::get('/personal/{persona}/liquidaciones', [PersonalDocumentController::class, 'liquidaciones']);
 Route::get('/personal/{persona}/documentos', [PersonalDocumentController::class, 'index']);
 Route::post('/personal/{persona}/documentos', [PersonalDocumentController::class, 'store']);
+Route::put('/personal/{persona}/documentos/{documento}', [PersonalDocumentController::class, 'updateDocument']);
+Route::delete('/personal/{persona}/documentos/{documento}', [PersonalDocumentController::class, 'destroy']);
+Route::get('/personal/{persona}/documentos/descargar-todos', [PersonalDocumentController::class, 'downloadAll'])
+    ->name('personal.documentos.descargarTodos');
 Route::get('/personal/{persona}/documentos/{documento}/descargar', [PersonalDocumentController::class, 'download'])->name('personal.documentos.descargar');
 Route::post('/personal/{persona}/comentarios', [PersonalCommentController::class, 'store']);
 Route::post('/personal/{persona}/aprobar', [PersonalController::class, 'approve']);
@@ -47,6 +53,7 @@ Route::put('/usuarios/{usuario}', [UserController::class, 'update']);
 Route::delete('/usuarios/{usuario}', [UserController::class, 'destroy']);
 
 Route::get('/reclamos/meta', [ReclamoController::class, 'meta']);
+Route::get('/distriapp/reclamos', [ReclamoController::class, 'distriappIndex']);
 Route::get('/reclamos', [ReclamoController::class, 'index']);
 Route::post('/reclamos', [ReclamoController::class, 'store']);
 Route::get('/reclamos/{reclamo}', [ReclamoController::class, 'show']);
@@ -58,6 +65,17 @@ Route::get('/reclamos/{reclamo}/documentos/{documento}/descargar', [ReclamoContr
 
 Route::get('/notificaciones', [NotificationController::class, 'index']);
 Route::post('/notificaciones/{notification}/leer', [NotificationController::class, 'markAsRead']);
+
+Route::get('/attendance', [AttendanceController::class, 'index']);
+Route::post('/attendance', [AttendanceController::class, 'store']);
+
+Route::get('/workflow-tasks', [WorkflowTaskController::class, 'index']);
+Route::get('/workflow-tasks/export', [WorkflowTaskController::class, 'export']);
+Route::post('/workflow-tasks', [WorkflowTaskController::class, 'store']);
+Route::put('/workflow-tasks/{workflowTask}', [WorkflowTaskController::class, 'update']);
+Route::post('/workflow-tasks/{workflowTask}/status', [WorkflowTaskController::class, 'updateStatus']);
+Route::delete('/workflow-tasks/{workflowTask}', [WorkflowTaskController::class, 'destroy']);
+Route::get('/workflow-tasks/users', [WorkflowTaskController::class, 'users']);
 
 Route::post('/login', [AuthController::class, 'login']);
 

@@ -20,11 +20,17 @@ class NotificationController extends Controller
             'onlyUnread' => ['nullable', 'boolean'],
         ]);
 
-        $query = Notification::query()
-            ->where('user_id', $validated['userId'])
-            ->orderByDesc('created_at');
+        $query = Notification::query()->orderByDesc('created_at');
 
-        if ($request->boolean('onlyUnread')) {
+        $hasUserColumn = Schema::hasColumn('notifications', 'user_id');
+        if ($hasUserColumn) {
+            $query->where('user_id', $validated['userId']);
+        } else {
+            $query->whereRaw('1 = 0');
+        }
+
+        $hasReadColumn = Schema::hasColumn('notifications', 'read_at');
+        if ($request->boolean('onlyUnread') && $hasReadColumn) {
             $query->whereNull('read_at');
         }
 
@@ -32,6 +38,7 @@ class NotificationController extends Controller
         $hasDescriptionColumn = Schema::hasColumn('notifications', 'description');
         $hasReclamoIdColumn = Schema::hasColumn('notifications', 'reclamo_id');
         $hasEntityColumns = Schema::hasColumn('notifications', 'entity_id') && Schema::hasColumn('notifications', 'entity_type');
+        $hasMetadataColumn = Schema::hasColumn('notifications', 'metadata');
 
         $notifications = $query->get();
 
@@ -98,8 +105,10 @@ class NotificationController extends Controller
                 $hasReclamoIdColumn,
                 $hasEntityColumns,
                 $reclamos,
-                $personas
+                $personas,
+                $hasMetadataColumn
             ) {
+                $metadata = $hasMetadataColumn && is_array($notification->metadata) ? $notification->metadata : null;
                 $message = null;
                 if ($hasMessageColumn) {
                     $message = $notification->message;
@@ -135,8 +144,8 @@ class NotificationController extends Controller
                     $notification->entity_id
                 ) {
                     $personaId = (int) $notification->entity_id;
-                } elseif (is_array($notification->metadata) && isset($notification->metadata['persona_id'])) {
-                    $personaId = (int) $notification->metadata['persona_id'];
+                } elseif (is_array($metadata) && isset($metadata['persona_id'])) {
+                    $personaId = (int) $metadata['persona_id'];
                 }
 
                 $personaNombre = null;
@@ -151,6 +160,23 @@ class NotificationController extends Controller
                     ) ?: null;
                 }
 
+                $workflowTaskId = null;
+                $workflowTaskLabel = null;
+                $metadataTaskLabel = is_array($metadata) && isset($metadata['workflow_task_label'])
+                    ? (string) $metadata['workflow_task_label']
+                    : null;
+                if (
+                    $hasEntityColumns &&
+                    $notification->entity_type === 'workflow_task' &&
+                    $notification->entity_id
+                ) {
+                    $workflowTaskId = (int) $notification->entity_id;
+                    $workflowTaskLabel = $metadataTaskLabel ?: 'Tarea asignada';
+                } elseif (is_array($metadata) && isset($metadata['workflow_task_id'])) {
+                    $workflowTaskId = (int) $metadata['workflow_task_id'];
+                    $workflowTaskLabel = $metadataTaskLabel ?: 'Tarea asignada';
+                }
+
                 return [
                     'id' => $notification->id,
                     'message' => $message,
@@ -159,9 +185,12 @@ class NotificationController extends Controller
                     'reclamoEstado' => $reclamoEstado,
                     'personaId' => $personaId,
                     'personaNombre' => $personaNombre,
+                    'workflowTaskId' => $workflowTaskId,
+                    'workflowTaskLabel' => $workflowTaskLabel,
                     'readAt' => $notification->read_at?->toIso8601String(),
                     'createdAt' => $notification->created_at?->toIso8601String(),
                     'createdAtLabel' => $notification->created_at?->timezone(config('app.timezone', 'UTC'))?->format('d/m/Y H:i'),
+                    'metadata' => $metadata,
                 ];
             })
             ->values();

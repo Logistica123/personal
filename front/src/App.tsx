@@ -161,6 +161,8 @@ type PersonalDetail = {
   aprobadoPorId: number | null;
   aprobadoPorNombre: string | null;
   esSolicitud: boolean;
+  documentsDownloadAllUrl: string | null;
+  documentsDownloadAllAbsoluteUrl?: string | null;
   duenoNombre: string | null;
   duenoFechaNacimiento: string | null;
   duenoEmail: string | null;
@@ -173,12 +175,18 @@ type PersonalDetail = {
     id: number;
     nombre: string | null;
     downloadUrl: string | null;
+    absoluteDownloadUrl?: string | null;
     mime: string | null;
     size: number | null;
+    sizeLabel?: string | null;
+    fechaCarga?: string | null;
+    fechaCargaIso?: string | null;
     fechaVencimiento: string | null;
     tipoId: number | null;
     tipoNombre: string | null;
     requiereVencimiento: boolean;
+    parentDocumentId: number | null;
+    isAttachment: boolean;
   }>;
   comments: Array<{
     id: number;
@@ -204,6 +212,47 @@ type PendingPersonalUpload = {
   typeName: string | null;
   fechaVencimiento: string | null;
 };
+
+type LiquidacionDocument = PersonalDetail['documents'][number];
+
+type LiquidacionGroup = {
+  main: LiquidacionDocument;
+  attachments: LiquidacionDocument[];
+};
+
+type LiquidacionFortnightSection = {
+  monthKey: string;
+  monthLabel: string;
+  sections: Array<{
+    key: string;
+    label: string;
+    rows: LiquidacionGroup[];
+  }>;
+};
+
+const MONTH_FILTER_OPTIONS = [
+  { value: '', label: 'Todos los meses' },
+  { value: '01', label: 'Enero' },
+  { value: '02', label: 'Febrero' },
+  { value: '03', label: 'Marzo' },
+  { value: '04', label: 'Abril' },
+  { value: '05', label: 'Mayo' },
+  { value: '06', label: 'Junio' },
+  { value: '07', label: 'Julio' },
+  { value: '08', label: 'Agosto' },
+  { value: '09', label: 'Septiembre' },
+  { value: '10', label: 'Octubre' },
+  { value: '11', label: 'Noviembre' },
+  { value: '12', label: 'Diciembre' },
+  { value: 'unknown', label: 'Sin fecha' },
+];
+
+const FORTNIGHT_FILTER_OPTIONS = [
+  { value: '', label: 'Todas las quincenas' },
+  { value: 'Q1', label: 'Primera quincena' },
+  { value: 'Q2', label: 'Segunda quincena' },
+  { value: 'NO_DATE', label: 'Sin quincena' },
+];
 
 type AltaAttachmentItem = {
   id: string;
@@ -320,6 +369,29 @@ type AttendanceRecord = {
   userKey?: string;
 };
 
+type RemoteAttendanceApiRecord = {
+  id: number;
+  status: 'entrada' | 'salida';
+  userId: number | null;
+  userName: string | null;
+  recordedAt: string | null;
+  recordedAtLabel: string | null;
+};
+
+type WorkflowStatus = 'nueva' | 'proceso' | 'finalizado';
+
+type WorkflowTaskRecord = {
+  id: number;
+  titulo: string;
+  descripcion: string | null;
+  status: WorkflowStatus;
+  creatorId: number | null;
+  creatorNombre: string | null;
+  responsableId: number | null;
+  responsableNombre: string | null;
+  createdAt: string | null;
+};
+
 const formatRoleLabel = (role: string | null | undefined): string => {
   const normalized = role?.trim().toLowerCase();
   if (normalized === 'admin' || normalized === 'administrador') {
@@ -341,6 +413,8 @@ type ReclamoRecord = {
   statusLabel: string | null;
   pagado: boolean;
   pagadoLabel: string | null;
+  importePagado: string | null;
+  importePagadoLabel: string | null;
   creator: string | null;
   creatorId: number | null;
   agente: string | null;
@@ -435,6 +509,16 @@ type AuthUser = {
   role?: string | null;
 };
 
+type NotificationMetadata = {
+  celebration?: boolean;
+  celebration_title?: string | null;
+  celebration_message?: string | null;
+  celebration_detail?: string | null;
+  persona_full_name?: string | null;
+  agente_nombre?: string | null;
+  [key: string]: unknown;
+};
+
 type NotificationRecord = {
   id: number;
   message: string | null;
@@ -443,9 +527,12 @@ type NotificationRecord = {
   reclamoEstado: string | null;
   personaId: number | null;
   personaNombre: string | null;
+  workflowTaskId?: number | null;
+  workflowTaskLabel?: string | null;
   readAt: string | null;
   createdAt: string | null;
   createdAtLabel?: string | null;
+  metadata?: NotificationMetadata | null;
 };
 
 type EditableSucursal = {
@@ -750,6 +837,118 @@ const formatElapsedTime = (fromIso: string | null, toIso?: string | null): strin
   return parts.length > 0 ? parts.join(' ') : '0m';
 };
 
+const currencyFormatter = new Intl.NumberFormat('es-AR', {
+  style: 'currency',
+  currency: 'ARS',
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+});
+
+const formatCurrency = (value: string | number | null | undefined): string => {
+  if (value === null || value === undefined || value === '') {
+    return '—';
+  }
+
+  const numeric = typeof value === 'number' ? value : Number(String(value).replace(',', '.'));
+  if (Number.isNaN(numeric)) {
+    return '—';
+  }
+
+  return currencyFormatter.format(numeric);
+};
+
+const CELEBRATION_DISMISSED_STORAGE_KEY = 'celebrations:dismissed';
+let cachedDismissedCelebrations: number[] | null = null;
+
+const getDismissedCelebrations = (): number[] => {
+  if (cachedDismissedCelebrations) {
+    return cachedDismissedCelebrations;
+  }
+
+  if (typeof window === 'undefined') {
+    return [];
+  }
+
+  try {
+    const raw = window.localStorage.getItem(CELEBRATION_DISMISSED_STORAGE_KEY);
+    if (!raw) {
+      cachedDismissedCelebrations = [];
+      return cachedDismissedCelebrations;
+    }
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) {
+      cachedDismissedCelebrations = [];
+      return cachedDismissedCelebrations;
+    }
+    cachedDismissedCelebrations = parsed
+      .map((value) => Number(value))
+      .filter((value) => Number.isInteger(value));
+    return cachedDismissedCelebrations;
+  } catch {
+    cachedDismissedCelebrations = [];
+    return cachedDismissedCelebrations;
+  }
+};
+
+const persistDismissedCelebrations = (values: number[]) => {
+  cachedDismissedCelebrations = values;
+  if (typeof window === 'undefined') {
+    return;
+  }
+  try {
+    window.localStorage.setItem(CELEBRATION_DISMISSED_STORAGE_KEY, JSON.stringify(values));
+  } catch {
+    // ignore storage errors
+  }
+};
+
+const markCelebrationAsDismissed = (id: number | null | undefined) => {
+  if (typeof id !== 'number' || !Number.isInteger(id)) {
+    return;
+  }
+  const current = getDismissedCelebrations();
+  if (current.includes(id)) {
+    return;
+  }
+  persistDismissedCelebrations([...current, id]);
+};
+
+const hasCelebrationBeenDismissed = (id: number): boolean => {
+  if (typeof id !== 'number' || !Number.isInteger(id)) {
+    return false;
+  }
+  return getDismissedCelebrations().includes(id);
+};
+
+const resetCelebrationDismissedCache = () => {
+  cachedDismissedCelebrations = null;
+};
+
+
+const escapeCsvValue = (value: string | number | null | undefined): string => {
+  if (value === null || value === undefined) {
+    return '""';
+  }
+  const stringValue = String(value);
+  if (/["\n,]/.test(stringValue)) {
+    return `"${stringValue.replace(/"/g, '""')}"`;
+  }
+  return stringValue;
+};
+
+const downloadCsv = (filename: string, rows: Array<Array<string | number | null | undefined>>) => {
+  const csv = rows.map((row) => row.map((value) => escapeCsvValue(value)).join(',')).join('\r\n');
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const url = window.URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.setAttribute('download', filename);
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  window.URL.revokeObjectURL(url);
+};
+
 const buildAttendanceUserKey = (record: AttendanceRecord): string => {
   if (record.userKey && record.userKey.trim().length > 0) {
     return record.userKey.trim();
@@ -762,6 +961,18 @@ const buildAttendanceUserKey = (record: AttendanceRecord): string => {
     return `name-${normalizedName}`;
   }
   return 'anon';
+};
+
+const mapRemoteAttendance = (items: RemoteAttendanceApiRecord[]): AttendanceRecord[] => {
+  return items
+    .filter((item) => typeof item.recordedAt === 'string' && item.recordedAt.length > 0)
+    .map((item) => ({
+      status: item.status,
+      timestamp: item.recordedAt as string,
+      userId: item.userId ?? null,
+      userName: item.userName ?? null,
+      userKey: item.userId != null ? `id-${item.userId}` : undefined,
+    }));
 };
 
 const formatMonthValue = (date: Date): string => {
@@ -948,13 +1159,17 @@ const DashboardLayout: React.FC<{
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
   const [notificationsVersion, setNotificationsVersion] = useState(0);
-  const [notificationToast, setNotificationToast] = useState<{ id: number; message: string } | null>(null);
+  const [notificationToast, setNotificationToast] = useState<{ id: number; message: string; detail?: string | null } | null>(null);
   const notificationToastTimeoutRef = useRef<number | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
   const lastToastIdRef = useRef<number | null>(null);
   const unreadInitializedRef = useRef(false);
   const previousUnreadCountRef = useRef(0);
   const previousLatestNotificationIdRef = useRef<number | null>(null);
+  const previousLatestNotificationTimestampRef = useRef<number | null>(null);
+  const [celebration, setCelebration] = useState<{ title: string; message: string; detail?: string | null; notificationId?: number } | null>(null);
+  const [fireworks, setFireworks] = useState<Array<{ id: number; left: number; top: number; delay: number; duration: number; color: string }>>([]);
+  const celebrationTimeoutRef = useRef<number | null>(null);
   const [currentTime, setCurrentTime] = useState(() => new Date());
   const [attendanceRecord, setAttendanceRecord] = useState<AttendanceRecord | null>(() => {
     const storedUser = readAuthUserFromStorage();
@@ -985,6 +1200,84 @@ const DashboardLayout: React.FC<{
     };
   }, []);
 
+  const currentActorId = useMemo(() => (authUser?.id != null ? Number(authUser.id) : null), [authUser?.id]);
+
+  useEffect(() => {
+    if (currentActorId == null) {
+      return;
+    }
+
+    if (!currentUserKey) {
+      return;
+    }
+
+    let cancelled = false;
+
+    const syncLatestAttendance = async () => {
+      try {
+        const response = await fetch(`${apiBaseUrl}/api/attendance?userId=${currentActorId}&limit=1`);
+
+        if (!response.ok) {
+          throw new Error(`Error ${response.status}: ${response.statusText}`);
+        }
+
+        const payload = (await response.json()) as { data?: RemoteAttendanceApiRecord[] };
+        const remoteRecords = payload.data ? mapRemoteAttendance(payload.data) : [];
+        const latest = remoteRecords[0] ?? null;
+
+        if (cancelled) {
+          return;
+        }
+
+        if (!latest) {
+          setAttendanceRecord(null);
+          removeAttendanceRecordFromStorage(currentUserKey);
+          return;
+        }
+
+        setAttendanceRecord((prev) => {
+          if (
+            prev &&
+            prev.status === latest.status &&
+            prev.timestamp === latest.timestamp &&
+            prev.userId === latest.userId
+          ) {
+            return prev;
+          }
+
+          return {
+            ...latest,
+            userKey: currentUserKey,
+          };
+        });
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.error('No se pudo sincronizar el estado de asistencia actual', err);
+      }
+    };
+
+    syncLatestAttendance();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [apiBaseUrl, authUser?.id, currentUserKey]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    const handleStorage = () => {
+      resetCelebrationDismissedCache();
+    };
+
+    window.addEventListener('storage', handleStorage);
+    return () => {
+      window.removeEventListener('storage', handleStorage);
+    };
+  }, []);
+
   useEffect(() => {
     const interval = window.setInterval(() => setCurrentTime(new Date()), 1000);
     return () => window.clearInterval(interval);
@@ -994,6 +1287,9 @@ const DashboardLayout: React.FC<{
     return () => {
       if (notificationToastTimeoutRef.current) {
         window.clearTimeout(notificationToastTimeoutRef.current);
+      }
+      if (celebrationTimeoutRef.current) {
+        window.clearTimeout(celebrationTimeoutRef.current);
       }
     };
   }, []);
@@ -1066,6 +1362,148 @@ const DashboardLayout: React.FC<{
     }
   }, []);
 
+  const playCelebrationTone = useCallback(() => {
+    try {
+      if (!audioContextRef.current) {
+        const AudioContextConstructor =
+          window.AudioContext ||
+          (window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+        if (!AudioContextConstructor) {
+          return;
+        }
+        audioContextRef.current = new AudioContextConstructor();
+      }
+
+      const context = audioContextRef.current;
+      if (!context) {
+        return;
+      }
+
+      const schedule = () => {
+        const sequence = [
+          { freq: 523.25, duration: 0.22, type: 'sine' },
+          { freq: 587.33, duration: 0.18, type: 'sine' },
+          { freq: 659.25, duration: 0.22, type: 'triangle' },
+          { freq: 783.99, duration: 0.26, type: 'triangle' },
+          { freq: 880.0, duration: 0.32, type: 'sine' },
+        ];
+
+        let start = context.currentTime;
+
+        sequence.forEach((note, index) => {
+          const oscillator = context.createOscillator();
+          const gain = context.createGain();
+          oscillator.type = note.type as OscillatorType;
+          oscillator.frequency.setValueAtTime(note.freq, start);
+          gain.gain.setValueAtTime(0.0001, start);
+          gain.gain.linearRampToValueAtTime(0.12, start + 0.06);
+          gain.gain.exponentialRampToValueAtTime(0.0001, start + note.duration);
+          oscillator.connect(gain);
+          gain.connect(context.destination);
+          oscillator.start(start);
+          oscillator.stop(start + note.duration + 0.05);
+          oscillator.onended = () => {
+            oscillator.disconnect();
+            gain.disconnect();
+          };
+
+          start += note.duration * (index < sequence.length - 1 ? 0.7 : 1);
+        });
+      };
+
+      if (context.state === 'suspended') {
+        context
+          .resume()
+          .then(() => {
+            schedule();
+          })
+          .catch(() => {
+            // ignore resume errors
+          });
+        return;
+      }
+
+      schedule();
+    } catch {
+      // ignore celebration tone issues
+    }
+  }, []);
+
+  const closeCelebration = useCallback(() => {
+    if (celebrationTimeoutRef.current) {
+      window.clearTimeout(celebrationTimeoutRef.current);
+      celebrationTimeoutRef.current = null;
+    }
+
+    if (celebration?.notificationId != null) {
+      markCelebrationAsDismissed(celebration.notificationId);
+    }
+
+    setCelebration(null);
+    setFireworks([]);
+  }, [celebration]);
+
+  useEffect(() => {
+    const handler = (event: Event) => {
+      const custom = event as CustomEvent<{ title?: string; message?: string; detail?: string | null; notificationId?: number }>;
+      const detail = custom.detail ?? {};
+      const colors = ['#ff6b81', '#f7b731', '#4cd4b0', '#778beb', '#a55eea', '#ff9f43'];
+      const bursts = Array.from({ length: 12 }).map((_, index) => ({
+        id: Date.now() + index,
+        left: 5 + Math.random() * 90,
+        top: 10 + Math.random() * 60,
+        delay: Math.random() * 0.7,
+        duration: 1.4 + Math.random() * 0.8,
+        color: colors[index % colors.length],
+      }));
+
+      if (celebrationTimeoutRef.current) {
+        window.clearTimeout(celebrationTimeoutRef.current);
+        celebrationTimeoutRef.current = null;
+      }
+
+      setFireworks(bursts);
+      setCelebration({
+        title: detail.title ?? '¡Felicitaciones!',
+        message: detail.message ?? '¡Gran trabajo, la solicitud fue aprobada con éxito!',
+        detail: detail.detail ?? null,
+        notificationId: detail.notificationId,
+      });
+
+      playCelebrationTone();
+
+      celebrationTimeoutRef.current = window.setTimeout(() => {
+        closeCelebration();
+      }, 7000);
+    };
+
+    window.addEventListener('celebration:trigger', handler as EventListener);
+    return () => {
+      window.removeEventListener('celebration:trigger', handler as EventListener);
+      if (celebrationTimeoutRef.current) {
+        window.clearTimeout(celebrationTimeoutRef.current);
+        celebrationTimeoutRef.current = null;
+      }
+    };
+  }, [closeCelebration, playCelebrationTone]);
+
+  useEffect(() => {
+    if (!celebration) {
+      return;
+    }
+
+    const handleKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        closeCelebration();
+      }
+    };
+
+    window.addEventListener('keydown', handleKey);
+    return () => {
+      window.removeEventListener('keydown', handleKey);
+    };
+  }, [celebration, closeCelebration]);
+
   const showNotificationToast = useCallback(
     async (record: NotificationRecord) => {
       if (lastToastIdRef.current === record.id) {
@@ -1073,6 +1511,15 @@ const DashboardLayout: React.FC<{
       }
 
       let personaLabel = record.personaNombre?.trim().length ? record.personaNombre?.trim() ?? null : null;
+      const metadata = record.metadata ?? null;
+
+      if (
+        (!personaLabel || personaLabel.length === 0) &&
+        typeof metadata?.persona_full_name === 'string' &&
+        metadata.persona_full_name.trim().length > 0
+      ) {
+        personaLabel = metadata.persona_full_name.trim();
+      }
 
       if ((!personaLabel || personaLabel.length === 0) && record.personaId) {
         try {
@@ -1091,13 +1538,32 @@ const DashboardLayout: React.FC<{
         }
       }
 
-      const baseMessage = record.message?.trim().length ? record.message.trim() : null;
-      const finalMessage = personaLabel
-        ? `Llegó una notificación de ${personaLabel}.`
-        : baseMessage ?? 'Llegó una nueva notificación.';
+      const metadataMessage =
+        typeof metadata?.celebration_message === 'string' && metadata.celebration_message.trim().length > 0
+          ? metadata.celebration_message.trim()
+          : null;
+
+      const recordMessage =
+        typeof record.message === 'string' && record.message.trim().length > 0 ? record.message.trim() : null;
+
+      const baseMessage = metadataMessage ?? recordMessage;
+      const shouldShowDetail = personaLabel
+        ? !baseMessage || !baseMessage.toLowerCase().includes(personaLabel.toLowerCase())
+        : false;
+      const defaultDetail = shouldShowDetail && personaLabel ? `Responsable: ${personaLabel}` : null;
+
+      const metadataDetail =
+        typeof metadata?.celebration_detail === 'string' && metadata.celebration_detail.trim().length > 0
+          ? metadata.celebration_detail.trim()
+          : null;
+
+      const finalMessage =
+        baseMessage ?? (personaLabel ? `Llegó una notificación de ${personaLabel}.` : 'Llegó una nueva notificación.');
+      const finalDetail = metadataDetail ?? defaultDetail;
 
       lastToastIdRef.current = record.id;
-      setNotificationToast({ id: record.id, message: finalMessage });
+      setNotificationToast({ id: record.id, message: finalMessage, detail: finalDetail });
+
       playNotificationTone();
       if (notificationToastTimeoutRef.current) {
         window.clearTimeout(notificationToastTimeoutRef.current);
@@ -1147,8 +1613,8 @@ const DashboardLayout: React.FC<{
   }, [attendanceRecord, currentTime]);
 
   const isWorking = attendanceRecord?.status === 'entrada';
-  const entryButtonClassName = isWorking ? 'time-button time-button--active-in' : 'time-button time-button--in';
-  const exitButtonClassName = isWorking ? 'time-button time-button--active-out' : 'time-button';
+  const entryButtonClassName = 'time-button time-button--in';
+  const exitButtonClassName = 'time-button time-button--active-out';
 
   const displayName = useMemo(() => {
     if (authUser?.name && authUser.name.trim().length > 0) {
@@ -1353,6 +1819,7 @@ const DashboardLayout: React.FC<{
       previousUnreadCountRef.current = 0;
       setNotificationToast(null);
       previousLatestNotificationIdRef.current = null;
+      previousLatestNotificationTimestampRef.current = null;
       lastToastIdRef.current = null;
       return;
     }
@@ -1383,24 +1850,35 @@ const DashboardLayout: React.FC<{
         setUnreadCount(count);
 
         const latestId = sorted.length > 0 ? sorted[0].id : null;
+        let latestTimestamp: number | null = null;
+        if (sorted.length > 0 && sorted[0].createdAt) {
+          const parsed = Date.parse(sorted[0].createdAt);
+          if (!Number.isNaN(parsed)) {
+            latestTimestamp = parsed;
+          }
+        }
 
         if (!unreadInitializedRef.current) {
           unreadInitializedRef.current = true;
           previousUnreadCountRef.current = count;
           previousLatestNotificationIdRef.current = latestId;
+          previousLatestNotificationTimestampRef.current = latestTimestamp;
           return;
         }
 
-        const hasNew =
-          (count > previousUnreadCountRef.current && sorted.length > 0) ||
-          (latestId !== null && latestId !== previousLatestNotificationIdRef.current);
+        const hadCountIncrease = count > previousUnreadCountRef.current;
+        const hasNewerTimestamp =
+          latestTimestamp !== null &&
+          (previousLatestNotificationTimestampRef.current === null ||
+            latestTimestamp > previousLatestNotificationTimestampRef.current);
 
-        if (hasNew && sorted.length > 0) {
+        if (sorted.length > 0 && (hadCountIncrease || hasNewerTimestamp)) {
           await showNotificationToast(sorted[0]);
         }
 
         previousUnreadCountRef.current = count;
         previousLatestNotificationIdRef.current = latestId;
+        previousLatestNotificationTimestampRef.current = latestTimestamp;
       } catch {
         if (cancelled) {
           return;
@@ -1453,7 +1931,42 @@ const DashboardLayout: React.FC<{
     window.location.href = '/';
   };
 
+  const syncAttendanceRecord = useCallback(
+    async (record: AttendanceRecord) => {
+      try {
+        await fetch(`${apiBaseUrl}/api/attendance`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            status: record.status,
+            timestamp: record.timestamp,
+            userId: record.userId ?? null,
+            userName: record.userName ?? null,
+          }),
+        });
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.error('No se pudo sincronizar el registro de asistencia', err);
+      }
+    },
+    [apiBaseUrl]
+  );
+
   const handleMarkAttendance = (status: AttendanceRecord['status']) => {
+    const currentlyWorking = attendanceRecord?.status === 'entrada';
+
+    if (status === 'entrada' && currentlyWorking) {
+      window.alert('Ya registraste la entrada. Marcá la salida cuando corresponda.');
+      return;
+    }
+
+    if (status === 'salida' && !currentlyWorking) {
+      window.alert('Todavía no registraste la entrada.');
+      return;
+    }
+
     if (!currentUserKey) {
       window.alert('No se pudo identificar al usuario actual.');
       return;
@@ -1483,10 +1996,47 @@ const DashboardLayout: React.FC<{
     setAttendanceRecord(record);
     appendAttendanceLog(record);
     window.dispatchEvent(new CustomEvent('attendance:updated', { detail: record }));
+    syncAttendanceRecord(record);
   };
 
   return (
-    <div className="dashboard-shell">
+    <>
+      {celebration ? (
+        <div className="celebration-overlay" role="alertdialog" aria-live="polite" onClick={closeCelebration}>
+          <div className="celebration-fireworks">
+            {fireworks.map((burst) => (
+              <span
+                key={burst.id}
+                className="celebration-firework"
+                style={{
+                  left: `${burst.left}%`,
+                  top: `${burst.top}%`,
+                  animationDelay: `${burst.delay}s`,
+                  animationDuration: `${burst.duration}s`,
+                  background: `radial-gradient(circle, ${burst.color} 0%, rgba(255, 255, 255, 0) 70%)`,
+                  boxShadow: '0 0 30px rgba(255, 255, 255, 0.6)',
+                }}
+              />
+            ))}
+          </div>
+          <div
+            className="celebration-card"
+            role="document"
+            onClick={(event) => {
+              event.stopPropagation();
+            }}
+          >
+            <h3>{celebration.title}</h3>
+            <p>{celebration.message}</p>
+            {celebration.detail ? <p className="celebration-card__detail">{celebration.detail}</p> : null}
+            <button type="button" className="primary-action" onClick={closeCelebration}>
+              ¡Genial!
+            </button>
+          </div>
+        </div>
+      ) : null}
+
+      <div className="dashboard-shell">
       <aside className="dashboard-sidebar">
         <div className="sidebar-logo">
           <img src="/logo-empresa.png" alt="Logo de la empresa" className="brand-logo" />
@@ -1519,6 +2069,9 @@ const DashboardLayout: React.FC<{
               Control horario
             </NavLink>
           ) : null}
+          <NavLink to="/flujo-trabajo" className={({ isActive }) => `sidebar-link${isActive ? ' is-active' : ''}`}>
+            Flujo de trabajo
+          </NavLink>
           <NavLink to="/aprobaciones" className={({ isActive }) => `sidebar-link${isActive ? ' is-active' : ''}`}>
             Aprobaciones/solicitudes
           </NavLink>
@@ -1557,18 +2110,17 @@ const DashboardLayout: React.FC<{
                 <span className="time-tracker__clock">{formattedClock}</span>
                 <small className="time-tracker__last">{formattedAttendance}</small>
               </div>
-              <div className="time-tracker__actions">
-                <button
-                  type="button"
-                  className={entryButtonClassName}
-                  onClick={() => handleMarkAttendance('entrada')}
-                >
-                  Entrada
-                </button>
-                <button type="button" className={exitButtonClassName} onClick={() => handleMarkAttendance('salida')}>
-                  Salida
-                </button>
-              </div>
+        <div className="time-tracker__actions">
+          {attendanceRecord?.status === 'entrada' ? (
+            <button type="button" className={exitButtonClassName} onClick={() => handleMarkAttendance('salida')}>
+              Salida
+            </button>
+          ) : (
+            <button type="button" className={entryButtonClassName} onClick={() => handleMarkAttendance('entrada')}>
+              Entrada
+            </button>
+          )}
+        </div>
             </div>
             <div className="notification-anchor">
               <button
@@ -1588,6 +2140,9 @@ const DashboardLayout: React.FC<{
                   <div className="notification-toast__content">
                     <strong>Nueva notificación</strong>
                     <p>{notificationToast.message}</p>
+                    {notificationToast.detail ? (
+                      <small className="notification-toast__detail">{notificationToast.detail}</small>
+                    ) : null}
                   </div>
                   <button
                     type="button"
@@ -1633,6 +2188,7 @@ const DashboardLayout: React.FC<{
         </section>
       </main>
     </div>
+    </>
   );
 };
 
@@ -2319,6 +2875,51 @@ const ReclamosPage: React.FC = () => {
     dateTo,
   ]);
 
+  const handleExportReclamos = useCallback(() => {
+    const headers = [
+      'Fecha reclamo',
+      'Código',
+      'Detalle',
+      'Agente creador',
+      'Transportista',
+      'Responsable',
+      'Cliente',
+      'Tipo de reclamo',
+      'Estado',
+      'Pagado',
+      'Importe pagado',
+      'Demora',
+    ];
+
+    const rows: Array<Array<string>> = [headers];
+
+    if (filteredReclamos.length === 0) {
+      rows.push(['Sin datos filtrados']);
+    } else {
+      filteredReclamos.forEach((reclamo) => {
+        rows.push([
+          reclamo.fechaReclamo ?? '',
+          reclamo.codigo ?? `#${reclamo.id}`,
+          reclamo.detalle ?? '',
+          reclamo.creator ?? '',
+          reclamo.transportista ?? '',
+          reclamo.agente ?? '',
+          reclamo.cliente ?? '',
+          reclamo.tipo ?? '',
+          reclamo.statusLabel ?? reclamo.status ?? '',
+          reclamo.pagado ? 'Sí' : 'No',
+          reclamo.pagado
+            ? reclamo.importePagadoLabel ?? formatCurrency(reclamo.importePagado)
+            : '',
+          formatElapsedTime(reclamo.createdAt),
+        ]);
+      });
+    }
+
+    const today = new Date().toISOString().slice(0, 10);
+    downloadCsv(`reclamos-${today}.csv`, rows);
+  }, [filteredReclamos]);
+
   const footerLabel = useMemo(() => {
     if (loading) {
       return 'Cargando reclamos...';
@@ -2436,6 +3037,14 @@ const ReclamosPage: React.FC = () => {
           </label>
         </div>
         <div className="filters-actions">
+          <button
+            type="button"
+            className="secondary-action secondary-action--ghost"
+            onClick={handleExportReclamos}
+            disabled={loading || filteredReclamos.length === 0}
+          >
+            Exportar listado
+          </button>
           <button type="button" className="secondary-action" onClick={handleResetFilters}>
             Limpiar
           </button>
@@ -2524,6 +3133,7 @@ const ReclamosPage: React.FC = () => {
               <th>Tipo de reclamo</th>
               <th>Estado</th>
               <th>Pagado</th>
+              <th>Importe pagado</th>
               <th>Demora</th>
               <th>Acciones</th>
             </tr>
@@ -2531,13 +3141,13 @@ const ReclamosPage: React.FC = () => {
           <tbody>
             {loading && (
               <tr>
-                <td colSpan={10}>Cargando reclamos...</td>
+                <td colSpan={12}>Cargando reclamos...</td>
               </tr>
             )}
 
             {error && !loading && (
               <tr>
-                <td colSpan={10} className="error-cell">
+                <td colSpan={12} className="error-cell">
                   {error}
                 </td>
               </tr>
@@ -2545,7 +3155,7 @@ const ReclamosPage: React.FC = () => {
 
             {!loading && !error && filteredReclamos.length === 0 && (
               <tr>
-                <td colSpan={10}>No hay reclamos para mostrar.</td>
+                <td colSpan={12}>No hay reclamos para mostrar.</td>
               </tr>
             )}
 
@@ -2575,6 +3185,11 @@ const ReclamosPage: React.FC = () => {
                     >
                       {reclamo.pagadoLabel ?? (reclamo.pagado ? 'Sí' : 'No')}
                     </span>
+                  </td>
+                  <td>
+                    {reclamo.pagado
+                      ? reclamo.importePagadoLabel ?? formatCurrency(reclamo.importePagado)
+                      : '—'}
                   </td>
                   <td>{formatElapsedTime(reclamo.createdAt)}</td>
                   <td>
@@ -3449,6 +4064,7 @@ const ReclamoDetailPage: React.FC = () => {
     pagado: 'false',
     fechaReclamo: '',
     detalle: '',
+    importePagado: '',
   });
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -3461,6 +4077,7 @@ const ReclamoDetailPage: React.FC = () => {
   const [documentUploading, setDocumentUploading] = useState(false);
   const [documentMessage, setDocumentMessage] = useState<string | null>(null);
   const [documentError, setDocumentError] = useState<string | null>(null);
+  const transportistaInfo = detail?.transportistaDetail;
 
   const shouldRefreshFormRef = useRef(true);
 
@@ -3577,6 +4194,7 @@ const ReclamoDetailPage: React.FC = () => {
       pagado: detail.pagado ? 'true' : 'false',
       fechaReclamo: detail.fechaReclamo ?? '',
       detalle: detail.detalle ?? '',
+      importePagado: detail.pagado ? detail.importePagado ?? '' : '',
     });
     shouldRefreshFormRef.current = false;
   }, [detail, meta]);
@@ -3592,6 +4210,7 @@ const ReclamoDetailPage: React.FC = () => {
       pagado: detail.pagado ? 'true' : 'false',
       fechaReclamo: detail.fechaReclamo ?? '',
       detalle: detail.detalle ?? '',
+      importePagado: detail.pagado ? detail.importePagado ?? '' : '',
     });
     setSaveError(null);
     setSaveSuccess(null);
@@ -3609,6 +4228,28 @@ const ReclamoDetailPage: React.FC = () => {
     if (!targetStatus) {
       setSaveError('Selecciona un estado para el reclamo.');
       return;
+    }
+
+    let normalizedImporte: number | null = null;
+    if (formValues.pagado === 'true') {
+      const trimmedImporte = formValues.importePagado.trim();
+      if (!trimmedImporte) {
+        setSaveError('Ingresa el importe pagado.');
+        return;
+      }
+
+      const parsed = Number(trimmedImporte.replace(',', '.'));
+      if (Number.isNaN(parsed)) {
+        setSaveError('Ingresa un importe pagado válido.');
+        return;
+      }
+
+      if (parsed < 0) {
+        setSaveError('El importe pagado debe ser mayor o igual a 0.');
+        return;
+      }
+
+      normalizedImporte = Number(parsed.toFixed(2));
     }
 
     try {
@@ -3629,6 +4270,7 @@ const ReclamoDetailPage: React.FC = () => {
           tipoId: detail.tipoId,
           status: targetStatus,
           pagado: formValues.pagado === 'true',
+          importePagado: normalizedImporte,
           fechaReclamo: formValues.fechaReclamo || null,
         }),
       });
@@ -3841,6 +4483,38 @@ const ReclamoDetailPage: React.FC = () => {
     }
   };
 
+  const handleExportTransportista = useCallback(() => {
+    if (!detail) {
+      return;
+    }
+
+    const info = detail.transportistaDetail;
+    const rows = [
+      ['Campo', 'Valor'],
+      ['ID transportista', info?.id ?? detail.transportistaId ?? ''],
+      ['Nombre completo', info?.nombreCompleto ?? detail.transportista ?? ''],
+      ['CUIL', info?.cuil ?? ''],
+      ['Cliente', info?.cliente ?? detail.cliente ?? ''],
+      ['Sucursal', info?.sucursal ?? ''],
+      ['Unidad', info?.unidadDetalle ?? info?.unidad ?? ''],
+      ['Patente', info?.patente ?? ''],
+      ['Agente del alta', detail.creator ?? info?.agente ?? ''],
+      ['Responsable actual', detail.agente ?? ''],
+      ['Pagado', detail.pagado ? 'Sí' : 'No'],
+      [
+        'Importe pagado',
+        detail.pagado ? detail.importePagadoLabel ?? formatCurrency(detail.importePagado) : '',
+      ],
+      ['Fecha del alta', info?.fechaAlta ?? ''],
+      ['Fecha del reclamo', detail.fechaReclamo ?? ''],
+      ['Teléfono', info?.telefono ?? ''],
+      ['Email', info?.email ?? ''],
+    ];
+
+    const filename = `transportista-${detail.transportistaId ?? detail.id ?? 'reclamo'}.csv`;
+    downloadCsv(filename, rows);
+  }, [detail]);
+
   const renderReadOnlyField = (label: string, value: string | null) => (
     <label className="input-control">
       <span>{label}</span>
@@ -3896,7 +4570,6 @@ const ReclamoDetailPage: React.FC = () => {
     );
   }
 
-  const transportistaInfo = detail.transportistaDetail;
 
   return (
     <DashboardLayout
@@ -3911,7 +4584,17 @@ const ReclamoDetailPage: React.FC = () => {
       <div className="reclamo-detail">
         <div className="reclamo-detail-main">
           <section className="reclamo-card">
-            <h3>Datos del transportista</h3>
+            <div className="reclamo-card-header">
+              <h3>Datos del transportista</h3>
+              <button
+                type="button"
+                className="secondary-action"
+                onClick={handleExportTransportista}
+                disabled={!detail}
+              >
+                Descargar datos
+              </button>
+            </div>
             <div className="reclamo-card-grid">
               {renderReadOnlyField('Nombre completo', transportistaInfo?.nombreCompleto ?? detail.transportista)}
               {renderReadOnlyField('CUIL', transportistaInfo?.cuil ?? '')}
@@ -3923,6 +4606,12 @@ const ReclamoDetailPage: React.FC = () => {
               {renderReadOnlyField('Responsable actual', detail.agente ?? '')}
               {renderReadOnlyField('Fecha del alta', transportistaInfo?.fechaAlta ?? '')}
               {renderReadOnlyField('Fecha del reclamo', formValues.fechaReclamo || detail.fechaReclamo || '')}
+              {detail.pagado
+                ? renderReadOnlyField(
+                    'Importe pagado',
+                    detail.importePagadoLabel ?? detail.importePagado ?? ''
+                  )
+                : null}
               {renderReadOnlyField('Teléfono', transportistaInfo?.telefono ?? '')}
               {renderReadOnlyField('Email', transportistaInfo?.email ?? '')}
             </div>
@@ -4081,12 +4770,36 @@ const ReclamoDetailPage: React.FC = () => {
               <span>Pagado</span>
               <select
                 value={formValues.pagado}
-                onChange={(event) => setFormValues((prev) => ({ ...prev, pagado: event.target.value }))}
+                onChange={(event) => {
+                  const nextValue = event.target.value;
+                  setFormValues((prev) => ({
+                    ...prev,
+                    pagado: nextValue,
+                    importePagado: nextValue === 'true' ? prev.importePagado : '',
+                  }));
+                }}
               >
                 <option value="false">No</option>
                 <option value="true">Sí</option>
               </select>
             </label>
+
+            {formValues.pagado === 'true' ? (
+              <label className="input-control">
+                <span>Importe pagado</span>
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  inputMode="decimal"
+                  placeholder="0.00"
+                  value={formValues.importePagado}
+                  onChange={(event) =>
+                    setFormValues((prev) => ({ ...prev, importePagado: event.target.value }))
+                  }
+                />
+              </label>
+            ) : null}
 
             <label className="input-control">
               <span>Fecha del reclamo</span>
@@ -4757,6 +5470,14 @@ const PersonalPage: React.FC = () => {
 
 const LiquidacionesPage: React.FC = () => {
   const navigate = useNavigate();
+  const { personaId: personaIdParam } = useParams<{ personaId?: string }>();
+  const personaIdFromRoute = useMemo(() => {
+    if (!personaIdParam) {
+      return null;
+    }
+    const parsed = Number(personaIdParam);
+    return Number.isNaN(parsed) ? null : parsed;
+  }, [personaIdParam]);
   const apiBaseUrl = useMemo(() => resolveApiBaseUrl(), []);
   const [personal, setPersonal] = useState<PersonalRecord[]>([]);
   const [loading, setLoading] = useState(true);
@@ -4772,18 +5493,39 @@ const LiquidacionesPage: React.FC = () => {
   const [estadoFilter, setEstadoFilter] = useState('');
   const [combustibleFilter, setCombustibleFilter] = useState('');
   const [tarifaFilter, setTarifaFilter] = useState('');
-  const [selectedPersonaId, setSelectedPersonaId] = useState<number | null>(null);
+  const [selectedPersonaId, setSelectedPersonaId] = useState<number | null>(personaIdFromRoute);
   const [detail, setDetail] = useState<PersonalDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState<string | null>(null);
   const [pendingUploads, setPendingUploads] = useState<PendingPersonalUpload[]>([]);
   const [uploading, setUploading] = useState(false);
   const [uploadStatus, setUploadStatus] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  const [deletingDocumentIds, setDeletingDocumentIds] = useState<Set<number>>(() => new Set());
   const [documentTypes, setDocumentTypes] = useState<PersonalDocumentType[]>([]);
   const [documentTypesLoading, setDocumentTypesLoading] = useState(true);
   const [documentTypesError, setDocumentTypesError] = useState<string | null>(null);
   const [selectedDocumentTypeId, setSelectedDocumentTypeId] = useState('');
   const [documentExpiry, setDocumentExpiry] = useState('');
+  const [liquidacionMonthFilter, setLiquidacionMonthFilter] = useState('');
+  const [liquidacionFortnightFilter, setLiquidacionFortnightFilter] = useState('');
+  const autoRefreshRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [showPasteModal, setShowPasteModal] = useState(false);
+  const [pasteError, setPasteError] = useState<string | null>(null);
+  const pasteTextareaRef = useRef<HTMLTextAreaElement | null>(null);
+  useEffect(() => {
+    setLiquidacionMonthFilter('');
+    setLiquidacionFortnightFilter('');
+    setDeletingDocumentIds(new Set<number>());
+  }, [selectedPersonaId]);
+
+  useEffect(() => {
+    if (showPasteModal) {
+      setPasteError(null);
+      window.setTimeout(() => {
+        pasteTextareaRef.current?.focus();
+      }, 0);
+    }
+  }, [showPasteModal]);
 
   const selectedDocumentType = useMemo(() => {
     if (!selectedDocumentTypeId) {
@@ -4798,6 +5540,12 @@ const LiquidacionesPage: React.FC = () => {
   const liquidacionType = useMemo(() => {
     return documentTypes.find((tipo) => (tipo.nombre ?? '').toLowerCase().includes('liquid'));
   }, [documentTypes]);
+
+  useEffect(() => {
+    if (personaIdFromRoute !== selectedPersonaId) {
+      setSelectedPersonaId(personaIdFromRoute);
+    }
+  }, [personaIdFromRoute, selectedPersonaId]);
 
   const formatFileSize = (size: number | null | undefined): string => {
     if (!size || size <= 0) {
@@ -4846,14 +5594,16 @@ const LiquidacionesPage: React.FC = () => {
   );
 
   const refreshPersonaDetail = useCallback(
-    async (options?: { signal?: AbortSignal }) => {
+    async (options?: { signal?: AbortSignal; silent?: boolean }) => {
       if (!selectedPersonaId) {
         return;
       }
 
       try {
-        setDetailLoading(true);
-        setDetailError(null);
+        if (!options?.silent) {
+          setDetailLoading(true);
+          setDetailError(null);
+        }
 
         const response = await fetch(`${apiBaseUrl}/api/personal/${selectedPersonaId}`, {
           signal: options?.signal,
@@ -4872,15 +5622,22 @@ const LiquidacionesPage: React.FC = () => {
         setDetail({
           ...payload.data,
           documents: payload.data.documents ?? [],
+          documentsDownloadAllUrl: payload.data.documentsDownloadAllUrl ?? null,
+          documentsDownloadAllAbsoluteUrl: payload.data.documentsDownloadAllAbsoluteUrl ?? null,
         });
+        setDetailError(null);
       } catch (err) {
         if ((err as Error).name === 'AbortError') {
           return;
         }
         setDetailError((err as Error).message ?? 'No se pudo cargar la información del personal.');
-        setDetail(null);
+        if (!options?.silent) {
+          setDetail(null);
+        }
       } finally {
-        setDetailLoading(false);
+        if (!options?.silent) {
+          setDetailLoading(false);
+        }
       }
     },
     [apiBaseUrl, selectedPersonaId]
@@ -4961,12 +5718,31 @@ const LiquidacionesPage: React.FC = () => {
       setDetail(null);
       setDetailError(null);
       setDetailLoading(false);
+      if (autoRefreshRef.current) {
+        clearInterval(autoRefreshRef.current);
+        autoRefreshRef.current = null;
+      }
       return;
     }
 
     const controller = new AbortController();
     refreshPersonaDetail({ signal: controller.signal });
-    return () => controller.abort();
+
+    if (autoRefreshRef.current) {
+      clearInterval(autoRefreshRef.current);
+    }
+
+    autoRefreshRef.current = setInterval(() => {
+      refreshPersonaDetail({ silent: true });
+    }, 15000);
+
+    return () => {
+      controller.abort();
+      if (autoRefreshRef.current) {
+        clearInterval(autoRefreshRef.current);
+        autoRefreshRef.current = null;
+      }
+    };
   }, [refreshPersonaDetail, selectedPersonaId]);
 
   useEffect(() => {
@@ -5191,74 +5967,483 @@ const LiquidacionesPage: React.FC = () => {
       return [] as PersonalDetail['documents'];
     }
 
-    const matches = detail.documents.filter((doc) => (doc.tipoNombre ?? '').toLowerCase().includes('liquid'));
+    const normalised = detail.documents.map((doc) => {
+      const rawParent = (doc as PersonalDetail['documents'][number]).parentDocumentId as unknown;
+      const numericParent =
+        typeof rawParent === 'number'
+          ? rawParent
+          : rawParent !== null && rawParent !== undefined && rawParent !== ''
+            ? Number(rawParent)
+            : null;
+      const parentDocumentId =
+        typeof numericParent === 'number' && !Number.isNaN(numericParent) ? numericParent : null;
+
+      return {
+        ...doc,
+        parentDocumentId,
+        isAttachment: doc.isAttachment ?? (parentDocumentId !== null),
+      };
+    });
+
+    const matches = normalised.filter((doc) => (doc.tipoNombre ?? '').toLowerCase().includes('liquid'));
     if (matches.length > 0) {
       return matches;
     }
-    return detail.documents;
+    return normalised;
   }, [detail]);
+
+  const liquidacionGroups = useMemo(() => {
+    if (liquidacionDocuments.length === 0) {
+      return [] as LiquidacionGroup[];
+    }
+
+    const attachmentsByParent = new Map<number, LiquidacionDocument[]>();
+    const mainDocuments: LiquidacionDocument[] = [];
+    const orphanAttachments: LiquidacionDocument[] = [];
+
+    const toTimestamp = (doc: LiquidacionDocument): number => {
+      if (doc.fechaCargaIso) {
+        const value = Date.parse(doc.fechaCargaIso);
+        if (!Number.isNaN(value)) {
+          return value;
+        }
+      }
+
+      if (doc.fechaCarga) {
+        const value = Date.parse(doc.fechaCarga);
+        if (!Number.isNaN(value)) {
+          return value;
+        }
+      }
+
+      return 0;
+    };
+
+    const sortDocs = (items: LiquidacionDocument[]): LiquidacionDocument[] =>
+      [...items].sort((a, b) => {
+        const timeA = toTimestamp(a);
+        const timeB = toTimestamp(b);
+
+        if (timeA !== timeB) {
+          return timeB - timeA;
+        }
+
+        return (b.id ?? 0) - (a.id ?? 0);
+      });
+
+    liquidacionDocuments.forEach((doc) => {
+      const parentId = typeof doc.parentDocumentId === 'number' ? doc.parentDocumentId : null;
+      const isAttachment = doc.isAttachment ?? Boolean(parentId);
+
+      if (isAttachment && parentId !== null) {
+        const current = attachmentsByParent.get(parentId) ?? [];
+        current.push(doc);
+        attachmentsByParent.set(parentId, current);
+        return;
+      }
+
+      if (isAttachment && parentId === null) {
+        orphanAttachments.push(doc);
+        return;
+      }
+
+      mainDocuments.push(doc);
+    });
+
+    const groups: LiquidacionGroup[] = [];
+
+    sortDocs(mainDocuments).forEach((mainDoc) => {
+      const attachments = sortDocs(attachmentsByParent.get(mainDoc.id) ?? []);
+      groups.push({
+        main: mainDoc,
+        attachments,
+      });
+    });
+
+    sortDocs(orphanAttachments).forEach((orphan) => {
+      groups.push({
+        main: orphan,
+        attachments: [],
+      });
+    });
+
+    return groups;
+  }, [liquidacionDocuments]);
+
+  const liquidacionFortnightSections = useMemo(() => {
+    if (liquidacionGroups.length === 0) {
+      return [] as LiquidacionFortnightSection[];
+    }
+
+    const monthFormatter = new Intl.DateTimeFormat('es-AR', { month: 'long', year: 'numeric' });
+    const capitalize = (value: string) => value.charAt(0).toUpperCase() + value.slice(1);
+
+    const monthMap = new Map<
+      string,
+      {
+        monthKey: string;
+        monthLabel: string;
+        sections: Map<string, { key: string; label: string; rows: LiquidacionGroup[] }>;
+      }
+    >();
+
+    const getDateFromGroup = (group: LiquidacionGroup): Date | null => {
+      const source = group.main;
+      const rawIso =
+        source.fechaVencimiento
+        ?? source.fechaCargaIso
+        ?? source.fechaCarga
+        ?? null;
+
+      if (!rawIso) {
+        return null;
+      }
+
+      const parsed = new Date(rawIso);
+      if (Number.isNaN(parsed.getTime())) {
+        return null;
+      }
+
+      return parsed;
+    };
+
+    const monthOrderValue = (key: string): number | null => {
+      if (key === 'unknown') {
+        return null;
+      }
+      const [year, month] = key.split('-').map((segment) => Number(segment));
+      if (!Number.isFinite(year) || !Number.isFinite(month)) {
+        return null;
+      }
+      return year * 100 + month;
+    };
+
+    liquidacionGroups.forEach((group) => {
+      const date = getDateFromGroup(group);
+      const monthKey = date
+        ? `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`
+        : 'unknown';
+      const monthLabel = date ? capitalize(monthFormatter.format(date)) : 'Sin fecha';
+
+      const quincenaKey = date ? (date.getDate() <= 15 ? 'Q1' : 'Q2') : 'NO_DATE';
+      const quincenaLabel = date
+        ? date.getDate() <= 15
+          ? 'Primera quincena (1-15)'
+          : 'Segunda quincena (16-fin)'
+        : 'Sin fecha definida';
+
+      const monthBucket = monthMap.get(monthKey) ?? {
+        monthKey,
+        monthLabel,
+        sections: new Map<string, { key: string; label: string; rows: LiquidacionGroup[] }>(),
+      };
+
+      const sectionBucket = monthBucket.sections.get(quincenaKey) ?? {
+        key: quincenaKey,
+        label: quincenaLabel,
+        rows: [] as LiquidacionGroup[],
+      };
+
+      sectionBucket.rows.push(group);
+      monthBucket.sections.set(quincenaKey, sectionBucket);
+      monthMap.set(monthKey, monthBucket);
+    });
+
+    const quincenaOrder = (key: string): number => {
+      switch (key) {
+        case 'Q1':
+          return 0;
+        case 'Q2':
+          return 1;
+        default:
+          return 2;
+      }
+    };
+
+    const months = Array.from(monthMap.values())
+      .filter((month) => month.sections.size > 0)
+      .sort((a, b) => {
+        const aValue = monthOrderValue(a.monthKey);
+        const bValue = monthOrderValue(b.monthKey);
+
+        if (aValue === null && bValue === null) {
+          return 0;
+        }
+        if (aValue === null) {
+          return 1;
+        }
+        if (bValue === null) {
+          return -1;
+        }
+
+        return bValue - aValue;
+      });
+
+    return months.map((month) => ({
+      monthKey: month.monthKey,
+      monthLabel: month.monthLabel,
+      sections: Array.from(month.sections.values())
+        .filter((section) => section.rows.length > 0)
+        .sort((a, b) => quincenaOrder(a.key) - quincenaOrder(b.key)),
+    }));
+  }, [liquidacionGroups]);
+
+  const liquidacionMonthOptions = useMemo(() => {
+    const hasUnknown = liquidacionFortnightSections.some((section) => section.monthKey === 'unknown');
+    return MONTH_FILTER_OPTIONS.filter((option) => option.value !== 'unknown' || hasUnknown);
+  }, [liquidacionFortnightSections]);
+
+  const liquidacionFortnightOptions = useMemo(() => {
+    const hasNoDateSection = liquidacionFortnightSections.some((month) =>
+      month.sections.some((section) => section.key === 'NO_DATE')
+    );
+
+    return FORTNIGHT_FILTER_OPTIONS.filter((option) => option.value !== 'NO_DATE' || hasNoDateSection);
+  }, [liquidacionFortnightSections]);
+
+  const resolveFilteredTargetDate = useCallback((): string | null => {
+    if (!liquidacionMonthFilter || liquidacionMonthFilter === 'unknown') {
+      return null;
+    }
+
+    let year: number | null = null;
+    let month: number | null = null;
+
+    const now = new Date();
+
+    if (/^\d{4}-\d{2}$/.test(liquidacionMonthFilter)) {
+      year = Number(liquidacionMonthFilter.slice(0, 4));
+      month = Number(liquidacionMonthFilter.slice(5));
+    } else if (/^\d{2}$/.test(liquidacionMonthFilter)) {
+      year = now.getFullYear();
+      month = Number(liquidacionMonthFilter);
+    }
+
+    if (
+      year === null ||
+      Number.isNaN(year) ||
+      month === null ||
+      Number.isNaN(month) ||
+      month < 1 ||
+      month > 12
+    ) {
+      return null;
+    }
+
+    let day: number;
+    if (liquidacionFortnightFilter === 'Q2') {
+      day = new Date(year, month, 0).getDate();
+    } else if (liquidacionFortnightFilter === 'Q1') {
+      day = 15;
+    } else {
+      day = 1;
+    }
+
+    return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+  }, [liquidacionMonthFilter, liquidacionFortnightFilter]);
+
+  const filteredLiquidacionSections = useMemo(() => {
+    if (liquidacionFortnightSections.length === 0) {
+      return [] as LiquidacionFortnightSection[];
+    }
+
+    const matchesMonth = (monthSection: LiquidacionFortnightSection): boolean => {
+      if (!liquidacionMonthFilter) {
+        return true;
+      }
+
+      if (liquidacionMonthFilter === 'unknown') {
+        return monthSection.monthKey === 'unknown';
+      }
+
+      const normalizedFilter = liquidacionMonthFilter.trim();
+
+      if (/^\d{4}-\d{2}$/.test(normalizedFilter)) {
+        return monthSection.monthKey === normalizedFilter;
+      }
+
+      if (/^\d{2}$/.test(normalizedFilter)) {
+        if (monthSection.monthKey === 'unknown') {
+          return false;
+        }
+        const monthPart = monthSection.monthKey.slice(-2);
+        return monthPart === normalizedFilter;
+      }
+
+      return monthSection.monthKey === normalizedFilter;
+    };
+
+    const matchesFortnight = (sectionKey: string): boolean => {
+      if (!liquidacionFortnightFilter) {
+        return true;
+      }
+      return sectionKey === liquidacionFortnightFilter;
+    };
+
+    return liquidacionFortnightSections
+      .filter((monthSection) => matchesMonth(monthSection))
+      .map((monthSection) => {
+        const filteredSections = monthSection.sections.filter((section) => matchesFortnight(section.key));
+
+        return {
+          ...monthSection,
+          sections: filteredSections,
+        };
+      })
+      .filter((monthSection) => monthSection.sections.length > 0);
+  }, [liquidacionFortnightSections, liquidacionMonthFilter, liquidacionFortnightFilter]);
 
   const handleSelectPersona = (registro: PersonalRecord) => {
     setSelectedPersonaId(registro.id);
     setPendingUploads([]);
     setUploadStatus(null);
     setDocumentExpiry('');
+    navigate(`/liquidaciones/${registro.id}`);
   };
 
   const handleRemovePendingUpload = useCallback((id: string) => {
     setPendingUploads((prev) => prev.filter((item) => item.id !== id));
   }, []);
 
-  const handlePendingFilesSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const files = event.target.files;
+  const prepareUploadsFromFiles = useCallback(
+    (files: File[]): { ok: true; uploads: PendingPersonalUpload[] } | { ok: false; message: string } => {
+      if (!files || files.length === 0) {
+        return { ok: false, message: 'No se encontraron archivos para cargar.' };
+      }
 
-    if (!files || files.length === 0) {
-      return;
-    }
+      if (!selectedPersonaId) {
+        return { ok: false, message: 'Seleccioná un registro antes de agregar liquidaciones.' };
+      }
 
-    if (!selectedPersonaId) {
-      setUploadStatus({ type: 'error', message: 'Seleccioná un registro antes de agregar archivos.' });
-      event.target.value = '';
-      return;
-    }
-
-    if (!selectedDocumentTypeId) {
-      setUploadStatus({ type: 'error', message: 'Seleccioná el tipo de documento antes de agregar archivos.' });
-      event.target.value = '';
-      return;
-    }
+      if (!selectedDocumentTypeId) {
+        return { ok: false, message: 'Seleccioná el tipo de documento antes de agregar liquidaciones.' };
+      }
 
     const tipo = selectedDocumentType;
 
-    if (tipo?.vence && !documentExpiry) {
-      setUploadStatus({ type: 'error', message: 'Este tipo de documento requiere fecha de vencimiento.' });
-      event.target.value = '';
-      return;
-    }
-
     const effectiveTypeId = liquidacionType ? liquidacionType.id : Number(selectedDocumentTypeId);
     if (!effectiveTypeId || Number.isNaN(effectiveTypeId)) {
-      setUploadStatus({ type: 'error', message: 'No se pudo determinar el tipo de documento para la liquidación.' });
-      event.target.value = '';
-      return;
+      return { ok: false, message: 'No se pudo determinar el tipo de documento para la liquidación.' };
     }
 
-    const newUploads: PendingPersonalUpload[] = Array.from(files).map((file) => ({
+    const targetDate = resolveFilteredTargetDate();
+    if (tipo?.vence && !documentExpiry && !targetDate) {
+      return { ok: false, message: 'Este tipo de documento requiere fecha de vencimiento.' };
+    }
+
+    const fechaVencimiento = targetDate ?? (tipo?.vence ? documentExpiry || null : null);
+
+    const uploads: PendingPersonalUpload[] = files.map((file) => ({
       id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
       file,
       typeId: effectiveTypeId,
       typeName: (liquidacionType ?? tipo)?.nombre ?? null,
-      fechaVencimiento: tipo?.vence ? documentExpiry || null : null,
+      fechaVencimiento,
     }));
 
-    setPendingUploads((prev) => [...prev, ...newUploads]);
+    return { ok: true, uploads };
+  },
+    [
+      selectedPersonaId,
+      selectedDocumentTypeId,
+      selectedDocumentType,
+      documentExpiry,
+      liquidacionType,
+      resolveFilteredTargetDate,
+    ]
+  );
+
+  const handlePendingFilesSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const files = event.target.files;
+    if (!files || files.length === 0) {
+      return;
+    }
+
+    const result = prepareUploadsFromFiles(Array.from(files));
+
+    if (!result.ok) {
+      setUploadStatus({ type: 'error', message: result.message });
+      event.target.value = '';
+      return;
+    }
+
+    setPendingUploads((prev) => [...prev, ...result.uploads]);
     setUploadStatus(null);
 
-    if (!tipo?.vence) {
+    if (!selectedDocumentType?.vence) {
       setDocumentExpiry('');
     }
 
     event.target.value = '';
+  };
+
+  const handleOpenPasteModal = () => {
+    if (!selectedPersonaId) {
+      setUploadStatus({ type: 'error', message: 'Seleccioná un registro antes de pegar la liquidación.' });
+      return;
+    }
+
+    if (!selectedDocumentTypeId) {
+      setUploadStatus({ type: 'error', message: 'Seleccioná el tipo de documento antes de pegar la liquidación.' });
+      return;
+    }
+
+    if (selectedDocumentType?.vence && !documentExpiry) {
+      setUploadStatus({
+        type: 'error',
+        message: 'Este tipo de documento requiere fecha de vencimiento antes de adjuntar la liquidación.',
+      });
+      return;
+    }
+
+    setPasteError(null);
+    setShowPasteModal(true);
+  };
+
+  const handleClosePasteModal = () => {
+    setShowPasteModal(false);
+    setPasteError(null);
+  };
+
+  const handlePasteAreaPaste = (event: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    event.preventDefault();
+
+    const clipboardItems = Array.from(event.clipboardData.items ?? []);
+    const files: File[] = [];
+
+    clipboardItems.forEach((item) => {
+      if (item.kind === 'file' && item.type.startsWith('image/')) {
+        const blob = item.getAsFile();
+        if (blob) {
+          const extension = blob.type.split('/')[1] ?? 'png';
+          const fileName = `liquidacion-${Date.now()}-${Math.random().toString(36).slice(2)}.${extension}`;
+          const file = new File([blob], fileName, { type: blob.type });
+          files.push(file);
+        }
+      }
+    });
+
+    if (files.length === 0) {
+      setPasteError('El portapapeles no contiene una imagen. Copiá la captura de la liquidación e inténtalo nuevamente.');
+      return;
+    }
+
+    const result = prepareUploadsFromFiles(files);
+
+    if (!result.ok) {
+      setPasteError(result.message);
+      return;
+    }
+
+    setPendingUploads((prev) => [...prev, ...result.uploads]);
+    setUploadStatus({ type: 'success', message: 'Imagen pegada agregada a la lista de carga.' });
+
+    if (!selectedDocumentType?.vence) {
+      setDocumentExpiry('');
+    }
+
+    setShowPasteModal(false);
+    setPasteError(null);
   };
 
   const handleUploadDocumentos = async () => {
@@ -5335,6 +6520,70 @@ const LiquidacionesPage: React.FC = () => {
     window.open(resolvedUrl, '_blank', 'noopener');
   };
 
+  const handleDeleteDocumento = async (documento: PersonalDetail['documents'][number]) => {
+    if (!detail) {
+      return;
+    }
+
+    const docId = documento.id;
+    if (docId === null || docId === undefined) {
+      window.alert('No se pudo identificar el documento a eliminar.');
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `¿Eliminar "${documento.nombre ?? 'este documento'}"? Esta acción no se puede deshacer.`
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    setDeletingDocumentIds((prev) => {
+      const next = new Set(prev);
+      next.add(docId);
+      return next;
+    });
+
+    try {
+      const response = await fetch(`${apiBaseUrl}/api/personal/${detail.id}/documentos/${docId}`, {
+        method: 'DELETE',
+      });
+
+      if (!response.ok) {
+        let message = `Error ${response.status}: ${response.statusText}`;
+        try {
+          const payload = await response.json();
+          if (typeof payload?.message === 'string') {
+            message = payload.message;
+          } else if (payload?.errors) {
+            const firstError = Object.values(payload.errors)[0];
+            if (Array.isArray(firstError) && typeof firstError[0] === 'string') {
+              message = firstError[0];
+            }
+          }
+        } catch {
+          // ignore parsing errors
+        }
+
+        throw new Error(message);
+      }
+
+      setUploadStatus({ type: 'success', message: 'Documento eliminado correctamente.' });
+      await refreshPersonaDetail({ silent: true });
+    } catch (err) {
+      const message = (err as Error).message ?? 'No se pudo eliminar el documento.';
+      setUploadStatus({ type: 'error', message });
+      window.alert(message);
+    } finally {
+      setDeletingDocumentIds((prev) => {
+        const next = new Set(prev);
+        next.delete(docId);
+        return next;
+      });
+    }
+  };
+
   const handleClearSelection = () => {
     setSelectedPersonaId(null);
     setDetail(null);
@@ -5342,6 +6591,7 @@ const LiquidacionesPage: React.FC = () => {
     setPendingUploads([]);
     setUploadStatus(null);
     setDocumentExpiry('');
+    navigate('/liquidaciones');
   };
 
   const headerContent = (
@@ -5463,7 +6713,7 @@ const LiquidacionesPage: React.FC = () => {
     return detail.email ?? `Registro #${detail.id}`;
   }, [detail]);
 
-  return (
+  const listView = (
     <DashboardLayout title="Liquidaciones" subtitle="Gestión de liquidaciones del personal" headerContent={headerContent}>
       <div className="table-wrapper">
         <table>
@@ -5509,36 +6759,33 @@ const LiquidacionesPage: React.FC = () => {
 
             {!loading &&
               !error &&
-              pageRecords.map((registro) => {
-                const isSelected = selectedPersonaId === registro.id;
-                return (
-                  <tr key={registro.id} className={isSelected ? 'is-selected-row' : undefined}>
-                    <td>{registro.id}</td>
-                    <td>{registro.nombre ?? '—'}</td>
-                    <td>{registro.cuil ?? '—'}</td>
-                    <td>{registro.telefono ?? '—'}</td>
-                    <td>{registro.email ?? '—'}</td>
-                    <td>{registro.perfil ?? '—'}</td>
-                    <td>{registro.agente ?? '—'}</td>
-                    <td>{registro.estado ?? '—'}</td>
-                    <td>{registro.combustible ?? '—'}</td>
-                    <td>{registro.tarifaEspecial ?? '—'}</td>
-                    <td>{registro.cliente ?? '—'}</td>
-                    <td>{registro.unidad ?? '—'}</td>
-                    <td>{registro.sucursal ?? '—'}</td>
-                    <td>{registro.fechaAlta ?? '—'}</td>
-                    <td>
-                      <button
-                        type="button"
-                        className="secondary-action"
-                        onClick={() => handleSelectPersona(registro)}
-                      >
-                        {isSelected ? 'Gestionando' : 'Gestionar'}
-                      </button>
-                    </td>
-                  </tr>
-                );
-              })}
+              pageRecords.map((registro) => (
+                <tr key={registro.id}>
+                  <td>{registro.id}</td>
+                  <td>{registro.nombre ?? '—'}</td>
+                  <td>{registro.cuil ?? '—'}</td>
+                  <td>{registro.telefono ?? '—'}</td>
+                  <td>{registro.email ?? '—'}</td>
+                  <td>{registro.perfil ?? '—'}</td>
+                  <td>{registro.agente ?? '—'}</td>
+                  <td>{registro.estado ?? '—'}</td>
+                  <td>{registro.combustible ?? '—'}</td>
+                  <td>{registro.tarifaEspecial ?? '—'}</td>
+                  <td>{registro.cliente ?? '—'}</td>
+                  <td>{registro.unidad ?? '—'}</td>
+                  <td>{registro.sucursal ?? '—'}</td>
+                  <td>{registro.fechaAlta ?? '—'}</td>
+                  <td>
+                    <button
+                      type="button"
+                      className="secondary-action"
+                      onClick={() => handleSelectPersona(registro)}
+                    >
+                      Gestionar
+                    </button>
+                  </td>
+                </tr>
+              ))}
           </tbody>
         </table>
       </div>
@@ -5562,169 +6809,312 @@ const LiquidacionesPage: React.FC = () => {
           </button>
         </div>
       </footer>
+      <p className="form-info">Seleccioná un registro para gestionarlo en una nueva página.</p>
+    </DashboardLayout>
+  );
 
+  const detailHeaderContent = (
+    <div className="card-header card-header--compact">
+      <button type="button" className="secondary-action" onClick={handleClearSelection}>
+        ← Volver a liquidaciones
+      </button>
+    </div>
+  );
+
+  const detailView = (
+    <DashboardLayout
+      title="Liquidaciones"
+      subtitle={selectedPersonaLabel ? `Gestión de ${selectedPersonaLabel}` : 'Gestión de liquidaciones'}
+      headerContent={detailHeaderContent}
+    >
       <section className="personal-edit-section">
         <div className="card-header card-header--compact">
-          <h2>Liquidaciones</h2>
-          {selectedPersonaId ? (
-            <div className="filters-actions" style={{ gap: '0.5rem' }}>
-              <button type="button" className="secondary-action" onClick={handleClearSelection}>
-                Limpiar selección
-              </button>
-            </div>
+          <h2>Liquidaciones del personal</h2>
+        </div>
+
+        <p className="form-info">
+          {detailLoading
+            ? 'Cargando información del personal seleccionado...'
+            : `Gestioná las liquidaciones de ${selectedPersonaLabel ?? 'este personal'}.`}
+        </p>
+        {detailError ? <p className="form-info form-info--error">{detailError}</p> : null}
+
+        <div className="quincena-filters">
+          <label>
+            <span>Mes</span>
+            <select value={liquidacionMonthFilter} onChange={(event) => setLiquidacionMonthFilter(event.target.value)}>
+              {liquidacionMonthOptions.map((option) => (
+                <option key={`month-option-${option.value || 'all'}`} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            <span>Quincena</span>
+            <select
+              value={liquidacionFortnightFilter}
+              onChange={(event) => setLiquidacionFortnightFilter(event.target.value)}
+            >
+              {liquidacionFortnightOptions.map((option) => (
+                <option key={`fortnight-option-${option.value || 'all'}`} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+
+        {!detailLoading && !detailError && detail && filteredLiquidacionSections.length === 0 ? (
+          <p className="form-info">
+            No hay liquidaciones cargadas para este personal. Podés subir nuevas utilizando el formulario inferior.
+          </p>
+        ) : null}
+
+        {detail && filteredLiquidacionSections.length > 0 ? (
+          <div className="table-wrapper liquidaciones-table">
+            <table>
+              <thead>
+                <tr>
+                  <th>Nombre</th>
+                  <th>Tipo</th>
+                  <th>Fecha</th>
+                  <th>Peso</th>
+                  <th style={{ width: '200px' }}>Acciones</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredLiquidacionSections.map((monthSection) => (
+                  <React.Fragment key={`month-${monthSection.monthKey}`}>
+                    {monthSection.sections.map((section) => (
+                      <React.Fragment key={`month-${monthSection.monthKey}-${section.key}`}>
+                        <tr className="fortnight-row">
+                          <td colSpan={5}>
+                            <strong>{monthSection.monthLabel}</strong>
+                            <span className="fortnight-row__separator">•</span>
+                            <span>{section.label}</span>
+                          </td>
+                        </tr>
+                        {section.rows.map((group) => {
+                          const isDeletingMain = deletingDocumentIds.has(group.main.id);
+                          return (
+                            <React.Fragment key={group.main.id}>
+                              <tr>
+                                <td>{group.main.nombre ?? `Documento #${group.main.id}`}</td>
+                                <td>{group.main.tipoNombre ?? '—'}</td>
+                                <td>
+                                  {group.main.fechaVencimiento
+                                    ? group.main.fechaVencimiento
+                                    : group.main.requiereVencimiento
+                                      ? 'Requiere fecha'
+                                      : group.main.fechaCarga ?? '—'}
+                                </td>
+                                <td>{formatFileSize(group.main.size)}</td>
+                                <td className="table-actions">
+                                  <button
+                                    type="button"
+                                    className="secondary-action"
+                                    onClick={() => handleDownloadDocumento(group.main)}
+                                    disabled={isDeletingMain}
+                                  >
+                                    Descargar
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="secondary-action secondary-action--danger"
+                                    onClick={() => handleDeleteDocumento(group.main)}
+                                    disabled={isDeletingMain}
+                                  >
+                                    Borrar
+                                  </button>
+                                </td>
+                              </tr>
+                              {group.attachments.map((attachment) => {
+                                const isDeletingAttachment = deletingDocumentIds.has(attachment.id);
+                                return (
+                                  <tr
+                                    key={`${group.main.id}-attachment-${attachment.id}`}
+                                    className="attachment-row"
+                                  >
+                                    <td>
+                                      <div className="attachment-name">
+                                        <span className="attachment-chip">Adjunto</span>
+                                        <span>{attachment.nombre ?? `Documento #${attachment.id}`}</span>
+                                      </div>
+                                    </td>
+                                    <td>{attachment.tipoNombre ?? group.main.tipoNombre ?? '—'}</td>
+                                    <td>
+                                      {attachment.fechaVencimiento
+                                        ? attachment.fechaVencimiento
+                                        : attachment.requiereVencimiento
+                                          ? 'Requiere fecha'
+                                          : attachment.fechaCarga ?? '—'}
+                                    </td>
+                                    <td>{formatFileSize(attachment.size)}</td>
+                                    <td className="table-actions">
+                                      <button
+                                        type="button"
+                                        className="secondary-action"
+                                        onClick={() => handleDownloadDocumento(attachment)}
+                                        disabled={isDeletingAttachment}
+                                      >
+                                        Descargar
+                                      </button>
+                                      <button
+                                        type="button"
+                                        className="secondary-action secondary-action--danger"
+                                        onClick={() => handleDeleteDocumento(attachment)}
+                                        disabled={isDeletingAttachment}
+                                      >
+                                        Borrar
+                                      </button>
+                                    </td>
+                                  </tr>
+                                );
+                              })}
+                            </React.Fragment>
+                          );
+                        })}
+                      </React.Fragment>
+                    ))}
+                  </React.Fragment>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : null}
+
+        <div className="form-grid" style={{ marginTop: '1.5rem' }}>
+          <label className="input-control">
+            <span>Tipo de documento</span>
+            <input
+              type="text"
+              value={
+                liquidacionType?.nombre
+                  ?? selectedDocumentType?.nombre
+                  ?? 'Liquidación'
+              }
+              readOnly
+            />
+          </label>
+          {selectedDocumentType?.vence ? (
+            <label className="input-control">
+              <span>Fecha de vencimiento</span>
+              <input
+                type="date"
+                value={documentExpiry}
+                onChange={(event) => setDocumentExpiry(event.target.value)}
+              />
+            </label>
           ) : null}
         </div>
-        {selectedPersonaId ? (
-          <>
-            <p className="form-info">
-              {detailLoading
-                ? 'Cargando información del personal seleccionado...'
-                : `Gestioná las liquidaciones de ${selectedPersonaLabel}.`}
-            </p>
-            {detailError ? <p className="form-info form-info--error">{detailError}</p> : null}
 
-            {!detailLoading && !detailError && (!detail || liquidacionDocuments.length === 0) ? (
-              <p className="form-info">
-                No hay liquidaciones cargadas para este personal. Podés subir nuevas utilizando el formulario inferior.
-              </p>
-            ) : null}
+        {documentTypesError ? (
+          <p className="form-info form-info--error">{documentTypesError}</p>
+        ) : null}
 
-            {detail && liquidacionDocuments.length > 0 ? (
-              <div className="table-wrapper">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Nombre</th>
-                      <th>Tipo</th>
-                      <th>Fecha</th>
-                      <th>Peso</th>
-                      <th style={{ width: '140px' }}>Acciones</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {liquidacionDocuments.map((doc) => (
-                      <tr key={doc.id}>
-                        <td>{doc.nombre ?? `Documento #${doc.id}`}</td>
-                        <td>{doc.tipoNombre ?? '—'}</td>
-                        <td>
-                          {doc.fechaVencimiento
-                            ? doc.fechaVencimiento
-                            : doc.requiereVencimiento
-                              ? 'Requiere fecha'
-                              : '—'}
-                        </td>
-                        <td>{formatFileSize(doc.size)}</td>
-                        <td>
-                          <button
-                            type="button"
-                            className="secondary-action"
-                            onClick={() => handleDownloadDocumento(doc)}
-                          >
-                            Descargar
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+        <div className="upload-dropzone" role="presentation">
+          <div className="upload-dropzone__icon">📄</div>
+          <p>Arrastra y suelta liquidaciones aquí</p>
+          <label className="secondary-action" style={{ cursor: 'pointer' }}>
+            Seleccionar archivos
+            <input
+              type="file"
+              multiple
+              onChange={handlePendingFilesSelect}
+              style={{ display: 'none' }}
+            />
+          </label>
+          <button
+            type="button"
+            className="secondary-action secondary-action--ghost"
+            onClick={handleOpenPasteModal}
+          >
+            Pegar captura (Ctrl+V)
+          </button>
+          {pendingUploads.length > 0 ? (
+            <ul className="pending-upload-list">
+              {pendingUploads.map((item) => (
+                <li key={item.id}>
+                  <div>
+                    <strong>{item.file.name}</strong>
+                    <span>{item.typeName ?? 'Sin tipo asignado'}</span>
+                    {item.fechaVencimiento ? <span>Vence: {item.fechaVencimiento}</span> : null}
+                  </div>
+                  <button
+                    type="button"
+                    className="pending-upload-remove"
+                    onClick={() => handleRemovePendingUpload(item.id)}
+                    aria-label={`Quitar ${item.file.name}`}
+                  >
+                    ×
+                  </button>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+        </div>
+
+        {uploadStatus ? (
+          <p
+            className={
+              uploadStatus.type === 'error' ? 'form-info form-info--error' : 'form-info form-info--success'
+            }
+          >
+            {uploadStatus.message}
+          </p>
+        ) : null}
+
+        <div className="form-actions">
+          <button
+            type="button"
+            className="secondary-action"
+            onClick={() => setPendingUploads([])}
+            disabled={pendingUploads.length === 0}
+          >
+            Limpiar selección
+          </button>
+          <button
+            type="button"
+            className="primary-action"
+            onClick={handleUploadDocumentos}
+            disabled={
+              uploading ||
+              pendingUploads.length === 0 ||
+              documentTypesLoading ||
+              !selectedPersonaId ||
+              !selectedDocumentTypeId
+            }
+          >
+            {uploading ? 'Subiendo...' : 'Subir liquidaciones'}
+          </button>
+        </div>
+
+        {showPasteModal ? (
+          <div className="paste-overlay" role="dialog" aria-modal="true">
+            <div className="paste-modal">
+              <h3>Pegar liquidación desde el portapapeles</h3>
+              <p className="paste-modal__hint">Hacé clic en el cuadro y presioná Ctrl + V para pegar la imagen.</p>
+              <textarea
+                ref={pasteTextareaRef}
+                onPaste={handlePasteAreaPaste}
+                placeholder="Ctrl + V para pegar la captura…"
+                spellCheck={false}
+              />
+              {pasteError ? <p className="form-info form-info--error">{pasteError}</p> : null}
+              <div className="paste-modal__actions">
+                <button type="button" className="secondary-action" onClick={handleClosePasteModal}>
+                  Cancelar
+                </button>
               </div>
-            ) : null}
-
-            <div className="form-grid" style={{ marginTop: '1.5rem' }}>
-              <label className="input-control">
-                <span>Tipo de documento</span>
-                <input
-                  type="text"
-                  value={
-                    liquidacionType?.nombre
-                      ?? selectedDocumentType?.nombre
-                      ?? 'Liquidación'
-                  }
-                  readOnly
-                />
-              </label>
-              {selectedDocumentType?.vence ? (
-                <label className="input-control">
-                  <span>Fecha de vencimiento</span>
-                  <input
-                    type="date"
-                    value={documentExpiry}
-                    onChange={(event) => setDocumentExpiry(event.target.value)}
-                  />
-                </label>
-              ) : null}
             </div>
-
-            {documentTypesError ? (
-              <p className="form-info form-info--error">{documentTypesError}</p>
-            ) : null}
-
-            <div className="upload-dropzone" role="presentation">
-              <div className="upload-dropzone__icon">📄</div>
-              <p>Arrastra y suelta liquidaciones aquí</p>
-              <label className="secondary-action" style={{ cursor: 'pointer' }}>
-                Seleccionar archivos
-                <input
-                  type="file"
-                  multiple
-                  onChange={handlePendingFilesSelect}
-                  style={{ display: 'none' }}
-                />
-              </label>
-              {pendingUploads.length > 0 ? (
-                <ul className="pending-upload-list">
-                  {pendingUploads.map((item) => (
-                    <li key={item.id}>
-                      <div>
-                        <strong>{item.file.name}</strong>
-                        <span>{item.typeName ?? 'Sin tipo asignado'}</span>
-                        {item.fechaVencimiento ? <span>Vence: {item.fechaVencimiento}</span> : null}
-                      </div>
-                      <button
-                        type="button"
-                        className="pending-upload-remove"
-                        onClick={() => handleRemovePendingUpload(item.id)}
-                        aria-label={`Quitar ${item.file.name}`}
-                      >
-                        ×
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              ) : null}
-            </div>
-
-            {uploadStatus ? (
-              <p
-                className={
-                  uploadStatus.type === 'error' ? 'form-info form-info--error' : 'form-info form-info--success'
-                }
-              >
-                {uploadStatus.message}
-              </p>
-            ) : null}
-
-            <button
-              type="button"
-              className="primary-action"
-              onClick={handleUploadDocumentos}
-              disabled={
-                uploading ||
-                pendingUploads.length === 0 ||
-                documentTypesLoading ||
-                !selectedPersonaId ||
-                !selectedDocumentTypeId
-              }
-            >
-              {uploading ? 'Subiendo...' : 'Subir liquidaciones'}
-            </button>
-          </>
-        ) : (
-          <p className="form-info">Seleccioná un registro de la lista para ver y cargar liquidaciones.</p>
-        )}
+          </div>
+        ) : null}
       </section>
     </DashboardLayout>
   );
+
+  return personaIdFromRoute && selectedPersonaId ? detailView : listView;
 };
 
 const UsersPage: React.FC = () => {
@@ -5986,6 +7376,7 @@ const NotificationsPage: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [refreshTick, setRefreshTick] = useState(0);
+  const celebrationTriggeredRef = useRef<Set<number>>(new Set());
 
   useEffect(() => {
     if (!authUser?.id) {
@@ -6026,6 +7417,84 @@ const NotificationsPage: React.FC = () => {
     return () => controller.abort();
   }, [apiBaseUrl, authUser?.id, refreshTick]);
 
+  useEffect(() => {
+    if (loading || error) {
+      return;
+    }
+
+    const celebratory = notifications.find((notification) => {
+      if (celebrationTriggeredRef.current.has(notification.id)) {
+        return false;
+      }
+
+      if (notification.readAt) {
+        return false;
+      }
+
+      if (hasCelebrationBeenDismissed(notification.id)) {
+        return false;
+      }
+
+      if (notification.metadata?.celebration === true) {
+        return true;
+      }
+
+      if (notification.message && /¡felicitaciones/i.test(notification.message)) {
+        return true;
+      }
+
+      return false;
+    });
+
+    if (!celebratory) {
+      return;
+    }
+
+    celebrationTriggeredRef.current.add(celebratory.id);
+
+    const metadata = celebratory.metadata ?? {};
+    const metadataTitle =
+      typeof metadata.celebration_title === 'string' && metadata.celebration_title.trim().length > 0
+        ? metadata.celebration_title.trim()
+        : '¡Felicitaciones!';
+    const metadataMessage =
+      typeof metadata.celebration_message === 'string' && metadata.celebration_message.trim().length > 0
+        ? metadata.celebration_message.trim()
+        : null;
+    const metadataDetail =
+      typeof metadata.celebration_detail === 'string' && metadata.celebration_detail.trim().length > 0
+        ? metadata.celebration_detail.trim()
+        : null;
+
+    const personaLabelFromMetadata =
+      typeof metadata.persona_full_name === 'string' && metadata.persona_full_name.trim().length > 0
+        ? metadata.persona_full_name.trim()
+        : null;
+    const personaLabel = personaLabelFromMetadata
+      ?? (celebratory.personaNombre && celebratory.personaNombre.trim().length > 0
+        ? celebratory.personaNombre.trim()
+        : null);
+
+    const fallbackMessage = celebratory.message && celebratory.message.trim().length > 0
+      ? celebratory.message.trim()
+      : (personaLabel ? `¡Se aprobó la solicitud de ${personaLabel}!` : '¡Solicitud aprobada!');
+
+    const fallbackDetail = personaLabel
+      ? `El alta de ${personaLabel} ya está activa.`
+      : null;
+
+    window.dispatchEvent(
+      new CustomEvent('celebration:trigger', {
+        detail: {
+          title: metadataTitle,
+          message: metadataMessage ?? fallbackMessage,
+          detail: metadataDetail ?? fallbackDetail ?? undefined,
+          notificationId: celebratory.id,
+        },
+      })
+    );
+  }, [error, loading, notifications]);
+
   const handleMarkAsRead = async (notification: NotificationRecord) => {
     if (!authUser?.id || notification.readAt) {
       return;
@@ -6040,6 +7509,7 @@ const NotificationsPage: React.FC = () => {
         throw new Error(`Error ${response.status}: ${response.statusText}`);
       }
 
+      markCelebrationAsDismissed(notification.id);
       setRefreshTick((value) => value + 1);
       window.dispatchEvent(new CustomEvent('notifications:updated'));
       window.dispatchEvent(new CustomEvent('personal:updated'));
@@ -6123,6 +7593,14 @@ const NotificationsPage: React.FC = () => {
                         >
                           {notification.reclamoCodigo ?? `Reclamo #${notification.reclamoId}`}
                         </button>
+                      ) : notification.workflowTaskId ? (
+                        <button
+                          type="button"
+                          className="secondary-action secondary-action--ghost"
+                          onClick={() => navigate('/flujo-trabajo')}
+                        >
+                          {notification.workflowTaskLabel ?? 'Tarea asignada'}
+                        </button>
                       ) : notification.personaId ? (
                         <button
                           type="button"
@@ -6162,11 +7640,16 @@ const NotificationsPage: React.FC = () => {
 
 const AttendanceLogPage: React.FC = () => {
   const authUser = useStoredAuthUser();
+  const apiBaseUrl = useMemo(() => resolveApiBaseUrl(), []);
   const isAdmin = useMemo(() => {
     const normalized = authUser?.role?.toLowerCase() ?? '';
     return normalized.includes('admin');
   }, [authUser?.role]);
   const [log, setLog] = useState<AttendanceRecord[]>(() => readAttendanceLogFromStorage());
+  const [remoteLog, setRemoteLog] = useState<AttendanceRecord[] | null>(null);
+  const [remoteLoading, setRemoteLoading] = useState(true);
+  const [remoteError, setRemoteError] = useState<string | null>(null);
+  const [refreshTick, setRefreshTick] = useState(0);
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -6175,9 +7658,50 @@ const AttendanceLogPage: React.FC = () => {
     return () => window.removeEventListener('attendance:updated', handler);
   }, []);
 
+  useEffect(() => {
+    const controller = new AbortController();
+
+    const fetchRemoteLog = async () => {
+      try {
+        setRemoteLoading(true);
+        setRemoteError(null);
+
+        const response = await fetch(`${apiBaseUrl}/api/attendance?limit=500`, {
+          signal: controller.signal,
+        });
+
+        if (!response.ok) {
+          throw new Error(`Error ${response.status}: ${response.statusText}`);
+        }
+
+        const payload = (await response.json()) as { data?: RemoteAttendanceApiRecord[] };
+        setRemoteLog(payload.data ? mapRemoteAttendance(payload.data) : []);
+      } catch (err) {
+        if ((err as Error).name === 'AbortError') {
+          return;
+        }
+        setRemoteError((err as Error).message ?? 'No se pudo cargar el registro remoto de asistencia.');
+        setRemoteLog(null);
+      } finally {
+        setRemoteLoading(false);
+      }
+    };
+
+    fetchRemoteLog();
+
+    return () => controller.abort();
+  }, [apiBaseUrl, refreshTick]);
+
+  const effectiveLog = useMemo(() => {
+    if (remoteLog && remoteLog.length > 0) {
+      return remoteLog;
+    }
+    return log;
+  }, [log, remoteLog]);
+
   const durationLookup = useMemo(() => {
     const lookup = new Map<string, string>();
-    const chronological = [...log].sort(
+    const chronological = [...effectiveLog].sort(
       (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
     );
     const lastEntryByUser = new Map<string, AttendanceRecord>();
@@ -6198,10 +7722,10 @@ const AttendanceLogPage: React.FC = () => {
     });
 
     return lookup;
-  }, [log]);
+  }, [effectiveLog]);
 
   const handleClearLog = () => {
-    if (!window.confirm('¿Seguro que deseas limpiar el registro de marcaciones?')) {
+    if (!window.confirm('¿Seguro que deseas limpiar el registro local de marcaciones?')) {
       return;
     }
     if (typeof window !== 'undefined') {
@@ -6216,7 +7740,7 @@ const AttendanceLogPage: React.FC = () => {
     return <Navigate to="/clientes" replace />;
   }
 
-  const sortedLog = [...log].sort(
+  const sortedLog = [...effectiveLog].sort(
     (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
   );
 
@@ -6225,10 +7749,18 @@ const AttendanceLogPage: React.FC = () => {
       <button
         type="button"
         className="secondary-action"
+        onClick={() => setRefreshTick((value) => value + 1)}
+        disabled={remoteLoading}
+      >
+        {remoteLoading ? 'Actualizando...' : 'Actualizar'}
+      </button>
+      <button
+        type="button"
+        className="secondary-action"
         onClick={handleClearLog}
         disabled={sortedLog.length === 0}
       >
-        Limpiar registro
+        Limpiar registro local
       </button>
     </div>
   );
@@ -6236,6 +7768,8 @@ const AttendanceLogPage: React.FC = () => {
   return (
     <DashboardLayout title="Control horario" subtitle="Registro de marcaciones" headerContent={headerContent}>
       <div className="table-wrapper">
+        {remoteError ? <p className="form-info form-info--error">{remoteError}</p> : null}
+        {remoteLoading ? <p className="form-info">Sincronizando registro remoto...</p> : null}
         <table>
           <thead>
             <tr>
@@ -6312,8 +7846,13 @@ const AttendanceUserDetailPage: React.FC = () => {
   const { userKey: encodedUserKey } = useParams<{ userKey: string }>();
   const navigate = useNavigate();
   const location = useLocation();
+  const apiBaseUrl = useMemo(() => resolveApiBaseUrl(), []);
   const [log, setLog] = useState<AttendanceRecord[]>(() => readAttendanceLogFromStorage());
   const [selectedMonth, setSelectedMonth] = useState(() => formatMonthValue(new Date()));
+  const [remoteLog, setRemoteLog] = useState<AttendanceRecord[] | null>(null);
+  const [remoteLoading, setRemoteLoading] = useState(true);
+  const [remoteError, setRemoteError] = useState<string | null>(null);
+  const [refreshTick, setRefreshTick] = useState(0);
 
   useEffect(() => {
     const handler = () => setLog(readAttendanceLogFromStorage());
@@ -6334,6 +7873,57 @@ const AttendanceUserDetailPage: React.FC = () => {
 
   const searchParams = useMemo(() => new URLSearchParams(location.search), [location.search]);
   const queryName = searchParams.get('nombre');
+  const userIdFromKey = useMemo(() => {
+    if (decodedUserKey.startsWith('id-')) {
+      const numeric = Number(decodedUserKey.replace('id-', ''));
+      return Number.isNaN(numeric) ? null : numeric;
+    }
+    return null;
+  }, [decodedUserKey]);
+
+  useEffect(() => {
+    if (!userIdFromKey) {
+      setRemoteLog(null);
+      setRemoteLoading(false);
+      setRemoteError(null);
+      return;
+    }
+
+    const controller = new AbortController();
+
+    const fetchRemote = async () => {
+      try {
+        setRemoteLoading(true);
+        setRemoteError(null);
+
+        const response = await fetch(
+          `${apiBaseUrl}/api/attendance?userId=${userIdFromKey}&limit=500`,
+          {
+            signal: controller.signal,
+          }
+        );
+
+        if (!response.ok) {
+          throw new Error(`Error ${response.status}: ${response.statusText}`);
+        }
+
+        const payload = (await response.json()) as { data?: RemoteAttendanceApiRecord[] };
+        setRemoteLog(payload.data ? mapRemoteAttendance(payload.data) : []);
+      } catch (err) {
+        if ((err as Error).name === 'AbortError') {
+          return;
+        }
+        setRemoteError((err as Error).message ?? 'No se pudo cargar la asistencia desde el servidor.');
+        setRemoteLog(null);
+      } finally {
+        setRemoteLoading(false);
+      }
+    };
+
+    fetchRemote();
+
+    return () => controller.abort();
+  }, [apiBaseUrl, userIdFromKey, refreshTick]);
 
   const userLog = useMemo(() => {
     if (!decodedUserKey) {
@@ -6342,12 +7932,19 @@ const AttendanceUserDetailPage: React.FC = () => {
     return log.filter((record) => (record.userKey ?? buildAttendanceUserKey(record)) === decodedUserKey);
   }, [log, decodedUserKey]);
 
+  const effectiveUserLog = useMemo(() => {
+    if (remoteLog && remoteLog.length > 0) {
+      return remoteLog;
+    }
+    return userLog;
+  }, [remoteLog, userLog]);
+
   const displayName = useMemo(() => {
     const fromQuery = queryName?.trim();
     if (fromQuery && fromQuery.length > 0) {
       return fromQuery;
     }
-    const firstRecord = userLog.find((item) => item.userName && item.userName.trim().length > 0);
+    const firstRecord = effectiveUserLog.find((item) => item.userName && item.userName.trim().length > 0);
     if (firstRecord?.userName) {
       return firstRecord.userName.trim();
     }
@@ -6355,7 +7952,7 @@ const AttendanceUserDetailPage: React.FC = () => {
       return `Usuario #${decodedUserKey.replace('id-', '')}`;
     }
     return 'Operador';
-  }, [queryName, userLog, decodedUserKey]);
+  }, [queryName, effectiveUserLog, decodedUserKey]);
 
   const monthRange = useMemo(() => {
     if (!selectedMonth || !/^\d{4}-\d{2}$/.test(selectedMonth)) {
@@ -6383,7 +7980,7 @@ const AttendanceUserDetailPage: React.FC = () => {
       }>;
     }
 
-    const chronological = [...userLog].sort(
+    const chronological = [...effectiveUserLog].sort(
       (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
     );
     const sessions: Array<{
@@ -6431,7 +8028,7 @@ const AttendanceUserDetailPage: React.FC = () => {
     });
 
     return sessions;
-  }, [userLog, monthRange]);
+  }, [effectiveUserLog, monthRange]);
 
   const totalDurationMs = useMemo(
     () => monthlySessions.reduce((acc, session) => acc + session.durationMs, 0),
@@ -6442,6 +8039,14 @@ const AttendanceUserDetailPage: React.FC = () => {
     <div className="card-header card-header--compact">
       <button type="button" className="secondary-action" onClick={() => navigate('/control-horario')}>
         ← Volver al registro
+      </button>
+      <button
+        type="button"
+        className="secondary-action"
+        onClick={() => setRefreshTick((value) => value + 1)}
+        disabled={!userIdFromKey || remoteLoading}
+      >
+        {remoteLoading ? 'Actualizando...' : 'Actualizar'}
       </button>
     </div>
   );
@@ -6461,6 +8066,8 @@ const AttendanceUserDetailPage: React.FC = () => {
       headerContent={headerContent}
     >
       <div className="attendance-detail">
+        {remoteError ? <p className="form-info form-info--error">{remoteError}</p> : null}
+        {remoteLoading ? <p className="form-info">Sincronizando registro remoto...</p> : null}
         <div className="attendance-detail__filters">
           <label className="input-control">
             <span>Mes</span>
@@ -6534,6 +8141,429 @@ const AttendanceUserDetailPage: React.FC = () => {
           </table>
         </div>
       </div>
+    </DashboardLayout>
+  );
+};
+
+const WorkflowPage: React.FC = () => {
+  const authUser = useStoredAuthUser();
+  const apiBaseUrl = useMemo(() => resolveApiBaseUrl(), []);
+  const [tasks, setTasks] = useState<WorkflowTaskRecord[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [agents, setAgents] = useState<Array<{ id: number; nombre: string | null; email: string | null }>>([]);
+  const [formTitle, setFormTitle] = useState('');
+  const [formDescription, setFormDescription] = useState('');
+  const [formResponsibleId, setFormResponsibleId] = useState('');
+  const [responsableQuery, setResponsableQuery] = useState('');
+  const [refreshTick, setRefreshTick] = useState(0);
+  const [exporting, setExporting] = useState(false);
+
+  useEffect(() => {
+    const controller = new AbortController();
+
+    const fetchAgents = async () => {
+      try {
+        const response = await fetch(`${apiBaseUrl}/api/workflow-tasks/users`, {
+          signal: controller.signal,
+        });
+
+        if (!response.ok) {
+          throw new Error(`Error ${response.status}: ${response.statusText}`);
+        }
+
+        const payload = (await response.json()) as { data: Array<{ id: number; nombre: string | null; email: string | null }> };
+        setAgents(payload.data ?? []);
+      } catch (err) {
+        if ((err as Error).name === 'AbortError') {
+          return;
+        }
+        // eslint-disable-next-line no-console
+        console.error('No se pudieron cargar los agentes', err);
+      }
+    };
+
+    fetchAgents();
+
+    return () => controller.abort();
+  }, [apiBaseUrl]);
+
+  const currentActorId = useMemo(() => {
+    if (authUser?.id != null) {
+      return Number(authUser.id);
+    }
+    const normalizedName = authUser?.name?.trim().toLowerCase();
+    const normalizedEmail = authUser?.email?.trim().toLowerCase();
+    if (!normalizedName && !normalizedEmail) {
+      return null;
+    }
+    const match = agents.find((agent) => {
+      const agentName = (agent.nombre ?? '').trim().toLowerCase();
+      const agentEmail = (agent.email ?? '').trim().toLowerCase();
+      return (normalizedName && agentName === normalizedName) || (normalizedEmail && agentEmail === normalizedEmail);
+    });
+    return match?.id ?? null;
+  }, [authUser?.id, authUser?.name, authUser?.email, agents]);
+
+  const fetchTasks = useCallback(async () => {
+    if (currentActorId == null) {
+      return;
+    }
+
+    try {
+      setLoading(true);
+      setError(null);
+
+      const response = await fetch(`${apiBaseUrl}/api/workflow-tasks?userId=${currentActorId}`);
+
+      if (!response.ok) {
+        throw new Error(`Error ${response.status}: ${response.statusText}`);
+      }
+
+      const payload = (await response.json()) as { data: WorkflowTaskRecord[] };
+      setTasks(payload.data ?? []);
+    } catch (err) {
+      setError((err as Error).message ?? 'No se pudieron cargar las tareas.');
+      setTasks([]);
+    } finally {
+      setLoading(false);
+    }
+  }, [apiBaseUrl, currentActorId]);
+
+  useEffect(() => {
+    fetchTasks();
+  }, [fetchTasks, refreshTick]);
+
+  const agentOptions = useMemo(
+    () =>
+      agents.map((agent) => ({
+        id: agent.id,
+        label: agent.nombre?.trim() && agent.nombre.trim().length > 0 ? agent.nombre.trim() : `Agente #${agent.id}`,
+      })),
+    [agents]
+  );
+
+  useEffect(() => {
+    if (!formResponsibleId) {
+      return;
+    }
+    const match = agentOptions.find((option) => String(option.id) === String(formResponsibleId));
+    if (match && responsableQuery !== match.label) {
+      setResponsableQuery(match.label);
+    }
+  }, [agentOptions, formResponsibleId, responsableQuery]);
+
+  const columns = useMemo(
+    () =>
+      [
+        { status: 'nueva' as WorkflowStatus, title: 'Nueva tarea' },
+        { status: 'proceso' as WorkflowStatus, title: 'En proceso' },
+        { status: 'finalizado' as WorkflowStatus, title: 'Finalizado' },
+      ].map((column) => ({
+        ...column,
+        tasks: tasks.filter((task) => task.status === column.status),
+      })),
+    [tasks]
+  );
+
+  const handleAddTask = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (currentActorId == null) {
+      window.alert('Debes iniciar sesión para crear tareas.');
+      return;
+    }
+    if (!formResponsibleId) {
+      window.alert('Selecciona un responsable para la tarea.');
+      return;
+    }
+
+    try {
+      setLoading(true);
+      setError(null);
+
+      const response = await fetch(`${apiBaseUrl}/api/workflow-tasks`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+        },
+        body: JSON.stringify({
+          titulo: formTitle.trim(),
+          descripcion: formDescription.trim() || null,
+          creatorId: currentActorId,
+          responsableId: Number(formResponsibleId),
+        }),
+      });
+
+      if (!response.ok) {
+        let message = `Error ${response.status}: ${response.statusText}`;
+
+        try {
+          const payload = await response.json();
+          if (typeof payload?.message === 'string') {
+            message = payload.message;
+          }
+        } catch {
+          // ignore
+        }
+
+        throw new Error(message);
+      }
+
+      setFormTitle('');
+      setFormDescription('');
+      setFormResponsibleId('');
+      setResponsableQuery('');
+      setRefreshTick((value) => value + 1);
+    } catch (err) {
+      setError((err as Error).message ?? 'No se pudo crear la tarea.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleExport = async () => {
+    if (currentActorId == null) {
+      window.alert('Debes iniciar sesión para exportar las tareas.');
+      return;
+    }
+
+    try {
+      setExporting(true);
+      const response = await fetch(`${apiBaseUrl}/api/workflow-tasks/export?userId=${currentActorId}`, {
+        headers: { Accept: 'text/csv' },
+      });
+
+      if (!response.ok) {
+        throw new Error(`Error ${response.status}: ${response.statusText}`);
+      }
+
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+      link.download = `workflow-tasks-${timestamp}.csv`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      window.alert((err as Error).message ?? 'No se pudo exportar la lista de tareas.');
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  const handleDrop = async (status: WorkflowStatus, event: React.DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    if (currentActorId == null) {
+      return;
+    }
+    const taskId = event.dataTransfer.getData('text/plain');
+    if (!taskId) {
+      return;
+    }
+    const numericId = Number(taskId);
+    if (Number.isNaN(numericId)) {
+      return;
+    }
+    const targetTask = tasks.find((task) => task.id === numericId);
+    if (!targetTask || targetTask.status === status) {
+      return;
+    }
+
+    try {
+      const response = await fetch(`${apiBaseUrl}/api/workflow-tasks/${numericId}/status`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({ status, actorId: currentActorId }),
+      });
+
+      if (!response.ok) {
+        let message = `Error ${response.status}: ${response.statusText}`;
+        try {
+          const payload = await response.json();
+          if (typeof payload?.message === 'string') {
+            message = payload.message;
+          }
+        } catch {
+          // ignore parse errors
+        }
+        throw new Error(message);
+      }
+
+      setRefreshTick((value) => value + 1);
+    } catch (err) {
+      window.alert((err as Error).message ?? 'No se pudo actualizar la tarea.');
+    }
+  };
+
+  const handleDragOver = (event: React.DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+  };
+
+  const handleDelete = async (taskId: number) => {
+    if (currentActorId == null) {
+      return;
+    }
+
+    if (!window.confirm('¿Eliminar esta tarea del flujo?')) {
+      return;
+    }
+
+    try {
+      const response = await fetch(`${apiBaseUrl}/api/workflow-tasks/${taskId}`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({ actorId: currentActorId }),
+      });
+
+      if (!response.ok) {
+        let message = `Error ${response.status}: ${response.statusText}`;
+        try {
+          const payload = await response.json();
+          if (typeof payload?.message === 'string') {
+            message = payload.message;
+          }
+        } catch {
+          // ignore
+        }
+        throw new Error(message);
+      }
+
+      setRefreshTick((value) => value + 1);
+    } catch (err) {
+      window.alert((err as Error).message ?? 'No se pudo eliminar la tarea.');
+    }
+  };
+
+  if (currentActorId == null) {
+    return (
+      <DashboardLayout title="Flujo de trabajo" subtitle="Organiza tus tareas visualmente">
+        <p className="form-info form-info--error">Inicia sesión para gestionar tus tareas.</p>
+      </DashboardLayout>
+    );
+  }
+
+  return (
+    <DashboardLayout title="Flujo de trabajo" subtitle="Organiza tus tareas visualmente">
+      <div className="workflow-actions">
+        <button type="button" onClick={handleExport} disabled={exporting}>
+          {exporting ? 'Descargando...' : 'Exportar tareas'}
+        </button>
+      </div>
+      <section className="workflow-new-task">
+        <form onSubmit={handleAddTask} className="workflow-form">
+          <label>
+            <span>Título de la tarea</span>
+            <input
+              type="text"
+              value={formTitle}
+              onChange={(event) => setFormTitle(event.target.value)}
+              placeholder="Ej: Contactar cliente"
+              required
+            />
+          </label>
+          <label>
+            <span>Descripción (opcional)</span>
+            <textarea
+              value={formDescription}
+              onChange={(event) => setFormDescription(event.target.value)}
+              rows={2}
+              placeholder="Notas o contexto…"
+            />
+          </label>
+          <label>
+            <span>Responsable</span>
+            <input
+              type="text"
+              list="workflow-responsables"
+              value={responsableQuery}
+              onChange={(event) => {
+                const { value } = event.target;
+                setResponsableQuery(value);
+                const match = agentOptions.find(
+                  (option) => option.label.toLowerCase() === value.trim().toLowerCase()
+                );
+                setFormResponsibleId(match ? String(match.id) : '');
+              }}
+              placeholder="Busca o selecciona al agente"
+              required
+            />
+            <datalist id="workflow-responsables">
+              {agentOptions.map((option) => (
+                <option key={option.id} value={option.label} />
+              ))}
+            </datalist>
+          </label>
+          <button type="submit" className="primary-action" disabled={loading}>
+            {loading ? 'Guardando...' : 'Agregar tarea'}
+          </button>
+        </form>
+        {error ? <p className="form-info form-info--error">{error}</p> : null}
+      </section>
+
+      <section className="workflow-board">
+        {columns.map((column) => (
+          <div
+            key={column.status}
+            className="workflow-column"
+            onDragOver={handleDragOver}
+            onDrop={(event) => handleDrop(column.status, event)}
+          >
+            <header className="workflow-column__header">
+              <h3>{column.title}</h3>
+              <span>{column.tasks.length}</span>
+            </header>
+            <div className="workflow-column__body">
+              {loading ? (
+                <p className="workflow-column__empty">Cargando tareas…</p>
+              ) : column.tasks.length === 0 ? (
+                <p className="workflow-column__empty">
+                  {column.status === 'nueva'
+                    ? 'Agrega una tarea para empezar.'
+                    : 'Suelta tareas aquí'}
+                </p>
+              ) : (
+                column.tasks.map((task) => (
+                  <article
+                    key={task.id}
+                    className="workflow-card"
+                    draggable
+                    onDragStart={(event) => {
+                      event.dataTransfer.setData('text/plain', String(task.id));
+                    }}
+                  >
+                    <div className="workflow-card__title">
+                      <strong>{task.titulo}</strong>
+                      <button
+                        type="button"
+                        className="workflow-card__delete"
+                        onClick={() => handleDelete(task.id)}
+                        aria-label="Eliminar tarea"
+                      >
+                        ×
+                      </button>
+                    </div>
+                    {task.descripcion ? (
+                      <p className="workflow-card__description">{task.descripcion}</p>
+                    ) : null}
+                    <footer className="workflow-card__footer">
+                      <span>
+                        {task.createdAt
+                          ? new Date(task.createdAt).toLocaleDateString('es-AR')
+                          : '—'}
+                      </span>
+                      {task.responsableNombre ? <span>👤 {task.responsableNombre}</span> : null}
+                    </footer>
+                  </article>
+                ))
+              )}
+            </div>
+          </div>
+        ))}
+      </section>
     </DashboardLayout>
   );
 };
@@ -6837,6 +8867,8 @@ const ApprovalsRequestsPage: React.FC = () => {
         setReviewPersonaDetail({
           ...payload.data,
           comments: Array.isArray(payload.data.comments) ? payload.data.comments : [],
+          documentsDownloadAllUrl: payload.data.documentsDownloadAllUrl ?? null,
+          documentsDownloadAllAbsoluteUrl: payload.data.documentsDownloadAllAbsoluteUrl ?? null,
         });
         setApprovalEstadoId(payload.data.estadoId ? String(payload.data.estadoId) : '');
         setReviewCommentText('');
@@ -7590,6 +9622,29 @@ const sucursalOptions = useMemo(() => {
         type: 'success',
         message: payload.message ?? 'Solicitud aprobada correctamente.',
       });
+
+      const personaNombreCompleto = [reviewPersonaDetail.nombres, reviewPersonaDetail.apellidos]
+        .filter((part) => part && part.trim().length > 0)
+        .join(' ')
+        .trim();
+      const agenteNombre =
+        reviewPersonaDetail.agente && reviewPersonaDetail.agente.trim().length > 0
+          ? reviewPersonaDetail.agente.trim()
+          : authUser?.name ?? null;
+
+      window.dispatchEvent(
+        new CustomEvent('celebration:trigger', {
+          detail: {
+            title: '¡Felicitaciones!',
+            message: agenteNombre
+              ? `${agenteNombre}, ¡la solicitud fue aprobada con éxito!`
+              : '¡La solicitud fue aprobada con éxito!',
+            detail: personaNombreCompleto
+              ? `El alta de ${personaNombreCompleto} ya está activa.`
+              : undefined,
+          },
+        })
+      );
 
       window.dispatchEvent(new CustomEvent('notifications:updated'));
 
@@ -8848,35 +10903,60 @@ const handleAdelantoFieldChange =
 
               <div className="review-documents">
                 <h3>Documentación cargada</h3>
-                {reviewPersonaDetail.documents.length > 0 ? (
-                  <ul className="file-list">
-                    {reviewPersonaDetail.documents.map((documento) => {
-                      const labelParts = [documento.tipoNombre ?? `Documento #${documento.id}`];
-                      if (documento.nombre && documento.nombre !== labelParts[0]) {
-                        labelParts.push(documento.nombre);
-                      }
-                      const label = labelParts.join(' – ');
-                      const fallbackPath = reviewPersonaDetail
-                        ? `/api/personal/${reviewPersonaDetail.id}/documentos/${documento.id}/descargar`
-                        : null;
-                      const resolvedDownloadUrl = resolveApiUrl(apiBaseUrl, documento.downloadUrl ?? fallbackPath ?? null);
-                      return (
-                        <li key={documento.id}>
-                          {resolvedDownloadUrl ? (
-                            <a href={resolvedDownloadUrl} target="_blank" rel="noopener noreferrer">
-                              {label}
-                            </a>
-                          ) : (
-                            label
-                          )}
-                          {documento.fechaVencimiento ? ` · Vence: ${documento.fechaVencimiento}` : ''}
-                        </li>
+                {reviewPersonaDetail.documents.length > 0
+                  ? (() => {
+                      const downloadAllUrl = resolveApiUrl(
+                        apiBaseUrl,
+                        reviewPersonaDetail.documentsDownloadAllAbsoluteUrl
+                          ?? reviewPersonaDetail.documentsDownloadAllUrl
+                          ?? (reviewPersonaDetail
+                            ? `/api/personal/${reviewPersonaDetail.id}/documentos/descargar-todos`
+                            : null)
                       );
-                    })}
-                  </ul>
-                ) : (
-                  <p className="form-info">No hay documentos cargados para esta solicitud.</p>
-                )}
+
+                      return (
+                        <>
+                          {downloadAllUrl ? (
+                            <div className="review-documents-actions">
+                              <a className="secondary-action" href={downloadAllUrl} download>
+                                Descargar todos
+                              </a>
+                            </div>
+                          ) : null}
+                          <ul className="file-list">
+                            {reviewPersonaDetail.documents.map((documento) => {
+                              const labelParts = [documento.tipoNombre ?? `Documento #${documento.id}`];
+                              if (documento.nombre && documento.nombre !== labelParts[0]) {
+                                labelParts.push(documento.nombre);
+                              }
+                              const label = labelParts.join(' – ');
+                              const fallbackPath = reviewPersonaDetail
+                                ? `/api/personal/${reviewPersonaDetail.id}/documentos/${documento.id}/descargar`
+                                : null;
+                              const resolvedDownloadUrl = resolveApiUrl(
+                                apiBaseUrl,
+                                documento.downloadUrl ?? fallbackPath ?? null
+                              );
+                              return (
+                                <li key={documento.id}>
+                                  {resolvedDownloadUrl ? (
+                                    <a href={resolvedDownloadUrl} target="_blank" rel="noopener noreferrer">
+                                      {label}
+                                    </a>
+                                  ) : (
+                                    label
+                                  )}
+                                  {documento.fechaVencimiento ? ` · Vence: ${documento.fechaVencimiento}` : ''}
+                                </li>
+                              );
+                            })}
+                          </ul>
+                        </>
+                      );
+                    })()
+                  : (
+                    <p className="form-info">No hay documentos cargados para esta solicitud.</p>
+                  )}
               </div>
 
               <div className="review-comments">
@@ -10419,6 +12499,9 @@ const PersonalEditPage: React.FC = () => {
 
       setDetail({
         ...payload.data,
+        documents: payload.data.documents ?? [],
+        documentsDownloadAllUrl: payload.data.documentsDownloadAllUrl ?? null,
+        documentsDownloadAllAbsoluteUrl: payload.data.documentsDownloadAllAbsoluteUrl ?? null,
         history: payload.data.history ?? [],
       });
       setFormValues({
@@ -10691,6 +12774,9 @@ const PersonalEditPage: React.FC = () => {
       if (payload.data) {
         setDetail({
           ...payload.data,
+          documents: payload.data.documents ?? [],
+          documentsDownloadAllUrl: payload.data.documentsDownloadAllUrl ?? null,
+          documentsDownloadAllAbsoluteUrl: payload.data.documentsDownloadAllAbsoluteUrl ?? null,
           history: payload.data.history ?? [],
         });
         setFormValues({
@@ -11093,6 +13179,26 @@ const PersonalEditPage: React.FC = () => {
 
       <section className="personal-edit-section">
         <h2>Documentos</h2>
+        {detail.documents.length > 0
+          ? (() => {
+              const downloadAllUrl = resolveApiUrl(
+                apiBaseUrl,
+                detail.documentsDownloadAllAbsoluteUrl
+                  ?? detail.documentsDownloadAllUrl
+                  ?? (detail
+                    ? `/api/personal/${detail.id}/documentos/descargar-todos`
+                    : null)
+              );
+
+              return downloadAllUrl ? (
+                <div className="personal-documents-actions">
+                  <a className="secondary-action" href={downloadAllUrl} download>
+                    Descargar todos
+                  </a>
+                </div>
+              ) : null;
+            })()
+          : null}
         <div className="form-grid">
           <label className="input-control">
             <span>Documento</span>
@@ -13065,6 +15171,7 @@ const App: React.FC = () => {
       <Route path="/personal/nuevo" element={<PersonalCreatePage />} />
       <Route path="/personal/:personaId/editar" element={<PersonalEditPage />} />
       <Route path="/liquidaciones" element={<LiquidacionesPage />} />
+      <Route path="/liquidaciones/:personaId" element={<LiquidacionesPage />} />
       <Route path="/documentos" element={<DocumentTypesPage />} />
       <Route path="/documentos/nuevo" element={<DocumentTypeCreatePage />} />
       <Route path="/documentos/:tipoId/editar" element={<DocumentTypeEditPage />} />
@@ -13073,6 +15180,7 @@ const App: React.FC = () => {
       <Route path="/usuarios/:usuarioId/editar" element={<EditUserPage />} />
       <Route path="/control-horario/:userKey" element={<AttendanceUserDetailPage />} />
       <Route path="/control-horario" element={<AttendanceLogPage />} />
+      <Route path="/flujo-trabajo" element={<WorkflowPage />} />
       <Route path="/aprobaciones" element={<ApprovalsRequestsPage />} />
       <Route path="/clientes/nuevo" element={<CreateClientPage />} />
       <Route path="/clientes/:clienteId/editar" element={<EditClientPage />} />

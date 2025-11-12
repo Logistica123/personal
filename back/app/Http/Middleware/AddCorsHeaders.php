@@ -13,8 +13,17 @@ class AddCorsHeaders
         $origin = $request->headers->get('Origin');
         $allowedOrigins = [
             'https://personal.distriapp.com.ar',
+            'https://app.distriapp.com.ar',
+            'capacitor://localhost',
+            'ionic://localhost',
             'http://localhost:3000',
             'http://127.0.0.1:3000',
+            'http://localhost:4200',
+            'http://127.0.0.1:4200',
+            'http://localhost:4202',
+            'http://127.0.0.1:4202',
+            'http://localhost:8100',
+            'http://127.0.0.1:8100',
         ];
 
         $allowedOrigin = in_array($origin, $allowedOrigins, true) ? $origin : $allowedOrigins[0];

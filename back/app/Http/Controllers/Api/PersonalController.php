@@ -16,6 +16,7 @@ use Illuminate\Http\Request;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Log;
 
 class PersonalController extends Controller
 {
@@ -482,6 +483,55 @@ class PersonalController extends Controller
             'estado:id,nombre',
         ]);
 
+        $creatorUserId = null;
+        $creatorUserName = null;
+
+        $firstHistory = $persona->histories()
+            ->orderBy('created_at')
+            ->with('user:id,name')
+            ->first();
+
+        if ($firstHistory && $firstHistory->user_id) {
+            $creatorUserId = (int) $firstHistory->user_id;
+            $creatorUserName = $firstHistory->user?->name;
+        }
+
+        $recipientIds = collect([
+            $persona->agente_id,
+            $persona->agente_responsable_id,
+            $persona->aprobado_por,
+            $creatorUserId,
+        ])
+            ->filter(fn ($value) => $value !== null)
+            ->map(fn ($value) => (int) $value)
+            ->unique();
+
+        foreach ($recipientIds as $recipientId) {
+            $recipientName = null;
+
+            if ($persona->agente_id && (int) $persona->agente_id === $recipientId) {
+                $recipientName = $persona->agente?->name;
+            } elseif ($persona->agente_responsable_id && (int) $persona->agente_responsable_id === $recipientId) {
+                $recipientName = $persona->agenteResponsable?->name;
+            } elseif ($persona->aprobado_por && (int) $persona->aprobado_por === $recipientId) {
+                $recipientName = $persona->aprobadoPor?->name;
+            } elseif ($creatorUserId && $recipientId === $creatorUserId) {
+                $recipientName = $creatorUserName;
+            }
+
+            Log::info('Notificando aprobación de solicitud', [
+                'persona_id' => $persona->id,
+                'recipient_user_id' => $recipientId,
+                'recipient_name' => $recipientName,
+                'agente_id' => $persona->agente_id,
+                'agente_responsable_id' => $persona->agente_responsable_id,
+                'aprobado_por' => $persona->aprobado_por,
+                'creator_user_id' => $creatorUserId,
+            ]);
+
+            $this->notifySolicitudAprobada($persona, $recipientId, $recipientName);
+        }
+
         return response()->json([
             'message' => 'Solicitud aprobada correctamente.',
             'data' => [
@@ -582,6 +632,131 @@ class PersonalController extends Controller
         return false;
     }
 
+    protected function notifySolicitudAprobada(Persona $persona, int $userId, ?string $agenteNombre = null): void
+    {
+        $personaLabel = trim(
+            sprintf(
+                '%s %s',
+                $persona->nombres ?? '',
+                $persona->apellidos ?? ''
+            )
+        ) ?: sprintf('ID #%d', $persona->id);
+
+        $message = $agenteNombre
+            ? sprintf('¡Felicitaciones, %s! Se aprobó el alta de %s.', $agenteNombre, $personaLabel)
+            : sprintf('¡Felicitaciones! Se aprobó el alta de %s.', $personaLabel);
+        $detail = sprintf('El alta de %s ya está activa.', $personaLabel);
+
+        $hasMessageColumn = Schema::hasColumn('notifications', 'message');
+        $hasDescriptionColumn = Schema::hasColumn('notifications', 'description');
+        $hasTypeColumn = Schema::hasColumn('notifications', 'type');
+        $hasEntityTypeColumn = Schema::hasColumn('notifications', 'entity_type');
+        $hasEntityIdColumn = Schema::hasColumn('notifications', 'entity_id');
+        $hasMetadataColumn = Schema::hasColumn('notifications', 'metadata');
+
+        $payload = [
+            'user_id' => $userId,
+        ];
+
+        if ($hasMessageColumn) {
+            $payload['message'] = $message;
+        } elseif ($hasDescriptionColumn) {
+            $payload['description'] = $message;
+        }
+
+        if ($hasTypeColumn) {
+            $payload['type'] = 'personal_alta_aprobada';
+        }
+
+        if ($hasEntityTypeColumn) {
+            $payload['entity_type'] = 'persona';
+        }
+
+        if ($hasEntityIdColumn) {
+            $payload['entity_id'] = $persona->id;
+        }
+
+        if ($hasMetadataColumn) {
+            $payload['metadata'] = [
+                'persona_id' => $persona->id,
+                'nombres' => $persona->nombres,
+                'apellidos' => $persona->apellidos,
+                'persona_full_name' => $personaLabel,
+                'celebration' => true,
+                'celebration_title' => '¡Felicitaciones!',
+                'celebration_message' => $message,
+                'celebration_detail' => $detail,
+            ];
+
+            if ($persona->agente?->name) {
+                $payload['metadata']['agente_nombre'] = $persona->agente->name;
+            }
+
+            if ($agenteNombre) {
+                $payload['metadata']['celebration_recipient'] = $agenteNombre;
+            }
+        }
+
+        try {
+            Notification::create($payload);
+            return;
+        } catch (QueryException $exception) {
+            report($exception);
+            Log::warning('Error creando notificación de aprobación (payload principal)', [
+                'persona_id' => $persona->id,
+                'recipient_user_id' => $userId,
+                'error' => $exception->getMessage(),
+            ]);
+        }
+
+        $fallbackPayload = [
+            'user_id' => $userId,
+        ];
+
+        if ($hasMessageColumn) {
+            $fallbackPayload['message'] = $message;
+        } elseif ($hasDescriptionColumn) {
+            $fallbackPayload['description'] = $message;
+        }
+
+        if ($hasTypeColumn) {
+            $fallbackPayload['type'] = 'personal_alta_aprobada';
+        }
+
+        if ($hasEntityTypeColumn) {
+            $fallbackPayload['entity_type'] = 'persona';
+        }
+
+        if ($hasEntityIdColumn) {
+            $fallbackPayload['entity_id'] = $persona->id;
+        }
+
+        if ($hasMetadataColumn) {
+            $fallbackPayload['metadata'] = [
+                'persona_id' => $persona->id,
+                'celebration' => true,
+                'celebration_title' => '¡Felicitaciones!',
+                'celebration_message' => $message,
+                'celebration_detail' => $detail,
+            ];
+
+            if ($agenteNombre) {
+                $fallbackPayload['metadata']['celebration_recipient'] = $agenteNombre;
+            }
+        }
+
+        try {
+            Notification::create($fallbackPayload);
+        } catch (QueryException $exception) {
+            report($exception);
+            Log::error('No se pudo crear notificación de aprobación (payload fallback)', [
+                'persona_id' => $persona->id,
+                'recipient_user_id' => $userId,
+                'error' => $exception->getMessage(),
+            ]);
+        }
+    }
+
     protected function buildPersonaDetail(Persona $persona): array
     {
         $perfilMap = [
@@ -638,18 +813,35 @@ class PersonalController extends Controller
             'duenoCuilCobrador' => $persona->dueno?->cuil_cobrador,
             'duenoCbuAlias' => $persona->dueno?->cbu_alias,
             'duenoObservaciones' => $persona->dueno?->observaciones,
+            'documentsDownloadAllUrl' => route('personal.documentos.descargarTodos', [
+                'persona' => $persona->id,
+            ], false),
+            'documentsDownloadAllAbsoluteUrl' => route('personal.documentos.descargarTodos', [
+                'persona' => $persona->id,
+            ], true),
             'documents' => $persona->documentos->map(function ($documento) {
-                $downloadUrl = route('personal.documentos.descargar', [
+                $relativeDownloadUrl = route('personal.documentos.descargar', [
                     'persona' => $documento->persona_id,
                     'documento' => $documento->id,
                 ], false);
 
+                $absoluteDownloadUrl = route('personal.documentos.descargar', [
+                    'persona' => $documento->persona_id,
+                    'documento' => $documento->id,
+                ], true);
+
                 return [
                     'id' => $documento->id,
+                    'parentDocumentId' => $documento->parent_document_id,
+                    'isAttachment' => $documento->parent_document_id !== null,
                     'nombre' => $documento->nombre_original ?? basename($documento->ruta ?? ''),
-                    'downloadUrl' => $downloadUrl,
+                    'downloadUrl' => $relativeDownloadUrl,
+                    'absoluteDownloadUrl' => $absoluteDownloadUrl,
                     'mime' => $documento->mime,
                     'size' => $documento->size,
+                    'sizeLabel' => $this->formatFileSize($documento->size),
+                    'fechaCarga' => optional($documento->created_at)->format('Y-m-d'),
+                    'fechaCargaIso' => optional($documento->created_at)->toIso8601String(),
                     'fechaVencimiento' => optional($documento->fecha_vencimiento)->format('Y-m-d'),
                     'tipoId' => $documento->tipo_archivo_id,
                     'tipoNombre' => $documento->tipo?->nombre,
@@ -769,6 +961,26 @@ class PersonalController extends Controller
             report($exception);
             return null;
         }
+    }
+
+    protected function formatFileSize(?int $bytes): string
+    {
+        if (! $bytes || $bytes <= 0) {
+            return '—';
+        }
+
+        $units = ['B', 'KB', 'MB', 'GB', 'TB'];
+        $index = 0;
+        $size = (float) $bytes;
+
+        while ($size >= 1024 && $index < count($units) - 1) {
+            $size /= 1024;
+            $index++;
+        }
+
+        $formatted = $index === 0 ? (string) round($size) : number_format($size, 1, ',', '.');
+
+        return sprintf('%s %s', $formatted, $units[$index]);
     }
 
     protected function getPersonaHistoryFieldDefinitions(): array

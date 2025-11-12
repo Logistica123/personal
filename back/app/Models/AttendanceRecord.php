@@ -4,28 +4,24 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
-class PersonaHistory extends Model
+class AttendanceRecord extends Model
 {
     use HasFactory;
 
     protected $fillable = [
-        'persona_id',
         'user_id',
-        'description',
-        'changes',
+        'user_name',
+        'status',
+        'recorded_at',
     ];
 
     protected $casts = [
-        'changes' => 'array',
+        'recorded_at' => 'datetime',
     ];
 
-    public function persona()
-    {
-        return $this->belongsTo(Persona::class);
-    }
-
-    public function user()
+    public function user(): BelongsTo
     {
         return $this->belongsTo(User::class);
     }

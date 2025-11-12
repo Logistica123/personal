@@ -48,6 +48,78 @@ class ReclamoController extends Controller
         return response()->json(['data' => $reclamos]);
     }
 
+    public function distriappIndex(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'personaId' => ['nullable', 'integer', 'exists:personas,id'],
+            'cuil' => ['nullable', 'string', 'max:32'],
+            'status' => ['nullable', Rule::in(array_keys($this->statusLabels()))],
+            'limit' => ['nullable', 'integer', 'min:1', 'max:200'],
+        ]);
+
+        $filters = collect($validated);
+        $query = Reclamo::query()
+            ->with([
+                'creator:id,name',
+                'agente:id,name',
+                'tipo:id,nombre',
+                'persona' => fn ($personaQuery) => $personaQuery->select(
+                    'id',
+                    'nombres',
+                    'apellidos',
+                    'cliente_id',
+                    'cuil'
+                ),
+                'persona.cliente:id,nombre',
+            ]);
+
+        if ($filters->has('personaId') && $filters->get('personaId')) {
+            $query->where('persona_id', $filters->get('personaId'));
+        }
+
+        if ($filters->has('cuil') && $filters->get('cuil') !== null && $filters->get('cuil') !== '') {
+            $rawCuil = (string) $filters->get('cuil');
+            $normalizedCuil = preg_replace('/\D+/', '', $rawCuil);
+
+            $query->whereHas('persona', function ($personaQuery) use ($normalizedCuil, $rawCuil) {
+                if ($normalizedCuil !== '') {
+                    $personaQuery->whereRaw(
+                        "REPLACE(REPLACE(REPLACE(IFNULL(cuil, ''), '-', ''), '.', ''), ' ', '') = ?",
+                        [$normalizedCuil]
+                    );
+                } else {
+                    $personaQuery->where('cuil', $rawCuil);
+                }
+            });
+        }
+
+        if ($filters->has('status') && $filters->get('status')) {
+            $query->where('status', $filters->get('status'));
+        }
+
+        $limit = (int) ($filters->get('limit') ?: 50);
+
+        $reclamos = $query
+            ->orderByDesc('fecha_alta')
+            ->orderByDesc('created_at')
+            ->limit($limit)
+            ->get()
+            ->map(fn (Reclamo $reclamo) => $this->transformReclamo($reclamo))
+            ->values();
+
+        return response()->json([
+            'data' => $reclamos,
+            'meta' => [
+                'appliedFilters' => [
+                    'personaId' => $filters->get('personaId'),
+                    'cuil' => $filters->get('cuil'),
+                    'status' => $filters->get('status'),
+                    'limit' => $limit,
+                ],
+            ],
+        ]);
+    }
+
     public function meta(): JsonResponse
     {
         $agentes = User::query()
@@ -114,6 +186,12 @@ class ReclamoController extends Controller
             'tipoId' => ['required', 'integer', 'exists:reclamo_types,id'],
             'status' => ['required', Rule::in(array_keys($this->statusLabels()))],
             'pagado' => ['required', 'boolean'],
+            'importePagado' => [
+                'nullable',
+                'numeric',
+                'min:0',
+                Rule::requiredIf(fn () => (bool) $request->input('pagado')),
+            ],
             'fechaReclamo' => ['nullable', 'date'],
         ]);
 
@@ -133,6 +211,9 @@ class ReclamoController extends Controller
                     : null,
                 'status' => $validated['status'],
                 'pagado' => (bool) $validated['pagado'],
+                'importe_pagado' => (bool) $validated['pagado']
+                    ? $this->normalizeImportePagado($validated['importePagado'] ?? null)
+                    : null,
             ]);
 
             $actorId = $creatorId ?? $validated['agenteId'] ?? null;
@@ -146,7 +227,7 @@ class ReclamoController extends Controller
             return $reclamo;
         });
 
-        $reclamo->loadMissing([
+        $relations = [
             'creator:id,name',
             'agente:id,name',
             'tipo:id,nombre',
@@ -172,8 +253,13 @@ class ReclamoController extends Controller
             'comments.senderUser:id,name',
             'comments.senderPersona:id,nombres,apellidos',
             'logs.actor:id,name',
-            'documents' => fn ($query) => $query->orderByDesc('created_at'),
-        ]);
+        ];
+
+        if (Schema::hasTable('reclamo_documents')) {
+            $relations['documents'] = fn ($query) => $query->orderByDesc('created_at');
+        }
+
+        $reclamo->loadMissing($relations);
 
         if ($reclamo->agente_id) {
             $this->createAssignmentNotification($reclamo, (int) $reclamo->agente_id);
@@ -187,7 +273,7 @@ class ReclamoController extends Controller
 
     public function show(Reclamo $reclamo): JsonResponse
     {
-        $reclamo->loadMissing([
+        $showRelations = [
             'creator:id,name',
             'agente:id,name',
             'tipo:id,nombre',
@@ -215,8 +301,13 @@ class ReclamoController extends Controller
             'comments.senderPersona:id,nombres,apellidos',
             'logs' => fn ($query) => $query->orderBy('created_at'),
             'logs.actor:id,name',
-            'documents' => fn ($query) => $query->orderByDesc('created_at'),
-        ]);
+        ];
+
+        if (Schema::hasTable('reclamo_documents')) {
+            $showRelations['documents'] = fn ($query) => $query->orderByDesc('created_at');
+        }
+
+        $reclamo->loadMissing($showRelations);
 
         return response()->json([
             'data' => $this->transformReclamo($reclamo, true),
@@ -233,6 +324,12 @@ class ReclamoController extends Controller
             'tipoId' => ['required', 'integer', 'exists:reclamo_types,id'],
             'status' => ['required', Rule::in(array_keys($this->statusLabels()))],
             'pagado' => ['required', 'boolean'],
+            'importePagado' => [
+                'nullable',
+                'numeric',
+                'min:0',
+                Rule::requiredIf(fn () => (bool) $request->input('pagado')),
+            ],
             'fechaReclamo' => ['nullable', 'date'],
         ]);
 
@@ -242,7 +339,9 @@ class ReclamoController extends Controller
         $agentChanged = false;
         $newAgenteId = null;
 
-        DB::transaction(function () use ($reclamo, $validated, $originalAgente, $originalAgenteName, &$agentChanged, &$newAgenteId) {
+        $originalImportePagado = $this->normalizeImportePagado($reclamo->importe_pagado);
+
+        DB::transaction(function () use ($reclamo, $validated, $originalAgente, $originalAgenteName, &$agentChanged, &$newAgenteId, $originalImportePagado) {
             $originalStatus = $reclamo->status;
             $originalPagado = (bool) $reclamo->pagado;
 
@@ -256,6 +355,9 @@ class ReclamoController extends Controller
                 : null;
             $reclamo->status = $validated['status'];
             $reclamo->pagado = (bool) $validated['pagado'];
+            $reclamo->importe_pagado = $reclamo->pagado
+                ? $this->normalizeImportePagado($validated['importePagado'] ?? null)
+                : null;
 
             $reclamo->save();
 
@@ -274,6 +376,22 @@ class ReclamoController extends Controller
                         'old' => $originalPagado,
                         'new' => (bool) $reclamo->pagado,
                         'field' => 'pagado',
+                    ],
+                    $actorId
+                );
+            }
+
+            $currentImportePagado = $this->normalizeImportePagado($reclamo->importe_pagado);
+            if ($originalImportePagado !== $currentImportePagado) {
+                $this->recordComment(
+                    $reclamo,
+                    $currentImportePagado
+                        ? sprintf('Importe pagado actualizado a %s', $this->formatImportePagadoLabel($currentImportePagado))
+                        : 'Importe pagado eliminado.',
+                    [
+                        'old' => $originalImportePagado,
+                        'new' => $currentImportePagado,
+                        'field' => 'importe_pagado',
                     ],
                     $actorId
                 );
@@ -636,6 +754,8 @@ class ReclamoController extends Controller
             'statusLabel' => $statusLabel,
             'pagado' => (bool) $reclamo->pagado,
             'pagadoLabel' => $reclamo->pagado ? 'Sí' : 'No',
+            'importePagado' => $this->normalizeImportePagado($reclamo->importe_pagado),
+            'importePagadoLabel' => $this->formatImportePagadoLabel($reclamo->importe_pagado),
             'creator' => $reclamo->creator?->name,
             'creatorId' => $reclamo->creator_id,
             'agente' => $reclamo->agente?->name,
@@ -651,7 +771,7 @@ class ReclamoController extends Controller
         ];
 
         if ($withHistory) {
-            $documents = $reclamo->documents ?? collect();
+            $documents = $reclamo->relationLoaded('documents') ? ($reclamo->documents ?? collect()) : collect();
             $base['documents'] = $documents
                 ->map(fn (ReclamoDocument $document) => [
                     'id' => $document->id,
@@ -670,8 +790,8 @@ class ReclamoController extends Controller
             return $base;
         }
 
-        $comments = $reclamo->comments ?? collect();
-        $logs = $reclamo->logs ?? collect();
+        $comments = $reclamo->relationLoaded('comments') ? ($reclamo->comments ?? collect()) : collect();
+        $logs = $reclamo->relationLoaded('logs') ? ($reclamo->logs ?? collect()) : collect();
 
         $history = collect();
 
@@ -862,5 +982,23 @@ class ReclamoController extends Controller
     protected function formatReclamoCodigo(Reclamo $reclamo): string
     {
         return sprintf('R-%05d', $reclamo->id);
+    }
+
+    protected function normalizeImportePagado($value): ?string
+    {
+        if ($value === null || $value === '') {
+            return null;
+        }
+
+        return number_format((float) $value, 2, '.', '');
+    }
+
+    protected function formatImportePagadoLabel(?string $value): ?string
+    {
+        if ($value === null || $value === '') {
+            return null;
+        }
+
+        return '$ '.number_format((float) $value, 2, ',', '.');
     }
 }

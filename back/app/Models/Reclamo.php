@@ -20,14 +20,16 @@ class Reclamo extends Model
         'fecha_alta',
         'status',
         'pagado',
+        'importe_pagado',
     ];
 
     protected $casts = [
-    'fecha_alta' => 'datetime',
-    'created_at' => 'datetime',
-    'updated_at' => 'datetime',
-    'pagado' => 'boolean',
-];
+        'fecha_alta' => 'datetime',
+        'created_at' => 'datetime',
+        'updated_at' => 'datetime',
+        'pagado' => 'boolean',
+        'importe_pagado' => 'decimal:2',
+    ];
 
 
     public function persona()

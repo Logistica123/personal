@@ -16,6 +16,7 @@ class Archivo extends Model
 
     protected $fillable = [
         'persona_id',
+        'parent_document_id',
         'tipo_archivo_id',
         'carpeta',
         'ruta',
@@ -37,6 +38,16 @@ class Archivo extends Model
     public function persona()
     {
         return $this->belongsTo(Persona::class);
+    }
+
+    public function parent()
+    {
+        return $this->belongsTo(self::class, 'parent_document_id');
+    }
+
+    public function children()
+    {
+        return $this->hasMany(self::class, 'parent_document_id');
     }
 
     public function tipo()
