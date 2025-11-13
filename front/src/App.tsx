@@ -421,6 +421,7 @@ type ReclamoRecord = {
   agenteId: number | null;
   transportista: string | null;
   transportistaId: number | null;
+  transportistas?: ReclamoTransportistaSummary[];
   cliente: string | null;
   tipo: string | null;
   tipoId: number | null;
@@ -451,6 +452,14 @@ type TransportistaDetail = {
   agente: string | null;
   agenteId: number | null;
   fechaAlta: string | null;
+};
+
+type ReclamoTransportistaSummary = {
+  id: number | null;
+  nombre: string | null;
+  cliente?: string | null;
+  patente?: string | null;
+  unidad?: string | null;
 };
 
 type ReclamoTransportistaDetail = {
@@ -535,6 +544,49 @@ type NotificationRecord = {
   metadata?: NotificationMetadata | null;
 };
 
+type ChatContact = {
+  id: number;
+  name: string;
+  role: string;
+  client?: string | null;
+  status: 'online' | 'away' | 'offline';
+  lastSeen: string;
+  lastMessage: string;
+  avatar?: string | null;
+  unread?: number;
+};
+
+type ChatMessage = {
+  id: string;
+  author: 'self' | 'contact';
+  text: string;
+  timestamp: string;
+  imageData?: string | null;
+  imageName?: string | null;
+};
+
+type StoredChatMessage = {
+  id: string;
+  senderId: number | null;
+  recipientId: number | null;
+  text: string;
+  timestamp: string;
+  imageData?: string | null;
+  imageName?: string | null;
+};
+
+type GeneralInfoEntry = {
+  id: string;
+  title: string;
+  body: string;
+  createdAt: string;
+  authorId: number | null;
+  authorName: string | null;
+  authorRole: string | null;
+  imageData?: string | null;
+  imageAlt?: string | null;
+};
+
 type EditableSucursal = {
   id: number | null;
   nombre: string;
@@ -595,6 +647,71 @@ const useStoredAuthUser = (): AuthUser | null => {
 const ATTENDANCE_RECORD_KEY = 'attendanceRecord';
 const ATTENDANCE_LOG_KEY = 'attendanceLog';
 const LOCAL_SOLICITUDES_STORAGE_KEY = 'approvals:localSolicitudes';
+const GENERAL_INFO_STORAGE_KEY = 'generalInfo:entries';
+const GENERAL_INFO_UPDATED_EVENT = 'general-info:updated';
+const CHAT_LOG_STORAGE_KEY = 'dashboard-chat:log';
+
+const DEFAULT_GENERAL_INFO_ENTRIES: GeneralInfoEntry[] = [
+  {
+    id: 'seed-general-info-1',
+    title: 'Bienvenidos al nuevo panel',
+    body:
+      'Usá este espacio para compartir recordatorios y novedades con tu equipo. ' +
+      'La información que publiques acá será visible para todos los usuarios.',
+    createdAt: '2024-03-10T12:00:00.000Z',
+    authorId: null,
+    authorName: 'Equipo Logística Argentina',
+    authorRole: 'Sistema',
+    imageData: null,
+    imageAlt: null,
+  },
+  {
+    id: 'seed-general-info-2',
+    title: 'Recomendación semanal',
+    body:
+      'Recordá mantener actualizada la información de tus clientes y sucursales. ' +
+      'Esto nos ayuda a planificar rutas de forma más precisa.',
+    createdAt: '2024-03-17T15:30:00.000Z',
+    authorId: null,
+    authorName: 'Coordinación Operativa',
+    authorRole: 'Sistema',
+    imageData: null,
+    imageAlt: null,
+  },
+];
+
+const cloneGeneralInfoEntries = (entries: GeneralInfoEntry[]): GeneralInfoEntry[] =>
+  entries.map((entry) => ({ ...entry }));
+
+const readGeneralInfoEntriesFromStorage = (): GeneralInfoEntry[] => {
+  if (typeof window === 'undefined') {
+    return cloneGeneralInfoEntries(DEFAULT_GENERAL_INFO_ENTRIES);
+  }
+
+  const raw = window.localStorage.getItem(GENERAL_INFO_STORAGE_KEY);
+  if (!raw) {
+    return cloneGeneralInfoEntries(DEFAULT_GENERAL_INFO_ENTRIES);
+  }
+
+  try {
+    const parsed = JSON.parse(raw) as GeneralInfoEntry[];
+    if (!Array.isArray(parsed)) {
+      return cloneGeneralInfoEntries(DEFAULT_GENERAL_INFO_ENTRIES);
+    }
+    return cloneGeneralInfoEntries(parsed);
+  } catch {
+    return cloneGeneralInfoEntries(DEFAULT_GENERAL_INFO_ENTRIES);
+  }
+};
+
+const persistGeneralInfoEntriesToStorage = (entries: GeneralInfoEntry[]): void => {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  window.localStorage.setItem(GENERAL_INFO_STORAGE_KEY, JSON.stringify(entries));
+  window.dispatchEvent(new Event(GENERAL_INFO_UPDATED_EVENT));
+};
 
 const deriveAttendanceUserKey = (authUser: AuthUser | null): string | null => {
   if (!authUser) {
@@ -768,6 +885,35 @@ const appendAttendanceLog = (record: AttendanceRecord) => {
   window.localStorage.setItem(ATTENDANCE_LOG_KEY, JSON.stringify(trimmed));
 };
 
+const readStoredChatMessages = (): StoredChatMessage[] => {
+  if (typeof window === 'undefined') {
+    return [];
+  }
+  try {
+    const raw = window.localStorage.getItem(CHAT_LOG_STORAGE_KEY);
+    if (!raw) {
+      return [];
+    }
+    const parsed = JSON.parse(raw) as StoredChatMessage[];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+};
+
+const persistStoredChatMessages = (messages: StoredChatMessage[]) => {
+  if (typeof window === 'undefined') {
+    return;
+  }
+  window.localStorage.setItem(CHAT_LOG_STORAGE_KEY, JSON.stringify(messages));
+};
+
+const appendStoredChatMessage = (entry: StoredChatMessage) => {
+  const log = readStoredChatMessages();
+  log.push(entry);
+  persistStoredChatMessages(log.slice(-500));
+};
+
 const computeInitials = (value: string | null | undefined): string => {
   if (!value) {
     return 'US';
@@ -788,6 +934,29 @@ const computeInitials = (value: string | null | undefined): string => {
   const second = words[1]?.charAt(0) ?? '';
   const initials = `${first}${second}`.trim();
   return initials.length > 0 ? initials.toUpperCase() : 'US';
+};
+
+const escapeHtml = (value: string): string =>
+  value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+
+const ensureHtmlContent = (content: string): string => {
+  if (!content) {
+    return '';
+  }
+  if (/<[a-z][\s\S]*>/i.test(content)) {
+    return content;
+  }
+  const safeParagraphs = content
+    .split(/\n+/)
+    .map((paragraph) => paragraph.trim())
+    .filter((paragraph) => paragraph.length > 0)
+    .map((paragraph) => `<p>${escapeHtml(paragraph)}</p>`);
+  return safeParagraphs.length > 0 ? safeParagraphs.join('') : `<p>${escapeHtml(content)}</p>`;
 };
 
 const truncateText = (text: string | null, maxLength: number): string => {
@@ -2042,6 +2211,13 @@ const DashboardLayout: React.FC<{
           <img src="/logo-empresa.png" alt="Logo de la empresa" className="brand-logo" />
         </div>
 
+        <NavLink
+          to="/informacion-general"
+          className={({ isActive }) => `sidebar-info-card${isActive ? ' is-active' : ''}`}
+        >
+          <span className="sidebar-info-card__title">Información general</span>
+        </NavLink>
+
         <nav className="sidebar-nav">
           <span className="sidebar-title">Acciones</span>
           <NavLink to="/clientes" className={({ isActive }) => `sidebar-link${isActive ? ' is-active' : ''}`}>
@@ -2163,6 +2339,13 @@ const DashboardLayout: React.FC<{
             </div>
             <button
               type="button"
+              className="topbar-button topbar-button--chat"
+              onClick={() => navigate('/chat')}
+            >
+              Chat
+            </button>
+            <button
+              type="button"
               className={`user-chip${showUserMenu ? ' is-open' : ''}`}
               onClick={() => setShowUserMenu((prev) => !prev)}
             >
@@ -2192,6 +2375,944 @@ const DashboardLayout: React.FC<{
   );
 };
 
+const GeneralInfoPage: React.FC = () => {
+  const authUser = useStoredAuthUser();
+  const [entries, setEntries] = useState<GeneralInfoEntry[]>(() => readGeneralInfoEntriesFromStorage());
+  const [title, setTitle] = useState('');
+  const [body, setBody] = useState('');
+  const [imageData, setImageData] = useState<string | null>(null);
+  const [imageName, setImageName] = useState<string | null>(null);
+  const [formError, setFormError] = useState<string | null>(null);
+  const [formSuccess, setFormSuccess] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const editorRef = useRef<HTMLDivElement | null>(null);
+  const [formatState, setFormatState] = useState({
+    bold: false,
+    italic: false,
+    underline: false,
+    fontSize: '3',
+  });
+
+  const isAdmin = useMemo(() => {
+    const normalized = authUser?.role?.toLowerCase() ?? '';
+    return normalized.includes('admin');
+  }, [authUser?.role]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    const handleStorage = (event: StorageEvent) => {
+      if (event.key === GENERAL_INFO_STORAGE_KEY) {
+        setEntries(readGeneralInfoEntriesFromStorage());
+      }
+    };
+
+    const handleCustomUpdate = () => setEntries(readGeneralInfoEntriesFromStorage());
+
+    window.addEventListener('storage', handleStorage);
+    window.addEventListener(GENERAL_INFO_UPDATED_EVENT, handleCustomUpdate as EventListener);
+
+    return () => {
+      window.removeEventListener('storage', handleStorage);
+      window.removeEventListener(GENERAL_INFO_UPDATED_EVENT, handleCustomUpdate as EventListener);
+    };
+  }, []);
+
+  const sortedEntries = useMemo(
+    () =>
+      [...entries].sort(
+        (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+      ),
+    [entries]
+  );
+
+  const helperText = isAdmin
+    ? 'Compartí comunicados, anuncios o recordatorios importantes con todo el equipo.'
+    : 'Solo los administradores pueden publicar novedades. Igual vas a poder leer todas las actualizaciones disponibles.';
+
+  const formatEntryDate = (value: string) => {
+    try {
+      return new Date(value).toLocaleString('es-AR', {
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+      });
+    } catch {
+      return value;
+    }
+  };
+
+  const syncBodyWithEditor = () => {
+    if (editorRef.current) {
+      setBody(editorRef.current.innerHTML);
+      updateFormatState();
+    }
+  };
+
+  useEffect(() => {
+    if (editorRef.current && editorRef.current.innerHTML !== body) {
+      editorRef.current.innerHTML = body || '';
+    }
+    updateFormatState();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [body]);
+
+  const updateFormatState = () => {
+    if (typeof document === 'undefined') {
+      return;
+    }
+    const bold = document.queryCommandState('bold');
+    const italic = document.queryCommandState('italic');
+    const underline = document.queryCommandState('underline');
+    const fontSize = document.queryCommandValue('fontSize') || '3';
+    setFormatState({
+      bold,
+      italic,
+      underline,
+      fontSize: typeof fontSize === 'string' ? fontSize : String(fontSize),
+    });
+  };
+
+  const applyEditorCommand = (command: string, value?: string) => {
+    if (!isAdmin || typeof document === 'undefined' || !editorRef.current) {
+      return;
+    }
+    editorRef.current.focus();
+    document.execCommand(command, false, value);
+    syncBodyWithEditor();
+    updateFormatState();
+  };
+
+  const handlePublish = (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+
+    if (!isAdmin) {
+      setFormError('Solo los administradores pueden publicar novedades.');
+      setFormSuccess(null);
+      return;
+    }
+
+    const trimmedTitle = title.trim();
+    const editorHtml = editorRef.current?.innerHTML ?? body;
+    const editorText = editorRef.current?.innerText?.replace(/\u200B/g, '').trim() ?? editorHtml.replace(/<[^>]*>/g, '').trim();
+
+    if (!trimmedTitle || !editorText) {
+      setFormError('Completá el título y la descripción para publicar.');
+      setFormSuccess(null);
+      return;
+    }
+
+    const normalizedBody = ensureHtmlContent(editorHtml);
+
+    const newEntry: GeneralInfoEntry = {
+      id: uniqueKey(),
+      title: trimmedTitle,
+      body: normalizedBody,
+      createdAt: new Date().toISOString(),
+      authorId: authUser?.id ?? null,
+      authorName: (authUser?.name && authUser.name.trim().length > 0
+        ? authUser.name.trim()
+        : authUser?.email) ?? 'Administrador',
+      authorRole: authUser?.role ?? 'Administrador',
+      imageData,
+      imageAlt: imageName ?? trimmedTitle,
+    };
+
+    const nextEntries = [newEntry, ...entries];
+    setEntries(nextEntries);
+    persistGeneralInfoEntriesToStorage(nextEntries);
+    setTitle('');
+    setBody('');
+    setImageData(null);
+    setImageName(null);
+    if (editorRef.current) {
+      editorRef.current.innerHTML = '';
+    }
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+    setFormError(null);
+    setFormSuccess('Publicación creada correctamente.');
+  };
+
+  const handleImageChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    setFormError(null);
+    setFormSuccess(null);
+    const file = event.target.files?.[0];
+    if (!file) {
+      setImageData(null);
+      setImageName(null);
+      return;
+    }
+
+    if (!file.type.startsWith('image/')) {
+      setFormError('Seleccioná un archivo de imagen válido.');
+      event.target.value = '';
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      setImageData(typeof reader.result === 'string' ? reader.result : null);
+      setImageName(file.name);
+    };
+    reader.onerror = () => {
+      setFormError('No pudimos leer la imagen seleccionada.');
+      setImageData(null);
+      setImageName(null);
+      event.target.value = '';
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleRemoveImage = () => {
+    setImageData(null);
+    setImageName(null);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+  };
+
+  const handleDeleteEntry = (entry: GeneralInfoEntry) => {
+    if (!isAdmin) {
+      return;
+    }
+    if (!window.confirm(`¿Eliminar la publicación "${entry.title}"?`)) {
+      return;
+    }
+    const nextEntries = entries.filter((item) => item.id !== entry.id);
+    setEntries(nextEntries);
+    persistGeneralInfoEntriesToStorage(nextEntries);
+  };
+
+  return (
+    <DashboardLayout
+      title="Información general"
+      subtitle="Comparte novedades internas con el resto del equipo"
+    >
+      <div className="general-info-layout">
+        <section className="general-info-panel">
+          <div className="general-info-panel__header">
+            <h2>Publicar novedad</h2>
+            <p className="general-info-helper">{helperText}</p>
+          </div>
+          <form className="general-info-form" onSubmit={handlePublish}>
+            <label>
+              <span>Título</span>
+              <input
+                type="text"
+                value={title}
+                onChange={(event) => setTitle(event.target.value)}
+                placeholder="Ej: Nueva base operativa en Rosario"
+                disabled={!isAdmin}
+              />
+            </label>
+            <div className="rich-editor">
+              <div className="rich-editor__label">
+                <span>Descripción</span>
+                <small>Podés aplicar negritas, color o cambiar el tamaño del texto.</small>
+              </div>
+              <div className="rich-editor__toolbar">
+                <button
+                  type="button"
+                  aria-label="Negrita"
+                  className={formatState.bold ? 'toolbar-active' : undefined}
+                  onClick={() => applyEditorCommand('bold')}
+                  disabled={!isAdmin}
+                >
+                  B
+                </button>
+                <button
+                  type="button"
+                  aria-label="Itálica"
+                  className={formatState.italic ? 'toolbar-active' : undefined}
+                  onClick={() => applyEditorCommand('italic')}
+                  disabled={!isAdmin}
+                >
+                  I
+                </button>
+                <button
+                  type="button"
+                  aria-label="Subrayado"
+                  className={formatState.underline ? 'toolbar-active' : undefined}
+                  onClick={() => applyEditorCommand('underline')}
+                  disabled={!isAdmin}
+                >
+                  U
+                </button>
+                <select
+                  aria-label="Tamaño de fuente"
+                  onChange={(event) => applyEditorCommand('fontSize', event.target.value)}
+                  disabled={!isAdmin}
+                  value={formatState.fontSize}
+                >
+                  <option value="1">8</option>
+                  <option value="2">10</option>
+                  <option value="3">12</option>
+                  <option value="4">14</option>
+                  <option value="5">18</option>
+                  <option value="6">24</option>
+                  <option value="7">32</option>
+                </select>
+                <input
+                  type="color"
+                  aria-label="Color de texto"
+                  onChange={(event) => applyEditorCommand('foreColor', event.target.value)}
+                  disabled={!isAdmin}
+                />
+                <button type="button" aria-label="Limpiar formato" onClick={() => applyEditorCommand('removeFormat')} disabled={!isAdmin}>
+                  Limpiar
+                </button>
+              </div>
+              <div
+                className="rich-editor__area"
+                ref={editorRef}
+                contentEditable={isAdmin}
+                onInput={syncBodyWithEditor}
+                onKeyUp={updateFormatState}
+                onMouseUp={updateFormatState}
+                data-placeholder="Detallá la novedad que querés compartir..."
+                suppressContentEditableWarning
+              />
+            </div>
+            <label className="general-info-upload">
+              <span>Imagen (opcional)</span>
+              <input
+                type="file"
+                accept="image/*"
+                onChange={handleImageChange}
+                disabled={!isAdmin}
+                ref={fileInputRef}
+              />
+            </label>
+
+            {imageData ? (
+              <div className="general-info-preview">
+                <img src={imageData} alt={imageName ?? 'Vista previa de la publicación'} />
+                <div className="general-info-preview__meta">
+                  <span>{imageName ?? 'Imagen seleccionada'}</span>
+                  <button type="button" onClick={handleRemoveImage} className="secondary-action">
+                    Quitar imagen
+                  </button>
+                </div>
+              </div>
+            ) : null}
+
+            {formError ? <p className="form-info form-info--error">{formError}</p> : null}
+            {formSuccess ? (
+              <p className="form-info form-info--success">{formSuccess}</p>
+            ) : null}
+            <button type="submit" className="primary-action" disabled={!isAdmin}>
+              Publicar
+            </button>
+          </form>
+        </section>
+
+        <section className="general-info-feed">
+          <div className="general-info-feed__header">
+            <h2>Publicaciones recientes</h2>
+            <span>{sortedEntries.length} publicación{sortedEntries.length === 1 ? '' : 'es'}</span>
+          </div>
+
+          {sortedEntries.length === 0 ? (
+            <p className="general-info-empty">Todavía no hay novedades publicadas.</p>
+          ) : (
+            <ul className="general-info-list">
+              {sortedEntries.map((entry) => (
+                <li key={entry.id} className="general-info-card">
+                  <header className="general-info-card__meta">
+                    <div>
+                      <p className="general-info-card__title">{entry.title}</p>
+                      <span className="general-info-card__author">
+                        {entry.authorName ?? 'Equipo'} · {entry.authorRole ?? 'Administrador'}
+                      </span>
+                    </div>
+                    <time dateTime={entry.createdAt}>{formatEntryDate(entry.createdAt)}</time>
+                    {isAdmin ? (
+                      <button
+                        type="button"
+                        className="general-info-card__delete"
+                        onClick={() => handleDeleteEntry(entry)}
+                        aria-label={`Eliminar publicación ${entry.title}`}
+                      >
+                        ×
+                      </button>
+                    ) : null}
+                  </header>
+                  {entry.imageData ? (
+                    <figure className="general-info-card__media">
+                      <img src={entry.imageData} alt={entry.imageAlt ?? entry.title} loading="lazy" />
+                    </figure>
+                  ) : null}
+                  <div
+                    className="general-info-card__content general-info-card__content--rich"
+                    dangerouslySetInnerHTML={{ __html: ensureHtmlContent(entry.body) }}
+                  />
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+      </div>
+    </DashboardLayout>
+  );
+};
+const fallbackChatContacts: ChatContact[] = [
+  {
+    id: 101,
+    name: 'Monica Fernandez',
+    role: 'Administradora',
+    client: 'QX',
+    status: 'online',
+    lastSeen: 'En línea',
+    lastMessage: 'Listo, quedó asignado.',
+    unread: 1,
+  },
+  {
+    id: 102,
+    name: 'Andrés Silva',
+    role: 'Operador',
+    client: 'Andreani',
+    status: 'away',
+    lastSeen: 'Visto hace 5 min',
+    lastMessage: '¿Revisás el reclamo por favor?',
+    unread: 0,
+  },
+];
+
+const ChatPage: React.FC = () => {
+  const apiBaseUrl = useMemo(() => resolveApiBaseUrl(), []);
+  const authUser = useStoredAuthUser();
+  const currentUserId = authUser?.id ?? null;
+  const currentUserName =
+    authUser?.name && authUser.name.trim().length > 0
+      ? authUser.name.trim()
+      : authUser?.email ?? 'Yo';
+  const [search, setSearch] = useState('');
+  const [contacts, setContacts] = useState<ChatContact[]>([]);
+  const [contactsLoading, setContactsLoading] = useState(true);
+  const [contactsError, setContactsError] = useState<string | null>(null);
+  const [selectedContactId, setSelectedContactId] = useState<number | null>(null);
+  const [messagesByContact, setMessagesByContact] = useState<Record<number, ChatMessage[]>>({});
+  const [messageInput, setMessageInput] = useState('');
+  const [pendingImage, setPendingImage] = useState<{ data: string; name: string | null } | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [showEmojiPicker, setShowEmojiPicker] = useState(false);
+  const quickEmojis = useMemo(() => ['😀', '😂', '😍', '👍', '🙏', '🚚', '✅', '🔥', '💬', '🎉'], []);
+  const createDownloadLink = useCallback((dataUrl: string, filename?: string) => {
+    if (!dataUrl) {
+      return;
+    }
+    const link = document.createElement('a');
+    link.href = dataUrl;
+    link.download = filename ?? `archivo-${Date.now()}`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  }, []);
+
+  const mapUserToContact = useCallback(
+    (usuario: Usuario, index: number): ChatContact => {
+      const name =
+        usuario.name?.trim().length
+          ? usuario.name.trim()
+          : usuario.email?.trim().length
+          ? usuario.email.trim()
+          : `Usuario #${usuario.id}`;
+      const status: ChatContact['status'] = index % 3 === 0 ? 'away' : index % 2 === 0 ? 'offline' : 'online';
+      const lastSeen =
+        status === 'online'
+          ? 'En línea'
+          : status === 'away'
+          ? 'Visto hace 5 min'
+          : 'Visto hace 2 h';
+      return {
+        id: usuario.id,
+        name,
+        role: formatRoleLabel(usuario.role),
+        client: usuario.email,
+        status,
+        lastSeen,
+        lastMessage: 'Inicia una conversación',
+        unread: status === 'online' ? 1 : 0,
+      };
+    },
+    []
+  );
+
+  const syncMessagesFromStorage = useCallback(
+    (seedContacts?: ChatContact[]) => {
+      if (currentUserId == null) {
+        return;
+      }
+      const log = readStoredChatMessages();
+      const grouped: Record<number, ChatMessage[]> = {};
+      log.forEach((entry) => {
+        const isSender = entry.senderId === currentUserId;
+        const isRecipient = entry.recipientId === currentUserId;
+        if (!isSender && !isRecipient) {
+          return;
+        }
+        const contactId = isSender ? entry.recipientId : entry.senderId;
+        if (contactId == null) {
+          return;
+        }
+        const author: 'self' | 'contact' = isSender ? 'self' : 'contact';
+        (grouped[contactId] ??= []).push({
+          id: entry.id,
+          author,
+          text: entry.text,
+          timestamp: entry.timestamp,
+          imageData: entry.imageData,
+          imageName: entry.imageName,
+        });
+      });
+      Object.keys(grouped).forEach((idKey) => {
+        grouped[Number(idKey)].sort(
+          (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+        );
+      });
+      setMessagesByContact(grouped);
+      setContacts((prev) => {
+        const base = seedContacts ?? prev;
+        let updated = base.map((contact) => {
+          const conversation = grouped[contact.id] ?? [];
+          const last = conversation[conversation.length - 1];
+          const fallbackText =
+            last?.text && last.text.trim().length
+              ? last.text
+              : last?.imageData
+              ? '📷 Imagen'
+              : contact.lastMessage;
+          return last ? { ...contact, lastMessage: fallbackText ?? 'Nueva conversación', unread: contact.unread ?? 0 } : contact;
+        });
+        Object.keys(grouped).forEach((idKey) => {
+          const contactId = Number(idKey);
+          if (!updated.some((contact) => contact.id === contactId)) {
+            const conversation = grouped[contactId];
+            const last = conversation[conversation.length - 1];
+            updated = [
+              ...updated,
+              {
+                id: contactId,
+                name: `Usuario #${contactId}`,
+                role: 'Usuario',
+                client: null,
+                status: 'online',
+                lastSeen: 'En línea',
+                lastMessage:
+                  (last?.text && last.text.trim().length > 0
+                    ? last.text
+                    : last?.imageData
+                    ? '📷 Imagen'
+                    : 'Nueva conversación') ?? 'Nueva conversación',
+                unread: 0,
+              },
+            ];
+          }
+        });
+        return updated;
+      });
+    },
+    [currentUserId]
+  );
+
+  useEffect(() => {
+    const controller = new AbortController();
+    const fetchContacts = async () => {
+      try {
+        setContactsLoading(true);
+        setContactsError(null);
+        const response = await fetch(`${apiBaseUrl}/api/usuarios`, {
+          signal: controller.signal,
+        });
+        if (!response.ok) {
+          throw new Error(`Error ${response.status}: ${response.statusText}`);
+        }
+        const payload = (await response.json()) as { data?: Usuario[] };
+        if (!payload?.data || !Array.isArray(payload.data)) {
+          throw new Error('Formato de usuarios inesperado');
+        }
+        const mapped = payload.data.map(mapUserToContact);
+        setContacts(mapped);
+        if (!selectedContactId && mapped.length > 0) {
+          setSelectedContactId(mapped[0].id);
+        }
+        syncMessagesFromStorage(mapped);
+      } catch (err) {
+        if ((err as Error).name !== 'AbortError') {
+          setContactsError((err as Error).message ?? 'No se pudo cargar la lista de usuarios.');
+          setContacts(fallbackChatContacts);
+          if (!selectedContactId && fallbackChatContacts.length > 0) {
+            setSelectedContactId(fallbackChatContacts[0].id);
+          }
+          syncMessagesFromStorage(fallbackChatContacts);
+        }
+      } finally {
+        setContactsLoading(false);
+      }
+    };
+
+    fetchContacts();
+
+    return () => controller.abort();
+  }, [apiBaseUrl, mapUserToContact, selectedContactId, syncMessagesFromStorage]);
+
+  useEffect(() => {
+    if (contactsLoading || currentUserId == null) {
+      return;
+    }
+    syncMessagesFromStorage();
+  }, [contactsLoading, currentUserId, syncMessagesFromStorage]);
+
+  useEffect(() => {
+    const handleStorageUpdate = (event: StorageEvent) => {
+      if (event.key === CHAT_LOG_STORAGE_KEY) {
+        syncMessagesFromStorage();
+      }
+    };
+    window.addEventListener('storage', handleStorageUpdate);
+    return () => window.removeEventListener('storage', handleStorageUpdate);
+  }, [syncMessagesFromStorage]);
+
+  useEffect(() => {
+    if (contacts.length === 0) {
+      setSelectedContactId(null);
+      return;
+    }
+    if (selectedContactId == null || !contacts.some((contact) => contact.id === selectedContactId)) {
+      setSelectedContactId(contacts[0].id);
+    }
+  }, [contacts, selectedContactId]);
+
+  const selectedContact = useMemo(
+    () => contacts.find((contact) => contact.id === selectedContactId) ?? null,
+    [contacts, selectedContactId]
+  );
+
+  const filteredContacts = useMemo(() => {
+    const term = search.trim().toLowerCase();
+    if (term.length === 0) {
+      return contacts;
+    }
+    return contacts.filter(
+      (contact) =>
+        contact.name.toLowerCase().includes(term) ||
+        contact.role.toLowerCase().includes(term) ||
+        (contact.client?.toLowerCase().includes(term) ?? false)
+    );
+  }, [contacts, search]);
+
+  const formatMessageTime = (isoDate: string) => {
+    try {
+      return new Date(isoDate).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' });
+    } catch {
+      return isoDate;
+    }
+  };
+
+  const handleEmojiSelect = (emoji: string) => {
+    setMessageInput((prev) => `${prev}${emoji}`);
+    setShowEmojiPicker(false);
+  };
+
+  const handleImageChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) {
+      return;
+    }
+    if (!file.type.startsWith('image/')) {
+      window.alert('Seleccioná un archivo de imagen válido.');
+      event.target.value = '';
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      setPendingImage({
+        data: typeof reader.result === 'string' ? reader.result : '',
+        name: file.name,
+      });
+    };
+    reader.onerror = () => {
+      window.alert('No se pudo leer la imagen seleccionada.');
+      event.target.value = '';
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleRemovePendingImage = () => {
+    setPendingImage(null);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+  };
+
+  const handleSendMessage = () => {
+    if (!selectedContactId) {
+      return;
+    }
+    if (currentUserId == null) {
+      window.alert('No se pudo identificar al usuario actual para enviar el mensaje.');
+      return;
+    }
+    const targetContact = contacts.find((contact) => contact.id === selectedContactId);
+    if (!targetContact) {
+      return;
+    }
+    const trimmed = messageInput.trim();
+    const hasImage = Boolean(pendingImage?.data);
+    if (trimmed.length === 0 && !hasImage) {
+      return;
+    }
+
+    const timestamp = new Date().toISOString();
+    const newMessage: ChatMessage = {
+      id: uniqueKey(),
+      author: 'self',
+      text: trimmed,
+      timestamp,
+      imageData: pendingImage?.data,
+      imageName: pendingImage?.name,
+    };
+
+    setMessagesByContact((prev) => {
+      const current = prev[selectedContactId] ?? [];
+      return { ...prev, [selectedContactId]: [...current, newMessage] };
+    });
+    setMessageInput('');
+    setPendingImage(null);
+    setShowEmojiPicker(false);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+    setContacts((prev) =>
+      prev.map((contact) =>
+        contact.id === selectedContactId
+          ? {
+              ...contact,
+              lastMessage:
+                trimmed.length > 0
+                  ? trimmed
+                  : hasImage
+                  ? '📷 Imagen'
+                  : contact.lastMessage ?? 'Mensaje enviado',
+              unread: 0,
+              lastSeen: 'En línea',
+            }
+          : contact
+      )
+    );
+    appendStoredChatMessage({
+      id: newMessage.id,
+      senderId: currentUserId,
+      recipientId: targetContact.id,
+      text: trimmed,
+      timestamp,
+      imageData: pendingImage?.data ?? null,
+      imageName: pendingImage?.name ?? null,
+    });
+    syncMessagesFromStorage();
+  };
+
+  const handleSelectContact = (contactId: number) => {
+    setSelectedContactId(contactId);
+    setContacts((prev) =>
+      prev.map((contact) =>
+        contact.id === contactId ? { ...contact, unread: 0, lastSeen: 'En línea' } : contact
+      )
+    );
+  };
+
+  const selectedMessages = selectedContactId ? messagesByContact[selectedContactId] ?? [] : [];
+
+  return (
+    <DashboardLayout title="Chat" subtitle="Comunicate con tu equipo en tiempo real">
+      <div className="chat-layout">
+        <aside className="chat-sidebar">
+          <div className="chat-sidebar__header">
+            <h3>Conversaciones</h3>
+            <span>{contactsLoading ? '...' : contacts.length}</span>
+          </div>
+          <label className="chat-search">
+            <input
+              type="search"
+              placeholder="Buscar"
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              disabled={contactsLoading || Boolean(contactsError)}
+            />
+          </label>
+          <div className="chat-contact-list">
+            {contactsError ? (
+              <p className="form-info form-info--error">
+                {contactsError} · mostrando contactos de referencia.
+              </p>
+            ) : null}
+            {contactsLoading ? (
+              <p className="section-helper">Cargando usuarios...</p>
+            ) : filteredContacts.length === 0 ? (
+              <p className="section-helper">No se encontraron contactos.</p>
+            ) : (
+              filteredContacts.map((contact) => {
+                const isActive = contact.id === selectedContactId;
+                return (
+                  <button
+                    key={contact.id}
+                    type="button"
+                    className={`chat-contact${isActive ? ' is-active' : ''}`}
+                    onClick={() => handleSelectContact(contact.id)}
+                  >
+                    <div className="chat-contact__avatar">
+                      {contact.avatar ? (
+                        <img src={contact.avatar} alt={contact.name} />
+                      ) : (
+                        <span>{computeInitials(contact.name)}</span>
+                      )}
+                      <span className={`presence presence--${contact.status}`} />
+                    </div>
+                    <div className="chat-contact__meta">
+                      <strong>{contact.name}</strong>
+                      <small>{contact.client ?? contact.role}</small>
+                      <p>{contact.lastMessage}</p>
+                    </div>
+                    <div className="chat-contact__status">
+                      <time>{contact.lastSeen}</time>
+                      {contact.unread && contact.unread > 0 ? (
+                        <span className="chat-contact__badge">{Math.min(contact.unread, 9)}</span>
+                      ) : null}
+                    </div>
+                  </button>
+                );
+              })
+            )}
+          </div>
+        </aside>
+        <div className="chat-panel">
+          {!selectedContact ? (
+            <div className="chat-empty-state">
+              <h3>Selecciona un contacto</h3>
+              <p>Elegí un contacto de la lista para comenzar a chatear.</p>
+            </div>
+          ) : (
+            <>
+              <header className="chat-panel__header">
+                <div>
+                  <strong>{selectedContact.name}</strong>
+                  <small>
+                    {selectedContact.status === 'online' ? 'En línea' : selectedContact.lastSeen}
+                  </small>
+                </div>
+                <span>{selectedContact.role}</span>
+              </header>
+              <div className="chat-messages">
+                {selectedMessages.map((message) => (
+                  <div
+                    key={message.id}
+                    className={`chat-message chat-message--${message.author}`}
+                  >
+                    {message.text ? <p>{message.text}</p> : null}
+                    {message.imageData ? (
+                      <figure className="chat-message__media">
+                        <img src={message.imageData} alt={message.imageName ?? 'Imagen enviada'} />
+                        <figcaption>
+                          {message.imageName ?? 'Archivo adjunto'}
+                          <button
+                            type="button"
+                            className="chat-download"
+                            onClick={() => createDownloadLink(message.imageData ?? '', message.imageName ?? 'archivo')}
+                          >
+                            Descargar
+                          </button>
+                        </figcaption>
+                      </figure>
+                    ) : null}
+                    <time>{formatMessageTime(message.timestamp)}</time>
+                  </div>
+                ))}
+              </div>
+              <footer className="chat-input">
+                <div className="chat-input__tools">
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept="image/*"
+                    hidden
+                    onChange={handleImageChange}
+                  />
+                  <button
+                    type="button"
+                    className="chat-tool"
+                    aria-label="Adjuntar imagen"
+                    onClick={() => fileInputRef.current?.click()}
+                  >
+                    📎
+                  </button>
+                  <div className="emoji-picker-wrapper">
+                    <button
+                      type="button"
+                      className="chat-tool"
+                      aria-label="Insertar emoji"
+                      onClick={() => setShowEmojiPicker((value) => !value)}
+                    >
+                      😊
+                    </button>
+                    {showEmojiPicker ? (
+                      <div className="emoji-picker">
+                        {quickEmojis.map((emoji) => (
+                          <button
+                            key={emoji}
+                            type="button"
+                            onClick={() => handleEmojiSelect(emoji)}
+                            aria-label={`Insertar ${emoji}`}
+                          >
+                            {emoji}
+                          </button>
+                        ))}
+                      </div>
+                    ) : null}
+                  </div>
+                  {pendingImage ? (
+                    <div className="chat-image-preview">
+                      <img src={pendingImage.data} alt={pendingImage.name ?? 'Imagen seleccionada'} />
+                      <button
+                        type="button"
+                        aria-label="Quitar imagen"
+                        onClick={handleRemovePendingImage}
+                      >
+                        ×
+                      </button>
+                    </div>
+                  ) : null}
+                </div>
+                <div className="chat-input__composer">
+                  <textarea
+                    rows={2}
+                    placeholder="Escribí un mensaje..."
+                    value={messageInput}
+                    onChange={(event) => setMessageInput(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter' && !event.shiftKey) {
+                        event.preventDefault();
+                        handleSendMessage();
+                      }
+                    }}
+                  />
+                  <button type="button" className="primary-action" onClick={handleSendMessage}>
+                    Enviar
+                  </button>
+                </div>
+              </footer>
+            </>
+          )}
+        </div>
+      </div>
+    </DashboardLayout>
+  );
+};
 const DashboardPage: React.FC = () => {
   const navigate = useNavigate();
   const [clientes, setClientes] = useState<Cliente[]>([]);
@@ -2678,10 +3799,69 @@ const ReclamosPage: React.FC = () => {
   const [agenteFilter, setAgenteFilter] = useState('');
   const [creatorFilter, setCreatorFilter] = useState('');
   const [transportistaFilter, setTransportistaFilter] = useState('');
+  const [clienteFilter, setClienteFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [tipoFilter, setTipoFilter] = useState('');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
+  const getTransportistaEntries = useCallback((record: ReclamoRecord): ReclamoTransportistaSummary[] => {
+    if (Array.isArray(record.transportistas) && record.transportistas.length > 0) {
+      return record.transportistas;
+    }
+    if (record.transportista) {
+      return [
+        {
+          id: record.transportistaId ?? null,
+          nombre: record.transportista,
+        },
+      ];
+    }
+    return [];
+  }, []);
+
+  const getTransportistaNames = useCallback(
+    (record: ReclamoRecord): string[] =>
+      getTransportistaEntries(record)
+        .map((entry) => {
+          const base = entry.nombre ?? entry.cliente ?? '';
+          return typeof base === 'string' ? base.trim() : '';
+        })
+        .filter((name) => name.length > 0),
+    [getTransportistaEntries]
+  );
+
+  const formatTransportistaDisplay = useCallback(
+    (record: ReclamoRecord) => {
+      const entries = getTransportistaEntries(record);
+      const names = getTransportistaNames(record);
+      const label =
+        names[0] ??
+        record.transportista ??
+        (entries[0]
+          ? entries[0].nombre ??
+            entries[0].cliente ??
+            `Transportista #${entries[0].id ?? ''}`
+          : '—');
+      const restCount = entries.length > 1 ? entries.length - 1 : 0;
+      const tooltip =
+        entries.length > 1
+          ? names.length > 0
+            ? names.join(', ')
+            : entries
+                .map((entry, index) => entry.nombre ?? entry.cliente ?? `Transportista #${entry.id ?? index + 1}`)
+                .join(', ')
+          : names.length === 1
+          ? undefined
+          : record.transportista ?? undefined;
+      return {
+        label,
+        restCount,
+        tooltip,
+        names,
+      };
+    },
+    [getTransportistaEntries, getTransportistaNames]
+  );
 
   useEffect(() => {
     const controller = new AbortController();
@@ -2776,17 +3956,24 @@ const ReclamosPage: React.FC = () => {
     [reclamos]
   );
 
-  const transportistaOptions = useMemo(
-    () =>
-      Array.from(
-        new Set(
-          reclamos
-            .map((reclamo) => reclamo.transportista)
-            .filter((value): value is string => Boolean(value))
-        )
-      ).sort((a, b) => a.localeCompare(b)),
-    [reclamos]
-  );
+  const clienteOptions = useMemo(() => {
+    const unique = Array.from(
+      new Set(
+        reclamos
+          .map((reclamo) => reclamo.cliente?.trim())
+          .filter((value): value is string => Boolean(value))
+      )
+    );
+    return unique.sort((a, b) => a.localeCompare(b));
+  }, [reclamos]);
+
+  const transportistaOptions = useMemo(() => {
+    const names = new Set<string>();
+    reclamos.forEach((reclamo) => {
+      getTransportistaNames(reclamo).forEach((name) => names.add(name));
+    });
+    return Array.from(names).sort((a, b) => a.localeCompare(b));
+  }, [reclamos, getTransportistaNames]);
 
   const estadoOptions = useMemo(() => {
     const map = new Map<string, string>();
@@ -2824,8 +4011,11 @@ const ReclamosPage: React.FC = () => {
         return false;
       }
 
-      if (transportistaFilter && reclamo.transportista !== transportistaFilter) {
-        return false;
+      if (transportistaFilter) {
+        const names = getTransportistaNames(reclamo);
+        if (!names.includes(transportistaFilter)) {
+          return false;
+        }
       }
 
       if (statusFilter && reclamo.status !== statusFilter) {
@@ -2845,6 +4035,10 @@ const ReclamosPage: React.FC = () => {
         return false;
       }
 
+      if (clienteFilter && reclamo.cliente !== clienteFilter) {
+        return false;
+      }
+
       if (term.length === 0) {
         return true;
       }
@@ -2854,7 +4048,7 @@ const ReclamosPage: React.FC = () => {
         reclamo.detalle,
         reclamo.creator,
         reclamo.agente,
-        reclamo.transportista,
+        ...getTransportistaNames(reclamo),
         reclamo.cliente,
         reclamo.tipo,
         reclamo.status,
@@ -2869,10 +4063,12 @@ const ReclamosPage: React.FC = () => {
     agenteFilter,
     creatorFilter,
     transportistaFilter,
+    clienteFilter,
     statusFilter,
     tipoFilter,
     dateFrom,
     dateTo,
+    getTransportistaNames,
   ]);
 
   const handleExportReclamos = useCallback(() => {
@@ -2897,12 +4093,15 @@ const ReclamosPage: React.FC = () => {
       rows.push(['Sin datos filtrados']);
     } else {
       filteredReclamos.forEach((reclamo) => {
+        const transportistaDisplay = formatTransportistaDisplay(reclamo);
         rows.push([
           reclamo.fechaReclamo ?? '',
           reclamo.codigo ?? `#${reclamo.id}`,
           reclamo.detalle ?? '',
           reclamo.creator ?? '',
-          reclamo.transportista ?? '',
+          transportistaDisplay.restCount > 0
+            ? `${transportistaDisplay.label} (+${transportistaDisplay.restCount})`
+            : transportistaDisplay.label ?? '',
           reclamo.agente ?? '',
           reclamo.cliente ?? '',
           reclamo.tipo ?? '',
@@ -2918,7 +4117,7 @@ const ReclamosPage: React.FC = () => {
 
     const today = new Date().toISOString().slice(0, 10);
     downloadCsv(`reclamos-${today}.csv`, rows);
-  }, [filteredReclamos]);
+  }, [filteredReclamos, formatTransportistaDisplay]);
 
   const footerLabel = useMemo(() => {
     if (loading) {
@@ -2945,6 +4144,7 @@ const ReclamosPage: React.FC = () => {
     setAgenteFilter('');
     setCreatorFilter('');
     setTransportistaFilter('');
+    setClienteFilter('');
     setStatusFilter('');
     setTipoFilter('');
     setDateFrom('');
@@ -2995,6 +4195,17 @@ const ReclamosPage: React.FC = () => {
             >
               <option value="">Seleccionar transportista</option>
               {transportistaOptions.map((option) => (
+                <option key={option} value={option}>
+                  {option}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="filter-field">
+            <span>Cliente</span>
+            <select value={clienteFilter} onChange={(event) => setClienteFilter(event.target.value)}>
+              <option value="">Seleccionar cliente</option>
+              {clienteOptions.map((option) => (
                 <option key={option} value={option}>
                   {option}
                 </option>
@@ -3061,7 +4272,10 @@ const ReclamosPage: React.FC = () => {
   );
 
   const handleEditReclamo = (reclamo: ReclamoRecord) => {
-    navigate(`/reclamos/${reclamo.id}`);
+    const transportistas = getTransportistaEntries(reclamo);
+    navigate(`/reclamos/${reclamo.id}`, {
+      state: transportistas.length > 0 ? { transportistas } : undefined,
+    });
   };
 
   const handleDeleteReclamo = async (reclamo: ReclamoRecord) => {
@@ -3161,15 +4375,26 @@ const ReclamosPage: React.FC = () => {
 
             {!loading &&
               !error &&
-              filteredReclamos.map((reclamo) => (
-                <tr key={reclamo.id}>
+              filteredReclamos.map((reclamo) => {
+                const transportistaDisplay = formatTransportistaDisplay(reclamo);
+                return (
+                  <tr key={reclamo.id}>
                   <td>{reclamo.fechaReclamo ?? '—'}</td>
                   <td>{reclamo.codigo ?? `#${reclamo.id}`}</td>
                   <td title={reclamo.detalle ?? undefined}>
                     {truncateText(reclamo.detalle, 80)}
                   </td>
                   <td>{reclamo.creator ?? '—'}</td>
-                  <td>{reclamo.transportista ?? '—'}</td>
+                  <td>
+                    <span className="transportista-cell" title={transportistaDisplay.tooltip}>
+                      <span>{transportistaDisplay.label ?? '—'}</span>
+                      {transportistaDisplay.restCount > 0 ? (
+                        <span className="transportista-cell__extra">
+                          +{transportistaDisplay.restCount}
+                        </span>
+                      ) : null}
+                    </span>
+                  </td>
                   <td>{reclamo.agente ?? '—'}</td>
                   <td>{reclamo.tipo ?? '—'}</td>
                   <td>
@@ -3211,8 +4436,9 @@ const ReclamosPage: React.FC = () => {
                       </button>
                     </div>
                   </td>
-                </tr>
-              ))}
+                  </tr>
+                );
+              })}
           </tbody>
         </table>
       </div>
@@ -3265,6 +4491,7 @@ const CreateReclamoPage: React.FC = () => {
   const [transportistaDetailError, setTransportistaDetailError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [attachments, setAttachments] = useState<File[]>([]);
+  const [selectedTransportistas, setSelectedTransportistas] = useState<TransportistaDetail[]>([]);
   const attachmentSummary = useMemo(() => {
     if (attachments.length === 0) {
       return null;
@@ -3419,6 +4646,37 @@ const CreateReclamoPage: React.FC = () => {
     }));
   };
 
+  const clearTransportistaSelectionState = () => {
+    setTransportistaSearch('');
+    setTransportistaDetail(null);
+    setTransportistaDetailError(null);
+    setFormValues((prev) => ({
+      ...prev,
+      transportistaId: '',
+    }));
+  };
+
+  const handleAddTransportistaToList = () => {
+    if (!transportistaDetail) {
+      window.alert('Seleccioná un transportista antes de agregarlo al reclamo.');
+      return;
+    }
+
+    setSelectedTransportistas((prev) => {
+      if (prev.some((item) => item.id === transportistaDetail.id)) {
+        window.alert('Este transportista ya fue agregado.');
+        return prev;
+      }
+      return [...prev, transportistaDetail];
+    });
+
+    clearTransportistaSelectionState();
+  };
+
+  const handleRemoveTransportistaFromList = (id: number) => {
+    setSelectedTransportistas((prev) => prev.filter((item) => item.id !== id));
+  };
+
   useEffect(() => {
     const transportistaId = formValues.transportistaId;
     if (!transportistaId) {
@@ -3535,7 +4793,14 @@ const CreateReclamoPage: React.FC = () => {
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
 
-    if (!formValues.transportistaId || !formValues.tipoId || !formValues.status) {
+    const transportistaIds =
+      selectedTransportistas.length > 0
+        ? selectedTransportistas.map((item) => item.id)
+        : formValues.transportistaId
+        ? [Number(formValues.transportistaId)]
+        : [];
+
+    if (transportistaIds.length === 0 || !formValues.tipoId || !formValues.status) {
       setSubmitError('Completa los campos obligatorios.');
       return;
     }
@@ -3544,6 +4809,24 @@ const CreateReclamoPage: React.FC = () => {
       setSubmitError(null);
       setSuccessMessage(null);
       setSaving(true);
+
+      const mapTransportistaForPayload = (transportista: TransportistaDetail) => ({
+        id: transportista.id,
+        agenteId: transportista.agenteId ?? null,
+        agente: transportista.agente ?? null,
+        cliente: transportista.cliente ?? null,
+        sucursal: transportista.sucursal ?? null,
+        unidad: transportista.unidad ?? null,
+        unidadDetalle: transportista.unidadDetalle ?? null,
+        patente: transportista.patente ?? null,
+      });
+
+      const transportistasPayload =
+        selectedTransportistas.length > 0
+          ? selectedTransportistas.map(mapTransportistaForPayload)
+          : transportistaDetail && formValues.transportistaId
+          ? [mapTransportistaForPayload(transportistaDetail)]
+          : transportistaIds.map((id) => ({ id, agenteId: null }));
 
       const response = await fetch(`${apiBaseUrl}/api/reclamos`, {
         method: 'POST',
@@ -3554,7 +4837,9 @@ const CreateReclamoPage: React.FC = () => {
           detalle: formValues.detalle.trim() || null,
           agenteId: formValues.agenteId ? Number(formValues.agenteId) : null,
           creatorId: formValues.creatorId ? Number(formValues.creatorId) : null,
-          transportistaId: Number(formValues.transportistaId),
+          transportistaId: transportistaIds[0],
+          transportistaIds,
+          transportistas: transportistasPayload,
           tipoId: Number(formValues.tipoId),
           status: formValues.status,
           pagado: formValues.pagado === 'true',
@@ -3584,6 +4869,34 @@ const CreateReclamoPage: React.FC = () => {
 
       const payload = (await response.json()) as { message?: string; data: ReclamoRecord };
       const createdReclamo = payload.data;
+      if (selectedTransportistas.length > 0) {
+        createdReclamo.transportistas = selectedTransportistas.map((item) => ({
+          id: item.id ?? null,
+          nombre:
+            `${item.nombres ?? ''} ${item.apellidos ?? ''}`.trim() ||
+            item.cliente ||
+            `Transportista #${item.id}`,
+          cliente: item.cliente ?? null,
+          patente: item.patente ?? item.unidad ?? null,
+          unidad: item.unidadDetalle ?? item.unidad ?? null,
+        }));
+        if (!createdReclamo.transportista && createdReclamo.transportistas.length > 0) {
+          createdReclamo.transportista = createdReclamo.transportistas[0].nombre;
+        }
+      } else if (transportistaDetail && formValues.transportistaId) {
+        createdReclamo.transportistas = [
+          {
+            id: transportistaDetail.id ?? Number(formValues.transportistaId),
+            nombre:
+              `${transportistaDetail.nombres ?? ''} ${transportistaDetail.apellidos ?? ''}`.trim() ||
+              transportistaDetail.cliente ||
+              createdReclamo.transportista,
+            cliente: transportistaDetail.cliente ?? null,
+            patente: transportistaDetail.patente ?? transportistaDetail.unidad ?? null,
+            unidad: transportistaDetail.unidadDetalle ?? transportistaDetail.unidad ?? null,
+          },
+        ];
+      }
       const newReclamoId = createdReclamo?.id ?? null;
       const currentAttachments = attachments.length > 0 ? [...attachments] : [];
 
@@ -3689,6 +5002,7 @@ const CreateReclamoPage: React.FC = () => {
       });
       setTransportistaSearch('');
       setTransportistaDetail(null);
+      setSelectedTransportistas([]);
       setAttachments([]);
       if (fileInputRef.current) {
         fileInputRef.current.value = '';
@@ -3909,6 +5223,49 @@ const CreateReclamoPage: React.FC = () => {
               />
             </label>
           </div>
+
+          <div className="transportista-actions">
+            <button
+              type="button"
+              className="secondary-action"
+              onClick={handleAddTransportistaToList}
+              disabled={!transportistaDetail}
+            >
+              Agregar transportista al reclamo
+            </button>
+            <small>Podés agregar más de un transportista para este reclamo.</small>
+          </div>
+
+          <div className="transportista-selected">
+            <div className="transportista-selected__header">
+              <span>Transportistas añadidos</span>
+              <span className="transportista-selected__counter">{selectedTransportistas.length}</span>
+            </div>
+
+            {selectedTransportistas.length === 0 ? (
+              <p className="section-helper">Todavía no agregaste transportistas a este reclamo.</p>
+            ) : (
+              <ul className="transportista-selected__list">
+                {selectedTransportistas.map((item) => (
+                  <li key={item.id} className="transportista-selected__item">
+                    <div>
+                      <strong>{`${item.nombres ?? ''} ${item.apellidos ?? ''}`.trim() || `Transportista #${item.id}`}</strong>
+                      <small>
+                        {item.cliente ?? 'Cliente no registrado'} · {item.patente ?? item.unidad ?? 'Sin patente'}
+                      </small>
+                    </div>
+                    <button
+                      type="button"
+                      className="secondary-action secondary-action--ghost"
+                      onClick={() => handleRemoveTransportistaFromList(item.id)}
+                    >
+                      Quitar
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
         </div>
 
         <div className="reclamo-section">
@@ -4051,6 +5408,10 @@ const CreateReclamoPage: React.FC = () => {
 const ReclamoDetailPage: React.FC = () => {
   const { reclamoId } = useParams<{ reclamoId: string }>();
   const navigate = useNavigate();
+  const location = useLocation();
+  const locationState = location.state as
+    | { transportistas?: ReclamoTransportistaSummary[] }
+    | undefined;
   const apiBaseUrl = useMemo(() => resolveApiBaseUrl(), []);
   const [detail, setDetail] = useState<ReclamoDetail | null>(null);
   const [loading, setLoading] = useState(true);
@@ -4078,20 +5439,32 @@ const ReclamoDetailPage: React.FC = () => {
   const [documentMessage, setDocumentMessage] = useState<string | null>(null);
   const [documentError, setDocumentError] = useState<string | null>(null);
   const transportistaInfo = detail?.transportistaDetail;
+  const initialTransportistasRef = useRef<ReclamoTransportistaSummary[] | undefined>(
+    locationState?.transportistas
+  );
 
   const shouldRefreshFormRef = useRef(true);
 
-  const applyDetail = useCallback((data: ReclamoDetail, options?: { refreshForm?: boolean }) => {
-    if (options && Object.prototype.hasOwnProperty.call(options, 'refreshForm')) {
-      shouldRefreshFormRef.current = !!options.refreshForm;
-    } else {
-      shouldRefreshFormRef.current = true;
-    }
-    setDetail({
-      ...data,
-      documents: data.documents ?? [],
-    });
-  }, []);
+  const applyDetail = useCallback(
+    (data: ReclamoDetail, options?: { refreshForm?: boolean }) => {
+      if (options && Object.prototype.hasOwnProperty.call(options, 'refreshForm')) {
+        shouldRefreshFormRef.current = !!options.refreshForm;
+      } else {
+        shouldRefreshFormRef.current = true;
+      }
+      const normalizedTransportistas =
+        data.transportistas && data.transportistas.length > 0
+          ? data.transportistas
+          : initialTransportistasRef.current ?? [];
+
+      setDetail({
+        ...data,
+        transportistas: normalizedTransportistas,
+        documents: data.documents ?? [],
+      });
+    },
+    [initialTransportistasRef]
+  );
 
   useEffect(() => {
     if (!reclamoId) {
@@ -4595,6 +5968,28 @@ const ReclamoDetailPage: React.FC = () => {
                 Descargar datos
               </button>
             </div>
+            {Array.isArray(detail.transportistas) && detail.transportistas.length > 1 ? (
+              <div className="transportista-associated-list">
+                <p className="section-helper">
+                  {`Este reclamo incluye ${detail.transportistas.length} transportistas.`}
+                </p>
+                <ul>
+                  {detail.transportistas.map((item, index) => (
+                    <li key={item.id ?? `${item.nombre ?? 'transportista'}-${index}`}>
+                      <span>{item.nombre ?? `Transportista #${item.id ?? index + 1}`}</span>
+                      <small>
+                        {item.cliente ?? 'Cliente no registrado'}
+                        {item.patente
+                          ? ` · ${item.patente}`
+                          : item.unidad
+                          ? ` · ${item.unidad}`
+                          : ''}
+                      </small>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
             <div className="reclamo-card-grid">
               {renderReadOnlyField('Nombre completo', transportistaInfo?.nombreCompleto ?? detail.transportista)}
               {renderReadOnlyField('CUIL', transportistaInfo?.cuil ?? '')}
@@ -15159,6 +16554,8 @@ const App: React.FC = () => {
     <Routes>
       <Route path="/" element={<LoginPage />} />
       <Route path="/dashboard" element={<Navigate to="/clientes" replace />} />
+      <Route path="/chat" element={<ChatPage />} />
+      <Route path="/informacion-general" element={<GeneralInfoPage />} />
       <Route path="/clientes" element={<DashboardPage />} />
       <Route path="/unidades" element={<UnitsPage />} />
       <Route path="/reclamos" element={<ReclamosPage />} />
