@@ -3406,21 +3406,25 @@ const ChatPage: React.FC = () => {
       url.searchParams.set('userId', currentUserId.toString());
       url.searchParams.set('limit', '200');
 
-      try {
-        const response = await fetch(url.toString());
-        if (!response.ok) {
-          throw new Error('No se pudieron recuperar los mensajes.');
-        }
-        const payload = (await response.json()) as { data?: Array<Record<string, unknown>> };
-        const entries = Array.isArray(payload?.data)
-          ? payload.data.map((item) => normalizeServerMessage(item))
-          : [];
-        persistStoredChatMessages(entries, currentUserId);
-        persistStoredChatBadge(entries, currentUserId);
-        mergeMessagesIntoState(entries, seedContacts);
-      } catch {
-        mergeMessagesIntoState(readStoredChatMessages(currentUserId), seedContacts);
+    try {
+      console.debug('fetchMessagesFromServer url', url.toString());
+      const response = await fetch(url.toString());
+      if (!response.ok) {
+        console.error('chat fetch failed', response.status, response.statusText);
+        throw new Error('No se pudieron recuperar los mensajes.');
       }
+      const payload = (await response.json()) as { data?: Array<Record<string, unknown>> };
+      console.debug('chat fetch response', payload);
+      const entries = Array.isArray(payload?.data)
+        ? payload.data.map((item) => normalizeServerMessage(item))
+        : [];
+      persistStoredChatMessages(entries, currentUserId);
+      persistStoredChatBadge(entries, currentUserId);
+      mergeMessagesIntoState(entries, seedContacts);
+    } catch (error) {
+      console.error('chat fetch error', error);
+      mergeMessagesIntoState(readStoredChatMessages(currentUserId), seedContacts);
+    }
     },
     [apiBaseUrl, currentUserId, mergeMessagesIntoState, normalizeServerMessage]
   );
