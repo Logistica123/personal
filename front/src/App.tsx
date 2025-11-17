@@ -552,6 +552,7 @@ type ChatContact = {
   status: 'online' | 'away' | 'offline';
   lastSeen: string;
   lastMessage: string;
+  lastMessageAt?: string | null;
   avatar?: string | null;
   unread?: number;
 };
@@ -650,6 +651,15 @@ const LOCAL_SOLICITUDES_STORAGE_KEY = 'approvals:localSolicitudes';
 const GENERAL_INFO_STORAGE_KEY = 'generalInfo:entries';
 const GENERAL_INFO_UPDATED_EVENT = 'general-info:updated';
 const CHAT_LOG_STORAGE_KEY = 'dashboard-chat:log';
+const CHAT_BADGE_STORAGE_KEY = 'dashboard-chat:badge';
+const CHAT_BADGE_UPDATED_EVENT = 'dashboard-chat:badge-updated';
+const CHAT_LAST_READ_STORAGE_KEY = 'dashboard-chat:last-read';
+const CHAT_LAST_READ_UPDATED_EVENT = 'dashboard-chat:last-read-updated';
+
+const buildChatStorageKey = (base: string, userId: number | null): string => {
+  const suffix = userId != null ? userId.toString() : 'anon';
+  return `${base}:${suffix}`;
+};
 
 const DEFAULT_GENERAL_INFO_ENTRIES: GeneralInfoEntry[] = [
   {
@@ -885,12 +895,12 @@ const appendAttendanceLog = (record: AttendanceRecord) => {
   window.localStorage.setItem(ATTENDANCE_LOG_KEY, JSON.stringify(trimmed));
 };
 
-const readStoredChatMessages = (): StoredChatMessage[] => {
+const readStoredChatMessages = (currentUserId: number | null): StoredChatMessage[] => {
   if (typeof window === 'undefined') {
     return [];
   }
   try {
-    const raw = window.localStorage.getItem(CHAT_LOG_STORAGE_KEY);
+    const raw = window.localStorage.getItem(buildChatStorageKey(CHAT_LOG_STORAGE_KEY, currentUserId));
     if (!raw) {
       return [];
     }
@@ -901,17 +911,143 @@ const readStoredChatMessages = (): StoredChatMessage[] => {
   }
 };
 
-const persistStoredChatMessages = (messages: StoredChatMessage[]) => {
+const persistStoredChatMessages = (messages: StoredChatMessage[], currentUserId: number | null) => {
   if (typeof window === 'undefined') {
     return;
   }
-  window.localStorage.setItem(CHAT_LOG_STORAGE_KEY, JSON.stringify(messages));
+  window.localStorage.setItem(
+    buildChatStorageKey(CHAT_LOG_STORAGE_KEY, currentUserId),
+    JSON.stringify(messages)
+  );
 };
 
-const appendStoredChatMessage = (entry: StoredChatMessage) => {
-  const log = readStoredChatMessages();
+const readChatLastRead = (currentUserId: number | null): Record<number, string> => {
+  if (typeof window === 'undefined') {
+    return {};
+  }
+  const raw = window.localStorage.getItem(buildChatStorageKey(CHAT_LAST_READ_STORAGE_KEY, currentUserId));
+  if (!raw) {
+    return {};
+  }
+  try {
+    const parsed = JSON.parse(raw) as Record<string, string>;
+    return Object.entries(parsed).reduce<Record<number, string>>((acc, [key, value]) => {
+      const contactId = Number(key);
+      if (!Number.isFinite(contactId) || typeof value !== 'string') {
+        return acc;
+      }
+      acc[contactId] = value;
+      return acc;
+    }, {});
+  } catch {
+    return {};
+  }
+};
+
+const persistChatLastRead = (record: Record<number, string>, currentUserId: number | null) => {
+  if (typeof window === 'undefined') {
+    return;
+  }
+  const normalized = Object.entries(record).reduce<Record<string, string>>((acc, [key, value]) => {
+    const contactId = Number(key);
+    if (!Number.isFinite(contactId) || typeof value !== 'string') {
+      return acc;
+    }
+    acc[contactId.toString()] = value;
+    return acc;
+  }, {});
+  window.localStorage.setItem(
+    buildChatStorageKey(CHAT_LAST_READ_STORAGE_KEY, currentUserId),
+    JSON.stringify(normalized)
+  );
+  window.dispatchEvent(new CustomEvent(CHAT_LAST_READ_UPDATED_EVENT));
+};
+
+const computeUnreadForConversation = (
+  conversation: ChatMessage[],
+  contactId: number,
+  lastReadMap: Record<number, string>
+): number => {
+  const lastRead = lastReadMap[contactId];
+  const lastReadTime = lastRead ? Date.parse(lastRead) : null;
+  return conversation.reduce((acc, message) => {
+    if (message.author !== 'contact') {
+      return acc;
+    }
+    if (!message.timestamp) {
+      return acc;
+    }
+    const messageTime = Date.parse(message.timestamp);
+    if (Number.isNaN(messageTime)) {
+      return acc;
+    }
+    if (lastReadTime !== null && messageTime <= lastReadTime) {
+      return acc;
+    }
+    return acc + 1;
+  }, 0);
+};
+
+const readStoredChatBadge = (currentUserId: number | null): number => {
+  if (typeof window === 'undefined') {
+    return 0;
+  }
+  const raw = window.localStorage.getItem(buildChatStorageKey(CHAT_BADGE_STORAGE_KEY, currentUserId));
+  if (!raw) {
+    return 0;
+  }
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed)) {
+    return 0;
+  }
+  return Math.max(0, Math.floor(parsed));
+};
+
+const persistStoredChatBadge = (messages: StoredChatMessage[], currentUserId: number | null) => {
+  if (typeof window === 'undefined') {
+    return;
+  }
+  if (currentUserId == null) {
+    const key = buildChatStorageKey(CHAT_BADGE_STORAGE_KEY, currentUserId);
+    window.localStorage.setItem(key, '0');
+    window.dispatchEvent(new CustomEvent(CHAT_BADGE_UPDATED_EVENT, { detail: { value: 0, userId: null } }));
+    return;
+  }
+  const lastReadMap = readChatLastRead(currentUserId);
+  const count = messages.reduce((acc, entry) => {
+    if (entry.recipientId !== currentUserId) {
+      return acc;
+    }
+    if (entry.senderId == null || entry.senderId === currentUserId) {
+      return acc;
+    }
+    const senderId = entry.senderId;
+    const lastRead = senderId != null ? lastReadMap[senderId] : null;
+    if (lastRead && entry.timestamp) {
+      const lastReadTime = Date.parse(lastRead);
+      const entryTime = Date.parse(entry.timestamp);
+      if (!Number.isNaN(lastReadTime) && !Number.isNaN(entryTime) && entryTime <= lastReadTime) {
+        return acc;
+      }
+    }
+    return acc + 1;
+  }, 0);
+  const normalized = Math.max(0, Math.floor(count));
+  const key = buildChatStorageKey(CHAT_BADGE_STORAGE_KEY, currentUserId);
+  window.localStorage.setItem(key, normalized.toString());
+  window.dispatchEvent(
+    new CustomEvent(CHAT_BADGE_UPDATED_EVENT, {
+      detail: { value: normalized, userId: currentUserId },
+    })
+  );
+};
+
+const appendStoredChatMessage = (entry: StoredChatMessage, currentUserId: number | null) => {
+  const log = readStoredChatMessages(currentUserId);
   log.push(entry);
-  persistStoredChatMessages(log.slice(-500));
+  const trimmed = log.slice(-500);
+  persistStoredChatMessages(trimmed, currentUserId);
+  persistStoredChatBadge(trimmed, currentUserId);
 };
 
 const computeInitials = (value: string | null | undefined): string => {
@@ -1327,6 +1463,7 @@ const DashboardLayout: React.FC<{
   const [authUser, setAuthUser] = useState<AuthUser | null>(() => readAuthUserFromStorage());
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
+  const [chatBadgeCount, setChatBadgeCount] = useState(() => readStoredChatBadge(authUser?.id ?? null));
   const [notificationsVersion, setNotificationsVersion] = useState(0);
   const [notificationToast, setNotificationToast] = useState<{ id: number; message: string; detail?: string | null } | null>(null);
   const notificationToastTimeoutRef = useRef<number | null>(null);
@@ -1368,6 +1505,46 @@ const DashboardLayout: React.FC<{
       window.removeEventListener('storage', listener);
     };
   }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+    const handleBadgeStorage = (event: Event) => {
+      const custom = event as CustomEvent<{ value?: number; userId?: number | null }>;
+      if (custom.detail?.userId !== authUser?.id) {
+        return;
+      }
+      setChatBadgeCount(
+        custom.detail?.value ?? readStoredChatBadge(authUser?.id ?? null)
+      );
+    };
+    window.addEventListener(CHAT_BADGE_UPDATED_EVENT, handleBadgeStorage);
+    return () => {
+      window.removeEventListener(CHAT_BADGE_UPDATED_EVENT, handleBadgeStorage);
+    };
+  }, [authUser?.id]);
+
+  useEffect(() => {
+    setChatBadgeCount(readStoredChatBadge(authUser?.id ?? null));
+  }, [authUser?.id]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+    const handleStorageEvent = (event: StorageEvent) => {
+      if (
+        event.key === buildChatStorageKey(CHAT_BADGE_STORAGE_KEY, authUser?.id ?? null)
+      ) {
+        setChatBadgeCount(readStoredChatBadge(authUser?.id ?? null));
+      }
+    };
+    window.addEventListener('storage', handleStorageEvent);
+    return () => {
+      window.removeEventListener('storage', handleStorageEvent);
+    };
+  }, [authUser?.id]);
 
   const currentActorId = useMemo(() => (authUser?.id != null ? Number(authUser.id) : null), [authUser?.id]);
 
@@ -2341,8 +2518,14 @@ const DashboardLayout: React.FC<{
               type="button"
               className="topbar-button topbar-button--chat"
               onClick={() => navigate('/chat')}
+              aria-label={chatBadgeCount > 0 ? `Chat (${chatBadgeCount} mensajes)` : 'Chat'}
             >
               Chat
+              {chatBadgeCount > 0 ? (
+                <span className="topbar-button__badge" aria-hidden="true">
+                  {chatBadgeCount > 99 ? '99+' : chatBadgeCount}
+                </span>
+              ) : null}
             </button>
             <button
               type="button"
@@ -2770,6 +2953,7 @@ const fallbackChatContacts: ChatContact[] = [
     status: 'online',
     lastSeen: 'En línea',
     lastMessage: 'Listo, quedó asignado.',
+    lastMessageAt: '2024-10-01T12:00:00.000Z',
     unread: 1,
   },
   {
@@ -2780,6 +2964,7 @@ const fallbackChatContacts: ChatContact[] = [
     status: 'away',
     lastSeen: 'Visto hace 5 min',
     lastMessage: '¿Revisás el reclamo por favor?',
+    lastMessageAt: '2024-09-30T15:40:00.000Z',
     unread: 0,
   },
 ];
@@ -2838,6 +3023,7 @@ const ChatPage: React.FC = () => {
         status,
         lastSeen,
         lastMessage: 'Inicia una conversación',
+        lastMessageAt: null,
         unread: status === 'online' ? 1 : 0,
       };
     },
@@ -2849,7 +3035,9 @@ const ChatPage: React.FC = () => {
       if (currentUserId == null) {
         return;
       }
-      const log = readStoredChatMessages();
+      const log = readStoredChatMessages(currentUserId);
+      persistStoredChatBadge(log, currentUserId);
+      const lastReadMap = readChatLastRead(currentUserId);
       const grouped: Record<number, ChatMessage[]> = {};
       log.forEach((entry) => {
         const isSender = entry.senderId === currentUserId;
@@ -2882,19 +3070,32 @@ const ChatPage: React.FC = () => {
         let updated = base.map((contact) => {
           const conversation = grouped[contact.id] ?? [];
           const last = conversation[conversation.length - 1];
+          const hasConversation = conversation.length > 0;
           const fallbackText =
-            last?.text && last.text.trim().length
-              ? last.text
-              : last?.imageData
-              ? '📷 Imagen'
+            hasConversation && last
+              ? last.text && last.text.trim().length > 0
+                ? last.text
+                : last.imageData
+                ? '📷 Imagen'
+                : contact.lastMessage
               : contact.lastMessage;
-          return last ? { ...contact, lastMessage: fallbackText ?? 'Nueva conversación', unread: contact.unread ?? 0 } : contact;
+          const lastMessageAt = hasConversation
+            ? last?.timestamp ?? contact.lastMessageAt ?? null
+            : contact.lastMessageAt ?? null;
+          const unreadCount = computeUnreadForConversation(conversation, contact.id, lastReadMap);
+          return {
+            ...contact,
+            lastMessage: fallbackText ?? 'Nueva conversación',
+            lastMessageAt,
+            unread: unreadCount,
+          };
         });
         Object.keys(grouped).forEach((idKey) => {
           const contactId = Number(idKey);
           if (!updated.some((contact) => contact.id === contactId)) {
             const conversation = grouped[contactId];
             const last = conversation[conversation.length - 1];
+            const unreadCount = computeUnreadForConversation(conversation, contactId, lastReadMap);
             updated = [
               ...updated,
               {
@@ -2910,10 +3111,19 @@ const ChatPage: React.FC = () => {
                     : last?.imageData
                     ? '📷 Imagen'
                     : 'Nueva conversación') ?? 'Nueva conversación',
-                unread: 0,
+                lastMessageAt: last?.timestamp ?? null,
+                unread: unreadCount,
               },
             ];
           }
+        });
+        updated = [...updated].sort((a, b) => {
+          const aTime = a.lastMessageAt ? Date.parse(a.lastMessageAt) : 0;
+          const bTime = b.lastMessageAt ? Date.parse(b.lastMessageAt) : 0;
+          if (bTime !== aTime) {
+            return bTime - aTime;
+          }
+          return a.name.localeCompare(b.name);
         });
         return updated;
       });
@@ -2978,16 +3188,6 @@ const ChatPage: React.FC = () => {
     window.addEventListener('storage', handleStorageUpdate);
     return () => window.removeEventListener('storage', handleStorageUpdate);
   }, [syncMessagesFromStorage]);
-
-  useEffect(() => {
-    if (contacts.length === 0) {
-      setSelectedContactId(null);
-      return;
-    }
-    if (selectedContactId == null || !contacts.some((contact) => contact.id === selectedContactId)) {
-      setSelectedContactId(contacts[0].id);
-    }
-  }, [contacts, selectedContactId]);
 
   const selectedContact = useMemo(
     () => contacts.find((contact) => contact.id === selectedContactId) ?? null,
@@ -3106,26 +3306,66 @@ const ChatPage: React.FC = () => {
           : contact
       )
     );
-    appendStoredChatMessage({
-      id: newMessage.id,
-      senderId: currentUserId,
-      recipientId: targetContact.id,
-      text: trimmed,
-      timestamp,
-      imageData: pendingImage?.data ?? null,
-      imageName: pendingImage?.name ?? null,
-    });
+    appendStoredChatMessage(
+      {
+        id: newMessage.id,
+        senderId: currentUserId,
+        recipientId: targetContact.id,
+        text: trimmed,
+        timestamp,
+        imageData: pendingImage?.data ?? null,
+        imageName: pendingImage?.name ?? null,
+      },
+      currentUserId
+    );
     syncMessagesFromStorage();
   };
 
-  const handleSelectContact = (contactId: number) => {
-    setSelectedContactId(contactId);
-    setContacts((prev) =>
-      prev.map((contact) =>
-        contact.id === contactId ? { ...contact, unread: 0, lastSeen: 'En línea' } : contact
-      )
-    );
-  };
+  const markContactMessagesRead = useCallback(
+    (contactId: number, upto?: string) => {
+      if (currentUserId == null) {
+        return;
+      }
+      const timestamp = upto ?? new Date().toISOString();
+      const lastRead = readChatLastRead(currentUserId);
+      const previous = lastRead[contactId];
+      if (previous) {
+        const previousTime = Date.parse(previous);
+        const newTime = Date.parse(timestamp);
+        if (!Number.isNaN(previousTime) && !Number.isNaN(newTime) && newTime <= previousTime) {
+          return;
+        }
+      }
+      persistChatLastRead({ ...lastRead, [contactId]: timestamp }, currentUserId);
+      persistStoredChatBadge(readStoredChatMessages(currentUserId), currentUserId);
+    },
+    [currentUserId]
+  );
+
+  const handleSelectContact = useCallback(
+    (contactId: number) => {
+      setSelectedContactId(contactId);
+      const conversation = messagesByContact[contactId] ?? [];
+      const lastTimestamp = conversation[conversation.length - 1]?.timestamp;
+      markContactMessagesRead(contactId, lastTimestamp);
+      setContacts((prev) =>
+        prev.map((contact) =>
+          contact.id === contactId ? { ...contact, unread: 0, lastSeen: 'En línea' } : contact
+        )
+      );
+    },
+    [messagesByContact, markContactMessagesRead]
+  );
+
+  useEffect(() => {
+    if (contacts.length === 0) {
+      setSelectedContactId(null);
+      return;
+    }
+    if (selectedContactId == null || !contacts.some((contact) => contact.id === selectedContactId)) {
+      handleSelectContact(contacts[0].id);
+    }
+  }, [contacts, selectedContactId, handleSelectContact]);
 
   const selectedMessages = selectedContactId ? messagesByContact[selectedContactId] ?? [] : [];
 

@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\Api\AuthController;
+use App\Http\Controllers\Api\ChatMessageController;
 use App\Http\Controllers\Api\ClienteController;
 use App\Http\Controllers\Api\UnidadController;
 use App\Http\Controllers\Api\UserController;
@@ -17,7 +18,7 @@ Route::get('/personal/documentos/tipos', [PersonalDocumentController::class, 'ty
 Route::post('/personal/documentos/tipos', [PersonalDocumentController::class, 'storeType']);
 Route::get('/personal/documentos/tipos/{tipo}', [PersonalDocumentController::class, 'show']);
 Route::put('/personal/documentos/tipos/{tipo}', [PersonalDocumentController::class, 'update']);
-Route::get('/personal/{persona}/liquidaciones', [PersonalDocumentController::class, 'liquidaciones']);
+Route::match(['GET', 'POST'], '/personal/{persona}/liquidaciones', [PersonalDocumentController::class, 'liquidaciones']);
 Route::get('/personal/{persona}/documentos', [PersonalDocumentController::class, 'index']);
 Route::post('/personal/{persona}/documentos', [PersonalDocumentController::class, 'store']);
 Route::put('/personal/{persona}/documentos/{documento}', [PersonalDocumentController::class, 'updateDocument']);
@@ -67,6 +68,7 @@ Route::get('/notificaciones', [NotificationController::class, 'index']);
 Route::post('/notificaciones/{notification}/leer', [NotificationController::class, 'markAsRead']);
 
 Route::get('/attendance', [AttendanceController::class, 'index']);
+Route::match(['GET', 'POST'], '/attendance/logs', [AttendanceController::class, 'index']);
 Route::post('/attendance', [AttendanceController::class, 'store']);
 
 Route::get('/workflow-tasks', [WorkflowTaskController::class, 'index']);
@@ -76,6 +78,9 @@ Route::put('/workflow-tasks/{workflowTask}', [WorkflowTaskController::class, 'up
 Route::post('/workflow-tasks/{workflowTask}/status', [WorkflowTaskController::class, 'updateStatus']);
 Route::delete('/workflow-tasks/{workflowTask}', [WorkflowTaskController::class, 'destroy']);
 Route::get('/workflow-tasks/users', [WorkflowTaskController::class, 'users']);
+
+Route::get('/chat/messages', [ChatMessageController::class, 'index']);
+Route::post('/chat/messages', [ChatMessageController::class, 'store']);
 
 Route::post('/login', [AuthController::class, 'login']);
 
