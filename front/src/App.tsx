@@ -3263,13 +3263,11 @@ const ChatPage: React.FC = () => {
     []
   );
 
-  const syncMessagesFromStorage = useCallback(
-    (seedContacts?: ChatContact[]) => {
+  const mergeMessagesIntoState = useCallback(
+    (log: StoredChatMessage[], seedContacts?: ChatContact[]) => {
       if (currentUserId == null) {
         return;
       }
-      const log = readStoredChatMessages(currentUserId);
-      persistStoredChatBadge(log, currentUserId);
       const lastReadMap = readChatLastRead(currentUserId);
       const grouped: Record<number, ChatMessage[]> = {};
       log.forEach((entry) => {
@@ -3364,6 +3362,69 @@ const ChatPage: React.FC = () => {
     [currentUserId]
   );
 
+  const syncMessagesFromStorage = useCallback(
+    (seedContacts?: ChatContact[]) => {
+      if (currentUserId == null) {
+        return;
+      }
+      const log = readStoredChatMessages(currentUserId);
+      persistStoredChatBadge(log, currentUserId);
+      mergeMessagesIntoState(log, seedContacts);
+    },
+    [currentUserId, mergeMessagesIntoState]
+  );
+
+  const normalizeServerMessage = useCallback(
+    (message: {
+      id?: number | string;
+      senderId?: number | null;
+      recipientId?: number | null;
+      text?: string | null;
+      imageData?: string | null;
+      imageName?: string | null;
+      createdAt?: string | null;
+    }): StoredChatMessage => {
+      return {
+        id: message.id != null ? String(message.id) : uniqueKey(),
+        senderId: message.senderId ?? null,
+        recipientId: message.recipientId ?? null,
+        text: message.text ?? '',
+        timestamp: message.createdAt ?? new Date().toISOString(),
+        imageData: message.imageData ?? null,
+        imageName: message.imageName ?? null,
+      };
+    },
+    []
+  );
+
+  const fetchMessagesFromServer = useCallback(
+    async (seedContacts?: ChatContact[]) => {
+      if (currentUserId == null) {
+        return;
+      }
+      const url = new URL(`${apiBaseUrl}/api/chat/messages`);
+      url.searchParams.set('userId', currentUserId.toString());
+      url.searchParams.set('limit', '200');
+
+      try {
+        const response = await fetch(url.toString());
+        if (!response.ok) {
+          throw new Error('No se pudieron recuperar los mensajes.');
+        }
+        const payload = (await response.json()) as { data?: Array<Record<string, unknown>> };
+        const entries = Array.isArray(payload?.data)
+          ? payload.data.map((item) => normalizeServerMessage(item))
+          : [];
+        persistStoredChatMessages(entries, currentUserId);
+        persistStoredChatBadge(entries, currentUserId);
+        mergeMessagesIntoState(entries, seedContacts);
+      } catch {
+        mergeMessagesIntoState(readStoredChatMessages(currentUserId), seedContacts);
+      }
+    },
+    [apiBaseUrl, currentUserId, mergeMessagesIntoState, normalizeServerMessage]
+  );
+
   useEffect(() => {
     const controller = new AbortController();
     const fetchContacts = async () => {
@@ -3382,7 +3443,7 @@ const ChatPage: React.FC = () => {
         }
         const mapped = payload.data.map(mapUserToContact);
         setContacts(mapped);
-        syncMessagesFromStorage(mapped);
+        fetchMessagesFromServer(mapped);
       } catch (err) {
         if ((err as Error).name !== 'AbortError') {
           setContactsError((err as Error).message ?? 'No se pudo cargar la lista de usuarios.');
@@ -3450,8 +3511,20 @@ const ChatPage: React.FC = () => {
     if (contactsLoading || currentUserId == null) {
       return;
     }
-    syncMessagesFromStorage();
-  }, [contactsLoading, currentUserId, syncMessagesFromStorage]);
+    fetchMessagesFromServer();
+  }, [contactsLoading, currentUserId, fetchMessagesFromServer]);
+
+  useEffect(() => {
+    if (contactsLoading || currentUserId == null) {
+      return undefined;
+    }
+    const interval = window.setInterval(() => {
+      if (!contactsLoading) {
+        fetchMessagesFromServer();
+      }
+    }, 5000);
+    return () => window.clearInterval(interval);
+  }, [contactsLoading, currentUserId, fetchMessagesFromServer]);
 
   const chatLogStorageKey = useMemo(
     () => buildChatStorageKey(CHAT_LOG_STORAGE_KEY, currentUserId),
@@ -3537,7 +3610,7 @@ const ChatPage: React.FC = () => {
     }
   };
 
-  const handleSendMessage = () => {
+  const handleSendMessage = async () => {
     if (!selectedContactId) {
       return;
     }
@@ -3592,7 +3665,7 @@ const ChatPage: React.FC = () => {
           : contact
       )
     );
-    const storedEntry = {
+    const storedEntry: StoredChatMessage = {
       id: newMessage.id,
       senderId: currentUserId,
       recipientId: targetContact.id,
@@ -3605,6 +3678,26 @@ const ChatPage: React.FC = () => {
     appendStoredChatMessage(storedEntry, currentUserId);
     appendStoredChatMessage(storedEntry, targetContact.id);
     syncMessagesFromStorage();
+
+    try {
+      await fetch(`${apiBaseUrl}/api/chat/messages`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          senderId: currentUserId,
+          recipientId: targetContact.id,
+          text: trimmed,
+          imageData: pendingImage?.data ?? null,
+          imageName: pendingImage?.name ?? null,
+        }),
+      });
+    } catch {
+      // ignorar errores de red y confiar en el fallback local
+    } finally {
+      void fetchMessagesFromServer();
+    }
   };
 
   const openConversation = useCallback((contactId: number) => {
