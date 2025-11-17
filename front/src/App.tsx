@@ -211,6 +211,39 @@ type PendingPersonalUpload = {
   typeId: number;
   typeName: string | null;
   fechaVencimiento: string | null;
+  previewUrl?: string | null;
+};
+
+const createImagePreviewUrl = (file: File): string | null => {
+  if (!file || !file.type || !file.type.startsWith('image/')) {
+    return null;
+  }
+
+  if (typeof URL === 'undefined' || typeof URL.createObjectURL !== 'function') {
+    return null;
+  }
+
+  try {
+    return URL.createObjectURL(file);
+  } catch {
+    return null;
+  }
+};
+
+const revokeImagePreviewUrl = (url?: string | null) => {
+  if (!url) {
+    return;
+  }
+
+  if (typeof URL === 'undefined' || typeof URL.revokeObjectURL !== 'function') {
+    return;
+  }
+
+  try {
+    URL.revokeObjectURL(url);
+  } catch {
+    // ignore errors while revoking
+  }
 };
 
 type LiquidacionDocument = PersonalDetail['documents'][number];
@@ -503,6 +536,43 @@ type ReclamoDocumentItem = {
   size: number | null;
   uploadedAt: string | null;
   uploadedAtLabel: string | null;
+};
+
+const TRANSPORTISTA_CACHE_KEY_PREFIX = 'reclamo-transportistas-';
+
+const getTransportistaCacheKey = (reclamoId: number) => `${TRANSPORTISTA_CACHE_KEY_PREFIX}${reclamoId}`;
+
+const loadTransportistasFromCache = (reclamoId: number): ReclamoTransportistaSummary[] | undefined => {
+  try {
+    const raw = sessionStorage.getItem(getTransportistaCacheKey(reclamoId));
+    if (!raw) {
+      return undefined;
+    }
+
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) {
+      sessionStorage.removeItem(getTransportistaCacheKey(reclamoId));
+      return undefined;
+    }
+
+    return parsed as ReclamoTransportistaSummary[];
+  } catch {
+    return undefined;
+  }
+};
+
+const persistTransportistasToCache = (reclamoId: number, transportistas: ReclamoTransportistaSummary[]) => {
+  const key = getTransportistaCacheKey(reclamoId);
+  if (transportistas.length === 0) {
+    sessionStorage.removeItem(key);
+    return;
+  }
+
+  try {
+    sessionStorage.setItem(key, JSON.stringify(transportistas));
+  } catch {
+    // ignore storage failures
+  }
 };
 
 type ReclamoDetail = ReclamoRecord & {
@@ -1482,6 +1552,17 @@ const DashboardLayout: React.FC<{
     return readAttendanceRecordFromStorage(deriveAttendanceUserKey(storedUser));
   });
   const currentUserKey = useMemo(() => deriveAttendanceUserKey(authUser), [authUser]);
+  const location = useLocation();
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const toggleSidebarVisibility = useCallback(() => {
+    setIsSidebarOpen((prev) => !prev);
+  }, []);
+  const closeSidebar = useCallback(() => {
+    setIsSidebarOpen(false);
+  }, []);
+  useEffect(() => {
+    closeSidebar();
+  }, [location.pathname, closeSidebar]);
   useEffect(() => {
     setAuthUser(readAuthUserFromStorage());
   }, []);
@@ -2382,11 +2463,19 @@ const DashboardLayout: React.FC<{
         </div>
       ) : null}
 
-      <div className="dashboard-shell">
-      <aside className="dashboard-sidebar">
-        <div className="sidebar-logo">
-          <img src="/logo-empresa.png" alt="Logo de la empresa" className="brand-logo" />
-        </div>
+      <div className={`dashboard-shell${isSidebarOpen ? ' is-sidebar-open' : ''}`}>
+        <aside className="dashboard-sidebar">
+          <button
+            type="button"
+            className="sidebar-close"
+            aria-label="Cerrar menú"
+            onClick={closeSidebar}
+          >
+            ×
+          </button>
+          <div className="sidebar-logo">
+            <img src="/logo-empresa.png" alt="Logo de la empresa" className="brand-logo" />
+          </div>
 
         <NavLink
           to="/informacion-general"
@@ -2395,7 +2484,7 @@ const DashboardLayout: React.FC<{
           <span className="sidebar-info-card__title">Información general</span>
         </NavLink>
 
-        <nav className="sidebar-nav">
+        <nav className="sidebar-nav" onClick={closeSidebar}>
           <span className="sidebar-title">Acciones</span>
           <NavLink to="/clientes" className={({ isActive }) => `sidebar-link${isActive ? ' is-active' : ''}`}>
             Gestión de clientes
@@ -2450,8 +2539,60 @@ const DashboardLayout: React.FC<{
           </a>
         </nav>
       </aside>
+      {isSidebarOpen ? (
+        <div className="sidebar-backdrop" onClick={closeSidebar} aria-hidden="true" />
+      ) : null}
 
       <main className="dashboard-content">
+        <div className="mobile-controls">
+          <button
+            type="button"
+            className="sidebar-toggle"
+            aria-label="Alternar menú"
+            onClick={toggleSidebarVisibility}
+          >
+            <span />
+          </button>
+          <div className="notification-anchor notification-anchor--mobile">
+            <button
+              className="topbar-button notification"
+              type="button"
+              aria-label="Notificaciones"
+              onClick={() => navigate('/notificaciones')}
+            >
+              🔔
+              {unreadCount > 0 ? (
+                <span className="notification-count">{Math.min(unreadCount, 99)}</span>
+              ) : null}
+            </button>
+            {notificationToast ? (
+              <div className="notification-toast" role="status" aria-live="polite">
+                <span className="notification-toast__icon" aria-hidden="true">🔔</span>
+                <div className="notification-toast__content">
+                  <strong>Nueva notificación</strong>
+                  <p>{notificationToast.message}</p>
+                  {notificationToast.detail ? (
+                    <small className="notification-toast__detail">{notificationToast.detail}</small>
+                  ) : null}
+                </div>
+                <button
+                  type="button"
+                  className="notification-toast__close"
+                  onClick={() => {
+                    if (notificationToastTimeoutRef.current) {
+                      window.clearTimeout(notificationToastTimeoutRef.current);
+                      notificationToastTimeoutRef.current = null;
+                    }
+                    setNotificationToast(null);
+                  }}
+                  aria-label="Cerrar notificación"
+                >
+                  ×
+                </button>
+              </div>
+            ) : null}
+          </div>
+        </div>
         <header className="dashboard-topbar">
           <div>
             <h1>{title}</h1>
@@ -2463,19 +2604,19 @@ const DashboardLayout: React.FC<{
                 <span className="time-tracker__clock">{formattedClock}</span>
                 <small className="time-tracker__last">{formattedAttendance}</small>
               </div>
-        <div className="time-tracker__actions">
-          {attendanceRecord?.status === 'entrada' ? (
-            <button type="button" className={exitButtonClassName} onClick={() => handleMarkAttendance('salida')}>
-              Salida
-            </button>
-          ) : (
-            <button type="button" className={entryButtonClassName} onClick={() => handleMarkAttendance('entrada')}>
-              Entrada
-            </button>
-          )}
-        </div>
+              <div className="time-tracker__actions">
+                {attendanceRecord?.status === 'entrada' ? (
+                  <button type="button" className={exitButtonClassName} onClick={() => handleMarkAttendance('salida')}>
+                    Salida
+                  </button>
+                ) : (
+                  <button type="button" className={entryButtonClassName} onClick={() => handleMarkAttendance('entrada')}>
+                    Entrada
+                  </button>
+                )}
+              </div>
             </div>
-            <div className="notification-anchor">
+            <div className="notification-anchor notification-anchor--desktop">
               <button
                 className="topbar-button notification"
                 type="button"
@@ -2987,7 +3128,99 @@ const ChatPage: React.FC = () => {
   const [pendingImage, setPendingImage] = useState<{ data: string; name: string | null } | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
-  const quickEmojis = useMemo(() => ['😀', '😂', '😍', '👍', '🙏', '🚚', '✅', '🔥', '💬', '🎉'], []);
+  const quickEmojis = useMemo(
+    () => [
+      '😀',
+      '😂',
+      '😍',
+      '👍',
+      '🙏',
+      '🚚',
+      '✅',
+      '🔥',
+      '💬',
+      '🎉',
+      '🚀',
+      '🌟',
+      '🛠️',
+      '💡',
+      '🎁',
+      '📦',
+      '📢',
+      '🎯',
+      '👋',
+      '🌍',
+      '🧭',
+      '📞',
+      '🧾',
+      '💬',
+      '💼',
+      '📍',
+      '🌐',
+      '🕒',
+      '🎓',
+      '🤝',
+    ],
+    []
+  );
+  const incomingAudioContextRef = useRef<AudioContext | null>(null);
+  const lastMessageCountRef = useRef<Record<number, number>>({});
+
+  const playIncomingTone = useCallback(() => {
+    try {
+      if (!incomingAudioContextRef.current) {
+        const AudioContextConstructor =
+          window.AudioContext ||
+          (window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+        if (!AudioContextConstructor) {
+          return;
+        }
+        incomingAudioContextRef.current = new AudioContextConstructor();
+      }
+      const context = incomingAudioContextRef.current;
+      const scheduleNotes = (startOffset: number) => {
+        const now = context.currentTime + startOffset;
+        const oscillator = context.createOscillator();
+        const gain = context.createGain();
+        oscillator.type = 'triangle';
+        oscillator.frequency.setValueAtTime(780, now);
+        gain.gain.setValueAtTime(0.001, now);
+        gain.gain.exponentialRampToValueAtTime(0.12, now + 0.08);
+        gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.28);
+        oscillator.connect(gain);
+        gain.connect(context.destination);
+        oscillator.start(now);
+        oscillator.stop(now + 0.28);
+        oscillator.onended = () => {
+          oscillator.disconnect();
+          gain.disconnect();
+        };
+      };
+
+      const ensureContext = () => {
+        if (context.state === 'suspended') {
+          return context.resume().catch(() => Promise.resolve());
+        }
+        return Promise.resolve();
+      };
+
+      void ensureContext().then(() => {
+        scheduleNotes(0);
+        scheduleNotes(0.18);
+      });
+    } catch {
+      // ignore audio errors
+    }
+  }, []);
+  const navigate = useNavigate();
+  const params = useParams<{ contactId?: string }>();
+  const routeContactId = useMemo(() => {
+    if (!params.contactId) {
+      return null;
+    }
+    const parsed = Number(params.contactId);
+    return Number.isNaN(parsed) ? null : parsed;
+  }, [params.contactId]);
   const createDownloadLink = useCallback((dataUrl: string, filename?: string) => {
     if (!dataUrl) {
       return;
@@ -3149,17 +3382,11 @@ const ChatPage: React.FC = () => {
         }
         const mapped = payload.data.map(mapUserToContact);
         setContacts(mapped);
-        if (!selectedContactId && mapped.length > 0) {
-          setSelectedContactId(mapped[0].id);
-        }
         syncMessagesFromStorage(mapped);
       } catch (err) {
         if ((err as Error).name !== 'AbortError') {
           setContactsError((err as Error).message ?? 'No se pudo cargar la lista de usuarios.');
           setContacts(fallbackChatContacts);
-          if (!selectedContactId && fallbackChatContacts.length > 0) {
-            setSelectedContactId(fallbackChatContacts[0].id);
-          }
           syncMessagesFromStorage(fallbackChatContacts);
         }
       } finally {
@@ -3170,7 +3397,54 @@ const ChatPage: React.FC = () => {
     fetchContacts();
 
     return () => controller.abort();
-  }, [apiBaseUrl, mapUserToContact, selectedContactId, syncMessagesFromStorage]);
+  }, [apiBaseUrl, mapUserToContact, syncMessagesFromStorage]);
+
+  useEffect(() => {
+    setSelectedContactId(routeContactId);
+  }, [routeContactId]);
+
+  const markContactMessagesRead = useCallback(
+    (contactId: number, upto?: string) => {
+      if (currentUserId == null) {
+        return;
+      }
+      const timestamp = upto ?? new Date().toISOString();
+      const lastRead = readChatLastRead(currentUserId);
+      const previous = lastRead[contactId];
+      if (previous) {
+        const previousTime = Date.parse(previous);
+        const newTime = Date.parse(timestamp);
+        if (!Number.isNaN(previousTime) && !Number.isNaN(newTime) && newTime <= previousTime) {
+          return;
+        }
+      }
+      persistChatLastRead({ ...lastRead, [contactId]: timestamp }, currentUserId);
+      persistStoredChatBadge(readStoredChatMessages(currentUserId), currentUserId);
+    },
+    [currentUserId]
+  );
+
+  const setActiveContact = useCallback(
+    (contactId: number) => {
+      setSelectedContactId(contactId);
+      const conversation = messagesByContact[contactId] ?? [];
+      const lastTimestamp = conversation[conversation.length - 1]?.timestamp;
+      markContactMessagesRead(contactId, lastTimestamp);
+      setContacts((prev) =>
+        prev.map((contact) =>
+          contact.id === contactId ? { ...contact, unread: 0, lastSeen: 'En línea' } : contact
+        )
+      );
+    },
+    [messagesByContact, markContactMessagesRead]
+  );
+
+  useEffect(() => {
+    if (selectedContactId == null) {
+      return;
+    }
+    setActiveContact(selectedContactId);
+  }, [selectedContactId, setActiveContact]);
 
   useEffect(() => {
     if (contactsLoading || currentUserId == null) {
@@ -3179,15 +3453,27 @@ const ChatPage: React.FC = () => {
     syncMessagesFromStorage();
   }, [contactsLoading, currentUserId, syncMessagesFromStorage]);
 
+  const chatLogStorageKey = useMemo(
+    () => buildChatStorageKey(CHAT_LOG_STORAGE_KEY, currentUserId),
+    [currentUserId]
+  );
+
   useEffect(() => {
+    if (currentUserId == null) {
+      return undefined;
+    }
     const handleStorageUpdate = (event: StorageEvent) => {
-      if (event.key === CHAT_LOG_STORAGE_KEY) {
-        syncMessagesFromStorage();
+      if (event.key !== chatLogStorageKey) {
+        return;
       }
+      syncMessagesFromStorage();
     };
     window.addEventListener('storage', handleStorageUpdate);
     return () => window.removeEventListener('storage', handleStorageUpdate);
-  }, [syncMessagesFromStorage]);
+  }, [chatLogStorageKey, currentUserId, syncMessagesFromStorage]);
+
+  const chatMessagesRef = useRef<HTMLDivElement | null>(null);
+  const [shouldAutoScroll, setShouldAutoScroll] = useState(true);
 
   const selectedContact = useMemo(
     () => contacts.find((contact) => contact.id === selectedContactId) ?? null,
@@ -3306,72 +3592,87 @@ const ChatPage: React.FC = () => {
           : contact
       )
     );
-    appendStoredChatMessage(
-      {
-        id: newMessage.id,
-        senderId: currentUserId,
-        recipientId: targetContact.id,
-        text: trimmed,
-        timestamp,
-        imageData: pendingImage?.data ?? null,
-        imageName: pendingImage?.name ?? null,
-      },
-      currentUserId
-    );
+    const storedEntry = {
+      id: newMessage.id,
+      senderId: currentUserId,
+      recipientId: targetContact.id,
+      text: trimmed,
+      timestamp,
+      imageData: pendingImage?.data ?? null,
+      imageName: pendingImage?.name ?? null,
+    };
+
+    appendStoredChatMessage(storedEntry, currentUserId);
+    appendStoredChatMessage(storedEntry, targetContact.id);
     syncMessagesFromStorage();
   };
 
-  const markContactMessagesRead = useCallback(
-    (contactId: number, upto?: string) => {
-      if (currentUserId == null) {
-        return;
-      }
-      const timestamp = upto ?? new Date().toISOString();
-      const lastRead = readChatLastRead(currentUserId);
-      const previous = lastRead[contactId];
-      if (previous) {
-        const previousTime = Date.parse(previous);
-        const newTime = Date.parse(timestamp);
-        if (!Number.isNaN(previousTime) && !Number.isNaN(newTime) && newTime <= previousTime) {
-          return;
-        }
-      }
-      persistChatLastRead({ ...lastRead, [contactId]: timestamp }, currentUserId);
-      persistStoredChatBadge(readStoredChatMessages(currentUserId), currentUserId);
-    },
-    [currentUserId]
-  );
-
-  const handleSelectContact = useCallback(
-    (contactId: number) => {
-      setSelectedContactId(contactId);
-      const conversation = messagesByContact[contactId] ?? [];
-      const lastTimestamp = conversation[conversation.length - 1]?.timestamp;
-      markContactMessagesRead(contactId, lastTimestamp);
-      setContacts((prev) =>
-        prev.map((contact) =>
-          contact.id === contactId ? { ...contact, unread: 0, lastSeen: 'En línea' } : contact
-        )
-      );
-    },
-    [messagesByContact, markContactMessagesRead]
-  );
-
-  useEffect(() => {
-    if (contacts.length === 0) {
-      setSelectedContactId(null);
-      return;
-    }
-    if (selectedContactId == null || !contacts.some((contact) => contact.id === selectedContactId)) {
-      handleSelectContact(contacts[0].id);
-    }
-  }, [contacts, selectedContactId, handleSelectContact]);
+  const openConversation = useCallback((contactId: number) => {
+    navigate(`/chat/${contactId}`);
+  }, [navigate]);
+  const goBackToList = useCallback(() => {
+    navigate('/chat');
+  }, [navigate]);
 
   const selectedMessages = selectedContactId ? messagesByContact[selectedContactId] ?? [] : [];
 
+  const layoutClasses = ['chat-layout'];
+  if (routeContactId) {
+    layoutClasses.push('chat-layout--conversation');
+  }
+
+  useEffect(() => {
+    if (!messagesByContact) {
+      return;
+    }
+    let tonePlayed = false;
+    Object.entries(messagesByContact).forEach(([idKey, conversation]) => {
+      const contactId = Number(idKey);
+      const previousCount = lastMessageCountRef.current[contactId] ?? 0;
+      if (conversation.length > previousCount) {
+        const newMessages = conversation.slice(previousCount);
+        if (!tonePlayed && newMessages.some((message) => message.author === 'contact')) {
+          playIncomingTone();
+          tonePlayed = true;
+        }
+      }
+      lastMessageCountRef.current[contactId] = conversation.length;
+    });
+  }, [messagesByContact, playIncomingTone]);
+
+  const watermarkStyle = useMemo(
+    () =>
+      ({
+        '--chat-watermark': `url(${(process.env.PUBLIC_URL ?? '') + '/logo-empresa.png'})`,
+      } as React.CSSProperties),
+    []
+  );
+
+  const handleMessagesScroll = useCallback(() => {
+    const container = chatMessagesRef.current;
+    if (!container) {
+      return;
+    }
+    const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
+    setShouldAutoScroll(distanceFromBottom <= 40);
+  }, []);
+
+  useEffect(() => {
+    setShouldAutoScroll(true);
+  }, [selectedContactId]);
+
+  useEffect(() => {
+    if (!chatMessagesRef.current) {
+      return;
+    }
+    if (shouldAutoScroll) {
+      chatMessagesRef.current.scrollTop = chatMessagesRef.current.scrollHeight;
+    }
+  }, [selectedMessages, shouldAutoScroll]);
+
   return (
     <DashboardLayout title="Chat" subtitle="Comunicate con tu equipo en tiempo real">
-      <div className="chat-layout">
+      <div className={layoutClasses.join(' ')}>
         <aside className="chat-sidebar">
           <div className="chat-sidebar__header">
             <h3>Conversaciones</h3>
@@ -3404,7 +3705,7 @@ const ChatPage: React.FC = () => {
                     key={contact.id}
                     type="button"
                     className={`chat-contact${isActive ? ' is-active' : ''}`}
-                    onClick={() => handleSelectContact(contact.id)}
+                    onClick={() => openConversation(contact.id)}
                   >
                     <div className="chat-contact__avatar">
                       {contact.avatar ? (
@@ -3416,13 +3717,20 @@ const ChatPage: React.FC = () => {
                     </div>
                     <div className="chat-contact__meta">
                       <strong>{contact.name}</strong>
-                      <small>{contact.client ?? contact.role}</small>
+                      {contact.role ? <small>{contact.role}</small> : null}
                       <p>{contact.lastMessage}</p>
                     </div>
                     <div className="chat-contact__status">
                       <time>{contact.lastSeen}</time>
                       {contact.unread && contact.unread > 0 ? (
                         <span className="chat-contact__badge">{Math.min(contact.unread, 9)}</span>
+                      ) : null}
+                      {contact.unread && contact.unread > 0 ? (
+                        <span className="chat-contact__notification-count">
+                          {contact.unread === 1
+                            ? '1 notificación'
+                            : `${contact.unread} notificaciones`}
+                        </span>
                       ) : null}
                     </div>
                   </button>
@@ -3431,7 +3739,7 @@ const ChatPage: React.FC = () => {
             )}
           </div>
         </aside>
-        <div className="chat-panel">
+        <div className="chat-panel" style={watermarkStyle}>
           {!selectedContact ? (
             <div className="chat-empty-state">
               <h3>Selecciona un contacto</h3>
@@ -3439,6 +3747,9 @@ const ChatPage: React.FC = () => {
             </div>
           ) : (
             <>
+              <button type="button" className="chat-panel__back" onClick={goBackToList}>
+                ← Volver a la lista
+              </button>
               <header className="chat-panel__header">
                 <div>
                   <strong>{selectedContact.name}</strong>
@@ -3448,7 +3759,11 @@ const ChatPage: React.FC = () => {
                 </div>
                 <span>{selectedContact.role}</span>
               </header>
-              <div className="chat-messages">
+              <div
+                ref={chatMessagesRef}
+                className="chat-messages"
+                onScroll={handleMessagesScroll}
+              >
                 {selectedMessages.map((message) => (
                   <div
                     key={message.id}
@@ -5140,6 +5455,10 @@ const CreateReclamoPage: React.FC = () => {
       const newReclamoId = createdReclamo?.id ?? null;
       const currentAttachments = attachments.length > 0 ? [...attachments] : [];
 
+      if (newReclamoId) {
+        persistTransportistasToCache(newReclamoId, createdReclamo.transportistas ?? []);
+      }
+
       if (currentAttachments.length > 0) {
         if (!newReclamoId) {
           setSubmitError('El reclamo se creó, pero no fue posible adjuntar los archivos automáticamente.');
@@ -5692,10 +6011,32 @@ const ReclamoDetailPage: React.FC = () => {
       } else {
         shouldRefreshFormRef.current = true;
       }
-      const normalizedTransportistas =
-        data.transportistas && data.transportistas.length > 0
-          ? data.transportistas
-          : initialTransportistasRef.current ?? [];
+      const apiTransportistas = Array.isArray(data.transportistas) ? data.transportistas : [];
+      const fallbackFromState =
+        initialTransportistasRef.current && initialTransportistasRef.current.length > 0
+          ? initialTransportistasRef.current
+          : [];
+      const cachedTransportistas =
+        data.id != null ? loadTransportistasFromCache(data.id) ?? [] : [];
+
+      const normalizedTransportistas: ReclamoTransportistaSummary[] = (() => {
+        let candidate = apiTransportistas;
+
+        if (fallbackFromState.length > candidate.length) {
+          candidate = fallbackFromState;
+        }
+
+        if (cachedTransportistas.length > candidate.length) {
+          candidate = cachedTransportistas;
+        }
+
+        return candidate;
+      })();
+
+      initialTransportistasRef.current = undefined;
+      if (data.id != null) {
+        persistTransportistasToCache(data.id, normalizedTransportistas);
+      }
 
       setDetail({
         ...data,
@@ -7133,6 +7474,66 @@ const LiquidacionesPage: React.FC = () => {
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState<string | null>(null);
   const [pendingUploads, setPendingUploads] = useState<PendingPersonalUpload[]>([]);
+  const pendingPreviewUrlsRef = useRef<string[]>([]);
+  useEffect(() => {
+    pendingPreviewUrlsRef.current = pendingUploads
+      .map((upload) => upload.previewUrl)
+      .filter((url): url is string => Boolean(url));
+  }, [pendingUploads]);
+
+  useEffect(() => {
+    return () => {
+      pendingPreviewUrlsRef.current.forEach((url) => revokeImagePreviewUrl(url));
+    };
+  }, []);
+  const imagePreviews = useMemo(
+    () =>
+      pendingUploads.filter(
+        (item): item is PendingPersonalUpload & { previewUrl: string } => Boolean(item.previewUrl)
+      ),
+    [pendingUploads]
+  );
+  const [previewModalImage, setPreviewModalImage] = useState<{ url: string; label: string } | null>(null);
+  const openPreviewModal = useCallback((url: string, label: string) => {
+    setPreviewModalImage({ url, label });
+  }, []);
+  const closePreviewModal = useCallback(() => {
+    setPreviewModalImage(null);
+  }, []);
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        closePreviewModal();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [closePreviewModal]);
+  const resolveDocumentPreviewUrl = useCallback(
+    (doc: LiquidacionDocument): string | null => {
+      const rawUrl = doc.absoluteDownloadUrl ?? doc.downloadUrl ?? null;
+      if (!rawUrl) {
+        return null;
+      }
+      return resolveApiUrl(apiBaseUrl, rawUrl);
+    },
+    [apiBaseUrl]
+  );
+  const handlePreviewDocument = useCallback(
+    (doc: LiquidacionDocument) => {
+      if (!doc.mime?.startsWith('image/')) {
+        return;
+      }
+      const previewUrl = resolveDocumentPreviewUrl(doc);
+      if (!previewUrl) {
+        return;
+      }
+      openPreviewModal(previewUrl, doc.nombre ?? `Documento #${doc.id}`);
+    },
+    [openPreviewModal, resolveDocumentPreviewUrl]
+  );
   const [uploading, setUploading] = useState(false);
   const [uploadStatus, setUploadStatus] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
   const [deletingDocumentIds, setDeletingDocumentIds] = useState<Set<number>>(() => new Set());
@@ -7930,15 +8331,30 @@ const LiquidacionesPage: React.FC = () => {
 
   const handleSelectPersona = (registro: PersonalRecord) => {
     setSelectedPersonaId(registro.id);
-    setPendingUploads([]);
+    clearPendingUploads();
     setUploadStatus(null);
     setDocumentExpiry('');
     navigate(`/liquidaciones/${registro.id}`);
   };
 
   const handleRemovePendingUpload = useCallback((id: string) => {
-    setPendingUploads((prev) => prev.filter((item) => item.id !== id));
+    setPendingUploads((prev) => {
+      const target = prev.find((item) => item.id === id);
+      if (target) {
+        revokeImagePreviewUrl(target.previewUrl);
+      }
+      return prev.filter((item) => item.id !== id);
+    });
   }, []);
+
+  const clearPendingUploads = useCallback(() => {
+    setPendingUploads((prev) => {
+      prev.forEach((item) => revokeImagePreviewUrl(item.previewUrl));
+      return [];
+    });
+    pendingPreviewUrlsRef.current = [];
+    closePreviewModal();
+  }, [closePreviewModal]);
 
   const prepareUploadsFromFiles = useCallback(
     (files: File[]): { ok: true; uploads: PendingPersonalUpload[] } | { ok: false; message: string } => {
@@ -7974,6 +8390,7 @@ const LiquidacionesPage: React.FC = () => {
       typeId: effectiveTypeId,
       typeName: (liquidacionType ?? tipo)?.nombre ?? null,
       fechaVencimiento,
+      previewUrl: createImagePreviewUrl(file),
     }));
 
     return { ok: true, uploads };
@@ -8129,7 +8546,7 @@ const LiquidacionesPage: React.FC = () => {
       }
 
       setUploadStatus({ type: 'success', message: 'Liquidaciones cargadas correctamente.' });
-      setPendingUploads([]);
+      clearPendingUploads();
       setDocumentExpiry('');
       refreshPersonaDetail();
     } catch (err) {
@@ -8223,7 +8640,7 @@ const LiquidacionesPage: React.FC = () => {
     setSelectedPersonaId(null);
     setDetail(null);
     setDetailError(null);
-    setPendingUploads([]);
+    clearPendingUploads();
     setUploadStatus(null);
     setDocumentExpiry('');
     navigate('/liquidaciones');
@@ -8554,6 +8971,15 @@ const LiquidacionesPage: React.FC = () => {
                                   >
                                     Descargar
                                   </button>
+                                  {group.main.mime?.startsWith('image/') ? (
+                                    <button
+                                      type="button"
+                                      className="secondary-action secondary-action--ghost"
+                                      onClick={() => handlePreviewDocument(group.main)}
+                                    >
+                                      Vista previa
+                                    </button>
+                                  ) : null}
                                   <button
                                     type="button"
                                     className="secondary-action secondary-action--danger"
@@ -8595,6 +9021,15 @@ const LiquidacionesPage: React.FC = () => {
                                       >
                                         Descargar
                                       </button>
+                                      {attachment.mime?.startsWith('image/') ? (
+                                        <button
+                                          type="button"
+                                          className="secondary-action secondary-action--ghost"
+                                          onClick={() => handlePreviewDocument(attachment)}
+                                        >
+                                          Vista previa
+                                        </button>
+                                      ) : null}
                                       <button
                                         type="button"
                                         className="secondary-action secondary-action--danger"
@@ -8667,10 +9102,29 @@ const LiquidacionesPage: React.FC = () => {
           >
             Pegar captura (Ctrl+V)
           </button>
-          {pendingUploads.length > 0 ? (
-            <ul className="pending-upload-list">
-              {pendingUploads.map((item) => (
-                <li key={item.id}>
+          {imagePreviews.length > 0 ? (
+            <div className="pending-upload-previews">
+              {imagePreviews.map((item) => (
+                <button
+                  type="button"
+                  key={item.id}
+                  className="pending-upload-previews__item"
+                  onClick={() => openPreviewModal(item.previewUrl, item.file.name)}
+                >
+                  <img
+                    src={item.previewUrl}
+                    alt={`Vista previa de ${item.file.name}`}
+                    className="pending-upload-previews__image"
+                  />
+                  <span>{item.file.name}</span>
+                </button>
+              ))}
+            </div>
+          ) : null}
+        {pendingUploads.length > 0 ? (
+          <ul className="pending-upload-list">
+            {pendingUploads.map((item) => (
+              <li key={item.id}>
                   <div>
                     <strong>{item.file.name}</strong>
                     <span>{item.typeName ?? 'Sin tipo asignado'}</span>
@@ -8700,11 +9154,38 @@ const LiquidacionesPage: React.FC = () => {
           </p>
         ) : null}
 
+        {previewModalImage ? (
+          <div
+            className="preview-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-label={`Vista previa de ${previewModalImage.label}`}
+            onClick={closePreviewModal}
+          >
+            <div className="preview-modal__content" onClick={(event) => event.stopPropagation()}>
+              <button
+                type="button"
+                className="preview-modal__close"
+                aria-label="Cerrar vista previa"
+                onClick={closePreviewModal}
+              >
+                ×
+              </button>
+              <img
+                src={previewModalImage.url}
+                alt={`Vista ampliada de ${previewModalImage.label}`}
+                className="preview-modal__image"
+              />
+              <p className="preview-modal__caption">{previewModalImage.label}</p>
+            </div>
+          </div>
+        ) : null}
+
         <div className="form-actions">
           <button
             type="button"
             className="secondary-action"
-            onClick={() => setPendingUploads([])}
+            onClick={clearPendingUploads}
             disabled={pendingUploads.length === 0}
           >
             Limpiar selección
@@ -16795,6 +17276,7 @@ const App: React.FC = () => {
       <Route path="/" element={<LoginPage />} />
       <Route path="/dashboard" element={<Navigate to="/clientes" replace />} />
       <Route path="/chat" element={<ChatPage />} />
+      <Route path="/chat/:contactId" element={<ChatPage />} />
       <Route path="/informacion-general" element={<GeneralInfoPage />} />
       <Route path="/clientes" element={<DashboardPage />} />
       <Route path="/unidades" element={<UnitsPage />} />
