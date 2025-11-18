@@ -664,6 +664,30 @@ type GeneralInfoEntry = {
   imageAlt?: string | null;
 };
 
+type GeneralInfoEntryApi = {
+  id: string;
+  title: string;
+  body: string;
+  created_at: string;
+  author_id?: number | null;
+  author_name?: string | null;
+  author_role?: string | null;
+  image_data?: string | null;
+  image_alt?: string | null;
+};
+
+const mapGeneralInfoApiEntry = (entry: GeneralInfoEntryApi): GeneralInfoEntry => ({
+  id: entry.id,
+  title: entry.title,
+  body: entry.body,
+  createdAt: entry.created_at,
+  authorId: entry.author_id ?? null,
+  authorName: entry.author_name ?? null,
+  authorRole: entry.author_role ?? null,
+  imageData: entry.image_data ?? null,
+  imageAlt: entry.image_alt ?? null,
+});
+
 type EditableSucursal = {
   id: number | null;
   nombre: string;
@@ -2847,6 +2871,7 @@ const DashboardLayout: React.FC<{
 const GeneralInfoPage: React.FC = () => {
   const authUser = useStoredAuthUser();
   const [entries, setEntries] = useState<GeneralInfoEntry[]>(() => readGeneralInfoEntriesFromStorage());
+  const apiBaseUrl = useMemo(() => resolveApiBaseUrl(), []);
   const [title, setTitle] = useState('');
   const [body, setBody] = useState('');
   const [imageData, setImageData] = useState<string | null>(null);
@@ -2861,6 +2886,23 @@ const GeneralInfoPage: React.FC = () => {
     underline: false,
     fontSize: '3',
   });
+
+  const fetchGeneralInfoEntriesFromServer = useCallback(async () => {
+    try {
+      const response = await fetch(`${apiBaseUrl}/api/general-info/posts`);
+      if (!response.ok) {
+        throw new Error(`No se pudieron cargar las publicaciones (${response.status})`);
+      }
+      const payload = (await response.json()) as { data?: GeneralInfoEntryApi[] };
+      const remoteEntries = Array.isArray(payload?.data)
+        ? payload.data.map(mapGeneralInfoApiEntry)
+        : [];
+      setEntries(remoteEntries);
+      persistGeneralInfoEntriesToStorage(remoteEntries);
+    } catch (error) {
+      console.error('fetchGeneralInfoEntriesFromServer failed', error);
+    }
+  }, [apiBaseUrl]);
 
   const isAdmin = useMemo(() => {
     const normalized = authUser?.role?.toLowerCase() ?? '';
@@ -2888,6 +2930,10 @@ const GeneralInfoPage: React.FC = () => {
       window.removeEventListener(GENERAL_INFO_UPDATED_EVENT, handleCustomUpdate as EventListener);
     };
   }, []);
+
+  useEffect(() => {
+    void fetchGeneralInfoEntriesFromServer();
+  }, [fetchGeneralInfoEntriesFromServer]);
 
   const sortedEntries = useMemo(
     () =>
@@ -2956,7 +3002,7 @@ const GeneralInfoPage: React.FC = () => {
     updateFormatState();
   };
 
-  const handlePublish = (event: React.FormEvent<HTMLFormElement>) => {
+  const handlePublish = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
 
     if (!isAdmin) {
@@ -2976,6 +3022,11 @@ const GeneralInfoPage: React.FC = () => {
     }
 
     const normalizedBody = ensureHtmlContent(editorHtml);
+    const authorName =
+      authUser?.name && authUser.name.trim().length > 0
+        ? authUser.name.trim()
+        : authUser?.email ?? 'Administrador';
+    const authorRole = authUser?.role ?? 'Administrador';
 
     const newEntry: GeneralInfoEntry = {
       id: uniqueKey(),
@@ -2983,10 +3034,8 @@ const GeneralInfoPage: React.FC = () => {
       body: normalizedBody,
       createdAt: new Date().toISOString(),
       authorId: authUser?.id ?? null,
-      authorName: (authUser?.name && authUser.name.trim().length > 0
-        ? authUser.name.trim()
-        : authUser?.email) ?? 'Administrador',
-      authorRole: authUser?.role ?? 'Administrador',
+      authorName,
+      authorRole,
       imageData,
       imageAlt: imageName ?? trimmedTitle,
     };
@@ -3005,7 +3054,36 @@ const GeneralInfoPage: React.FC = () => {
       fileInputRef.current.value = '';
     }
     setFormError(null);
-    setFormSuccess('Publicación creada correctamente.');
+    setFormSuccess(null);
+
+    try {
+      const response = await fetch(`${apiBaseUrl}/api/general-info/posts`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          title: trimmedTitle,
+          body: normalizedBody,
+          authorId: authUser?.id ?? null,
+          authorName,
+          authorRole,
+          imageData,
+          imageAlt: imageName ?? trimmedTitle,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`No se pudo subir la publicación (${response.status}).`);
+      }
+
+      await fetchGeneralInfoEntriesFromServer();
+      setFormSuccess('Publicación creada correctamente.');
+    } catch (error) {
+      console.error('handlePublish failed', error);
+      setFormError('No pudimos sincronizar la publicación con el servidor. Se guardó localmente.');
+      setFormSuccess(null);
+    }
   };
 
   const handleImageChange = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -3046,7 +3124,7 @@ const GeneralInfoPage: React.FC = () => {
     }
   };
 
-  const handleDeleteEntry = (entry: GeneralInfoEntry) => {
+  const handleDeleteEntry = async (entry: GeneralInfoEntry) => {
     if (!isAdmin) {
       return;
     }
@@ -3056,6 +3134,24 @@ const GeneralInfoPage: React.FC = () => {
     const nextEntries = entries.filter((item) => item.id !== entry.id);
     setEntries(nextEntries);
     persistGeneralInfoEntriesToStorage(nextEntries);
+    setFormError(null);
+    setFormSuccess(null);
+
+    try {
+      const response = await fetch(`${apiBaseUrl}/api/general-info/posts/${entry.id}`, {
+        method: 'DELETE',
+      });
+      if (!response.ok) {
+        throw new Error(`No se pudo eliminar la publicación (${response.status}).`);
+      }
+      await fetchGeneralInfoEntriesFromServer();
+      setFormSuccess('Publicación eliminada correctamente.');
+    } catch (error) {
+      console.error('handleDeleteEntry failed', error);
+      setFormError('No pudimos eliminar la publicación del servidor.');
+      setFormSuccess(null);
+      await fetchGeneralInfoEntriesFromServer();
+    }
   };
 
   return (

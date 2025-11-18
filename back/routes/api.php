@@ -12,6 +12,7 @@ use App\Http\Controllers\Api\PersonalDocumentController;
 use App\Http\Controllers\Api\PersonalCommentController;
 use App\Http\Controllers\Api\AttendanceController;
 use App\Http\Controllers\Api\WorkflowTaskController;
+use App\Http\Controllers\Api\GeneralInfoController;
 use Illuminate\Support\Facades\Route;
 
 Route::get('/personal/documentos/tipos', [PersonalDocumentController::class, 'types']);
@@ -78,6 +79,10 @@ Route::put('/workflow-tasks/{workflowTask}', [WorkflowTaskController::class, 'up
 Route::post('/workflow-tasks/{workflowTask}/status', [WorkflowTaskController::class, 'updateStatus']);
 Route::delete('/workflow-tasks/{workflowTask}', [WorkflowTaskController::class, 'destroy']);
 Route::get('/workflow-tasks/users', [WorkflowTaskController::class, 'users']);
+
+Route::get('/general-info/posts', [GeneralInfoController::class, 'index']);
+Route::post('/general-info/posts', [GeneralInfoController::class, 'store']);
+Route::delete('/general-info/posts/{post}', [GeneralInfoController::class, 'destroy']);
 
 Route::get('/chat/messages', [ChatMessageController::class, 'index']);
 Route::post('/chat/messages', [ChatMessageController::class, 'store']);
