@@ -2266,9 +2266,9 @@ tbody tr:nth-child(even) {
 
 @media (max-height: 820px) {
   .chat-layout {
-    min-height: auto;
-    max-height: none;
-    overflow: visible;
+    min-height: calc(100vh - 210px);
+    max-height: calc(100vh - 210px);
+    overflow: hidden;
   }
 
   .chat-sidebar,
