@@ -699,6 +699,38 @@ const resolveApiBaseUrl = (): string => {
   return process.env.REACT_APP_API_BASE || 'https://apibasepersonal.distriapp.com.ar';
 };
 
+const getEstadoBadgeClass = (estado?: string | null) => {
+  switch ((estado ?? '').trim().toLowerCase()) {
+    case 'baja':
+      return 'estado-badge--baja';
+    case 'activo':
+      return 'estado-badge--activo';
+    case 'suspendido':
+      return 'estado-badge--suspendido';
+    default:
+      return 'estado-badge--default';
+  }
+};
+
+const tipoLabelOverrides: Record<string, string> = {
+  'dis faltantes': 'Días faltantes',
+  'dis_faltantes': 'Días faltantes',
+  'dis-faltantes': 'Días faltantes',
+  'dias faltantes': 'Días faltantes',
+  'dias_faltantes': 'Días faltantes',
+  'dias-faltantes': 'Días faltantes',
+};
+
+const formatReclamoTipoLabel = (tipo?: string | null): string => {
+  if (!tipo) {
+    return '';
+  }
+
+  const normalized = tipo.trim();
+  const key = normalized.replace(/[_-]/g, ' ').toLowerCase();
+  return tipoLabelOverrides[key as keyof typeof tipoLabelOverrides] ?? normalized;
+};
+
 
 const uniqueKey = () => Math.random().toString(36).slice(2);
 
@@ -4975,7 +5007,7 @@ const ReclamosPage: React.FC = () => {
             : transportistaDisplay.label ?? '',
           reclamo.agente ?? '',
           reclamo.cliente ?? '',
-          reclamo.tipo ?? '',
+          formatReclamoTipoLabel(reclamo.tipo),
           reclamo.statusLabel ?? reclamo.status ?? '',
           reclamo.pagado ? 'Sí' : 'No',
           reclamo.pagado
@@ -5112,7 +5144,7 @@ const ReclamosPage: React.FC = () => {
               <option value="">Tipo de reclamo</option>
               {tipoOptions.map((option) => (
                 <option key={option} value={option}>
-                  {option}
+                  {formatReclamoTipoLabel(option)}
                 </option>
               ))}
             </select>
@@ -5267,7 +5299,7 @@ const ReclamosPage: React.FC = () => {
                     </span>
                   </td>
                   <td>{reclamo.agente ?? '—'}</td>
-                  <td>{reclamo.tipo ?? '—'}</td>
+                  <td>{formatReclamoTipoLabel(reclamo.tipo) || '—'}</td>
                   <td>
                     <span
                       className={`status-badge status-badge--state status-${(reclamo.status ?? '').toLowerCase()}`}
@@ -5346,6 +5378,13 @@ const CreateReclamoPage: React.FC = () => {
     fechaReclamo: '',
   });
   const authUser = useStoredAuthUser();
+  const normalizedUserName = useMemo(
+    () =>
+      authUser?.name?.trim().toLowerCase() ??
+      authUser?.email?.trim().toLowerCase() ??
+      '',
+    [authUser?.name, authUser?.email]
+  );
   const normalizedRole = useMemo(() => authUser?.role?.toLowerCase().trim() ?? '', [authUser?.role]);
   const isAdmin = useMemo(() => normalizedRole.includes('admin'), [normalizedRole]);
   const isOperator = useMemo(
@@ -5421,7 +5460,7 @@ const CreateReclamoPage: React.FC = () => {
     }
 
     setFormValues((prev) => {
-      if (prev.status) {
+      if (prev.status && prev.creatorId) {
         return prev;
       }
 
@@ -5434,11 +5473,36 @@ const CreateReclamoPage: React.FC = () => {
         return prev;
       }
 
-      const defaultCreator = prev.creatorId || (meta.creadores[0]?.id ? String(meta.creadores[0].id) : '');
+      const matchingCreator = meta.creadores.find((creator) => {
+        const normalizedCreatorName = creator.nombre?.trim().toLowerCase() ?? '';
+        return normalizedCreatorName && normalizedCreatorName === normalizedUserName;
+      });
 
-      return { ...prev, status: preferredStatus, creatorId: defaultCreator };
+      const defaultCreatorId =
+        prev.creatorId ||
+        (matchingCreator?.id ? String(matchingCreator.id) : meta.creadores[0]?.id ? String(meta.creadores[0].id) : '');
+
+      return {
+        ...prev,
+        status: preferredStatus,
+        creatorId: defaultCreatorId,
+      };
     });
-  }, [meta]);
+  }, [meta, normalizedUserName]);
+
+  const creatorSelection = useMemo(() => {
+    if (!meta) {
+      return [];
+    }
+    const matchingCreator = meta.creadores.find((creator) => {
+      const normalizedCreatorName = creator.nombre?.trim().toLowerCase() ?? '';
+      return normalizedCreatorName && normalizedCreatorName === normalizedUserName;
+    });
+    if (matchingCreator) {
+      return [matchingCreator];
+    }
+    return meta.creadores;
+  }, [meta, normalizedUserName]);
 
   const transportistaOptions = useMemo(() => {
     if (!meta) {
@@ -6159,7 +6223,7 @@ const CreateReclamoPage: React.FC = () => {
                 <option value="">Seleccionar</option>
                 {meta.tipos.map((tipo) => (
                   <option key={tipo.id} value={tipo.id}>
-                    {tipo.nombre ?? `Tipo #${tipo.id}`}
+                    {formatReclamoTipoLabel(tipo.nombre ?? `Tipo #${tipo.id}`)}
                   </option>
                 ))}
               </select>
@@ -6185,7 +6249,7 @@ const CreateReclamoPage: React.FC = () => {
                 onChange={(event) => setFormValues((prev) => ({ ...prev, creatorId: event.target.value }))}
               >
                 <option value="">Seleccionar</option>
-                {meta.creadores.map((creador) => (
+                {creatorSelection.map((creador) => (
                   <option key={creador.id} value={creador.id}>
                     {creador.nombre ?? `Agente #${creador.id}`}
                   </option>
@@ -6906,6 +6970,10 @@ const ReclamoDetailPage: React.FC = () => {
                 : null}
               {renderReadOnlyField('Teléfono', transportistaInfo?.telefono ?? '')}
               {renderReadOnlyField('Email', transportistaInfo?.email ?? '')}
+              {renderReadOnlyField(
+                'Tipo de reclamo',
+                formatReclamoTipoLabel(detail.tipo) || '—'
+              )}
             </div>
           </section>
 
@@ -7705,7 +7773,15 @@ const PersonalPage: React.FC = () => {
                   <td>{registro.email ?? '—'}</td>
                   <td>{registro.perfil ?? '—'}</td>
                   <td>{registro.agente ?? '—'}</td>
-                  <td>{registro.estado ?? '—'}</td>
+                  <td>
+                    {registro.estado ? (
+                      <span className={`estado-badge ${getEstadoBadgeClass(registro.estado)}`}>
+                        {registro.estado}
+                      </span>
+                    ) : (
+                      '—'
+                    )}
+                  </td>
                   <td>{registro.combustible ?? '—'}</td>
                   <td>{registro.tarifaEspecial ?? '—'}</td>
                   <td>{registro.cliente ?? '—'}</td>
