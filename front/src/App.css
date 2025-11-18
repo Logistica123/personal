@@ -805,6 +805,59 @@
   cursor: pointer;
 }
 
+.chat-toast {
+  position: absolute;
+  top: calc(100% + 0.75rem);
+  right: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.85rem 1rem;
+  border-radius: 12px;
+  background: linear-gradient(135deg, rgba(20, 82, 140, 0.95), rgba(14, 38, 65, 0.95));
+  color: #ffffff;
+  box-shadow: 0 10px 24px rgba(15, 31, 58, 0.2);
+  max-width: 320px;
+  z-index: 10;
+}
+
+.chat-toast__content {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.85rem;
+}
+
+.chat-toast__content p {
+  margin: 0;
+  color: #e2f5ff;
+  font-size: 0.8rem;
+}
+
+.chat-toast__detail {
+  display: block;
+  margin: 0;
+  font-size: 0.75rem;
+  color: #b1d2ff;
+}
+
+.chat-toast__actions {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.chat-toast__actions button {
+  background: #ffffff;
+  border: none;
+  border-radius: 8px;
+  padding: 0.35rem 0.75rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #0c1522;
+  cursor: pointer;
+}
+
 .celebration-overlay {
   position: fixed;
   inset: 0;

@@ -646,6 +646,12 @@ type StoredChatMessage = {
   imageName?: string | null;
 };
 
+type ChatToastPayload = {
+  message: string;
+  senderId: number | null;
+  createdAt: string | null;
+};
+
 type GeneralInfoEntry = {
   id: string;
   title: string;
@@ -1120,6 +1126,24 @@ const appendStoredChatMessage = (entry: StoredChatMessage, currentUserId: number
   persistStoredChatBadge(trimmed, currentUserId);
 };
 
+const normalizeServerMessage = (message: {
+  id?: number | string;
+  senderId?: number | null;
+  recipientId?: number | null;
+  text?: string | null;
+  imageData?: string | null;
+  imageName?: string | null;
+  createdAt?: string | null;
+}): StoredChatMessage => ({
+  id: message.id != null ? String(message.id) : uniqueKey(),
+  senderId: message.senderId ?? null,
+  recipientId: message.recipientId ?? null,
+  text: message.text ?? '',
+  timestamp: message.createdAt ?? new Date().toISOString(),
+  imageData: message.imageData ?? null,
+  imageName: message.imageName ?? null,
+});
+
 const computeInitials = (value: string | null | undefined): string => {
   if (!value) {
     return 'US';
@@ -1534,6 +1558,7 @@ const DashboardLayout: React.FC<{
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
   const [chatBadgeCount, setChatBadgeCount] = useState(() => readStoredChatBadge(authUser?.id ?? null));
+  const [chatToast, setChatToast] = useState<ChatToastPayload | null>(null);
   const [notificationsVersion, setNotificationsVersion] = useState(0);
   const [notificationToast, setNotificationToast] = useState<{ id: number; message: string; detail?: string | null } | null>(null);
   const notificationToastTimeoutRef = useRef<number | null>(null);
@@ -1546,12 +1571,14 @@ const DashboardLayout: React.FC<{
   const [celebration, setCelebration] = useState<{ title: string; message: string; detail?: string | null; notificationId?: number } | null>(null);
   const [fireworks, setFireworks] = useState<Array<{ id: number; left: number; top: number; delay: number; duration: number; color: string }>>([]);
   const celebrationTimeoutRef = useRef<number | null>(null);
+  const chatToastTimeoutRef = useRef<number | null>(null);
   const [currentTime, setCurrentTime] = useState(() => new Date());
   const [attendanceRecord, setAttendanceRecord] = useState<AttendanceRecord | null>(() => {
     const storedUser = readAuthUserFromStorage();
     return readAttendanceRecordFromStorage(deriveAttendanceUserKey(storedUser));
   });
   const currentUserKey = useMemo(() => deriveAttendanceUserKey(authUser), [authUser]);
+  const lastIncomingChatMessageIdRef = useRef<number | null>(null);
   const location = useLocation();
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const toggleSidebarVisibility = useCallback(() => {
@@ -1628,6 +1655,7 @@ const DashboardLayout: React.FC<{
   }, [authUser?.id]);
 
   const currentActorId = useMemo(() => (authUser?.id != null ? Number(authUser.id) : null), [authUser?.id]);
+  const currentUserId = currentActorId;
 
   useEffect(() => {
     if (currentActorId == null) {
@@ -2068,6 +2096,103 @@ const DashboardLayout: React.FC<{
     () => computeInitials(authUser?.name ?? authUser?.email),
     [authUser?.name, authUser?.email]
   );
+
+  const dismissChatToast = useCallback(() => {
+    if (chatToastTimeoutRef.current) {
+      window.clearTimeout(chatToastTimeoutRef.current);
+      chatToastTimeoutRef.current = null;
+    }
+    setChatToast(null);
+  }, []);
+
+  const openChatFromToast = useCallback(() => {
+    dismissChatToast();
+    navigate('/chat');
+  }, [dismissChatToast, navigate]);
+
+  const fetchRecentChatMessages = useCallback(async () => {
+    if (currentUserId == null) {
+      return;
+    }
+
+    const url = new URL(`${apiBaseUrl}/api/chat/messages`);
+    url.searchParams.set('userId', currentUserId.toString());
+    url.searchParams.set('limit', '5');
+    const afterId = lastIncomingChatMessageIdRef.current ?? 0;
+    if (afterId > 0) {
+      url.searchParams.set('afterId', afterId.toString());
+    }
+
+    try {
+      const response = await fetch(url.toString());
+      if (!response.ok) {
+        throw new Error(`No se pudieron recuperar los mensajes (${response.status})`);
+      }
+      const payload = (await response.json()) as { data?: Array<Record<string, unknown>> };
+      const entries = Array.isArray(payload?.data) ? payload.data.map(normalizeServerMessage) : [];
+      const incomingMessages = entries.filter(
+        (entry) => Number(entry.id) > (lastIncomingChatMessageIdRef.current ?? 0)
+      );
+      if (incomingMessages.length === 0) {
+        return;
+      }
+      lastIncomingChatMessageIdRef.current = incomingMessages.reduce(
+        (max, entry) => Math.max(max, Number(entry.id)),
+        lastIncomingChatMessageIdRef.current ?? 0
+      );
+      incomingMessages.forEach((entry) => {
+        appendStoredChatMessage(entry, currentUserId);
+      });
+      const onlyFromOthers = incomingMessages.filter(
+        (entry) => entry.senderId != null && entry.senderId !== currentUserId
+      );
+      if (onlyFromOthers.length > 0) {
+        const latest = onlyFromOthers[onlyFromOthers.length - 1];
+        setChatToast({
+          message: latest.text?.trim().slice(0, 80) ?? 'Nuevo mensaje',
+          senderId: latest.senderId,
+          createdAt: latest.timestamp,
+        });
+      }
+    } catch (error) {
+      console.error('fetchRecentChatMessages failed', error);
+    }
+  }, [apiBaseUrl, currentUserId]);
+
+  useEffect(() => {
+    if (chatToast == null) {
+      return undefined;
+    }
+    if (chatToastTimeoutRef.current) {
+      window.clearTimeout(chatToastTimeoutRef.current);
+    }
+    chatToastTimeoutRef.current = window.setTimeout(() => {
+      chatToastTimeoutRef.current = null;
+      setChatToast(null);
+    }, 6000);
+    return () => {
+      if (chatToastTimeoutRef.current) {
+        window.clearTimeout(chatToastTimeoutRef.current);
+        chatToastTimeoutRef.current = null;
+      }
+    };
+  }, [chatToast]);
+
+  useEffect(() => {
+    if (currentUserId == null) {
+      lastIncomingChatMessageIdRef.current = null;
+      return undefined;
+    }
+    fetchRecentChatMessages();
+    const interval = window.setInterval(() => {
+      fetchRecentChatMessages();
+    }, 8000);
+    return () => window.clearInterval(interval);
+  }, [currentUserId, fetchRecentChatMessages]);
+
+  useEffect(() => {
+    lastIncomingChatMessageIdRef.current = null;
+  }, [currentUserId]);
 
   useEffect(() => {
     if (!currentUserKey) {
@@ -2649,9 +2774,28 @@ const DashboardLayout: React.FC<{
                       setNotificationToast(null);
                     }}
                     aria-label="Cerrar notificación"
-                  >
-                    ×
-                  </button>
+                    >
+                      ×
+                    </button>
+                  </div>
+                ) : null}
+              {chatToast ? (
+                <div className="chat-toast" role="status" aria-live="polite">
+                  <div className="chat-toast__content">
+                    <strong>Nuevo mensaje</strong>
+                    <p>{chatToast.message}</p>
+                    {chatToast.senderId ? (
+                      <small className="chat-toast__detail">Usuario #{chatToast.senderId}</small>
+                    ) : null}
+                  </div>
+                  <div className="chat-toast__actions">
+                    <button type="button" onClick={openChatFromToast}>
+                      Abrir chat
+                    </button>
+                    <button type="button" className="notification-toast__close" onClick={dismissChatToast} aria-label="Cerrar">
+                      ×
+                    </button>
+                  </div>
                 </div>
               ) : null}
             </div>
@@ -3374,28 +3518,6 @@ const ChatPage: React.FC = () => {
     [currentUserId, mergeMessagesIntoState]
   );
 
-  const normalizeServerMessage = useCallback(
-    (message: {
-      id?: number | string;
-      senderId?: number | null;
-      recipientId?: number | null;
-      text?: string | null;
-      imageData?: string | null;
-      imageName?: string | null;
-      createdAt?: string | null;
-    }): StoredChatMessage => {
-      return {
-        id: message.id != null ? String(message.id) : uniqueKey(),
-        senderId: message.senderId ?? null,
-        recipientId: message.recipientId ?? null,
-        text: message.text ?? '',
-        timestamp: message.createdAt ?? new Date().toISOString(),
-        imageData: message.imageData ?? null,
-        imageName: message.imageName ?? null,
-      };
-    },
-    []
-  );
 
   const fetchMessagesFromServer = useCallback(
     async (seedContacts?: ChatContact[]) => {
@@ -3426,7 +3548,7 @@ const ChatPage: React.FC = () => {
       mergeMessagesIntoState(readStoredChatMessages(currentUserId), seedContacts);
     }
     },
-    [apiBaseUrl, currentUserId, mergeMessagesIntoState, normalizeServerMessage]
+    [apiBaseUrl, currentUserId, mergeMessagesIntoState]
   );
 
   useEffect(() => {
