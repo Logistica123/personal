@@ -2118,6 +2118,7 @@ const DashboardLayout: React.FC<{
     const url = new URL(`${apiBaseUrl}/api/chat/messages`);
     url.searchParams.set('userId', currentUserId.toString());
     url.searchParams.set('limit', '5');
+    const isInitialFetch = lastIncomingChatMessageIdRef.current == null;
     const afterId = lastIncomingChatMessageIdRef.current ?? 0;
     if (afterId > 0) {
       url.searchParams.set('afterId', afterId.toString());
@@ -2146,7 +2147,7 @@ const DashboardLayout: React.FC<{
       const onlyFromOthers = incomingMessages.filter(
         (entry) => entry.senderId != null && entry.senderId !== currentUserId
       );
-      if (onlyFromOthers.length > 0) {
+      if (!isInitialFetch && onlyFromOthers.length > 0) {
         const latest = onlyFromOthers[onlyFromOthers.length - 1];
         setChatToast({
           message: latest.text?.trim().slice(0, 80) ?? 'Nuevo mensaje',

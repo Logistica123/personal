@@ -2264,6 +2264,19 @@ tbody tr:nth-child(even) {
   overflow: hidden;
 }
 
+@media (max-height: 820px) {
+  .chat-layout {
+    min-height: auto;
+    max-height: none;
+    overflow: visible;
+  }
+
+  .chat-sidebar,
+  .chat-panel {
+    min-height: 0;
+  }
+}
+
 @media (max-width: 900px) {
   .chat-layout {
     grid-template-columns: 1fr;
@@ -2292,6 +2305,37 @@ tbody tr:nth-child(even) {
   gap: 1rem;
   box-shadow: 0 20px 40px rgba(0, 0, 0, 0.45);
   color: #e9edef;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.35) transparent;
+}
+
+.chat-sidebar::-webkit-scrollbar,
+.chat-panel::-webkit-scrollbar,
+.chat-messages::-webkit-scrollbar,
+.chat-contact-list::-webkit-scrollbar {
+  width: 8px;
+}
+
+.chat-sidebar::-webkit-scrollbar-track,
+.chat-panel::-webkit-scrollbar-track,
+.chat-messages::-webkit-scrollbar-track,
+.chat-contact-list::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.chat-sidebar::-webkit-scrollbar-thumb,
+.chat-panel::-webkit-scrollbar-thumb,
+.chat-messages::-webkit-scrollbar-thumb,
+.chat-contact-list::-webkit-scrollbar-thumb {
+  background-color: rgba(255, 255, 255, 0.35);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+
+.chat-panel::-webkit-scrollbar-thumb,
+.chat-messages::-webkit-scrollbar-thumb {
+  background-color: rgba(255, 255, 255, 0.25);
 }
 
 @media (max-width: 768px) {
@@ -2486,6 +2530,8 @@ tbody tr:nth-child(even) {
   color: #e9edef;
   position: relative;
   overflow: hidden;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.35) transparent;
 }
 
 .chat-panel > * {
@@ -2543,6 +2589,8 @@ tbody tr:nth-child(even) {
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.02);
   min-height: 0;
   max-height: calc(100% - 200px);
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.25) transparent;
 }
 
 .chat-message {
