@@ -7862,6 +7862,9 @@ const LiquidacionesPage: React.FC = () => {
   const [estadoFilter, setEstadoFilter] = useState('');
   const [combustibleFilter, setCombustibleFilter] = useState('');
   const [tarifaFilter, setTarifaFilter] = useState('');
+  const [liquidacionMonthFilter, setLiquidacionMonthFilter] = useState('');
+  const [liquidacionFortnightFilter, setLiquidacionFortnightFilter] = useState('');
+  const [liquidacionYearFilter, setLiquidacionYearFilter] = useState('');
   const [selectedPersonaId, setSelectedPersonaId] = useState<number | null>(personaIdFromRoute);
   const [detail, setDetail] = useState<PersonalDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
@@ -7935,9 +7938,6 @@ const LiquidacionesPage: React.FC = () => {
   const [documentTypesError, setDocumentTypesError] = useState<string | null>(null);
   const [selectedDocumentTypeId, setSelectedDocumentTypeId] = useState('');
   const [documentExpiry, setDocumentExpiry] = useState('');
-  const [liquidacionMonthFilter, setLiquidacionMonthFilter] = useState('');
-  const [liquidacionFortnightFilter, setLiquidacionFortnightFilter] = useState('');
-  const [liquidacionYearFilter, setLiquidacionYearFilter] = useState('');
   const autoRefreshRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [showPasteModal, setShowPasteModal] = useState(false);
   const [pasteError, setPasteError] = useState<string | null>(null);
@@ -9208,6 +9208,29 @@ const LiquidacionesPage: React.FC = () => {
             <option value="">Tarifa especial</option>
             <option value="true">Sí</option>
             <option value="false">No</option>
+          </select>
+        </label>
+        <label className="filter-field">
+          <span>Mes</span>
+          <select value={liquidacionMonthFilter} onChange={(event) => setLiquidacionMonthFilter(event.target.value)}>
+            {MONTH_FILTER_OPTIONS.map((option) => (
+              <option key={`list-month-option-${option.value || 'all'}`} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="filter-field">
+          <span>Quincena</span>
+          <select
+            value={liquidacionFortnightFilter}
+            onChange={(event) => setLiquidacionFortnightFilter(event.target.value)}
+          >
+            {FORTNIGHT_FILTER_OPTIONS.map((option) => (
+              <option key={`list-fortnight-option-${option.value || 'all'}`} value={option.value}>
+                {option.label}
+              </option>
+            ))}
           </select>
         </label>
       </div>
