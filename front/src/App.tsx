@@ -123,6 +123,7 @@ type PersonalRecord = {
   duenoCuilCobrador?: string | null;
   duenoCbuAlias?: string | null;
   duenoObservaciones?: string | null;
+  liquidacionPeriods?: Array<{ monthKey: string; fortnightKey: string }>;
 };
 
 type PersonalDetail = {
@@ -8210,6 +8211,38 @@ const LiquidacionesPage: React.FC = () => {
 
   const filteredPersonal = useMemo(() => {
     const term = searchTerm.trim().toLowerCase();
+    const monthMatches = (monthKey: string): boolean => {
+      if (!liquidacionMonthFilter) {
+        return true;
+      }
+
+      if (liquidacionMonthFilter === 'unknown') {
+        return monthKey === 'unknown';
+      }
+
+      const normalizedFilter = liquidacionMonthFilter.trim();
+
+      if (/^\d{4}-\d{2}$/.test(normalizedFilter)) {
+        return monthKey === normalizedFilter;
+      }
+
+      if (/^\d{2}$/.test(normalizedFilter)) {
+        if (monthKey === 'unknown') {
+          return false;
+        }
+        const monthPart = monthKey.slice(-2);
+        return monthPart === normalizedFilter;
+      }
+
+      return monthKey === normalizedFilter;
+    };
+
+    const fortnightMatches = (fortnightKey: string): boolean => {
+      if (!liquidacionFortnightFilter) {
+        return true;
+      }
+      return fortnightKey === liquidacionFortnightFilter;
+    };
 
     return personal.filter((registro) => {
       if (clienteFilter && registro.cliente !== clienteFilter) {
@@ -8249,6 +8282,14 @@ const LiquidacionesPage: React.FC = () => {
       if (tarifaFilter) {
         const target = tarifaFilter === 'true';
         if (registro.tarifaEspecialValue !== target) {
+          return false;
+        }
+      }
+
+      if (liquidacionMonthFilter || liquidacionFortnightFilter) {
+        const periods = registro.liquidacionPeriods ?? [];
+        const matchesPeriod = periods.some((period) => monthMatches(period.monthKey) && fortnightMatches(period.fortnightKey));
+        if (!matchesPeriod) {
           return false;
         }
       }
@@ -8300,6 +8341,8 @@ const LiquidacionesPage: React.FC = () => {
     estadoFilter,
     combustibleFilter,
     tarifaFilter,
+    liquidacionMonthFilter,
+    liquidacionFortnightFilter,
     perfilNames,
   ]);
 

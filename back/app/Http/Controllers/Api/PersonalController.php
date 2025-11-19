@@ -11,28 +11,52 @@ use App\Models\Estado;
 use App\Models\User;
 use App\Models\FileType;
 use App\Models\Notification;
+use App\Models\Dueno;
+use App\Models\PersonaComment;
+use App\Models\PersonaHistory;
+use App\Models\Archivo;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Str;
 
 class PersonalController extends Controller
 {
     public function index(Request $request): JsonResponse
     {
+        $liquidacionTypeIds = $this->resolveLiquidacionTypeIds();
+
         $query = Persona::query()
             ->with([
-            'cliente:id,nombre',
-            'unidad:id,matricula,marca,modelo',
-            'sucursal:id,nombre',
-            'agente:id,name',
-            'agenteResponsable:id,name',
-            'estado:id,nombre',
-            'dueno:id,persona_id,nombreapellido,fecha_nacimiento,email,telefono,cuil,cuil_cobrador,cbu_alias,observaciones',
-            'aprobadoPor:id,name',
-        ])
+                'cliente:id,nombre',
+                'unidad:id,matricula,marca,modelo',
+                'sucursal:id,nombre',
+                'agente:id,name',
+                'agenteResponsable:id,name',
+                'estado:id,nombre',
+                'dueno:id,persona_id,nombreapellido,fecha_nacimiento,email,telefono,cuil,cuil_cobrador,cbu_alias,observaciones',
+                'aprobadoPor:id,name',
+                'documentos' => function ($documentsQuery) use ($liquidacionTypeIds) {
+                    $documentsQuery
+                        ->select('id', 'persona_id', 'parent_document_id', 'nombre_original', 'tipo_archivo_id', 'fecha_vencimiento', 'created_at')
+                        ->with('tipo:id,nombre');
+
+                    if ($liquidacionTypeIds->isNotEmpty()) {
+                        $documentsQuery->whereIn('tipo_archivo_id', $liquidacionTypeIds);
+                    } else {
+                        $documentsQuery->where(function ($inner) {
+                            $inner
+                                ->whereRaw('LOWER(nombre_original) LIKE ?', ['%liquid%'])
+                                ->orWhereRaw('LOWER(ruta) LIKE ?', ['%liquid%']);
+                        });
+                    }
+
+                    $documentsQuery->whereNull('parent_document_id')->orderByDesc('created_at');
+                },
+            ])
             ->orderByDesc('id');
 
         if ($request->has('esSolicitud')) {
@@ -942,7 +966,79 @@ class PersonalController extends Controller
             'duenoCuilCobrador' => $persona->dueno?->cuil_cobrador,
             'duenoCbuAlias' => $persona->dueno?->cbu_alias,
             'duenoObservaciones' => $persona->dueno?->observaciones,
+            'liquidacionPeriods' => $this->buildLiquidacionPeriods($persona->documentos ?? []),
         ];
+    }
+
+    protected function resolveLiquidacionTypeIds(): \Illuminate\Support\Collection
+    {
+        return FileType::query()
+            ->select('id', 'nombre')
+            ->get()
+            ->filter(function (FileType $tipo) {
+                $nombre = Str::lower($tipo->nombre ?? '');
+                return $nombre !== '' && Str::contains($nombre, 'liquid');
+            })
+            ->pluck('id');
+    }
+
+    protected function buildLiquidacionPeriods(iterable $documents): array
+    {
+        $periods = [];
+        $seen = [];
+
+        foreach ($documents as $document) {
+            if ($document->parent_document_id) {
+                continue;
+            }
+
+            $date = $this->resolveDocumentDate($document);
+            if (! $date) {
+                continue;
+            }
+
+            $monthKey = $date->format('Y-m');
+            $fortnightKey = $this->determineFortnightKey($document, $date);
+            $key = "{$monthKey}|{$fortnightKey}";
+
+            if (isset($seen[$key])) {
+                continue;
+            }
+
+            $seen[$key] = true;
+            $periods[] = [
+                'monthKey' => $monthKey,
+                'fortnightKey' => $fortnightKey,
+            ];
+        }
+
+        return $periods;
+    }
+
+    protected function resolveDocumentDate(Archivo $document): ?Carbon
+    {
+        if ($document->fecha_vencimiento) {
+            return Carbon::parse($document->fecha_vencimiento);
+        }
+
+        return $document->created_at;
+    }
+
+    protected function determineFortnightKey(Archivo $document, Carbon $date): string
+    {
+        if ($this->isMonthlyDocument($document)) {
+            return 'MONTHLY';
+        }
+
+        return $date->day <= 15 ? 'Q1' : 'Q2';
+    }
+
+    protected function isMonthlyDocument(Archivo $document): bool
+    {
+        $descriptor = trim(($document->tipo?->nombre ?? '') . ' ' . ($document->nombre_original ?? ''));
+        $normalized = Str::lower($descriptor);
+
+        return Str::contains($normalized, 'mensual') || Str::contains($normalized, 'mes completo');
     }
 
     protected function formatFechaAlta($value): ?string
