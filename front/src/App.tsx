@@ -14903,6 +14903,14 @@ const PersonalEditPage: React.FC = () => {
     observaciones: '',
     combustible: false,
     tarifaEspecial: false,
+    duenoNombre: '',
+    duenoFechaNacimiento: '',
+    duenoEmail: '',
+    duenoTelefono: '',
+    duenoCuil: '',
+    duenoCuilCobrador: '',
+    duenoCbuAlias: '',
+    duenoObservaciones: '',
   });
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -15031,6 +15039,14 @@ const PersonalEditPage: React.FC = () => {
         patente: payload.data.patente ?? '',
         observacionTarifa: payload.data.observacionTarifa ?? '',
         observaciones: payload.data.observaciones ?? '',
+        duenoNombre: payload.data.duenoNombre ?? '',
+        duenoFechaNacimiento: payload.data.duenoFechaNacimiento ?? '',
+        duenoEmail: payload.data.duenoEmail ?? '',
+        duenoTelefono: payload.data.duenoTelefono ?? '',
+        duenoCuil: payload.data.duenoCuil ?? '',
+        duenoCuilCobrador: payload.data.duenoCuilCobrador ?? '',
+        duenoCbuAlias: payload.data.duenoCbuAlias ?? '',
+        duenoObservaciones: payload.data.duenoObservaciones ?? '',
         combustible: Boolean(payload.data.combustibleValue),
         tarifaEspecial: Boolean(payload.data.tarifaEspecialValue),
       });
@@ -15254,6 +15270,14 @@ const PersonalEditPage: React.FC = () => {
           observaciones: formValues.observaciones.trim() || null,
           combustible: formValues.combustible,
           tarifaEspecial: formValues.tarifaEspecial,
+          duenoNombre: formValues.duenoNombre.trim() || null,
+          duenoFechaNacimiento: formValues.duenoFechaNacimiento || null,
+          duenoEmail: formValues.duenoEmail.trim() || null,
+          duenoTelefono: formValues.duenoTelefono.trim() || null,
+          duenoCuil: formValues.duenoCuil.trim() || null,
+          duenoCuilCobrador: formValues.duenoCuilCobrador.trim() || null,
+          duenoCbuAlias: formValues.duenoCbuAlias.trim() || null,
+          duenoObservaciones: formValues.duenoObservaciones.trim() || null,
         }),
       });
 
@@ -15306,6 +15330,14 @@ const PersonalEditPage: React.FC = () => {
           patente: payload.data.patente ?? '',
           observacionTarifa: payload.data.observacionTarifa ?? '',
           observaciones: payload.data.observaciones ?? '',
+          duenoNombre: payload.data.duenoNombre ?? '',
+          duenoFechaNacimiento: payload.data.duenoFechaNacimiento ?? '',
+          duenoEmail: payload.data.duenoEmail ?? '',
+          duenoTelefono: payload.data.duenoTelefono ?? '',
+          duenoCuil: payload.data.duenoCuil ?? '',
+          duenoCuilCobrador: payload.data.duenoCuilCobrador ?? '',
+          duenoCbuAlias: payload.data.duenoCbuAlias ?? '',
+          duenoObservaciones: payload.data.duenoObservaciones ?? '',
           combustible: Boolean(payload.data.combustibleValue),
           tarifaEspecial: Boolean(payload.data.tarifaEspecialValue),
         });
@@ -15547,6 +15579,84 @@ const PersonalEditPage: React.FC = () => {
           </button>
         </div>
       </section>
+
+      {formValues.perfilValue === 2 ? (
+        <section className="personal-edit-section">
+          <h2>Dueño de la unidad</h2>
+          <div className="form-grid">
+            <label className="input-control">
+              <span>Nombre completo (Dueño)</span>
+              <input
+                type="text"
+                value={formValues.duenoNombre}
+                onChange={(event) => setFormValues((prev) => ({ ...prev, duenoNombre: event.target.value }))}
+                placeholder="Ingresar"
+              />
+            </label>
+            <label className="input-control">
+              <span>Fecha de nacimiento</span>
+              <input
+                type="date"
+                value={formValues.duenoFechaNacimiento}
+                onChange={(event) => setFormValues((prev) => ({ ...prev, duenoFechaNacimiento: event.target.value }))}
+              />
+            </label>
+            <label className="input-control">
+              <span>Correo (Dueño)</span>
+              <input
+                type="email"
+                value={formValues.duenoEmail}
+                onChange={(event) => setFormValues((prev) => ({ ...prev, duenoEmail: event.target.value }))}
+                placeholder="Ingresar"
+              />
+            </label>
+            <label className="input-control">
+              <span>CUIL (Dueño)</span>
+              <input
+                type="text"
+                value={formValues.duenoCuil}
+                onChange={(event) => setFormValues((prev) => ({ ...prev, duenoCuil: event.target.value }))}
+                placeholder="Ingresar"
+              />
+            </label>
+            <label className="input-control">
+              <span>CUIL cobrador</span>
+              <input
+                type="text"
+                value={formValues.duenoCuilCobrador}
+                onChange={(event) => setFormValues((prev) => ({ ...prev, duenoCuilCobrador: event.target.value }))}
+                placeholder="Ingresar"
+              />
+            </label>
+            <label className="input-control">
+              <span>CBU/Alias (Dueño)</span>
+              <input
+                type="text"
+                value={formValues.duenoCbuAlias}
+                onChange={(event) => setFormValues((prev) => ({ ...prev, duenoCbuAlias: event.target.value }))}
+                placeholder="Ingresar"
+              />
+            </label>
+            <label className="input-control">
+              <span>Teléfono (Dueño)</span>
+              <input
+                type="text"
+                value={formValues.duenoTelefono}
+                onChange={(event) => setFormValues((prev) => ({ ...prev, duenoTelefono: event.target.value }))}
+                placeholder="Ingresar"
+              />
+            </label>
+            <label className="input-control" style={{ gridColumn: '1 / -1' }}>
+              <span>Observaciones (Dueño)</span>
+              <textarea
+                rows={2}
+                value={formValues.duenoObservaciones}
+                onChange={(event) => setFormValues((prev) => ({ ...prev, duenoObservaciones: event.target.value }))}
+              />
+            </label>
+          </div>
+        </section>
+      ) : null}
 
       <section className="personal-edit-section">
         <h2>Datos de vinculación</h2>
