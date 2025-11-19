@@ -15551,112 +15551,17 @@ const PersonalEditPage: React.FC = () => {
               Tiene tarifa especial
             </div>
           </label>
-        </div>
-        <label className="input-control">
-          <span>Observación tarifa</span>
-          <textarea
-            value={formValues.observacionTarifa}
-            onChange={(event) => setFormValues((prev) => ({ ...prev, observacionTarifa: event.target.value }))}
-            rows={2}
-          />
-        </label>
-        <label className="input-control">
-          <span>Observaciones</span>
-          <textarea
-            value={formValues.observaciones}
-            onChange={(event) => setFormValues((prev) => ({ ...prev, observaciones: event.target.value }))}
-            rows={3}
-          />
-        </label>
-        {saveError ? <p className="form-info form-info--error">{saveError}</p> : null}
-        {saveSuccess ? <p className="form-info form-info--success">{saveSuccess}</p> : null}
-        <div className="form-actions">
-          <button type="button" className="secondary-action" onClick={() => navigate('/personal')}>
-            Cancelar
-          </button>
-          <button type="button" className="primary-action" onClick={handleSave} disabled={saving}>
-            {saving ? 'Guardando...' : 'Guardar'}
-          </button>
+          <label className="input-control">
+            <span>Observación tarifa</span>
+            <input
+              type="text"
+              value={formValues.observacionTarifa}
+              onChange={(event) => setFormValues((prev) => ({ ...prev, observacionTarifa: event.target.value }))}
+              placeholder="Ingresar"
+            />
+          </label>
         </div>
       </section>
-
-      {formValues.perfilValue === 2 ? (
-        <section className="personal-edit-section">
-          <h2>Dueño de la unidad</h2>
-          <div className="form-grid">
-            <label className="input-control">
-              <span>Nombre completo (Dueño)</span>
-              <input
-                type="text"
-                value={formValues.duenoNombre}
-                onChange={(event) => setFormValues((prev) => ({ ...prev, duenoNombre: event.target.value }))}
-                placeholder="Ingresar"
-              />
-            </label>
-            <label className="input-control">
-              <span>Fecha de nacimiento</span>
-              <input
-                type="date"
-                value={formValues.duenoFechaNacimiento}
-                onChange={(event) => setFormValues((prev) => ({ ...prev, duenoFechaNacimiento: event.target.value }))}
-              />
-            </label>
-            <label className="input-control">
-              <span>Correo (Dueño)</span>
-              <input
-                type="email"
-                value={formValues.duenoEmail}
-                onChange={(event) => setFormValues((prev) => ({ ...prev, duenoEmail: event.target.value }))}
-                placeholder="Ingresar"
-              />
-            </label>
-            <label className="input-control">
-              <span>CUIL (Dueño)</span>
-              <input
-                type="text"
-                value={formValues.duenoCuil}
-                onChange={(event) => setFormValues((prev) => ({ ...prev, duenoCuil: event.target.value }))}
-                placeholder="Ingresar"
-              />
-            </label>
-            <label className="input-control">
-              <span>CUIL cobrador</span>
-              <input
-                type="text"
-                value={formValues.duenoCuilCobrador}
-                onChange={(event) => setFormValues((prev) => ({ ...prev, duenoCuilCobrador: event.target.value }))}
-                placeholder="Ingresar"
-              />
-            </label>
-            <label className="input-control">
-              <span>CBU/Alias (Dueño)</span>
-              <input
-                type="text"
-                value={formValues.duenoCbuAlias}
-                onChange={(event) => setFormValues((prev) => ({ ...prev, duenoCbuAlias: event.target.value }))}
-                placeholder="Ingresar"
-              />
-            </label>
-            <label className="input-control">
-              <span>Teléfono (Dueño)</span>
-              <input
-                type="text"
-                value={formValues.duenoTelefono}
-                onChange={(event) => setFormValues((prev) => ({ ...prev, duenoTelefono: event.target.value }))}
-                placeholder="Ingresar"
-              />
-            </label>
-            <label className="input-control" style={{ gridColumn: '1 / -1' }}>
-              <span>Observaciones (Dueño)</span>
-              <textarea
-                rows={2}
-                value={formValues.duenoObservaciones}
-                onChange={(event) => setFormValues((prev) => ({ ...prev, duenoObservaciones: event.target.value }))}
-              />
-            </label>
-          </div>
-        </section>
-      ) : null}
 
       <section className="personal-edit-section">
         <h2>Datos de vinculación</h2>
@@ -15758,6 +15663,97 @@ const PersonalEditPage: React.FC = () => {
           </label>
         </div>
       </section>
+
+      {formValues.perfilValue === 2 ? (
+        <section className="personal-edit-section">
+          <h2>Dueño de la unidad</h2>
+          <div className="form-grid">
+            <label className="input-control">
+              <span>Nombre completo (Dueño)</span>
+              <input
+                type="text"
+                value={formValues.duenoNombre}
+                onChange={(event) => setFormValues((prev) => ({ ...prev, duenoNombre: event.target.value }))}
+                placeholder="Ingresar"
+              />
+            </label>
+            <label className="input-control">
+              <span>Fecha de nacimiento</span>
+              <input
+                type="date"
+                value={formValues.duenoFechaNacimiento}
+                onChange={(event) => setFormValues((prev) => ({ ...prev, duenoFechaNacimiento: event.target.value }))}
+              />
+            </label>
+            <label className="input-control">
+              <span>Correo (Dueño)</span>
+              <input
+                type="email"
+                value={formValues.duenoEmail}
+                onChange={(event) => setFormValues((prev) => ({ ...prev, duenoEmail: event.target.value }))}
+                placeholder="Ingresar"
+              />
+            </label>
+            <label className="input-control">
+              <span>CUIL (Dueño)</span>
+              <input
+                type="text"
+                value={formValues.duenoCuil}
+                onChange={(event) => setFormValues((prev) => ({ ...prev, duenoCuil: event.target.value }))}
+                placeholder="Ingresar"
+              />
+            </label>
+            <label className="input-control">
+              <span>CUIL cobrador</span>
+              <input
+                type="text"
+                value={formValues.duenoCuilCobrador}
+                onChange={(event) => setFormValues((prev) => ({ ...prev, duenoCuilCobrador: event.target.value }))}
+                placeholder="Ingresar"
+              />
+            </label>
+            <label className="input-control">
+              <span>CBU/Alias (Dueño)</span>
+              <input
+                type="text"
+                value={formValues.duenoCbuAlias}
+                onChange={(event) => setFormValues((prev) => ({ ...prev, duenoCbuAlias: event.target.value }))}
+                placeholder="Ingresar"
+              />
+            </label>
+            <label className="input-control">
+              <span>Teléfono (Dueño)</span>
+              <input
+                type="text"
+                value={formValues.duenoTelefono}
+                onChange={(event) => setFormValues((prev) => ({ ...prev, duenoTelefono: event.target.value }))}
+                placeholder="Ingresar"
+              />
+            </label>
+          </div>
+        </section>
+      ) : null}
+
+    <section className="personal-edit-section">
+      <h2>Observaciones</h2>
+      <label className="input-control">
+        <textarea
+          value={formValues.observaciones}
+          onChange={(event) => setFormValues((prev) => ({ ...prev, observaciones: event.target.value }))}
+          rows={3}
+        />
+      </label>
+      {saveError ? <p className="form-info form-info--error">{saveError}</p> : null}
+      {saveSuccess ? <p className="form-info form-info--success">{saveSuccess}</p> : null}
+      <div className="form-actions">
+        <button type="button" className="secondary-action" onClick={() => navigate('/personal')}>
+          Cancelar
+        </button>
+        <button type="button" className="primary-action" onClick={handleSave} disabled={saving}>
+          {saving ? 'Guardando...' : 'Guardar'}
+        </button>
+      </div>
+    </section>
 
       <section className="personal-edit-section">
         <h2>Historial de cambios</h2>
@@ -16074,7 +16070,7 @@ const PersonalCreatePage: React.FC = () => {
           duenoCuilCobrador: formValues.duenoCuilCobrador.trim() || null,
           duenoCbuAlias: formValues.duenoCbuAlias.trim() || null,
           duenoTelefono: formValues.duenoTelefono.trim() || null,
-          duenoObservaciones: formValues.duenoObservaciones.trim() || null,
+          duenoObservaciones: formValues.observaciones.trim() || null,
           autoApprove: true,
           autoApproveUserId: authUser?.id ?? null,
         }),
