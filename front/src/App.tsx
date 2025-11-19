@@ -281,7 +281,8 @@ const MONTH_FILTER_OPTIONS = [
 ];
 
 const FORTNIGHT_FILTER_OPTIONS = [
-  { value: '', label: 'Todas las quincenas' },
+  { value: '', label: 'Mes completo' },
+  { value: 'MONTHLY', label: 'Liquidación mensual' },
   { value: 'Q1', label: 'Primera quincena' },
   { value: 'Q2', label: 'Segunda quincena' },
   { value: 'NO_DATE', label: 'Sin quincena' },
@@ -7936,6 +7937,7 @@ const LiquidacionesPage: React.FC = () => {
   const [documentExpiry, setDocumentExpiry] = useState('');
   const [liquidacionMonthFilter, setLiquidacionMonthFilter] = useState('');
   const [liquidacionFortnightFilter, setLiquidacionFortnightFilter] = useState('');
+  const [liquidacionYearFilter, setLiquidacionYearFilter] = useState('');
   const autoRefreshRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [showPasteModal, setShowPasteModal] = useState(false);
   const [pasteError, setPasteError] = useState<string | null>(null);
@@ -7943,6 +7945,7 @@ const LiquidacionesPage: React.FC = () => {
   useEffect(() => {
     setLiquidacionMonthFilter('');
     setLiquidacionFortnightFilter('');
+    setLiquidacionYearFilter('');
     setDeletingDocumentIds(new Set<number>());
   }, [selectedPersonaId]);
 
@@ -7965,9 +7968,12 @@ const LiquidacionesPage: React.FC = () => {
     }
     return documentTypes.find((tipo) => tipo.id === targetId) ?? null;
   }, [documentTypes, selectedDocumentTypeId]);
-  const liquidacionType = useMemo(() => {
-    return documentTypes.find((tipo) => (tipo.nombre ?? '').toLowerCase().includes('liquid'));
+  const liquidacionTypeOptions = useMemo(() => {
+    return documentTypes.filter((tipo) => (tipo.nombre ?? '').toLowerCase().includes('liquid'));
   }, [documentTypes]);
+  const liquidacionType = useMemo(() => {
+    return liquidacionTypeOptions[0] ?? null;
+  }, [liquidacionTypeOptions]);
 
   useEffect(() => {
     if (personaIdFromRoute !== selectedPersonaId) {
@@ -8553,12 +8559,25 @@ const LiquidacionesPage: React.FC = () => {
         : 'unknown';
       const monthLabel = date ? capitalize(monthFormatter.format(date)) : 'Sin fecha';
 
-      const quincenaKey = date ? (date.getDate() <= 15 ? 'Q1' : 'Q2') : 'NO_DATE';
-      const quincenaLabel = date
-        ? date.getDate() <= 15
-          ? 'Primera quincena (1-15)'
-          : 'Segunda quincena (16-fin)'
-        : 'Sin fecha definida';
+      const normalizedTypeName = (
+        (group.main.tipoNombre ?? '') + (group.main.nombre ?? '')
+      ).toLowerCase();
+      const isMonthlyDocument = normalizedTypeName.includes('mensual');
+
+      const quincenaKey = isMonthlyDocument
+        ? 'MONTHLY'
+        : date
+          ? date.getDate() <= 15
+            ? 'Q1'
+            : 'Q2'
+          : 'NO_DATE';
+      const quincenaLabel = isMonthlyDocument
+        ? 'Liquidación mensual'
+        : date
+          ? date.getDate() <= 15
+            ? 'Primera quincena (1-15)'
+            : 'Segunda quincena (16-fin)'
+          : 'Sin fecha definida';
 
       const monthBucket = monthMap.get(monthKey) ?? {
         monthKey,
@@ -8579,12 +8598,16 @@ const LiquidacionesPage: React.FC = () => {
 
     const quincenaOrder = (key: string): number => {
       switch (key) {
-        case 'Q1':
+        case 'MONTHLY':
           return 0;
-        case 'Q2':
+        case 'Q1':
           return 1;
-        default:
+        case 'Q2':
           return 2;
+        case 'NO_DATE':
+          return 3;
+        default:
+          return 4;
       }
     };
 
@@ -8621,12 +8644,51 @@ const LiquidacionesPage: React.FC = () => {
     return MONTH_FILTER_OPTIONS.filter((option) => option.value !== 'unknown' || hasUnknown);
   }, [liquidacionFortnightSections]);
 
+  const liquidacionYearOptions = useMemo(() => {
+    const years = new Set<string>();
+    let hasUnknown = false;
+
+    liquidacionFortnightSections.forEach((section) => {
+      if (section.monthKey === 'unknown') {
+        hasUnknown = true;
+        return;
+      }
+      const [year] = section.monthKey.split('-');
+      if (year) {
+        years.add(year);
+      }
+    });
+
+    const sortedYears = Array.from(years).sort((a, b) => b.localeCompare(a));
+    const options = [
+      { value: '', label: 'Todos los años' },
+      ...sortedYears.map((year) => ({ value: year, label: year })),
+    ];
+    if (hasUnknown) {
+      options.push({ value: 'unknown', label: 'Sin fecha' });
+    }
+
+    return options;
+  }, [liquidacionFortnightSections]);
+
   const liquidacionFortnightOptions = useMemo(() => {
     const hasNoDateSection = liquidacionFortnightSections.some((month) =>
       month.sections.some((section) => section.key === 'NO_DATE')
     );
 
-    return FORTNIGHT_FILTER_OPTIONS.filter((option) => option.value !== 'NO_DATE' || hasNoDateSection);
+    const hasMonthlySection = liquidacionFortnightSections.some((month) =>
+      month.sections.some((section) => section.key === 'MONTHLY')
+    );
+
+    return FORTNIGHT_FILTER_OPTIONS.filter((option) => {
+      if (option.value === 'NO_DATE') {
+        return hasNoDateSection;
+      }
+      if (option.value === 'MONTHLY') {
+        return hasMonthlySection;
+      }
+      return true;
+    });
   }, [liquidacionFortnightSections]);
 
   const resolveFilteredTargetDate = useCallback((): string | null => {
@@ -8637,29 +8699,37 @@ const LiquidacionesPage: React.FC = () => {
     let year: number | null = null;
     let month: number | null = null;
 
-    const now = new Date();
-
     if (/^\d{4}-\d{2}$/.test(liquidacionMonthFilter)) {
       year = Number(liquidacionMonthFilter.slice(0, 4));
       month = Number(liquidacionMonthFilter.slice(5));
     } else if (/^\d{2}$/.test(liquidacionMonthFilter)) {
-      year = now.getFullYear();
       month = Number(liquidacionMonthFilter);
     }
 
-    if (
-      year === null ||
-      Number.isNaN(year) ||
-      month === null ||
-      Number.isNaN(month) ||
-      month < 1 ||
-      month > 12
-    ) {
+    if (!month || Number.isNaN(month)) {
+      return null;
+    }
+
+    if (liquidacionYearFilter) {
+      if (liquidacionYearFilter === 'unknown') {
+        return null;
+      }
+      const parsedYear = Number(liquidacionYearFilter);
+      if (!Number.isNaN(parsedYear)) {
+        year = parsedYear;
+      }
+    }
+
+    if (year === null) {
+      year = new Date().getFullYear();
+    }
+
+    if (Number.isNaN(year) || month < 1 || month > 12) {
       return null;
     }
 
     let day: number;
-    if (liquidacionFortnightFilter === 'Q2') {
+    if (liquidacionFortnightFilter === 'Q2' || liquidacionFortnightFilter === 'MONTHLY') {
       day = new Date(year, month, 0).getDate();
     } else if (liquidacionFortnightFilter === 'Q1') {
       day = 15;
@@ -8668,12 +8738,29 @@ const LiquidacionesPage: React.FC = () => {
     }
 
     return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-  }, [liquidacionMonthFilter, liquidacionFortnightFilter]);
+  }, [liquidacionFortnightFilter, liquidacionMonthFilter, liquidacionYearFilter]);
 
   const filteredLiquidacionSections = useMemo(() => {
     if (liquidacionFortnightSections.length === 0) {
       return [] as LiquidacionFortnightSection[];
     }
+
+    const matchesYear = (monthSection: LiquidacionFortnightSection): boolean => {
+      if (!liquidacionYearFilter) {
+        return true;
+      }
+
+      if (liquidacionYearFilter === 'unknown') {
+        return monthSection.monthKey === 'unknown';
+      }
+
+      if (monthSection.monthKey === 'unknown') {
+        return false;
+      }
+
+      const yearPart = monthSection.monthKey.slice(0, 4);
+      return /^\d{4}$/.test(yearPart) && yearPart === liquidacionYearFilter;
+    };
 
     const matchesMonth = (monthSection: LiquidacionFortnightSection): boolean => {
       if (!liquidacionMonthFilter) {
@@ -8709,7 +8796,7 @@ const LiquidacionesPage: React.FC = () => {
     };
 
     return liquidacionFortnightSections
-      .filter((monthSection) => matchesMonth(monthSection))
+      .filter((monthSection) => matchesYear(monthSection) && matchesMonth(monthSection))
       .map((monthSection) => {
         const filteredSections = monthSection.sections.filter((section) => matchesFortnight(section.key));
 
@@ -8719,7 +8806,7 @@ const LiquidacionesPage: React.FC = () => {
         };
       })
       .filter((monthSection) => monthSection.sections.length > 0);
-  }, [liquidacionFortnightSections, liquidacionMonthFilter, liquidacionFortnightFilter]);
+  }, [liquidacionFortnightSections, liquidacionMonthFilter, liquidacionFortnightFilter, liquidacionYearFilter]);
 
   const handleSelectPersona = (registro: PersonalRecord) => {
     setSelectedPersonaId(registro.id);
@@ -9285,6 +9372,16 @@ const LiquidacionesPage: React.FC = () => {
 
         <div className="quincena-filters">
           <label>
+            <span>Año</span>
+            <select value={liquidacionYearFilter} onChange={(event) => setLiquidacionYearFilter(event.target.value)}>
+              {liquidacionYearOptions.map((option) => (
+                <option key={`year-option-${option.value || 'all'}`} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
             <span>Mes</span>
             <select value={liquidacionMonthFilter} onChange={(event) => setLiquidacionMonthFilter(event.target.value)}>
               {liquidacionMonthOptions.map((option) => (
@@ -9449,15 +9546,26 @@ const LiquidacionesPage: React.FC = () => {
         <div className="form-grid" style={{ marginTop: '1.5rem' }}>
           <label className="input-control">
             <span>Tipo de documento</span>
-            <input
-              type="text"
-              value={
-                liquidacionType?.nombre
-                  ?? selectedDocumentType?.nombre
-                  ?? 'Liquidación'
-              }
-              readOnly
-            />
+            {liquidacionTypeOptions.length > 1 ? (
+              <select
+                value={selectedDocumentTypeId}
+                onChange={(event) => setSelectedDocumentTypeId(event.target.value)}
+              >
+                {liquidacionTypeOptions.map((tipo) => (
+                  <option key={tipo.id} value={tipo.id}>
+                    {tipo.nombre ?? `Tipo #${tipo.id}`}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <input
+                type="text"
+                value={
+                  liquidacionType?.nombre ?? selectedDocumentType?.nombre ?? 'Liquidación'
+                }
+                readOnly
+              />
+            )}
           </label>
           {selectedDocumentType?.vence ? (
             <label className="input-control">
