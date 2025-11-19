@@ -11112,6 +11112,8 @@ const ApprovalsRequestsPage: React.FC = () => {
   const [solicitudesPerfilFilter, setSolicitudesPerfilFilter] = useState('');
   const [solicitudesAgenteFilter, setSolicitudesAgenteFilter] = useState('');
   const [solicitudesEstadoFilter, setSolicitudesEstadoFilter] = useState('');
+  const [solicitudesClienteFilter, setSolicitudesClienteFilter] = useState('');
+  const [solicitudesSucursalFilter, setSolicitudesSucursalFilter] = useState('');
   const [flash, setFlash] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
   const perfilNames: Record<number, string> = useMemo(
     () => ({
@@ -12749,6 +12751,26 @@ const handleAdelantoFieldChange =
     return Array.from(labels).sort((a, b) => a.localeCompare(b));
   }, [combinedSolicitudes]);
 
+  const solicitudesClienteOptions = useMemo(() => {
+    const labels = new Set<string>();
+    combinedSolicitudes.forEach((registro) => {
+      if (registro.cliente) {
+        labels.add(registro.cliente);
+      }
+    });
+    return Array.from(labels).sort((a, b) => a.localeCompare(b));
+  }, [combinedSolicitudes]);
+
+  const solicitudesSucursalOptions = useMemo(() => {
+    const labels = new Set<string>();
+    combinedSolicitudes.forEach((registro) => {
+      if (registro.sucursal) {
+        labels.add(registro.sucursal);
+      }
+    });
+    return Array.from(labels).sort((a, b) => a.localeCompare(b));
+  }, [combinedSolicitudes]);
+
   const filteredSolicitudes = useMemo(() => {
     const term = solicitudesSearchTerm.trim().toLowerCase();
 
@@ -12764,6 +12786,14 @@ const handleAdelantoFieldChange =
       }
 
       if (solicitudesEstadoFilter && registro.estado !== solicitudesEstadoFilter) {
+        return false;
+      }
+
+      if (solicitudesClienteFilter && registro.cliente !== solicitudesClienteFilter) {
+        return false;
+      }
+
+      if (solicitudesSucursalFilter && registro.sucursal !== solicitudesSucursalFilter) {
         return false;
       }
 
@@ -12793,6 +12823,8 @@ const handleAdelantoFieldChange =
     solicitudesPerfilFilter,
     solicitudesAgenteFilter,
     solicitudesEstadoFilter,
+    solicitudesClienteFilter,
+    solicitudesSucursalFilter,
     perfilNames,
   ]);
 
@@ -12821,6 +12853,8 @@ const handleAdelantoFieldChange =
     setSolicitudesPerfilFilter('');
     setSolicitudesAgenteFilter('');
     setSolicitudesEstadoFilter('');
+    setSolicitudesClienteFilter('');
+    setSolicitudesSucursalFilter('');
   };
 
   const handleGoToList = () => {
@@ -12932,6 +12966,34 @@ const handleAdelantoFieldChange =
             >
               <option value="">Perfil</option>
               {solicitudesPerfilOptions.map((option) => (
+                <option key={option} value={option}>
+                  {option}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="filter-field">
+            <span>Cliente</span>
+            <select
+              value={solicitudesClienteFilter}
+              onChange={(event) => setSolicitudesClienteFilter(event.target.value)}
+            >
+              <option value="">Cliente</option>
+              {solicitudesClienteOptions.map((option) => (
+                <option key={option} value={option}>
+                  {option}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="filter-field">
+            <span>Sucursal</span>
+            <select
+              value={solicitudesSucursalFilter}
+              onChange={(event) => setSolicitudesSucursalFilter(event.target.value)}
+            >
+              <option value="">Sucursal</option>
+              {solicitudesSucursalOptions.map((option) => (
                 <option key={option} value={option}>
                   {option}
                 </option>
