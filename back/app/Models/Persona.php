@@ -36,6 +36,7 @@ class Persona extends Model
         'sucursal_id',
         'agente_id',
         'agente_responsable_id',
+        'agentes_responsables_ids',
         'estado_id',
         'tipo',
         'patente',
@@ -55,6 +56,10 @@ class Persona extends Model
         'created_at',
         'updated_at',
         'deleted_at',
+    ];
+
+    protected $casts = [
+        'agentes_responsables_ids' => 'array',
     ];
 
     public function cliente()

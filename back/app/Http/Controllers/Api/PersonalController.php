@@ -139,6 +139,8 @@ class PersonalController extends Controller
             'perfilValue' => ['nullable', 'integer'],
             'agenteId' => ['nullable', 'integer', 'exists:users,id'],
             'agenteResponsableId' => ['nullable', 'integer', 'exists:users,id'],
+            'agenteResponsableIds' => ['nullable', 'array'],
+            'agenteResponsableIds.*' => ['integer', 'exists:users,id'],
             'clienteId' => ['nullable', 'integer', 'exists:clientes,id'],
             'sucursalId' => ['nullable', 'integer', 'exists:sucursals,id'],
             'unidadId' => ['nullable', 'integer', 'exists:unidades,id'],
@@ -165,6 +167,21 @@ class PersonalController extends Controller
         $ownerHistoryDefinitions = $this->getPersonaOwnerHistoryFieldDefinitions();
         $originalPersonaSnapshot = $this->capturePersonaHistorySnapshot($persona, $personaHistoryDefinitions);
         $originalOwnerSnapshot = $this->capturePersonaOwnerHistorySnapshot($persona->dueno, $ownerHistoryDefinitions);
+        $responsableIds = collect(
+            $this->normalizeResponsableIds($request->input('agenteResponsableIds') ?? [])
+        );
+
+        if (array_key_exists('agenteResponsableId', $validated) && $validated['agenteResponsableId'] !== null) {
+            $responsableIds->prepend((int) $validated['agenteResponsableId']);
+        }
+
+        $responsableIds = $responsableIds
+            ->filter(fn ($id) => $id !== null)
+            ->map(fn ($id) => (int) $id)
+            ->filter(fn ($id) => $id > 0)
+            ->unique()
+            ->values();
+        $primaryResponsableId = $responsableIds->first();
 
         $stringAssignments = [
             'nombres' => 'nombres',
@@ -191,7 +208,6 @@ class PersonalController extends Controller
 
         $integerAssignments = [
             'agenteId' => 'agente_id',
-            'agenteResponsableId' => 'agente_responsable_id',
             'clienteId' => 'cliente_id',
             'sucursalId' => 'sucursal_id',
             'unidadId' => 'unidad_id',
@@ -202,6 +218,11 @@ class PersonalController extends Controller
             if (array_key_exists($inputKey, $validated)) {
                 $persona->{$attribute} = $validated[$inputKey] ?? null;
             }
+        }
+
+        if ($request->has('agenteResponsableId') || $request->has('agenteResponsableIds')) {
+            $persona->agente_responsable_id = $primaryResponsableId ?? null;
+            $persona->agentes_responsables_ids = $responsableIds->isNotEmpty() ? $responsableIds->all() : null;
         }
 
         if (array_key_exists('pago', $validated)) {
@@ -354,6 +375,8 @@ class PersonalController extends Controller
             'perfilValue' => ['nullable', 'integer'],
             'agenteId' => ['nullable', 'integer', 'exists:users,id'],
             'agenteResponsableId' => ['nullable', 'integer', 'exists:users,id'],
+            'agenteResponsableIds' => ['nullable', 'array'],
+            'agenteResponsableIds.*' => ['integer', 'exists:users,id'],
             'clienteId' => ['nullable', 'integer', 'exists:clientes,id'],
             'sucursalId' => ['nullable', 'integer', 'exists:sucursals,id'],
             'unidadId' => ['nullable', 'integer', 'exists:unidades,id'],
@@ -383,6 +406,21 @@ class PersonalController extends Controller
         $autoApproveUserId = $validated['autoApproveUserId'] ?? null;
         $fechaAltaInput = $validated['fechaAlta'] ?? $validated['fechaAltaVinculacion'] ?? null;
         $fechaAltaValue = $fechaAltaInput ? Carbon::parse($fechaAltaInput) : null;
+        $responsableIds = collect(
+            $this->normalizeResponsableIds($request->input('agenteResponsableIds') ?? [])
+        );
+
+        if (array_key_exists('agenteResponsableId', $validated) && $validated['agenteResponsableId'] !== null) {
+            $responsableIds->prepend((int) $validated['agenteResponsableId']);
+        }
+
+        $responsableIds = $responsableIds
+            ->filter(fn ($id) => $id !== null)
+            ->map(fn ($id) => (int) $id)
+            ->filter(fn ($id) => $id > 0)
+            ->unique()
+            ->values();
+        $primaryResponsableId = $responsableIds->first();
 
         $persona = Persona::create([
             'nombres' => $validated['nombres'],
@@ -392,7 +430,8 @@ class PersonalController extends Controller
             'email' => $validated['email'] ?? null,
             'tipo' => $validated['perfilValue'] ?? null,
             'agente_id' => $validated['agenteId'] ?? null,
-            'agente_responsable_id' => $validated['agenteResponsableId'] ?? null,
+            'agente_responsable_id' => $primaryResponsableId,
+            'agentes_responsables_ids' => $responsableIds->isNotEmpty() ? $responsableIds->all() : null,
             'cliente_id' => $validated['clienteId'] ?? null,
             'sucursal_id' => $validated['sucursalId'] ?? null,
             'unidad_id' => $validated['unidadId'] ?? null,
@@ -487,13 +526,24 @@ class PersonalController extends Controller
             ]);
         }
 
+        $estadoId = $validated['estadoId'] ?? null;
+        if ($estadoId === null) {
+            $estadoId = Estado::query()
+                ->whereRaw('LOWER(nombre) = ?', ['activo'])
+                ->value('id');
+        }
+
         $persona->aprobado = true;
         $persona->aprobado_at = Carbon::now();
         $persona->aprobado_por = $validated['userId'] ?? null;
         $persona->es_solicitud = false;
 
-        if (array_key_exists('estadoId', $validated)) {
-            $persona->estado_id = $validated['estadoId'];
+        if ($estadoId !== null) {
+            $persona->estado_id = $estadoId;
+        }
+
+        if (! $persona->fecha_alta) {
+            $persona->fecha_alta = Carbon::now();
         }
 
         $persona->save();
@@ -520,12 +570,10 @@ class PersonalController extends Controller
             $creatorUserName = $firstHistory->user?->name;
         }
 
-        $recipientIds = collect([
-            $persona->agente_id,
-            $persona->agente_responsable_id,
-            $persona->aprobado_por,
-            $creatorUserId,
-        ])
+        $recipientIds = collect($this->getResponsableIds($persona))
+            ->push($persona->agente_id)
+            ->push($persona->aprobado_por)
+            ->push($creatorUserId)
             ->filter(fn ($value) => $value !== null)
             ->map(fn ($value) => (int) $value)
             ->unique();
@@ -571,9 +619,13 @@ class PersonalController extends Controller
 
     protected function notifyAgenteResponsable(Persona $persona): bool
     {
-        $userId = $persona->agente_responsable_id ?? $persona->agente_id;
+        $responsableIds = collect($this->getResponsableIds($persona));
 
-        if (! $userId) {
+        if ($responsableIds->isEmpty() && $persona->agente_id) {
+            $responsableIds->push($persona->agente_id);
+        }
+
+        if ($responsableIds->isEmpty()) {
             return false;
         }
 
@@ -595,65 +647,72 @@ class PersonalController extends Controller
         $hasEntityIdColumn = Schema::hasColumn('notifications', 'entity_id');
         $hasMetadataColumn = Schema::hasColumn('notifications', 'metadata');
 
-        $payload = [
-            'user_id' => $userId,
-        ];
+        $sent = false;
 
-        if ($hasMessageColumn) {
-            $payload['message'] = $message;
-        } elseif ($hasDescriptionColumn) {
-            $payload['description'] = $message;
-        }
-
-        if ($hasTypeColumn) {
-            $payload['type'] = 'personal_alta_registrada';
-        }
-
-        if ($hasEntityTypeColumn) {
-            $payload['entity_type'] = 'persona';
-        }
-
-        if ($hasEntityIdColumn) {
-            $payload['entity_id'] = $persona->id;
-        }
-
-        if ($hasMetadataColumn) {
-            $payload['metadata'] = [
-                'persona_id' => $persona->id,
-                'nombres' => $persona->nombres,
-                'apellidos' => $persona->apellidos,
-            ];
-        }
-
-        try {
-            Notification::create($payload);
-            return true;
-        } catch (QueryException $exception) {
-            report($exception);
-
-            $fallbackPayload = [
+        foreach ($responsableIds as $userId) {
+            $payload = [
                 'user_id' => $userId,
             ];
 
             if ($hasMessageColumn) {
-                $fallbackPayload['message'] = $message;
+                $payload['message'] = $message;
             } elseif ($hasDescriptionColumn) {
-                $fallbackPayload['description'] = $message;
+                $payload['description'] = $message;
             }
 
             if ($hasTypeColumn) {
-                $fallbackPayload['type'] = 'personal_alta_registrada';
+                $payload['type'] = 'personal_alta_registrada';
+            }
+
+            if ($hasEntityTypeColumn) {
+                $payload['entity_type'] = 'persona';
+            }
+
+            if ($hasEntityIdColumn) {
+                $payload['entity_id'] = $persona->id;
+            }
+
+            if ($hasMetadataColumn) {
+                $payload['metadata'] = [
+                    'persona_id' => $persona->id,
+                    'nombres' => $persona->nombres,
+                    'apellidos' => $persona->apellidos,
+                    'agente_id' => $persona->agente_id,
+                    'cliente_id' => $persona->cliente_id,
+                    'patente' => $persona->patente,
+                ];
             }
 
             try {
-                Notification::create($fallbackPayload);
-                return true;
-            } catch (QueryException $retryException) {
-                report($retryException);
+                Notification::create($payload);
+                $sent = true;
+            } catch (QueryException $exception) {
+                report($exception);
+
+                $fallbackPayload = [
+                    'user_id' => $userId,
+                ];
+
+                if ($hasMessageColumn) {
+                    $fallbackPayload['message'] = $message;
+                } elseif ($hasDescriptionColumn) {
+                    $fallbackPayload['description'] = $message;
+                }
+
+                if ($hasTypeColumn) {
+                    $fallbackPayload['type'] = 'personal_alta_registrada';
+                }
+
+                try {
+                    Notification::create($fallbackPayload);
+                    $sent = true;
+                } catch (QueryException $retryException) {
+                    report($retryException);
+                }
             }
         }
 
-        return false;
+        return $sent;
     }
 
     protected function notifySolicitudAprobada(Persona $persona, int $userId, ?string $agenteNombre = null): void
@@ -791,6 +850,8 @@ class PersonalController extends Controller
         $tipo = $persona->tipo;
         $perfilValue = $tipo !== null && $tipo !== '' ? (int) $tipo : null;
         $perfil = $perfilValue !== null ? ($perfilMap[$perfilValue] ?? 'Perfil '.$perfilValue) : null;
+        $responsableIds = $this->getResponsableIds($persona);
+        $responsableNames = $this->resolveResponsableNames($responsableIds);
 
         return [
             'id' => $persona->id,
@@ -805,6 +866,8 @@ class PersonalController extends Controller
             'agenteId' => $persona->agente_id,
             'agenteResponsable' => $persona->agenteResponsable?->name,
             'agenteResponsableId' => $persona->agente_responsable_id,
+            'agentesResponsables' => $responsableNames,
+            'agentesResponsablesIds' => $responsableIds,
             'cliente' => $persona->cliente?->nombre,
             'clienteId' => $persona->cliente_id,
             'sucursal' => $persona->sucursal?->nombre,
@@ -917,6 +980,8 @@ class PersonalController extends Controller
         $perfil = $persona->tipo !== null ? ($perfilMap[$persona->tipo] ?? 'Perfil '.$persona->tipo) : null;
         $aprobadoValor = $persona->aprobado;
         $aprobado = $aprobadoValor === null ? false : (bool) $aprobadoValor;
+        $responsableIds = $this->getResponsableIds($persona);
+        $responsableNames = $this->resolveResponsableNames($responsableIds);
 
         return [
             'id' => $persona->id,
@@ -941,6 +1006,8 @@ class PersonalController extends Controller
             'agenteId' => $persona->agente_id,
             'agenteResponsable' => $persona->agenteResponsable?->name,
             'agenteResponsableId' => $persona->agente_responsable_id,
+            'agentesResponsables' => $responsableNames,
+            'agentesResponsablesIds' => $responsableIds,
             'estado' => $persona->estado?->nombre,
             'estadoId' => $persona->estado_id,
             'combustible' => $persona->combustible ? 'Sí' : 'No',
@@ -1311,6 +1378,41 @@ class PersonalController extends Controller
         $intValue = (int) $value;
 
         return $perfilMap[$intValue] ?? ('Perfil '.$intValue);
+    }
+
+    protected function normalizeResponsableIds($value): array
+    {
+        if (! is_array($value)) {
+            return [];
+        }
+
+        return collect($value)
+            ->filter(fn ($id) => $id !== null && $id !== '')
+            ->map(fn ($id) => (int) $id)
+            ->filter(fn ($id) => $id > 0)
+            ->values()
+            ->all();
+    }
+
+    protected function getResponsableIds(Persona $persona): array
+    {
+        return collect($persona->agentes_responsables_ids ?? [])
+            ->prepend($persona->agente_responsable_id)
+            ->filter(fn ($id) => $id !== null)
+            ->map(fn ($id) => (int) $id)
+            ->filter(fn ($id) => $id > 0)
+            ->unique()
+            ->values()
+            ->all();
+    }
+
+    protected function resolveResponsableNames(array $ids): array
+    {
+        return collect($ids)
+            ->map(fn ($id) => $this->resolveUserName($id))
+            ->filter()
+            ->values()
+            ->all();
     }
 
     protected function resolveUserName(?int $id): ?string

@@ -97,6 +97,8 @@ type PersonalRecord = {
   agenteId?: number | null;
   agenteResponsable?: string | null;
   agenteResponsableId?: number | null;
+  agentesResponsables?: string[] | null;
+  agentesResponsablesIds?: number[] | null;
   estado: string | null;
   estadoId?: number | null;
   combustible: string | null;
@@ -139,6 +141,8 @@ type PersonalDetail = {
   agenteId: number | null;
   agenteResponsable: string | null;
   agenteResponsableId: number | null;
+  agentesResponsables?: string[] | null;
+  agentesResponsablesIds?: number[] | null;
   cliente: string | null;
   clienteId: number | null;
   sucursal: string | null;
@@ -326,6 +330,7 @@ type AltaRequestForm = {
   sucursalId: string;
   agenteId: string;
   agenteResponsableId: string;
+  agenteResponsableIds: string[];
   unidadId: string;
   estadoId: string;
   fechaAltaVinculacion: string;
@@ -394,7 +399,10 @@ type PolizaRequestForm = {
   agenteId: string;
 };
 
-type AltaEditableField = Exclude<keyof AltaRequestForm, 'tarifaEspecial' | 'combustible' | 'perfilValue'>;
+type AltaEditableField = Exclude<
+  keyof AltaRequestForm,
+  'tarifaEspecial' | 'combustible' | 'perfilValue' | 'agenteResponsableIds'
+>;
 
 type AttendanceRecord = {
   status: 'entrada' | 'salida';
@@ -11445,6 +11453,7 @@ const ApprovalsRequestsPage: React.FC = () => {
     sucursalId: '',
     agenteId: '',
     agenteResponsableId: '',
+    agenteResponsableIds: [],
     unidadId: '',
     estadoId: '',
     fechaAltaVinculacion: '',
@@ -11621,6 +11630,20 @@ const ApprovalsRequestsPage: React.FC = () => {
     return () => controller.abort();
   }, [apiBaseUrl]);
 
+  useEffect(() => {
+    if (!authUser?.id || personaIdFromQuery) {
+      return;
+    }
+
+    const authId = String(authUser.id);
+    setAltaForm((prev) => {
+      if (prev.agenteId && prev.agenteId === authId) {
+        return prev;
+      }
+      return { ...prev, agenteId: authId };
+    });
+  }, [authUser?.id, personaIdFromQuery]);
+
   const fetchSolicitudes = useCallback(
     async (options?: { signal?: AbortSignal }) => {
       try {
@@ -11687,6 +11710,13 @@ const ApprovalsRequestsPage: React.FC = () => {
       return;
     }
 
+    const responsableIdsFromDetail =
+      reviewPersonaDetail.agentesResponsablesIds && reviewPersonaDetail.agentesResponsablesIds.length > 0
+        ? reviewPersonaDetail.agentesResponsablesIds
+        : reviewPersonaDetail.agenteResponsableId
+        ? [reviewPersonaDetail.agenteResponsableId]
+        : [];
+
     setAltaForm((prev) => ({
       ...prev,
       perfilValue: reviewPersonaDetail.perfilValue ?? prev.perfilValue,
@@ -11710,6 +11740,7 @@ const ApprovalsRequestsPage: React.FC = () => {
       agenteResponsableId: reviewPersonaDetail.agenteResponsableId
         ? String(reviewPersonaDetail.agenteResponsableId)
         : '',
+      agenteResponsableIds: responsableIdsFromDetail.map((id) => String(id)),
       unidadId: reviewPersonaDetail.unidadId ? String(reviewPersonaDetail.unidadId) : '',
       estadoId: reviewPersonaDetail.estadoId ? String(reviewPersonaDetail.estadoId) : '',
       observaciones: reviewPersonaDetail.observaciones ?? '',
@@ -11792,6 +11823,18 @@ const sucursalOptions = useMemo(() => {
         ...(field === 'clienteId' ? { sucursalId: '' } : {}),
       }));
     };
+
+  const handleAltaResponsablesChange = (event: React.ChangeEvent<HTMLSelectElement>) => {
+    const selectedValues = Array.from(event.target.selectedOptions)
+      .map((option) => option.value)
+      .filter((value) => value !== '');
+
+    setAltaForm((prev) => ({
+      ...prev,
+      agenteResponsableIds: selectedValues,
+      agenteResponsableId: selectedValues[0] ?? '',
+    }));
+  };
 
   const filesFromEvent = (fileList: FileList | null) => (fileList ? Array.from(fileList) : []);
 
@@ -11883,7 +11926,30 @@ const sucursalOptions = useMemo(() => {
     clienteId: form.clienteId ? Number(form.clienteId) : null,
     sucursalId: form.sucursalId ? Number(form.sucursalId) : null,
     agenteId: form.agenteId ? Number(form.agenteId) : null,
-    agenteResponsableId: form.agenteResponsableId ? Number(form.agenteResponsableId) : null,
+    agenteResponsableId: (() => {
+      if (form.agenteResponsableId) {
+        return Number(form.agenteResponsableId);
+      }
+      const first = form.agenteResponsableIds?.[0];
+      return first ? Number(first) : null;
+    })(),
+    agenteResponsableIds: (() => {
+      const selected = Array.isArray(form.agenteResponsableIds)
+        ? form.agenteResponsableIds
+        : form.agenteResponsableId
+        ? [form.agenteResponsableId]
+        : [];
+
+      const unique = Array.from(
+        new Set(
+          selected
+            .map((value) => Number(value))
+            .filter((num) => !Number.isNaN(num))
+        )
+      );
+
+      return unique.length > 0 ? unique : null;
+    })(),
     unidadId: form.unidadId ? Number(form.unidadId) : null,
     estadoId: form.estadoId ? Number(form.estadoId) : null,
     observaciones: form.observaciones.trim() || null,
@@ -12040,6 +12106,7 @@ const sucursalOptions = useMemo(() => {
         sucursalId: '',
         agenteId: '',
         agenteResponsableId: '',
+        agenteResponsableIds: [],
         unidadId: '',
         estadoId: '',
         fechaAltaVinculacion: '',
@@ -12230,6 +12297,13 @@ const sucursalOptions = useMemo(() => {
       return;
     }
 
+    const resolvedActivoEstadoId = (() => {
+      const match = (meta?.estados ?? []).find(
+        (estado) => (estado.nombre ?? '').trim().toLowerCase() === 'activo'
+      );
+      return match?.id ? String(match.id) : '';
+    })();
+
     try {
       setApproveLoading(true);
       setFlash(null);
@@ -12240,6 +12314,8 @@ const sucursalOptions = useMemo(() => {
 
       if (approvalEstadoId) {
         payloadBody.estadoId = Number(approvalEstadoId);
+      } else if (resolvedActivoEstadoId) {
+        payloadBody.estadoId = Number(resolvedActivoEstadoId);
       }
 
       const response = await fetch(`${apiBaseUrl}/api/personal/${reviewPersonaDetail.id}/aprobar`, {
@@ -12280,9 +12356,32 @@ const sucursalOptions = useMemo(() => {
           return prev;
         }
 
-        const estadoActualizadoNombre = approvalEstadoId
-          ? meta?.estados?.find((estado) => String(estado.id) === approvalEstadoId)?.nombre ?? prev.estado
-          : prev.estado;
+        const resolvedEstadoId = (() => {
+          if (approvalEstadoId) {
+            return Number(approvalEstadoId);
+          }
+          if (resolvedActivoEstadoId) {
+            return Number(resolvedActivoEstadoId);
+          }
+          return prev.estadoId ?? null;
+        })();
+
+        const estadoActualizadoNombre = (() => {
+          if (approvalEstadoId || resolvedActivoEstadoId) {
+            const targetId = approvalEstadoId || resolvedActivoEstadoId;
+            return (
+              meta?.estados?.find((estado) => String(estado.id) === targetId)?.nombre ??
+              payload.data?.personalRecord?.estado ??
+              prev.estado
+            );
+          }
+          return payload.data?.personalRecord?.estado ?? prev.estado;
+        })();
+
+        const resolvedFechaAlta =
+          payload.data?.personalRecord?.fechaAlta ??
+          prev.fechaAlta ??
+          new Date().toISOString().slice(0, 10);
 
         const resolvedAprobadoPorId =
           payload.data?.aprobadoPorId ?? prev.aprobadoPorId ?? (authUser?.id ?? null);
@@ -12295,8 +12394,9 @@ const sucursalOptions = useMemo(() => {
           aprobadoAt: payload.data?.aprobadoAt ?? prev.aprobadoAt,
           aprobadoPorId: resolvedAprobadoPorId,
           aprobadoPorNombre: resolvedAprobadoPorNombre,
-          estadoId: approvalEstadoId ? Number(approvalEstadoId) : prev.estadoId,
+          estadoId: resolvedEstadoId ?? prev.estadoId,
           estado: estadoActualizadoNombre,
+          fechaAlta: resolvedFechaAlta,
           comments: Array.isArray(prev.comments) ? prev.comments : [],
           esSolicitud: false,
         };
@@ -13606,6 +13706,10 @@ const handleAdelantoFieldChange =
                         minute: '2-digit',
                       })
                     : null;
+                  const agentesResponsablesLabel =
+                    (reviewPersonaDetail.agentesResponsables ?? []).filter(Boolean).length > 0
+                      ? (reviewPersonaDetail.agentesResponsables ?? []).filter(Boolean).join(', ')
+                      : reviewPersonaDetail.agenteResponsable || reviewPersonaDetail.agente || '—';
 
                   return (
                     <>
@@ -13615,7 +13719,7 @@ const handleAdelantoFieldChange =
                       <p><strong>Cliente:</strong> {reviewPersonaDetail.cliente || '—'}</p>
                       <p><strong>Sucursal:</strong> {reviewPersonaDetail.sucursal || '—'}</p>
                       <p><strong>Estado actual:</strong> {reviewPersonaDetail.estado || 'Sin estado'}</p>
-                      <p><strong>Agente responsable:</strong> {reviewPersonaDetail.agenteResponsable || reviewPersonaDetail.agente || '—'}</p>
+                      <p><strong>Agente responsable:</strong> {agentesResponsablesLabel}</p>
                       <p><strong>Fecha de alta:</strong> {reviewPersonaDetail.fechaAlta || '—'}</p>
                       {reviewPersonaDetail.aprobado ? (
                         <p><strong>Aprobado el:</strong> {aprobadoLabel ?? 'Fecha no registrada'}</p>
@@ -13894,14 +13998,19 @@ const handleAdelantoFieldChange =
               </label>
               <label className="input-control">
                 <span>Agente responsable</span>
-                <select value={altaForm.agenteResponsableId} onChange={handleAltaFieldChange('agenteResponsableId')}>
-                  <option value="">Seleccionar</option>
+                <select
+                  multiple
+                  size={Math.max(3, Math.min(6, (meta?.agentes?.length ?? 0) || 3))}
+                  value={altaForm.agenteResponsableIds}
+                  onChange={handleAltaResponsablesChange}
+                >
                   {(meta?.agentes ?? []).map((agente) => (
                     <option key={agente.id} value={agente.id}>
                       {agente.name ?? `Agente #${agente.id}`}
                     </option>
                   ))}
                 </select>
+                <small>Podés seleccionar uno o varios.</small>
               </label>
               <label className="input-control">
                 <span>Unidad</span>

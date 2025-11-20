@@ -49,10 +49,9 @@ class PersonalCommentController extends Controller
 
     protected function notifyStakeholders(Persona $persona, PersonaComment $comment, ?int $authorId = null): void
     {
-        $recipients = collect([
-            $persona->agente_responsable_id,
-            $persona->agente_id,
-        ])
+        $recipients = collect($persona->agentes_responsables_ids ?? [])
+            ->prepend($persona->agente_responsable_id)
+            ->push($persona->agente_id)
             ->filter()
             ->map(fn ($id) => (int) $id)
             ->unique()
