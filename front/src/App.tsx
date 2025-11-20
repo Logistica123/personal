@@ -635,6 +635,8 @@ type ChatContact = {
   lastMessageAt?: string | null;
   avatar?: string | null;
   unread?: number;
+  matchSnippet?: string | null;
+  matchTimestamp?: string | null;
 };
 
 type ChatMessage = {
@@ -3818,18 +3820,62 @@ const ChatPage: React.FC = () => {
     [contacts, selectedContactId]
   );
 
+  const buildMessageSnippet = useCallback((text: string, term: string) => {
+    const normalized = text.toLowerCase();
+    const idx = normalized.indexOf(term);
+    if (idx === -1) {
+      return text.length > 60 ? `${text.slice(0, 57)}…` : text;
+    }
+    const start = Math.max(0, idx - 20);
+    const end = Math.min(text.length, idx + term.length + 20);
+    const snippet = text.slice(start, end);
+    return `${start > 0 ? '…' : ''}${snippet}${end < text.length ? '…' : ''}`;
+  }, []);
+
+  const findMessageMatchForContact = useCallback(
+    (contactId: number, normalizedTerm: string) => {
+      if (!normalizedTerm) {
+        return null;
+      }
+      const conversation = messagesByContact[contactId] ?? [];
+      for (let i = conversation.length - 1; i >= 0; i -= 1) {
+        const message = conversation[i];
+        const text = message.text?.trim() ?? '';
+        if (text.toLowerCase().includes(normalizedTerm)) {
+          return {
+            snippet: buildMessageSnippet(text, normalizedTerm),
+            timestamp: message.timestamp,
+          };
+        }
+      }
+      return null;
+    },
+    [buildMessageSnippet, messagesByContact]
+  );
+
   const filteredContacts = useMemo(() => {
     const term = search.trim().toLowerCase();
-    if (term.length === 0) {
-      return contacts;
-    }
-    return contacts.filter(
-      (contact) =>
-        contact.name.toLowerCase().includes(term) ||
-        contact.role.toLowerCase().includes(term) ||
-        (contact.client?.toLowerCase().includes(term) ?? false)
-    );
-  }, [contacts, search]);
+    return contacts
+      .map((contact) => {
+        const match = term ? findMessageMatchForContact(contact.id, term) : null;
+        return {
+          ...contact,
+          matchSnippet: match?.snippet ?? null,
+          matchTimestamp: match?.timestamp ?? null,
+        };
+      })
+      .filter((contact) => {
+        if (term.length === 0) {
+          return true;
+        }
+        const matchesContact =
+          contact.name.toLowerCase().includes(term) ||
+          contact.role.toLowerCase().includes(term) ||
+          (contact.client?.toLowerCase().includes(term) ?? false);
+        const matchesConversation = Boolean(contact.matchSnippet);
+        return matchesContact || matchesConversation;
+      });
+  }, [contacts, search, findMessageMatchForContact]);
 
   const formatMessageTime = (isoDate: string) => {
     try {
@@ -4058,6 +4104,15 @@ const ChatPage: React.FC = () => {
             ) : (
               filteredContacts.map((contact) => {
                 const isActive = contact.id === selectedContactId;
+                const hasSearch = search.trim().length > 0;
+                const previewText =
+                  hasSearch && contact.matchSnippet
+                    ? `Coincidencia: ${contact.matchSnippet}`
+                    : contact.lastMessage;
+                const timeLabel =
+                  hasSearch && contact.matchTimestamp
+                    ? formatMessageTime(contact.matchTimestamp)
+                    : contact.lastSeen;
                 return (
                   <button
                     key={contact.id}
@@ -4076,10 +4131,10 @@ const ChatPage: React.FC = () => {
                     <div className="chat-contact__meta">
                       <strong>{contact.name}</strong>
                       {contact.role ? <small>{contact.role}</small> : null}
-                      <p>{contact.lastMessage}</p>
+                      <p>{previewText}</p>
                     </div>
                     <div className="chat-contact__status">
-                      <time>{contact.lastSeen}</time>
+                      <time>{timeLabel}</time>
                       {contact.unread && contact.unread > 0 ? (
                         <span className="chat-contact__badge">{Math.min(contact.unread, 9)}</span>
                       ) : null}
