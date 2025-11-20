@@ -624,6 +624,16 @@ type NotificationRecord = {
   metadata?: NotificationMetadata | null;
 };
 
+type NotificationDeletionRecord = {
+  id: number;
+  notificationId: number | null;
+  message: string | null;
+  deletedById: number | null;
+  deletedByName: string | null;
+  deletedAt: string | null;
+  deletedAtLabel?: string | null;
+};
+
 type ChatContact = {
   id: number;
   name: string;
@@ -10118,8 +10128,11 @@ const NotificationsPage: React.FC = () => {
   const apiBaseUrl = useMemo(() => resolveApiBaseUrl(), []);
   const authUser = useStoredAuthUser();
   const [notifications, setNotifications] = useState<NotificationRecord[]>([]);
+  const [deletedNotifications, setDeletedNotifications] = useState<NotificationDeletionRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [historyError, setHistoryError] = useState<string | null>(null);
+  const [historyLoading, setHistoryLoading] = useState(false);
   const [refreshTick, setRefreshTick] = useState(0);
   const celebrationTriggeredRef = useRef<Set<number>>(new Set());
 
@@ -10127,6 +10140,8 @@ const NotificationsPage: React.FC = () => {
     if (!authUser?.id) {
       setLoading(false);
       setError('No se pudo identificar al usuario autenticado.');
+      setHistoryLoading(false);
+      setHistoryError('No se pudo identificar al usuario autenticado.');
       return;
     }
 
@@ -10157,7 +10172,34 @@ const NotificationsPage: React.FC = () => {
       }
     };
 
+    const fetchDeletedNotifications = async () => {
+      try {
+        setHistoryLoading(true);
+        setHistoryError(null);
+
+        const response = await fetch(
+          `${apiBaseUrl}/api/notificaciones/eliminadas?userId=${authUser.id}`,
+          { signal: controller.signal }
+        );
+
+        if (!response.ok) {
+          throw new Error(`Error ${response.status}: ${response.statusText}`);
+        }
+
+        const payload = (await response.json()) as { data?: NotificationDeletionRecord[] };
+        setDeletedNotifications(payload.data ?? []);
+      } catch (err) {
+        if ((err as Error).name === 'AbortError') {
+          return;
+        }
+        setHistoryError((err as Error).message ?? 'No se pudo cargar el historial de eliminaciones.');
+      } finally {
+        setHistoryLoading(false);
+      }
+    };
+
     fetchNotifications();
+    fetchDeletedNotifications();
 
     return () => controller.abort();
   }, [apiBaseUrl, authUser?.id, refreshTick]);
@@ -10284,6 +10326,36 @@ const NotificationsPage: React.FC = () => {
     );
   };
 
+  const handleDeleteNotification = async (notification: NotificationRecord) => {
+    if (!authUser?.id) {
+      window.alert('No se pudo validar el usuario actual.');
+      return;
+    }
+    const confirmed = window.confirm('¿Seguro que deseas eliminar esta notificación? Se registrará quién la elimina.');
+    if (!confirmed) {
+      return;
+    }
+
+    try {
+      const response = await fetch(`${apiBaseUrl}/api/notificaciones/${notification.id}`, {
+        method: 'DELETE',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ userId: authUser.id }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`Error ${response.status}: ${response.statusText}`);
+      }
+
+      setRefreshTick((value) => value + 1);
+      window.dispatchEvent(new CustomEvent('notifications:updated'));
+    } catch (err) {
+      window.alert((err as Error).message ?? 'No se pudo eliminar la notificación.');
+    }
+  };
+
   return (
     <DashboardLayout title="Notificaciones" subtitle="Alertas asignadas" headerContent={headerContent}>
       {!authUser?.id ? (
@@ -10371,12 +10443,48 @@ const NotificationsPage: React.FC = () => {
                         >
                           ✅
                         </button>
+                        <button
+                          type="button"
+                          className="secondary-action secondary-action--danger"
+                          onClick={() => handleDeleteNotification(notification)}
+                          aria-label="Eliminar notificación"
+                        >
+                          🗑️
+                        </button>
                       </div>
                     </td>
                   </tr>
                 ))}
             </tbody>
           </table>
+          <section className="notifications-history">
+            <h3>Historial de eliminaciones</h3>
+            {historyLoading ? <p className="form-info">Cargando historial...</p> : null}
+            {historyError ? <p className="form-info form-info--error">{historyError}</p> : null}
+            {!historyLoading && !historyError && deletedNotifications.length === 0 ? (
+              <p className="form-info">No hay eliminaciones registradas.</p>
+            ) : null}
+            {!historyLoading && !historyError && deletedNotifications.length > 0 ? (
+              <table>
+                <thead>
+                  <tr>
+                    <th>Fecha</th>
+                    <th>Mensaje</th>
+                    <th>Eliminado por</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {deletedNotifications.map((item) => (
+                    <tr key={item.id}>
+                      <td>{item.deletedAtLabel ?? item.deletedAt ?? '—'}</td>
+                      <td>{item.message ?? '—'}</td>
+                      <td>{item.deletedByName ?? `Usuario #${item.deletedById ?? '—'}`}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            ) : null}
+          </section>
         </div>
       )}
     </DashboardLayout>

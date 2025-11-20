@@ -67,6 +67,8 @@ Route::get('/reclamos/{reclamo}/documentos/{documento}/descargar', [ReclamoContr
 
 Route::get('/notificaciones', [NotificationController::class, 'index']);
 Route::post('/notificaciones/{notification}/leer', [NotificationController::class, 'markAsRead']);
+Route::delete('/notificaciones/{notification}', [NotificationController::class, 'destroy']);
+Route::get('/notificaciones/eliminadas', [NotificationController::class, 'deletions']);
 
 Route::get('/attendance', [AttendanceController::class, 'index']);
 Route::match(['GET', 'POST'], '/attendance/logs', [AttendanceController::class, 'index']);

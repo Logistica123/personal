@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\Notification;
+use App\Models\NotificationDeletion;
 use App\Models\Persona;
 use App\Models\Reclamo;
 use Illuminate\Http\JsonResponse;
@@ -207,6 +208,58 @@ class NotificationController extends Controller
 
         return response()->json([
             'message' => 'Notificación marcada como leída.',
+        ]);
+    }
+
+    public function destroy(Request $request, Notification $notification): JsonResponse
+    {
+        $payload = $request->validate([
+            'userId' => ['nullable', 'integer', 'exists:users,id'],
+        ]);
+
+        NotificationDeletion::create([
+            'notification_id' => $notification->id,
+            'deleted_by_id' => $payload['userId'] ?? null,
+            'message' => $notification->message ?? $notification->description ?? null,
+            'metadata' => $notification->metadata,
+        ]);
+
+        $notification->delete();
+
+        return response()->json([
+            'message' => 'Notificación eliminada correctamente.',
+        ]);
+    }
+
+    public function deletions(Request $request): JsonResponse
+    {
+        $payload = $request->validate([
+            'userId' => ['required', 'integer', 'exists:users,id'],
+            'limit' => ['nullable', 'integer', 'min:1', 'max:200'],
+        ]);
+
+        $limit = $payload['limit'] ?? 100;
+
+        $entries = NotificationDeletion::query()
+            ->with('deleter:id,name')
+            ->orderByDesc('created_at')
+            ->limit($limit)
+            ->get()
+            ->map(function (NotificationDeletion $deletion) {
+                return [
+                    'id' => $deletion->id,
+                    'notificationId' => $deletion->notification_id,
+                    'message' => $deletion->message,
+                    'deletedById' => $deletion->deleted_by_id,
+                    'deletedByName' => $deletion->deleter?->name,
+                    'deletedAt' => $deletion->created_at?->toIso8601String(),
+                    'deletedAtLabel' => $deletion->created_at?->timezone(config('app.timezone', 'UTC'))?->format('d/m/Y H:i'),
+                ];
+            })
+            ->values();
+
+        return response()->json([
+            'data' => $entries,
         ]);
     }
 }
