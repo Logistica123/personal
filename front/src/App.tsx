@@ -301,6 +301,19 @@ const FORTNIGHT_FILTER_OPTIONS = [
   { value: 'NO_DATE', label: 'Sin quincena' },
 ];
 
+const PERFIL_DISPLAY_LABELS: Record<number, string> = {
+  1: 'Transportista',
+  2: 'Cobrador',
+  3: 'Servicios',
+};
+
+const getPerfilDisplayLabel = (value?: number | null, fallback?: string | null): string => {
+  if (value != null && PERFIL_DISPLAY_LABELS[value]) {
+    return PERFIL_DISPLAY_LABELS[value];
+  }
+  return fallback ?? '';
+};
+
 type AltaAttachmentItem = {
   id: string;
   file: File;
@@ -7478,15 +7491,17 @@ const PersonalPage: React.FC = () => {
 
   const perfilNames: Record<number, string> = useMemo(
     () => ({
-      1: 'Dueño y chofer',
-      2: 'Chofer',
-      3: 'Transportista',
+      1: getPerfilDisplayLabel(1),
+      2: getPerfilDisplayLabel(2),
+      3: getPerfilDisplayLabel(3),
     }),
     []
   );
 
   const filteredPersonal = useMemo(() => {
     const term = searchTerm.trim().toLowerCase();
+    const resolvePerfilLabel = (registro: PersonalRecord) =>
+      getPerfilDisplayLabel(registro.perfilValue ?? null, registro.perfil ?? '');
 
     return personal.filter((registro) => {
       if (registro.esSolicitud) {
@@ -7501,7 +7516,7 @@ const PersonalPage: React.FC = () => {
       }
 
       if (perfilFilter) {
-        const nombre = perfilNames[registro.perfilValue ?? 0] ?? registro.perfil;
+        const nombre = perfilNames[registro.perfilValue ?? 0] ?? resolvePerfilLabel(registro);
         if (nombre !== perfilFilter) {
           return false;
         }
@@ -7547,7 +7562,7 @@ const PersonalPage: React.FC = () => {
         registro.unidadDetalle,
         registro.sucursal,
         registro.fechaAlta,
-        registro.perfil,
+        resolvePerfilLabel(registro),
         registro.agente,
         registro.agenteResponsable,
         registro.estado,
@@ -7730,7 +7745,7 @@ const PersonalPage: React.FC = () => {
       { header: 'CUIL', resolve: (registro) => registro.cuil ?? '' },
       { header: 'Teléfono', resolve: (registro) => registro.telefono ?? '' },
       { header: 'Email', resolve: (registro) => registro.email ?? '' },
-      { header: 'Perfil', resolve: (registro) => registro.perfil ?? '' },
+      { header: 'Perfil', resolve: (registro) => getPerfilDisplayLabel(registro.perfilValue ?? null, registro.perfil ?? '') },
       { header: 'Perfil ID', resolve: (registro) => registro.perfilValue ?? '' },
       { header: 'Agente', resolve: (registro) => registro.agente ?? '' },
       { header: 'Agente ID', resolve: (registro) => registro.agenteId ?? '' },
@@ -7979,7 +7994,7 @@ const PersonalPage: React.FC = () => {
                   <td>{registro.cuil ?? '—'}</td>
                   <td>{registro.telefono ?? '—'}</td>
                   <td>{registro.email ?? '—'}</td>
-                  <td>{registro.perfil ?? '—'}</td>
+                  <td>{getPerfilDisplayLabel(registro.perfilValue ?? null, registro.perfil ?? '—') || '—'}</td>
                   <td>{registro.agente ?? '—'}</td>
                   <td>
                     {registro.estado ? (
@@ -8408,9 +8423,9 @@ const LiquidacionesPage: React.FC = () => {
 
   const perfilNames: Record<number, string> = useMemo(
     () => ({
-      1: 'Dueño y chofer',
-      2: 'Chofer',
-      3: 'Transportista',
+      1: getPerfilDisplayLabel(1),
+      2: getPerfilDisplayLabel(2),
+      3: getPerfilDisplayLabel(3),
     }),
     []
   );
@@ -11685,9 +11700,9 @@ const ApprovalsRequestsPage: React.FC = () => {
   const [deletingSolicitudId, setDeletingSolicitudId] = useState<number | null>(null);
   const perfilNames: Record<number, string> = useMemo(
     () => ({
-      1: 'Dueño y chofer',
-      2: 'Chofer',
-      3: 'Transportista',
+      1: getPerfilDisplayLabel(1),
+      2: getPerfilDisplayLabel(2),
+      3: getPerfilDisplayLabel(3),
     }),
     []
   );
@@ -13928,7 +13943,7 @@ const handleAdelantoFieldChange =
       case 1:
         return (
           <div className="personal-section">
-            <h3>Dueño y chofer</h3>
+            <h3>Transportista</h3>
             <div className="form-grid">
               {renderAltaInput('Nombres', 'nombres', true)}
               {renderAltaInput('Apellidos', 'apellidos', true)}
@@ -13948,7 +13963,7 @@ const handleAdelantoFieldChange =
       case 2:
         return (
           <div className="personal-section personal-section--chofer">
-            <h3>Chofer</h3>
+            <h3>Cobrador</h3>
             <div className="form-grid form-grid--chofer">
               {renderAltaInput('Nombre completo', 'nombres', true)}
               {renderAltaInput('Correo electrónico', 'email', false, 'email')}
@@ -14048,7 +14063,7 @@ const handleAdelantoFieldChange =
       case 3:
         return (
           <div className="personal-section">
-            <h3>Transportista</h3>
+            <h3>Servicios</h3>
             <div className="form-grid">
               {renderAltaInput('Nombres', 'nombres', true)}
               {renderAltaInput('Apellidos', 'apellidos', true)}
@@ -14188,16 +14203,16 @@ const handleAdelantoFieldChange =
 
       switch (reviewPersonaDetail.perfilValue) {
         case 1:
-          return renderReviewProfileGroup('Datos del titular', commonFields);
+          return renderReviewProfileGroup('Datos del transportista', commonFields);
         case 2:
           return (
             <>
-              {renderReviewProfileGroup('Datos del chofer', commonFields)}
+              {renderReviewProfileGroup('Datos del cobrador', commonFields)}
               {renderReviewProfileGroup('Dueño de la unidad', ownerFields)}
             </>
           );
         case 3:
-          return renderReviewProfileGroup('Datos del transportista', commonFields);
+          return renderReviewProfileGroup('Datos de servicios', commonFields);
         default:
           return renderReviewProfileGroup('Datos del perfil', commonFields);
       }
@@ -14611,7 +14626,7 @@ const handleAdelantoFieldChange =
                   checked={altaForm.perfilValue === perfil.value}
                   onChange={() => handleAltaPerfilChange(perfil.value)}
                 />
-                {perfil.label}
+                {getPerfilDisplayLabel(perfil.value, perfil.label)}
               </label>
             ))}
           </div>
@@ -17245,7 +17260,7 @@ const PersonalCreatePage: React.FC = () => {
       case 1:
         return (
           <section className="personal-section">
-            <h3>Dueño y chofer</h3>
+            <h3>Transportista</h3>
             <div className="form-grid">
               {renderInput('Nombres', 'nombres', true)}
               {renderInput('Apellidos', 'apellidos', true)}
@@ -17265,7 +17280,7 @@ const PersonalCreatePage: React.FC = () => {
       case 2:
         return (
           <section className="personal-section">
-            <h3>Chofer</h3>
+            <h3>Cobrador</h3>
             <div className="form-grid">
               {renderInput('Nombre completo', 'nombres', true)}
               {renderInput('Correo electrónico', 'email', false, 'email')}
@@ -17303,7 +17318,7 @@ const PersonalCreatePage: React.FC = () => {
       case 3:
         return (
           <section className="personal-section">
-            <h3>Transportista</h3>
+            <h3>Servicios</h3>
             <div className="form-grid">
               {renderInput('Nombres', 'nombres', true)}
               {renderInput('Apellidos', 'apellidos', true)}
@@ -17414,7 +17429,7 @@ const PersonalCreatePage: React.FC = () => {
                   checked={formValues.perfilValue === perfil.value}
                   onChange={() => handlePerfilChange(perfil.value)}
                 />
-                {perfil.label}
+                {getPerfilDisplayLabel(perfil.value, perfil.label)}
               </label>
             ))}
           </div>
