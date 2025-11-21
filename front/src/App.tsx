@@ -874,6 +874,7 @@ const CHAT_BADGE_STORAGE_KEY = 'dashboard-chat:badge';
 const CHAT_BADGE_UPDATED_EVENT = 'dashboard-chat:badge-updated';
 const CHAT_LAST_READ_STORAGE_KEY = 'dashboard-chat:last-read';
 const CHAT_LAST_READ_UPDATED_EVENT = 'dashboard-chat:last-read-updated';
+const WORKFLOW_DELETE_HISTORY_KEY = 'workflow:delete-history';
 
 const buildPersonalFiltersStorageKey = (userId: number | null | undefined): string | null => {
   if (userId == null) {
@@ -11143,6 +11144,23 @@ const WorkflowPage: React.FC = () => {
   const [responsableQuery, setResponsableQuery] = useState('');
   const [refreshTick, setRefreshTick] = useState(0);
   const [exporting, setExporting] = useState(false);
+  const [deleteHistory, setDeleteHistory] = useState<
+    Array<{ taskId: number; title: string; status: WorkflowStatus | null; removedAt: string; removedBy: string | null }>
+  >(() => {
+    if (typeof window === 'undefined') {
+      return [];
+    }
+    try {
+      const raw = window.localStorage.getItem(WORKFLOW_DELETE_HISTORY_KEY);
+      if (!raw) {
+        return [];
+      }
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  });
 
   useEffect(() => {
     const controller = new AbortController();
@@ -11189,6 +11207,8 @@ const WorkflowPage: React.FC = () => {
     });
     return match?.id ?? null;
   }, [authUser?.id, authUser?.name, authUser?.email, agents]);
+  const currentUserRole = useMemo(() => getUserRole(authUser), [authUser]);
+  const canDeleteWorkflowTasks = currentUserRole !== 'operator';
 
   const fetchTasks = useCallback(async () => {
     if (currentActorId == null) {
@@ -11307,6 +11327,17 @@ const WorkflowPage: React.FC = () => {
     }
   };
 
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+    try {
+      window.localStorage.setItem(WORKFLOW_DELETE_HISTORY_KEY, JSON.stringify(deleteHistory));
+    } catch {
+      // ignore storage errors
+    }
+  }, [deleteHistory]);
+
   const handleExport = async () => {
     if (currentActorId == null) {
       window.alert('Debes iniciar sesión para exportar las tareas.');
@@ -11392,6 +11423,12 @@ const WorkflowPage: React.FC = () => {
     if (currentActorId == null) {
       return;
     }
+    if (!canDeleteWorkflowTasks) {
+      window.alert('Tu rol no tiene permisos para eliminar tareas.');
+      return;
+    }
+
+    const targetTask = tasks.find((task) => task.id === taskId);
 
     if (!window.confirm('¿Eliminar esta tarea del flujo?')) {
       return;
@@ -11416,6 +11453,18 @@ const WorkflowPage: React.FC = () => {
         }
         throw new Error(message);
       }
+
+      setDeleteHistory((prev) => {
+        const newEntry = {
+          taskId,
+          title: targetTask?.titulo ?? `Tarea #${taskId}`,
+          status: targetTask?.status ?? null,
+          removedAt: new Date().toISOString(),
+          removedBy: authUser?.name || authUser?.email || (currentActorId != null ? `ID ${currentActorId}` : null),
+        };
+        const next = [newEntry, ...prev].slice(0, 50);
+        return next;
+      });
 
       setRefreshTick((value) => value + 1);
     } catch (err) {
@@ -11522,14 +11571,18 @@ const WorkflowPage: React.FC = () => {
                   >
                     <div className="workflow-card__title">
                       <strong>{task.titulo}</strong>
-                      <button
-                        type="button"
-                        className="workflow-card__delete"
-                        onClick={() => handleDelete(task.id)}
-                        aria-label="Eliminar tarea"
-                      >
-                        ×
-                      </button>
+                      {canDeleteWorkflowTasks ? (
+                        <button
+                          type="button"
+                          className="workflow-card__delete"
+                          onClick={() => handleDelete(task.id)}
+                          aria-label="Eliminar tarea"
+                        >
+                          ×
+                        </button>
+                      ) : (
+                        <span className="workflow-card__badge">Sin permisos</span>
+                      )}
                     </div>
                     {task.descripcion ? (
                       <p className="workflow-card__description">{task.descripcion}</p>
@@ -11548,6 +11601,43 @@ const WorkflowPage: React.FC = () => {
             </div>
           </div>
         ))}
+      </section>
+
+      <section className="workflow-history">
+        <h3>Historial de eliminación</h3>
+        {deleteHistory.length === 0 ? (
+          <p className="form-info">Todavía no hay eliminaciones registradas.</p>
+        ) : (
+          <ul className="workflow-history__list">
+            {deleteHistory.map((entry, index) => {
+              const when = new Date(entry.removedAt).toLocaleString('es-AR', {
+                year: 'numeric',
+                month: '2-digit',
+                day: '2-digit',
+                hour: '2-digit',
+                minute: '2-digit',
+              });
+              const statusLabel =
+                entry.status === 'proceso'
+                  ? 'En proceso'
+                  : entry.status === 'finalizado'
+                  ? 'Finalizado'
+                  : 'Nueva tarea';
+              return (
+                <li key={`${entry.taskId}-${entry.removedAt}-${index}`}>
+                  <div className="workflow-history__header">
+                    <strong>{entry.title}</strong>
+                    <span className="workflow-history__status">{statusLabel}</span>
+                  </div>
+                  <div className="workflow-history__meta">
+                    <span>Eliminada por: {entry.removedBy ?? 'Usuario'}</span>
+                    <span>{when}</span>
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        )}
       </section>
     </DashboardLayout>
   );
