@@ -306,6 +306,7 @@ const PERFIL_DISPLAY_LABELS: Record<number, string> = {
   2: 'Cobrador',
   3: 'Servicios',
 };
+const MAX_UPLOAD_SIZE_BYTES = 10 * 1024 * 1024; // 10 MB
 
 const getPerfilDisplayLabel = (value?: number | null, fallback?: string | null): string => {
   if (value != null && PERFIL_DISPLAY_LABELS[value]) {
@@ -12337,11 +12338,25 @@ const sucursalOptions = useMemo(() => {
     }
 
     const typeLabel = altaDocumentTypeName.trim().length > 0 ? altaDocumentTypeName.trim() : `Documento #${altaDocumentTypeId}`;
+    const oversized: string[] = files
+      .filter((file) => file.size > MAX_UPLOAD_SIZE_BYTES)
+      .map((file) => `${file.name} (${(file.size / (1024 * 1024)).toFixed(1)} MB)`);
+    if (oversized.length > 0) {
+      setFlash({
+        type: 'error',
+        message: `Estos archivos superan ${Math.round(MAX_UPLOAD_SIZE_BYTES / (1024 * 1024))} MB: ${oversized.join(' | ')}`,
+      });
+    }
+    const allowedFiles = files.filter((file) => file.size <= MAX_UPLOAD_SIZE_BYTES);
+    if (allowedFiles.length === 0) {
+      event.target.value = '';
+      return;
+    }
 
     setAltaAttachments((prev) => {
       const currentCount = prev.filter((item) => item.typeId === altaDocumentTypeId).length;
 
-      const newItems = files.map((file, index) => {
+      const newItems = allowedFiles.map((file, index) => {
         const absoluteIndex = currentCount + index;
         let positionLabel: string | null = null;
 
@@ -12485,6 +12500,20 @@ const sucursalOptions = useMemo(() => {
           const tipoArchivoId = Number(item.typeId);
           if (Number.isNaN(tipoArchivoId)) {
             uploadErrors.push(`${item.file.name}: el tipo de documento no es válido.`);
+            continue;
+          }
+
+          if (item.file.size > MAX_UPLOAD_SIZE_BYTES) {
+            uploadErrors.push(
+              `${item.file.name}: supera los ${Math.round(MAX_UPLOAD_SIZE_BYTES / (1024 * 1024))} MB permitidos.`
+            );
+            continue;
+          }
+
+          if (item.file.size > MAX_UPLOAD_SIZE_BYTES) {
+            uploadErrors.push(
+              `${item.file.name}: supera los ${Math.round(MAX_UPLOAD_SIZE_BYTES / (1024 * 1024))} MB permitidos.`
+            );
             continue;
           }
 
