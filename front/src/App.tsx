@@ -12271,6 +12271,30 @@ const sucursalOptions = useMemo(() => {
 
   const filesFromEvent = (fileList: FileList | null) => (fileList ? Array.from(fileList) : []);
 
+  const buildPersonalUploadRequestInit = useCallback(
+    (formData: FormData): RequestInit => {
+      const init: RequestInit = {
+        method: 'POST',
+        body: formData,
+        headers: { Accept: 'application/json' },
+      };
+
+      if (typeof window !== 'undefined') {
+        try {
+          const targetOrigin = new URL(apiBaseUrl).origin;
+          if (targetOrigin === window.location.origin) {
+            init.credentials = 'include';
+          }
+        } catch {
+          // ignore malformed URLs
+        }
+      }
+
+      return init;
+    },
+    [apiBaseUrl]
+  );
+
   const handleAltaFilesChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const files = filesFromEvent(event.target.files);
 
@@ -12467,12 +12491,10 @@ const sucursalOptions = useMemo(() => {
           }
 
           try {
-            const uploadResponse = await fetch(`${apiBaseUrl}/api/personal/${personaId}/documentos`, {
-              method: 'POST',
-              body: formData,
-              headers: { Accept: 'application/json' },
-              credentials: 'include',
-            });
+            const uploadResponse = await fetch(
+              `${apiBaseUrl}/api/personal/${personaId}/documentos`,
+              buildPersonalUploadRequestInit(formData)
+            );
 
             if (!uploadResponse.ok) {
               let uploadMessage = `${item.file.name}: Error ${uploadResponse.status}`;
@@ -12496,6 +12518,9 @@ const sucursalOptions = useMemo(() => {
 
             completedUploadIds.push(item.id);
           } catch (uploadErr) {
+            // Surface network errors (CORS, tamaño, etc.)
+            // eslint-disable-next-line no-console
+            console.error('Error subiendo documento de alta', uploadErr);
             uploadErrors.push(
               `${item.file.name}: ${(uploadErr as Error).message ?? 'No se pudo subir el archivo.'}`
             );
@@ -12659,12 +12684,10 @@ const sucursalOptions = useMemo(() => {
           }
 
           try {
-            const uploadResponse = await fetch(`${apiBaseUrl}/api/personal/${personaId}/documentos`, {
-              method: 'POST',
-              body: formData,
-              headers: { Accept: 'application/json' },
-              credentials: 'include',
-            });
+            const uploadResponse = await fetch(
+              `${apiBaseUrl}/api/personal/${personaId}/documentos`,
+              buildPersonalUploadRequestInit(formData)
+            );
 
             if (!uploadResponse.ok) {
               let uploadMessage = `${item.file.name}: Error ${uploadResponse.status}`;
@@ -12688,6 +12711,8 @@ const sucursalOptions = useMemo(() => {
 
             completedUploadIds.push(item.id);
           } catch (uploadErr) {
+            // eslint-disable-next-line no-console
+            console.error('Error subiendo documento de alta', uploadErr);
             uploadErrors.push(
               `${item.file.name}: ${(uploadErr as Error).message ?? 'No se pudo subir el archivo.'}`
             );
