@@ -14691,7 +14691,7 @@ const handleAdelantoFieldChange =
                 key={`alta-files-${altaFilesVersion}`}
                 type="file"
                 multiple
-                accept=".pdf,image/*"
+                accept="application/pdf,.pdf,image/*"
                 onChange={handleAltaFilesChange}
                 style={{ display: 'none' }}
               />
