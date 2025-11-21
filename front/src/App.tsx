@@ -12449,7 +12449,7 @@ const sucursalOptions = useMemo(() => {
           }
 
           const formData = new FormData();
-          formData.append('archivo', item.file);
+          formData.append('archivo', item.file, item.file.name);
           formData.append('tipoArchivoId', String(tipoArchivoId));
 
           const nombrePartes: string[] = [];
@@ -12470,6 +12470,8 @@ const sucursalOptions = useMemo(() => {
             const uploadResponse = await fetch(`${apiBaseUrl}/api/personal/${personaId}/documentos`, {
               method: 'POST',
               body: formData,
+              headers: { Accept: 'application/json' },
+              credentials: 'include',
             });
 
             if (!uploadResponse.ok) {
@@ -12639,7 +12641,7 @@ const sucursalOptions = useMemo(() => {
           }
 
           const formData = new FormData();
-          formData.append('archivo', item.file);
+          formData.append('archivo', item.file, item.file.name);
           formData.append('tipoArchivoId', String(tipoArchivoId));
 
           const nombrePartes: string[] = [];
@@ -12660,6 +12662,8 @@ const sucursalOptions = useMemo(() => {
             const uploadResponse = await fetch(`${apiBaseUrl}/api/personal/${personaId}/documentos`, {
               method: 'POST',
               body: formData,
+              headers: { Accept: 'application/json' },
+              credentials: 'include',
             });
 
             if (!uploadResponse.ok) {
