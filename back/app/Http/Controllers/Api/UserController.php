@@ -77,11 +77,23 @@ class UserController extends Controller
     public function update(Request $request, User $usuario): JsonResponse
     {
         $validated = $request->validate([
+            'name' => ['sometimes', 'nullable', 'string', 'max:255'],
+            'email' => ['sometimes', 'nullable', 'string', 'email', 'max:255', 'unique:users,email,' . $usuario->id],
             'password' => ['nullable', 'string', 'min:6', 'confirmed'],
             'role' => ['nullable', 'in:admin,operator'],
         ]);
 
         $updated = false;
+
+        if (array_key_exists('name', $validated)) {
+            $usuario->name = $validated['name'] ?? $usuario->name;
+            $updated = true;
+        }
+
+        if (array_key_exists('email', $validated)) {
+            $usuario->email = $validated['email'] ?? $usuario->email;
+            $updated = true;
+        }
 
         if (isset($validated['role'])) {
             $usuario->role = $validated['role'];

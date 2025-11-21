@@ -15158,6 +15158,8 @@ const EditUserPage: React.FC = () => {
   const { usuarioId } = useParams<{ usuarioId: string }>();
   const navigate = useNavigate();
   const apiBaseUrl = useMemo(() => resolveApiBaseUrl(), []);
+  const [name, setName] = useState('');
+  const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [passwordConfirmation, setPasswordConfirmation] = useState('');
   const [loading, setLoading] = useState(true);
@@ -15202,6 +15204,8 @@ const EditUserPage: React.FC = () => {
         }
 
         setUserName(payload.data.name ?? payload.data.email ?? `Usuario #${usuarioId}`);
+        setName(payload.data.name ?? '');
+        setEmail(payload.data.email ?? '');
         setRole((payload.data.role?.toLowerCase() === 'admin' ? 'admin' : 'operator'));
       } catch (err) {
         if ((err as Error).name === 'AbortError') {
@@ -15227,12 +15231,25 @@ const EditUserPage: React.FC = () => {
       return;
     }
 
+    const trimmedName = name.trim();
+    const trimmedEmail = email.trim();
+    if (!trimmedName) {
+      setSubmitError('El nombre es obligatorio.');
+      return;
+    }
+    if (!trimmedEmail) {
+      setSubmitError('El email es obligatorio.');
+      return;
+    }
+
     try {
       setSubmitError(null);
       setSuccessMessage(null);
       setSaving(true);
 
       const payloadBody: Record<string, unknown> = {
+        name: trimmedName,
+        email: trimmedEmail,
         role,
       };
       if (password.trim().length > 0) {
@@ -15273,8 +15290,15 @@ const EditUserPage: React.FC = () => {
         normalizedRole = resolvedRoleRaw.trim().toLowerCase() === 'admin' ? 'admin' : 'operator';
       }
 
+      const resolvedName = payload.data?.name ?? trimmedName;
+      const resolvedEmail = payload.data?.email ?? trimmedEmail;
+      setName(resolvedName);
+      setEmail(resolvedEmail);
+
       if (payload.data?.name || payload.data?.email) {
         setUserName((prev) => payload.data?.name ?? payload.data?.email ?? prev);
+      } else {
+        setUserName(resolvedName || resolvedEmail || userName);
       }
 
       setRole(normalizedRole);
@@ -15304,7 +15328,7 @@ const EditUserPage: React.FC = () => {
 
   if (!authUser?.role) {
     return (
-      <DashboardLayout title="Restablecer contraseña" subtitle={`Usuario #${usuarioId ?? ''}`} headerContent={headerContent}>
+      <DashboardLayout title="Editar usuario" subtitle={`Usuario #${usuarioId ?? ''}`} headerContent={headerContent}>
         <p className="form-info">Verificando permisos...</p>
       </DashboardLayout>
     );
@@ -15316,7 +15340,7 @@ const EditUserPage: React.FC = () => {
 
   if (loading) {
     return (
-      <DashboardLayout title="Restablecer contraseña" subtitle={`Usuario #${usuarioId ?? ''}`} headerContent={headerContent}>
+      <DashboardLayout title="Editar usuario" subtitle={`Usuario #${usuarioId ?? ''}`} headerContent={headerContent}>
         <p className="form-info">Cargando información del usuario...</p>
       </DashboardLayout>
     );
@@ -15324,7 +15348,7 @@ const EditUserPage: React.FC = () => {
 
   if (loadError) {
     return (
-      <DashboardLayout title="Restablecer contraseña" subtitle={`Usuario #${usuarioId ?? ''}`} headerContent={headerContent}>
+      <DashboardLayout title="Editar usuario" subtitle={`Usuario #${usuarioId ?? ''}`} headerContent={headerContent}>
         <p className="form-info form-info--error">{loadError}</p>
       </DashboardLayout>
     );
@@ -15332,12 +15356,32 @@ const EditUserPage: React.FC = () => {
 
   return (
     <DashboardLayout
-      title="Restablecer contraseña"
+      title="Editar usuario"
       subtitle={userName ? `Usuario: ${userName} · Rol actual: ${formatRoleLabel(role)}` : undefined}
       headerContent={headerContent}
     >
       <form className="edit-form" onSubmit={handleSubmit}>
         <div className="form-grid">
+          <label className="input-control">
+            <span>Nombre</span>
+            <input
+              type="text"
+              value={name}
+              onChange={(event) => setName(event.target.value)}
+              placeholder="Nombre completo"
+              required
+            />
+          </label>
+          <label className="input-control">
+            <span>Email</span>
+            <input
+              type="email"
+              value={email}
+              onChange={(event) => setEmail(event.target.value)}
+              placeholder="correo@ejemplo.com"
+              required
+            />
+          </label>
           <label className="input-control">
             <span>Nueva contraseña</span>
             <input
