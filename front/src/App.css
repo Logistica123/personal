@@ -2944,6 +2944,37 @@ tbody tr:nth-child(even) {
   padding: 0.4rem 0.6rem;
 }
 
+.file-list__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.file-list__info {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.file-list__info small {
+  color: #7a879b;
+}
+
+.file-list__delete {
+  background: none;
+  border: none;
+  color: #d92d20;
+  font-weight: 700;
+  cursor: pointer;
+  padding: 0.2rem 0.35rem;
+}
+
+.file-list__delete:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 .input-control input[disabled],
 .input-control textarea[disabled],
 .input-control select[disabled] {

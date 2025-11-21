@@ -11736,6 +11736,7 @@ const ApprovalsRequestsPage: React.FC = () => {
   const [reviewCommentError, setReviewCommentError] = useState<string | null>(null);
   const [reviewCommentInfo, setReviewCommentInfo] = useState<string | null>(null);
   const [reviewEditMode, setReviewEditMode] = useState(false);
+  const [reviewDeletingDocumentIds, setReviewDeletingDocumentIds] = useState<Set<number>>(() => new Set());
   const personaIdFromQuery = useMemo(() => {
     const searchParams = new URLSearchParams(location.search);
     const value = searchParams.get('personaId');
@@ -11954,6 +11955,7 @@ const ApprovalsRequestsPage: React.FC = () => {
       setReviewEditMode(false);
       return;
     }
+    setReviewDeletingDocumentIds(new Set());
 
     const personaIdNumeric = Number(personaIdFromQuery);
     if (Number.isNaN(personaIdNumeric)) {
@@ -12112,6 +12114,8 @@ const ApprovalsRequestsPage: React.FC = () => {
   }, [fetchSolicitudes]);
 
   useEffect(() => {
+    setReviewDeletingDocumentIds(new Set());
+
     const handler = (event: Event) => {
       const customEvent = event as CustomEvent<{ persona?: PersonalRecord }>;
       const persona = customEvent.detail?.persona;
@@ -14209,16 +14213,31 @@ const handleAdelantoFieldChange =
                               }
                               const label = labelParts.join(' – ');
                               const resolvedDownloadUrl = resolveReviewDocumentUrl(documento);
+                              const isDeleting = reviewDeletingDocumentIds.has(documento.id);
                               return (
                                 <li key={documento.id}>
-                                  {resolvedDownloadUrl ? (
-                                    <a href={resolvedDownloadUrl} target="_blank" rel="noopener noreferrer">
-                                      {label}
-                                    </a>
-                                  ) : (
-                                    label
-                                  )}
-                                  {documento.fechaVencimiento ? ` · Vence: ${documento.fechaVencimiento}` : ''}
+                                  <div className="file-list__row">
+                                    <div className="file-list__info">
+                                      {resolvedDownloadUrl ? (
+                                        <a href={resolvedDownloadUrl} target="_blank" rel="noopener noreferrer">
+                                          {label}
+                                        </a>
+                                      ) : (
+                                        <span>{label}</span>
+                                      )}
+                                      {documento.fechaVencimiento ? (
+                                        <small>Vence: {documento.fechaVencimiento}</small>
+                                      ) : null}
+                                    </div>
+                                    <button
+                                      type="button"
+                                      className="file-list__delete"
+                                      onClick={() => handleReviewDeleteDocument(documento)}
+                                      disabled={isDeleting}
+                                    >
+                                      {isDeleting ? 'Eliminando…' : 'Eliminar'}
+                                    </button>
+                                  </div>
                                 </li>
                               );
                             })}
@@ -14413,6 +14432,78 @@ const handleAdelantoFieldChange =
       })
       .filter((item): item is { id: number; url: string; label: string } => Boolean(item));
   }, [resolveReviewDocumentUrl, reviewPersonaDetail]);
+  const handleReviewDeleteDocument = useCallback(
+    async (documento: PersonalDetail['documents'][number]) => {
+      if (!reviewPersonaDetail) {
+        return;
+      }
+      const docId = documento.id;
+      if (docId == null) {
+        window.alert('No se pudo identificar el documento a eliminar.');
+        return;
+      }
+
+      const confirmed = window.confirm(
+        `¿Eliminar "${documento.nombre ?? documento.tipoNombre ?? 'este documento'}"? Esta acción no se puede deshacer.`
+      );
+      if (!confirmed) {
+        return;
+      }
+
+      setReviewDeletingDocumentIds((prev) => {
+        const next = new Set(prev);
+        next.add(docId);
+        return next;
+      });
+
+      try {
+        const response = await fetch(
+          `${apiBaseUrl}/api/personal/${reviewPersonaDetail.id}/documentos/${docId}`,
+          { method: 'DELETE' }
+        );
+
+        if (!response.ok) {
+          let message = `Error ${response.status}: ${response.statusText}`;
+          try {
+            const payload = await response.json();
+            if (typeof payload?.message === 'string') {
+              message = payload.message;
+            } else if (payload?.errors) {
+              const firstError = Object.values(payload.errors)[0];
+              if (Array.isArray(firstError) && typeof firstError[0] === 'string') {
+                message = firstError[0];
+              }
+            }
+          } catch {
+            // ignore parse errors
+          }
+          throw new Error(message);
+        }
+
+        setReviewPersonaDetail((prev) => {
+          if (!prev) {
+            return prev;
+          }
+          return {
+            ...prev,
+            documents: prev.documents.filter((doc) => doc.id !== docId),
+          };
+        });
+        setFlash({ type: 'success', message: 'Documento eliminado correctamente.' });
+      } catch (err) {
+        const message = (err as Error).message ?? 'No se pudo eliminar el documento.';
+        setFlash({ type: 'error', message });
+        window.alert(message);
+      } finally {
+        setReviewDeletingDocumentIds((prev) => {
+          const next = new Set(prev);
+          next.delete(docId);
+          return next;
+        });
+      }
+    },
+    [apiBaseUrl, reviewPersonaDetail, setFlash]
+  );
 
   const renderAltaEditorSections = () => (
     <>
@@ -14600,6 +14691,7 @@ const handleAdelantoFieldChange =
                 key={`alta-files-${altaFilesVersion}`}
                 type="file"
                 multiple
+                accept=".pdf,image/*"
                 onChange={handleAltaFilesChange}
                 style={{ display: 'none' }}
               />
