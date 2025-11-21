@@ -810,6 +810,39 @@ const CHAT_BADGE_UPDATED_EVENT = 'dashboard-chat:badge-updated';
 const CHAT_LAST_READ_STORAGE_KEY = 'dashboard-chat:last-read';
 const CHAT_LAST_READ_UPDATED_EVENT = 'dashboard-chat:last-read-updated';
 
+const buildPersonalFiltersStorageKey = (userId: number | null | undefined): string | null => {
+  if (userId == null) {
+    return null;
+  }
+  return `personal:filters:${userId}`;
+};
+
+const readStoredPersonalFilters = (
+  storageKey: string | null
+): { cliente?: string; sucursal?: string } => {
+  if (!storageKey || typeof window === 'undefined') {
+    return {};
+  }
+
+  try {
+    const raw = window.localStorage.getItem(storageKey);
+    if (!raw) {
+      return {};
+    }
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object') {
+      return {};
+    }
+
+    return {
+      cliente: typeof parsed.cliente === 'string' ? parsed.cliente : '',
+      sucursal: typeof parsed.sucursal === 'string' ? parsed.sucursal : '',
+    };
+  } catch {
+    return {};
+  }
+};
+
 const buildChatStorageKey = (base: string, userId: number | null): string => {
   const suffix = userId != null ? userId.toString() : 'anon';
   return `${base}:${suffix}`;
@@ -7263,14 +7296,20 @@ const ReclamoDetailPage: React.FC = () => {
 const PersonalPage: React.FC = () => {
   const navigate = useNavigate();
   const apiBaseUrl = useMemo(() => resolveApiBaseUrl(), []);
+  const authUser = useStoredAuthUser();
+  const personalFiltersStorageKey = useMemo(
+    () => buildPersonalFiltersStorageKey(authUser?.id ?? null),
+    [authUser?.id]
+  );
+  const resolveStoredFilters = useCallback(() => readStoredPersonalFilters(personalFiltersStorageKey), [personalFiltersStorageKey]);
   const [personal, setPersonal] = useState<PersonalRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 50;
-  const [clienteFilter, setClienteFilter] = useState('');
-  const [sucursalFilter, setSucursalFilter] = useState('');
+  const [clienteFilter, setClienteFilter] = useState(() => resolveStoredFilters().cliente ?? '');
+  const [sucursalFilter, setSucursalFilter] = useState(() => resolveStoredFilters().sucursal ?? '');
   const [perfilFilter, setPerfilFilter] = useState('');
   const [agenteFilter, setAgenteFilter] = useState('');
   const [unidadFilter, setUnidadFilter] = useState('');
@@ -7317,6 +7356,27 @@ const PersonalPage: React.FC = () => {
     fetchPersonal({ signal: controller.signal });
     return () => controller.abort();
   }, [fetchPersonal]);
+
+  useEffect(() => {
+    const stored = resolveStoredFilters();
+    setClienteFilter(stored.cliente ?? '');
+    setSucursalFilter(stored.sucursal ?? '');
+  }, [resolveStoredFilters]);
+
+  useEffect(() => {
+    if (!personalFiltersStorageKey || typeof window === 'undefined') {
+      return;
+    }
+
+    try {
+      window.localStorage.setItem(
+        personalFiltersStorageKey,
+        JSON.stringify({ cliente: clienteFilter, sucursal: sucursalFilter })
+      );
+    } catch {
+      // ignore write errors (storage full, etc.)
+    }
+  }, [personalFiltersStorageKey, clienteFilter, sucursalFilter]);
 
   useEffect(() => {
     const handler = (event: Event) => {
@@ -7525,6 +7585,9 @@ const PersonalPage: React.FC = () => {
     setTarifaFilter('');
     setSearchTerm('');
     setCurrentPage(1);
+    if (personalFiltersStorageKey && typeof window !== 'undefined') {
+      window.localStorage.removeItem(personalFiltersStorageKey);
+    }
   };
 
   const handleDeletePersonal = async (registro: PersonalRecord) => {
