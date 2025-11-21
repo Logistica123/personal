@@ -56,6 +56,14 @@ type Usuario = {
   status?: string | null;
   role?: string | null;
 };
+type UserRole = 'admin' | 'admin2' | 'encargado' | 'operator' | 'asesor';
+type AccessSection =
+  | 'clientes'
+  | 'unidades'
+  | 'usuarios'
+  | 'reclamos'
+  | 'control-horario'
+  | 'liquidaciones';
 
 type PersonalHistoryChange = {
   field: string | null;
@@ -440,10 +448,66 @@ const formatRoleLabel = (role: string | null | undefined): string => {
   if (normalized === 'admin' || normalized === 'administrador') {
     return 'Administrador';
   }
+  if (normalized === 'admin2' || normalized === 'administrador2' || normalized === 'administrador 2') {
+    return 'Administrador 2';
+  }
+  if (normalized === 'asesor' || normalized === 'asesores') {
+    return 'Asesor';
+  }
+  if (normalized === 'encargado' || normalized === 'encargados') {
+    return 'Encargado';
+  }
   if (normalized === 'operator' || normalized === 'operador') {
     return 'Operador';
   }
   return 'Usuario';
+};
+
+const normalizeUserRole = (role: string | null | undefined): UserRole => {
+  const normalized = role?.trim().toLowerCase();
+  if (normalized === 'admin' || normalized === 'administrador') {
+    return 'admin';
+  }
+  if (normalized === 'admin2' || normalized === 'administrador2' || normalized === 'administrador 2') {
+    return 'admin2';
+  }
+  if (normalized === 'asesor' || normalized === 'asesores') {
+    return 'asesor';
+  }
+  if (normalized === 'encargado' || normalized === 'encargados') {
+    return 'encargado';
+  }
+  return 'operator';
+};
+
+const getUserRole = (authUser: AuthUser | null | undefined): UserRole => normalizeUserRole(authUser?.role);
+
+const isElevatedRole = (role: UserRole): boolean => role === 'admin' || role === 'admin2';
+
+const USER_ROLE_OPTIONS: Array<{ value: UserRole; label: string }> = [
+  { value: 'operator', label: 'Operador' },
+  { value: 'asesor', label: 'Asesor' },
+  { value: 'encargado', label: 'Encargado' },
+  { value: 'admin2', label: 'Administrador 2' },
+  { value: 'admin', label: 'Administrador' },
+];
+
+const canAccessSection = (role: UserRole, section: AccessSection): boolean => {
+  switch (section) {
+    case 'usuarios':
+      return role === 'admin';
+    case 'control-horario':
+      return role === 'admin';
+    case 'liquidaciones':
+      return role === 'admin' || role === 'admin2';
+    case 'clientes':
+    case 'unidades':
+      return role !== 'operator' && role !== 'asesor';
+    case 'reclamos':
+      return role !== 'operator';
+    default:
+      return true;
+  }
 };
 
 type ReclamoRecord = {
@@ -2198,10 +2262,7 @@ const DashboardLayout: React.FC<{
     return formatRoleLabel(authUser?.role);
   }, [authUser]);
 
-  const isAdmin = useMemo(() => {
-    const normalized = authUser?.role?.toLowerCase() ?? '';
-    return normalized.includes('admin');
-  }, [authUser?.role]);
+  const userRole = useMemo(() => getUserRole(authUser), [authUser]);
 
   const avatarInitials = useMemo(
     () => computeInitials(authUser?.name ?? authUser?.email),
@@ -2723,13 +2784,17 @@ const DashboardLayout: React.FC<{
 
         <nav className="sidebar-nav" onClick={closeSidebar}>
           <span className="sidebar-title">Acciones</span>
-          <NavLink to="/clientes" className={({ isActive }) => `sidebar-link${isActive ? ' is-active' : ''}`}>
-            Gestión de clientes
-          </NavLink>
-          <NavLink to="/unidades" className={({ isActive }) => `sidebar-link${isActive ? ' is-active' : ''}`}>
-            Gestión de unidades
-          </NavLink>
-          {isAdmin ? (
+          {canAccessSection(userRole, 'clientes') ? (
+            <NavLink to="/clientes" className={({ isActive }) => `sidebar-link${isActive ? ' is-active' : ''}`}>
+              Gestión de clientes
+            </NavLink>
+          ) : null}
+          {canAccessSection(userRole, 'unidades') ? (
+            <NavLink to="/unidades" className={({ isActive }) => `sidebar-link${isActive ? ' is-active' : ''}`}>
+              Gestión de unidades
+            </NavLink>
+          ) : null}
+          {canAccessSection(userRole, 'usuarios') ? (
             <NavLink to="/usuarios" className={({ isActive }) => `sidebar-link${isActive ? ' is-active' : ''}`}>
               Gestión de usuarios
             </NavLink>
@@ -2737,13 +2802,15 @@ const DashboardLayout: React.FC<{
           <NavLink to="/personal" className={({ isActive }) => `sidebar-link${isActive ? ' is-active' : ''}`}>
             Personal
           </NavLink>
-          <NavLink to="/reclamos" className={({ isActive }) => `sidebar-link${isActive ? ' is-active' : ''}`}>
-            Reclamos
-          </NavLink>
+          {canAccessSection(userRole, 'reclamos') ? (
+            <NavLink to="/reclamos" className={({ isActive }) => `sidebar-link${isActive ? ' is-active' : ''}`}>
+              Reclamos
+            </NavLink>
+          ) : null}
           <NavLink to="/notificaciones" className={({ isActive }) => `sidebar-link${isActive ? ' is-active' : ''}`}>
             Notificaciones
           </NavLink>
-          {isAdmin ? (
+          {canAccessSection(userRole, 'control-horario') ? (
             <NavLink to="/control-horario" className={({ isActive }) => `sidebar-link${isActive ? ' is-active' : ''}`}>
               Control horario
             </NavLink>
@@ -2754,9 +2821,11 @@ const DashboardLayout: React.FC<{
           <NavLink to="/aprobaciones" className={({ isActive }) => `sidebar-link${isActive ? ' is-active' : ''}`}>
             Aprobaciones/solicitudes
           </NavLink>
-          <NavLink to="/liquidaciones" className={({ isActive }) => `sidebar-link${isActive ? ' is-active' : ''}`}>
-            Liquidaciones
-          </NavLink>
+          {canAccessSection(userRole, 'liquidaciones') ? (
+            <NavLink to="/liquidaciones" className={({ isActive }) => `sidebar-link${isActive ? ' is-active' : ''}`}>
+              Liquidaciones
+            </NavLink>
+          ) : null}
           <a className="sidebar-link" href="#tarifas" onClick={(event) => event.preventDefault()}>
             Tarifas
           </a>
@@ -2991,10 +3060,9 @@ const GeneralInfoPage: React.FC = () => {
     }
   }, [apiBaseUrl]);
 
-  const isAdmin = useMemo(() => {
-    const normalized = authUser?.role?.toLowerCase() ?? '';
-    return normalized.includes('admin');
-  }, [authUser?.role]);
+  const userRole = useMemo(() => getUserRole(authUser), [authUser]);
+  const canEditGeneralInfo = useMemo(() => isElevatedRole(userRole), [userRole]);
+  const isAdmin = canEditGeneralInfo;
 
   useEffect(() => {
     if (typeof window === 'undefined') {
@@ -3030,7 +3098,7 @@ const GeneralInfoPage: React.FC = () => {
     [entries]
   );
 
-  const helperText = isAdmin
+  const helperText = canEditGeneralInfo
     ? 'Compartí comunicados, anuncios o recordatorios importantes con todo el equipo.'
     : 'Solo los administradores pueden publicar novedades. Igual vas a poder leer todas las actualizaciones disponibles.';
 
@@ -15196,8 +15264,11 @@ const CreateUserPage: React.FC = () => {
             value={formValues.role}
             onChange={(event) => setFormValues((prev) => ({ ...prev, role: event.target.value }))}
           >
-            <option value="operator">Operador</option>
-            <option value="admin">Administrador</option>
+            {USER_ROLE_OPTIONS.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
           </select>
         </label>
 
@@ -15231,7 +15302,7 @@ const EditUserPage: React.FC = () => {
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [userName, setUserName] = useState<string | null>(null);
-  const [role, setRole] = useState<'admin' | 'operator'>('operator');
+  const [role, setRole] = useState<UserRole>('operator');
   const authUser = useStoredAuthUser();
   const isAdmin = useMemo(() => {
     const normalized = authUser?.role?.toLowerCase() ?? '';
@@ -15269,7 +15340,7 @@ const EditUserPage: React.FC = () => {
         setUserName(payload.data.name ?? payload.data.email ?? `Usuario #${usuarioId}`);
         setName(payload.data.name ?? '');
         setEmail(payload.data.email ?? '');
-        setRole((payload.data.role?.toLowerCase() === 'admin' ? 'admin' : 'operator'));
+        setRole(normalizeUserRole(payload.data.role));
       } catch (err) {
         if ((err as Error).name === 'AbortError') {
           return;
@@ -15348,10 +15419,7 @@ const EditUserPage: React.FC = () => {
 
       const payload = (await response.json()) as { message?: string; data?: Usuario };
       const resolvedRoleRaw = payload.data?.role ?? null;
-      let normalizedRole: 'admin' | 'operator' = role;
-      if (resolvedRoleRaw) {
-        normalizedRole = resolvedRoleRaw.trim().toLowerCase() === 'admin' ? 'admin' : 'operator';
-      }
+      const normalizedRole: UserRole = resolvedRoleRaw ? normalizeUserRole(resolvedRoleRaw) : role;
 
       const resolvedName = payload.data?.name ?? trimmedName;
       const resolvedEmail = payload.data?.email ?? trimmedEmail;
@@ -15467,9 +15535,12 @@ const EditUserPage: React.FC = () => {
           </label>
           <label className="input-control">
             <span>Rol</span>
-            <select value={role} onChange={(event) => setRole(event.target.value === 'admin' ? 'admin' : 'operator')}>
-              <option value="operator">Operador</option>
-              <option value="admin">Administrador</option>
+            <select value={role} onChange={(event) => setRole(normalizeUserRole(event.target.value))}>
+              {USER_ROLE_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
             </select>
           </label>
         </div>
@@ -15494,6 +15565,9 @@ const PersonalEditPage: React.FC = () => {
   const { personaId } = useParams<{ personaId: string }>();
   const navigate = useNavigate();
   const apiBaseUrl = useMemo(() => resolveApiBaseUrl(), []);
+  const authUser = useStoredAuthUser();
+  const userRole = useMemo(() => getUserRole(authUser), [authUser]);
+  const isReadOnly = userRole === 'operator';
   const [detail, setDetail] = useState<PersonalDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -15850,6 +15924,10 @@ const PersonalEditPage: React.FC = () => {
   );
 
   const handleSave = async () => {
+    if (isReadOnly) {
+      setSaveError('Tu rol actual solo permite visualizar la información.');
+      return;
+    }
     if (!personaId) {
       return;
     }
@@ -15987,6 +16065,10 @@ const PersonalEditPage: React.FC = () => {
   };
 
   const handleUploadDocumentos = async () => {
+    if (isReadOnly) {
+      setUploadStatus({ type: 'error', message: 'Tu rol actual solo permite visualizar la información.' });
+      return;
+    }
     if (!personaId || pendingUploads.length === 0) {
       return;
     }
@@ -16057,6 +16139,10 @@ const PersonalEditPage: React.FC = () => {
     <DashboardLayout title="Editar personal" subtitle={fullName || `Registro #${detail.id}`} headerContent={headerContent}>
       {metaError ? <p className="form-info form-info--error">{metaError}</p> : null}
       {metaLoading ? <p className="form-info">Cargando datos de referencia...</p> : null}
+      {isReadOnly ? (
+        <p className="form-info">Estás en modo solo lectura por tu rol. Podés visualizar la información pero no editarla.</p>
+      ) : null}
+      <fieldset disabled={isReadOnly} className="personal-edit-fieldset">
       <section className="personal-edit-section">
         <h2>Datos personales</h2>
         <div className="form-grid">
@@ -16107,7 +16193,7 @@ const PersonalEditPage: React.FC = () => {
           </label>
           <label className="input-control">
             <span>Perfil</span>
-            <input type="text" value={perfilLabel} readOnly />
+            <input type="text" value={perfilLabel} readOnly disabled={isReadOnly} />
           </label>
           <label className="input-control">
             <span>Fecha de alta</span>
@@ -16115,6 +16201,7 @@ const PersonalEditPage: React.FC = () => {
               type="date"
               value={formValues.fechaAlta}
               onChange={(event) => setFormValues((prev) => ({ ...prev, fechaAlta: event.target.value }))}
+              disabled={isReadOnly}
             />
           </label>
           <label className="input-control">
@@ -16356,6 +16443,7 @@ const PersonalEditPage: React.FC = () => {
           value={formValues.observaciones}
           onChange={(event) => setFormValues((prev) => ({ ...prev, observaciones: event.target.value }))}
           rows={3}
+          disabled={isReadOnly}
         />
       </label>
       {saveError ? <p className="form-info form-info--error">{saveError}</p> : null}
@@ -16364,12 +16452,12 @@ const PersonalEditPage: React.FC = () => {
         <button type="button" className="secondary-action" onClick={() => navigate('/personal')}>
           Cancelar
         </button>
-        <button type="button" className="primary-action" onClick={handleSave} disabled={saving}>
+        <button type="button" className="primary-action" onClick={handleSave} disabled={saving || isReadOnly}>
           {saving ? 'Guardando...' : 'Guardar'}
         </button>
       </div>
     </section>
-
+      </fieldset>
       <section className="personal-edit-section">
         <h2>Historial de cambios</h2>
         <div className="history-list">
@@ -16479,7 +16567,7 @@ const PersonalEditPage: React.FC = () => {
             <select
               value={selectedDocumentTypeId}
               onChange={(event) => setSelectedDocumentTypeId(event.target.value)}
-              disabled={documentTypesLoading}
+              disabled={documentTypesLoading || isReadOnly}
             >
               <option value="">Seleccionar</option>
               {documentTypes.map((tipo) => (
@@ -16496,6 +16584,7 @@ const PersonalEditPage: React.FC = () => {
                 type="date"
                 value={documentExpiry}
                 onChange={(event) => setDocumentExpiry(event.target.value)}
+                disabled={isReadOnly}
               />
             </label>
           ) : null}
@@ -16516,6 +16605,7 @@ const PersonalEditPage: React.FC = () => {
               multiple
               onChange={handlePendingFilesSelect}
               style={{ display: 'none' }}
+              disabled={isReadOnly}
             />
           </label>
           {pendingUploads.length > 0 ? (
@@ -16532,6 +16622,7 @@ const PersonalEditPage: React.FC = () => {
                     className="pending-upload-remove"
                     onClick={() => handleRemovePendingUpload(item.id)}
                     aria-label={`Quitar ${item.file.name}`}
+                    disabled={isReadOnly}
                   >
                     ×
                   </button>
@@ -16552,7 +16643,8 @@ const PersonalEditPage: React.FC = () => {
           disabled={
             uploading ||
             pendingUploads.length === 0 ||
-            documentTypesLoading
+            documentTypesLoading ||
+            isReadOnly
           }
         >
           {uploading ? 'Subiendo...' : 'Subir documentos'}
@@ -18383,6 +18475,24 @@ const EditClientPage: React.FC = () => {
   );
 };
 
+const RequireAccess: React.FC<{ section: AccessSection; children: React.ReactElement }> = ({
+  section,
+  children,
+}) => {
+  const authUser = useStoredAuthUser();
+  const userRole = useMemo(() => getUserRole(authUser), [authUser]);
+
+  if (!authUser?.role) {
+    return <Navigate to="/" replace />;
+  }
+
+  if (!canAccessSection(userRole, section)) {
+    return <Navigate to="/personal" replace />;
+  }
+
+  return children;
+};
+
 const App: React.FC = () => {
   return (
     <Routes>
@@ -18391,31 +18501,143 @@ const App: React.FC = () => {
       <Route path="/chat" element={<ChatPage />} />
       <Route path="/chat/:contactId" element={<ChatPage />} />
       <Route path="/informacion-general" element={<GeneralInfoPage />} />
-      <Route path="/clientes" element={<DashboardPage />} />
-      <Route path="/unidades" element={<UnitsPage />} />
-      <Route path="/reclamos" element={<ReclamosPage />} />
-      <Route path="/reclamos/nuevo" element={<CreateReclamoPage />} />
+      <Route
+        path="/clientes"
+        element={
+          <RequireAccess section="clientes">
+            <DashboardPage />
+          </RequireAccess>
+        }
+      />
+      <Route
+        path="/unidades"
+        element={
+          <RequireAccess section="unidades">
+            <UnitsPage />
+          </RequireAccess>
+        }
+      />
+      <Route
+        path="/reclamos"
+        element={
+          <RequireAccess section="reclamos">
+            <ReclamosPage />
+          </RequireAccess>
+        }
+      />
+      <Route
+        path="/reclamos/nuevo"
+        element={
+          <RequireAccess section="reclamos">
+            <CreateReclamoPage />
+          </RequireAccess>
+        }
+      />
       <Route path="/notificaciones" element={<NotificationsPage />} />
-      <Route path="/reclamos/:reclamoId" element={<ReclamoDetailPage />} />
-      <Route path="/unidades/nuevo" element={<CreateUnitPage />} />
-      <Route path="/unidades/:unidadId/editar" element={<EditUnitPage />} />
+      <Route
+        path="/reclamos/:reclamoId"
+        element={
+          <RequireAccess section="reclamos">
+            <ReclamoDetailPage />
+          </RequireAccess>
+        }
+      />
+      <Route
+        path="/unidades/nuevo"
+        element={
+          <RequireAccess section="unidades">
+            <CreateUnitPage />
+          </RequireAccess>
+        }
+      />
+      <Route
+        path="/unidades/:unidadId/editar"
+        element={
+          <RequireAccess section="unidades">
+            <EditUnitPage />
+          </RequireAccess>
+        }
+      />
       <Route path="/personal" element={<PersonalPage />} />
       <Route path="/personal/nuevo" element={<PersonalCreatePage />} />
       <Route path="/personal/:personaId/editar" element={<PersonalEditPage />} />
-      <Route path="/liquidaciones" element={<LiquidacionesPage />} />
-      <Route path="/liquidaciones/:personaId" element={<LiquidacionesPage />} />
+      <Route
+        path="/liquidaciones"
+        element={
+          <RequireAccess section="liquidaciones">
+            <LiquidacionesPage />
+          </RequireAccess>
+        }
+      />
+      <Route
+        path="/liquidaciones/:personaId"
+        element={
+          <RequireAccess section="liquidaciones">
+            <LiquidacionesPage />
+          </RequireAccess>
+        }
+      />
       <Route path="/documentos" element={<DocumentTypesPage />} />
       <Route path="/documentos/nuevo" element={<DocumentTypeCreatePage />} />
       <Route path="/documentos/:tipoId/editar" element={<DocumentTypeEditPage />} />
-      <Route path="/usuarios" element={<UsersPage />} />
-      <Route path="/usuarios/nuevo" element={<CreateUserPage />} />
-      <Route path="/usuarios/:usuarioId/editar" element={<EditUserPage />} />
-      <Route path="/control-horario/:userKey" element={<AttendanceUserDetailPage />} />
-      <Route path="/control-horario" element={<AttendanceLogPage />} />
+      <Route
+        path="/usuarios"
+        element={
+          <RequireAccess section="usuarios">
+            <UsersPage />
+          </RequireAccess>
+        }
+      />
+      <Route
+        path="/usuarios/nuevo"
+        element={
+          <RequireAccess section="usuarios">
+            <CreateUserPage />
+          </RequireAccess>
+        }
+      />
+      <Route
+        path="/usuarios/:usuarioId/editar"
+        element={
+          <RequireAccess section="usuarios">
+            <EditUserPage />
+          </RequireAccess>
+        }
+      />
+      <Route
+        path="/control-horario/:userKey"
+        element={
+          <RequireAccess section="control-horario">
+            <AttendanceUserDetailPage />
+          </RequireAccess>
+        }
+      />
+      <Route
+        path="/control-horario"
+        element={
+          <RequireAccess section="control-horario">
+            <AttendanceLogPage />
+          </RequireAccess>
+        }
+      />
       <Route path="/flujo-trabajo" element={<WorkflowPage />} />
       <Route path="/aprobaciones" element={<ApprovalsRequestsPage />} />
-      <Route path="/clientes/nuevo" element={<CreateClientPage />} />
-      <Route path="/clientes/:clienteId/editar" element={<EditClientPage />} />
+      <Route
+        path="/clientes/nuevo"
+        element={
+          <RequireAccess section="clientes">
+            <CreateClientPage />
+          </RequireAccess>
+        }
+      />
+      <Route
+        path="/clientes/:clienteId/editar"
+        element={
+          <RequireAccess section="clientes">
+            <EditClientPage />
+          </RequireAccess>
+        }
+      />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );

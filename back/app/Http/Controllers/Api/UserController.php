@@ -10,6 +10,11 @@ use Illuminate\Support\Facades\Hash;
 
 class UserController extends Controller
 {
+    /**
+     * @var string[]
+     */
+    private array $allowedRoles = ['admin', 'admin2', 'encargado', 'operator', 'asesor'];
+
     public function index(): JsonResponse
     {
         $users = User::query()
@@ -34,7 +39,7 @@ class UserController extends Controller
             'name' => ['required', 'string', 'max:255'],
             'email' => ['required', 'string', 'email', 'max:255', 'unique:users,email'],
             'password' => ['required', 'string', 'min:6', 'confirmed'],
-            'role' => ['nullable', 'in:admin,operator'],
+            'role' => ['nullable', 'in:' . implode(',', $this->allowedRoles)],
         ]);
 
         $role = $validated['role'] ?? 'operator';
@@ -80,7 +85,7 @@ class UserController extends Controller
             'name' => ['sometimes', 'nullable', 'string', 'max:255'],
             'email' => ['sometimes', 'nullable', 'string', 'email', 'max:255', 'unique:users,email,' . $usuario->id],
             'password' => ['nullable', 'string', 'min:6', 'confirmed'],
-            'role' => ['nullable', 'in:admin,operator'],
+            'role' => ['nullable', 'in:' . implode(',', $this->allowedRoles)],
         ]);
 
         $updated = false;
