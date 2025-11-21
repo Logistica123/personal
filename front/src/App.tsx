@@ -11682,6 +11682,7 @@ const ApprovalsRequestsPage: React.FC = () => {
   const [solicitudesClienteFilter, setSolicitudesClienteFilter] = useState('');
   const [solicitudesSucursalFilter, setSolicitudesSucursalFilter] = useState('');
   const [flash, setFlash] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  const [deletingSolicitudId, setDeletingSolicitudId] = useState<number | null>(null);
   const perfilNames: Record<number, string> = useMemo(
     () => ({
       1: 'Dueño y chofer',
@@ -13594,6 +13595,55 @@ const handleAdelantoFieldChange =
     setSolicitudesSucursalFilter('');
   };
 
+  const handleDeleteSolicitud = async (registro: PersonalRecord) => {
+    if (deletingSolicitudId !== null) {
+      return;
+    }
+
+    const nameLabel = registro.nombre ? `"${registro.nombre}"` : `#${registro.id}`;
+    const confirmed = window.confirm(`¿Eliminar la solicitud ${nameLabel}?`);
+    if (!confirmed) {
+      return;
+    }
+
+    if (registro.id < 0) {
+      setDeletingSolicitudId(registro.id);
+      setLocalSolicitudes((prev) => prev.filter((item) => item.id !== registro.id));
+      setDeletingSolicitudId(null);
+      setFlash({ type: 'success', message: 'Solicitud eliminada correctamente.' });
+      return;
+    }
+
+    try {
+      setDeletingSolicitudId(registro.id);
+
+      const response = await fetch(`${apiBaseUrl}/api/personal/${registro.id}`, {
+        method: 'DELETE',
+        headers: { Accept: 'application/json' },
+      });
+
+      if (!response.ok) {
+        let message = `Error ${response.status}: ${response.statusText}`;
+        try {
+          const payload = await response.json();
+          if (typeof payload?.message === 'string') {
+            message = payload.message;
+          }
+        } catch {
+          // ignore parse errors
+        }
+        throw new Error(message);
+      }
+
+      setBackendSolicitudes((prev) => prev.filter((item) => item.id !== registro.id));
+      setFlash({ type: 'success', message: 'Solicitud eliminada correctamente.' });
+    } catch (err) {
+      window.alert((err as Error).message ?? 'No se pudo eliminar la solicitud.');
+    } finally {
+      setDeletingSolicitudId(null);
+    }
+  };
+
   const handleGoToList = () => {
     setActiveTab('list');
     setReviewPersonaDetail(null);
@@ -13840,6 +13890,14 @@ const handleAdelantoFieldChange =
                         onClick={() => handleOpenSolicitud(registro)}
                       >
                         {registro.solicitudTipo && registro.solicitudTipo !== 'alta' ? '↗' : '👁️'}
+                      </button>
+                      <button
+                        type="button"
+                        aria-label={`Eliminar solicitud ${registro.nombre ?? registro.id}`}
+                        onClick={() => handleDeleteSolicitud(registro)}
+                        disabled={deletingSolicitudId === registro.id}
+                      >
+                        {deletingSolicitudId === registro.id ? '…' : '🗑️'}
                       </button>
                     </div>
                   </td>
