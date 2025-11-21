@@ -308,6 +308,7 @@ type AltaAttachmentItem = {
   typeName: string;
   vence: string | null;
   positionLabel: string | null;
+  previewUrl?: string | null;
 };
 
 type PersonalMeta = {
@@ -11659,6 +11660,8 @@ const ApprovalsRequestsPage: React.FC = () => {
   const [altaFilesVersion, setAltaFilesVersion] = useState(0);
   const [altaDocumentType, setAltaDocumentType] = useState('');
   const [altaDocumentExpiry, setAltaDocumentExpiry] = useState('');
+  const [altaPreviewModalImage, setAltaPreviewModalImage] = useState<{ url: string; label: string } | null>(null);
+  const altaAttachmentPreviewUrlsRef = useRef<string[]>([]);
   const altaSelectedDocumentType = useMemo(() => {
     if (!meta?.documentTypes || !altaDocumentType) {
       return null;
@@ -11716,6 +11719,25 @@ const ApprovalsRequestsPage: React.FC = () => {
 
     return normalized.includes('cedula verde');
   }, [altaDocumentTypeName]);
+  const openAltaPreviewModal = useCallback((url: string, label: string) => {
+    setAltaPreviewModalImage({ url, label });
+  }, []);
+  const closeAltaPreviewModal = useCallback(() => {
+    setAltaPreviewModalImage(null);
+  }, []);
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        closeAltaPreviewModal();
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [closeAltaPreviewModal]);
   const altaAttachmentsForCurrentType = useMemo(() => {
     if (!altaDocumentTypeId) {
       return [];
@@ -11723,6 +11745,29 @@ const ApprovalsRequestsPage: React.FC = () => {
 
     return altaAttachments.filter((item) => item.typeId === altaDocumentTypeId);
   }, [altaAttachments, altaDocumentTypeId]);
+  const altaImagePreviews = useMemo(
+    () =>
+      altaAttachments.filter(
+        (item): item is AltaAttachmentItem & { previewUrl: string } => Boolean(item.previewUrl)
+      ),
+    [altaAttachments]
+  );
+  useEffect(() => {
+    const currentUrls = altaAttachments
+      .map((item) => item.previewUrl)
+      .filter((url): url is string => Boolean(url));
+    const removedUrls = altaAttachmentPreviewUrlsRef.current.filter((url) => !currentUrls.includes(url));
+    if (altaPreviewModalImage?.url && removedUrls.includes(altaPreviewModalImage.url)) {
+      closeAltaPreviewModal();
+    }
+    removedUrls.forEach((url) => revokeImagePreviewUrl(url));
+    altaAttachmentPreviewUrlsRef.current = currentUrls;
+  }, [altaAttachments, altaPreviewModalImage?.url, closeAltaPreviewModal]);
+  useEffect(() => {
+    return () => {
+      altaAttachmentPreviewUrlsRef.current.forEach((url) => revokeImagePreviewUrl(url));
+    };
+  }, []);
   const [combustibleAttachments, setCombustibleAttachments] = useState<File[]>([]);
   const [combustibleFilesVersion, setCombustibleFilesVersion] = useState(0);
   const [aumentoAttachments, setAumentoAttachments] = useState<File[]>([]);
@@ -12183,6 +12228,7 @@ const sucursalOptions = useMemo(() => {
           typeName: typeLabel,
           vence: altaDocumentRequiresExpiry ? altaDocumentExpiry || null : null,
           positionLabel,
+          previewUrl: createImagePreviewUrl(file),
         } as AltaAttachmentItem;
       });
 
@@ -14072,13 +14118,7 @@ const handleAdelantoFieldChange =
                                 labelParts.push(documento.nombre);
                               }
                               const label = labelParts.join(' – ');
-                              const fallbackPath = reviewPersonaDetail
-                                ? `/api/personal/${reviewPersonaDetail.id}/documentos/${documento.id}/descargar`
-                                : null;
-                              const resolvedDownloadUrl = resolveApiUrl(
-                                apiBaseUrl,
-                                documento.downloadUrl ?? fallbackPath ?? null
-                              );
+                              const resolvedDownloadUrl = resolveReviewDocumentUrl(documento);
                               return (
                                 <li key={documento.id}>
                                   {resolvedDownloadUrl ? (
@@ -14093,6 +14133,25 @@ const handleAdelantoFieldChange =
                               );
                             })}
                           </ul>
+                          {reviewImageDocuments.length > 0 ? (
+                            <div className="pending-upload-previews">
+                              {reviewImageDocuments.map((doc) => (
+                                <button
+                                  type="button"
+                                  key={doc.id}
+                                  className="pending-upload-previews__item"
+                                  onClick={() => openAltaPreviewModal(doc.url, doc.label)}
+                                >
+                                  <img
+                                    src={doc.url}
+                                    alt={`Vista previa de ${doc.label}`}
+                                    className="pending-upload-previews__image"
+                                  />
+                                  <span>{doc.label}</span>
+                                </button>
+                              ))}
+                            </div>
+                          ) : null}
                         </>
                       );
                     })()
@@ -14223,6 +14282,47 @@ const handleAdelantoFieldChange =
   };
 
   const isReviewMode = Boolean(personaIdFromQuery);
+  const resolveReviewDocumentUrl = useCallback(
+    (documento: PersonalDetail['documents'][number]) => {
+      const fallbackPath = reviewPersonaDetail
+        ? `/api/personal/${reviewPersonaDetail.id}/documentos/${documento.id}/descargar`
+        : null;
+
+      return resolveApiUrl(
+        apiBaseUrl,
+        documento.absoluteDownloadUrl ?? documento.downloadUrl ?? fallbackPath ?? null
+      );
+    },
+    [apiBaseUrl, reviewPersonaDetail]
+  );
+  const reviewImageDocuments = useMemo(() => {
+    if (!reviewPersonaDetail) {
+      return [];
+    }
+
+    return reviewPersonaDetail.documents
+      .map((documento) => {
+        if (!documento.mime?.startsWith('image/')) {
+          return null;
+        }
+
+        const previewUrl = resolveReviewDocumentUrl(documento);
+        if (!previewUrl) {
+          return null;
+        }
+
+        const labelParts = [documento.tipoNombre ?? `Documento #${documento.id}`];
+        if (documento.nombre && documento.nombre !== labelParts[0]) {
+          labelParts.push(documento.nombre);
+        }
+        return {
+          id: documento.id,
+          url: previewUrl,
+          label: labelParts.join(' – '),
+        };
+      })
+      .filter((item): item is { id: number; url: string; label: string } => Boolean(item));
+  }, [resolveReviewDocumentUrl, reviewPersonaDetail]);
 
   const renderAltaEditorSections = () => (
     <>
@@ -14414,6 +14514,25 @@ const handleAdelantoFieldChange =
                 style={{ display: 'none' }}
               />
             </label>
+            {altaImagePreviews.length > 0 ? (
+              <div className="pending-upload-previews">
+                {altaImagePreviews.map((item) => (
+                  <button
+                    type="button"
+                    key={item.id}
+                    className="pending-upload-previews__item"
+                    onClick={() => item.previewUrl && openAltaPreviewModal(item.previewUrl, item.file.name)}
+                  >
+                    <img
+                      src={item.previewUrl}
+                      alt={`Vista previa de ${item.file.name}`}
+                      className="pending-upload-previews__image"
+                    />
+                    <span>{item.file.name}</span>
+                  </button>
+                ))}
+              </div>
+            ) : null}
             {renderAltaAttachmentList()}
             {isAltaCedulaVerde && altaAttachmentsForCurrentType.length < 2 ? (
               <p className="form-info">Recordá subir frente y dorso de la cédula verde.</p>
@@ -15111,6 +15230,33 @@ const handleAdelantoFieldChange =
       </div>
 
       <div className="approvals-panel">{renderTabContent()}</div>
+
+      {altaPreviewModalImage ? (
+        <div
+          className="preview-modal"
+          role="dialog"
+          aria-modal="true"
+          aria-label={`Vista previa de ${altaPreviewModalImage.label}`}
+          onClick={closeAltaPreviewModal}
+        >
+          <div className="preview-modal__content" onClick={(event) => event.stopPropagation()}>
+            <button
+              type="button"
+              className="preview-modal__close"
+              aria-label="Cerrar vista previa"
+              onClick={closeAltaPreviewModal}
+            >
+              ×
+            </button>
+            <img
+              src={altaPreviewModalImage.url}
+              alt={`Vista ampliada de ${altaPreviewModalImage.label}`}
+              className="preview-modal__image"
+            />
+            <p className="preview-modal__caption">{altaPreviewModalImage.label}</p>
+          </div>
+        </div>
+      ) : null}
     </DashboardLayout>
   );
 };
