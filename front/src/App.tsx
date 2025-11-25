@@ -24,6 +24,34 @@ const resolveApiUrl = (baseUrl: string, target?: string | null): string | null =
   }
 };
 
+const solicitudCacheKey = (id: number | null | undefined) =>
+  (id != null ? `personal:solicitudData:${id}` : '');
+
+const readCachedSolicitudData = (id: number | null | undefined): unknown | null => {
+  const key = solicitudCacheKey(id);
+  if (!key || typeof window === 'undefined') {
+    return null;
+  }
+  try {
+    const raw = window.localStorage.getItem(key);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+};
+
+const writeCachedSolicitudData = (id: number | null | undefined, data: unknown) => {
+  const key = solicitudCacheKey(id);
+  if (!key || typeof window === 'undefined' || data == null) {
+    return;
+  }
+  try {
+    window.localStorage.setItem(key, JSON.stringify(data));
+  } catch {
+    // ignore write errors
+  }
+};
+
 type Sucursal = {
   id: number | null;
   nombre: string | null;
@@ -127,6 +155,7 @@ type PersonalRecord = {
   aprobadoAt: string | null;
   aprobadoPor: string | null;
   aprobadoPorId?: number | null;
+  aprobadoPorNombre?: string | null;
   esSolicitud: boolean;
   solicitudTipo?: 'alta' | 'combustible' | 'aumento_combustible' | 'adelanto' | 'poliza';
   solicitudData?: unknown;
@@ -166,7 +195,9 @@ type PersonalDetail = {
   patente: string | null;
   estado: string | null;
   estadoId: number | null;
+  combustible?: string | null;
   combustibleValue: boolean;
+  tarifaEspecial?: string | null;
   tarifaEspecialValue: boolean;
   pago: string | null;
   cbuAlias: string | null;
@@ -184,6 +215,7 @@ type PersonalDetail = {
   aprobadoPorId: number | null;
   aprobadoPorNombre: string | null;
   esSolicitud: boolean;
+  solicitudData?: unknown;
   documentsDownloadAllUrl: string | null;
   documentsDownloadAllAbsoluteUrl?: string | null;
   duenoNombre: string | null;
@@ -11913,7 +11945,7 @@ const ApprovalsRequestsPage: React.FC = () => {
     cuil: '',
     cbuAlias: '',
     pago: '',
-    esCobrador: false,
+    esCobrador: true,
     cobradorNombre: '',
     cobradorEmail: '',
     cobradorCuil: '',
@@ -12448,9 +12480,6 @@ const sucursalOptions = useMemo(() => {
     setAltaForm((prev) => ({
       ...prev,
       esCobrador: checked,
-      ...(checked
-        ? {}
-        : { cobradorNombre: '', cobradorEmail: '', cobradorCuil: '', cobradorCbuAlias: '' }),
     }));
   };
 
@@ -12465,7 +12494,10 @@ const sucursalOptions = useMemo(() => {
   };
 
   const buildAltaRequestPayload = (form: AltaRequestForm) => {
-    const esCobrador = form.esCobrador || form.perfilValue === 2;
+    const hasCobradorFields = [form.cobradorNombre, form.cobradorEmail, form.cobradorCuil, form.cobradorCbuAlias].some(
+      (value) => (value ?? '').trim().length > 0
+    );
+    const esCobrador = form.esCobrador || form.perfilValue === 2 || hasCobradorFields;
     const cobradorNombre = form.cobradorNombre.trim() || null;
     const cobradorEmail = form.cobradorEmail.trim() || null;
     const cobradorCuil = form.cobradorCuil.trim() || null;
@@ -12677,6 +12709,10 @@ const sucursalOptions = useMemo(() => {
         message: payload.message ?? 'Solicitud de alta registrada correctamente.',
       });
 
+      if (personaId) {
+        writeCachedSolicitudData(personaId, { form: altaForm });
+      }
+
       const defaultPerfilValue =
         (meta?.perfiles ?? []).find((perfil) => perfil.value !== 2)?.value
         ?? meta?.perfiles?.[0]?.value
@@ -12693,7 +12729,7 @@ const sucursalOptions = useMemo(() => {
         cuil: '',
         cbuAlias: '',
         pago: '',
-        esCobrador: false,
+        esCobrador: true,
         cobradorNombre: '',
         cobradorEmail: '',
         cobradorCuil: '',
@@ -12952,69 +12988,233 @@ const sucursalOptions = useMemo(() => {
         };
       };
 
+      const resolvedEstadoId = (() => {
+        if (approvalEstadoId) {
+          return Number(approvalEstadoId);
+        }
+        if (resolvedActivoEstadoId) {
+          return Number(resolvedActivoEstadoId);
+        }
+        return reviewPersonaDetail.estadoId ?? payload.data?.personalRecord?.estadoId ?? null;
+      })();
+
+      const estadoActualizadoNombre = (() => {
+        if (approvalEstadoId || resolvedActivoEstadoId) {
+          const targetId = approvalEstadoId || resolvedActivoEstadoId;
+          return (
+            meta?.estados?.find((estado) => String(estado.id) === targetId)?.nombre ??
+            payload.data?.personalRecord?.estado ??
+            reviewPersonaDetail.estado
+          );
+        }
+        return payload.data?.personalRecord?.estado ?? reviewPersonaDetail.estado;
+      })();
+
+      const resolvedFechaAlta =
+        payload.data?.personalRecord?.fechaAlta ??
+        reviewPersonaDetail.fechaAlta ??
+        new Date().toISOString().slice(0, 10);
+
+      const resolvedAprobadoPorId =
+        payload.data?.aprobadoPorId ?? reviewPersonaDetail.aprobadoPorId ?? (authUser?.id ?? null);
+      const resolvedAprobadoPorNombre =
+        payload.data?.aprobadoPorNombre ??
+        (resolvedAprobadoPorId === authUser?.id && authUser?.name
+          ? authUser.name
+          : reviewPersonaDetail.aprobadoPorNombre);
+      const resolvedAprobadoAt =
+        payload.data?.aprobadoAt ??
+        payload.data?.personalRecord?.aprobadoAt ??
+        reviewPersonaDetail.aprobadoAt ??
+        null;
+
+      const fullNameFromReview = [reviewPersonaDetail.nombres, reviewPersonaDetail.apellidos]
+        .filter((part) => part && part.trim().length > 0)
+        .join(' ')
+        .trim();
+
+      const solicitudAltaForm = (
+        reviewPersonaDetail.solicitudData as { form?: AltaRequestForm } | null | undefined
+      )?.form;
+
+      const normalizeCobradorValue = (value: string | null | undefined) => {
+        const trimmed = (value ?? '').trim();
+        return trimmed.length > 0 ? trimmed : null;
+      };
+
+      const fallbackNombreCompletoSolicitud = solicitudAltaForm
+        ? [solicitudAltaForm.nombres, solicitudAltaForm.apellidos].filter(Boolean).join(' ').trim()
+        : '';
+      const fallbackEmailSolicitud = solicitudAltaForm?.email ?? '';
+      const fallbackCuilSolicitud = solicitudAltaForm?.cuil ?? '';
+      const fallbackCbuAliasSolicitud = solicitudAltaForm?.cbuAlias ?? '';
+
+      const fallbackCobradorNombre =
+        normalizeCobradorValue(solicitudAltaForm?.cobradorNombre) ??
+        normalizeCobradorValue(reviewPersonaDetail.cobradorNombre) ??
+        normalizeCobradorValue(reviewPersonaDetail.duenoNombre) ??
+        normalizeCobradorValue(fallbackNombreCompletoSolicitud) ??
+        normalizeCobradorValue(fullNameFromReview);
+      const fallbackCobradorEmail =
+        normalizeCobradorValue(solicitudAltaForm?.cobradorEmail) ??
+        normalizeCobradorValue(reviewPersonaDetail.cobradorEmail) ??
+        normalizeCobradorValue(reviewPersonaDetail.duenoEmail) ??
+        normalizeCobradorValue(fallbackEmailSolicitud);
+      const fallbackCobradorCuil =
+        normalizeCobradorValue(solicitudAltaForm?.cobradorCuil) ??
+        normalizeCobradorValue(reviewPersonaDetail.cobradorCuil) ??
+        normalizeCobradorValue(reviewPersonaDetail.duenoCuilCobrador) ??
+        normalizeCobradorValue(reviewPersonaDetail.duenoCuil) ??
+        normalizeCobradorValue(fallbackCuilSolicitud);
+      const fallbackCobradorCbuAlias =
+        normalizeCobradorValue(solicitudAltaForm?.cobradorCbuAlias) ??
+        normalizeCobradorValue(reviewPersonaDetail.cobradorCbuAlias) ??
+        normalizeCobradorValue(reviewPersonaDetail.duenoCbuAlias) ??
+        normalizeCobradorValue(fallbackCbuAliasSolicitud);
+
+      const resolvedEsCobrador =
+        payload.data?.personalRecord?.esCobrador
+        ?? reviewPersonaDetail.esCobrador
+        ?? solicitudAltaForm?.esCobrador
+        ?? false;
+      const resolvedCobradorNombre =
+        payload.data?.personalRecord?.cobradorNombre ??
+        fallbackCobradorNombre;
+      const resolvedCobradorEmail =
+        payload.data?.personalRecord?.cobradorEmail ??
+        fallbackCobradorEmail;
+      const resolvedCobradorCuil =
+        payload.data?.personalRecord?.cobradorCuil ??
+        fallbackCobradorCuil;
+      const resolvedCobradorCbuAlias =
+        payload.data?.personalRecord?.cobradorCbuAlias ??
+        fallbackCobradorCbuAlias;
+
+      const resolvedPersonalRecord: PersonalRecord = {
+        ...reviewPersonaDetail,
+        ...payload.data?.personalRecord,
+        solicitudData: reviewPersonaDetail.solicitudData ?? payload.data?.personalRecord?.solicitudData,
+        nombre:
+          payload.data?.personalRecord?.nombre ??
+          (() => {
+            const fromDetail = [reviewPersonaDetail.nombres, reviewPersonaDetail.apellidos]
+              .filter((part) => part && part.trim().length > 0)
+              .join(' ')
+              .trim();
+            if (fromDetail) {
+              return fromDetail;
+            }
+            if (fallbackNombreCompletoSolicitud) {
+              return fallbackNombreCompletoSolicitud;
+            }
+            return null;
+          })(),
+        nombres: payload.data?.personalRecord?.nombres ?? reviewPersonaDetail.nombres ?? solicitudAltaForm?.nombres ?? null,
+        apellidos:
+          payload.data?.personalRecord?.apellidos ?? reviewPersonaDetail.apellidos ?? solicitudAltaForm?.apellidos ?? null,
+        cuil: payload.data?.personalRecord?.cuil ?? reviewPersonaDetail.cuil ?? solicitudAltaForm?.cuil ?? null,
+        email: payload.data?.personalRecord?.email ?? reviewPersonaDetail.email ?? solicitudAltaForm?.email ?? null,
+        cbuAlias:
+          payload.data?.personalRecord?.cbuAlias ??
+          reviewPersonaDetail.cbuAlias ??
+          solicitudAltaForm?.cbuAlias ??
+          null,
+        telefono:
+          payload.data?.personalRecord?.telefono ?? reviewPersonaDetail.telefono ?? solicitudAltaForm?.telefono ?? null,
+        aprobado: true,
+        aprobadoAt: resolvedAprobadoAt,
+        aprobadoPor: payload.data?.personalRecord?.aprobadoPor ?? resolvedAprobadoPorNombre ?? null,
+        aprobadoPorId: resolvedAprobadoPorId,
+        aprobadoPorNombre: resolvedAprobadoPorNombre ?? payload.data?.personalRecord?.aprobadoPorNombre ?? null,
+        estadoId: resolvedEstadoId ?? reviewPersonaDetail.estadoId ?? null,
+        estado: estadoActualizadoNombre,
+        fechaAlta: resolvedFechaAlta,
+        combustible: payload.data?.personalRecord?.combustible ?? reviewPersonaDetail.combustible ?? null,
+        tarifaEspecial: payload.data?.personalRecord?.tarifaEspecial ?? reviewPersonaDetail.tarifaEspecial ?? null,
+        esCobrador: resolvedEsCobrador,
+        cobradorNombre: resolvedCobradorNombre,
+        cobradorEmail: resolvedCobradorEmail,
+        cobradorCuil: resolvedCobradorCuil,
+        cobradorCbuAlias: resolvedCobradorCbuAlias,
+        esSolicitud: false,
+      };
+
       setReviewPersonaDetail((prev) => {
         if (!prev) {
           return prev;
         }
 
-        const resolvedEstadoId = (() => {
-          if (approvalEstadoId) {
-            return Number(approvalEstadoId);
-          }
-          if (resolvedActivoEstadoId) {
-            return Number(resolvedActivoEstadoId);
-          }
-          return prev.estadoId ?? null;
-        })();
-
-        const estadoActualizadoNombre = (() => {
-          if (approvalEstadoId || resolvedActivoEstadoId) {
-            const targetId = approvalEstadoId || resolvedActivoEstadoId;
-            return (
-              meta?.estados?.find((estado) => String(estado.id) === targetId)?.nombre ??
-              payload.data?.personalRecord?.estado ??
-              prev.estado
-            );
-          }
-          return payload.data?.personalRecord?.estado ?? prev.estado;
-        })();
-
-        const resolvedFechaAlta =
-          payload.data?.personalRecord?.fechaAlta ??
-          prev.fechaAlta ??
-          new Date().toISOString().slice(0, 10);
-
-        const resolvedAprobadoPorId =
-          payload.data?.aprobadoPorId ?? prev.aprobadoPorId ?? (authUser?.id ?? null);
-        const resolvedAprobadoPorNombre = payload.data?.aprobadoPorNombre
-          ?? (resolvedAprobadoPorId === authUser?.id && authUser?.name ? authUser.name : prev.aprobadoPorNombre);
+        const esCobradorActualizado =
+          payload.data?.personalRecord?.esCobrador ?? prev.esCobrador ?? false;
+        const fullNameFromPrev = [prev.nombres, prev.apellidos]
+          .filter((part) => part && part.trim().length > 0)
+          .join(' ')
+          .trim();
+        const normalizePrevCobrador = (value: string | null | undefined) => {
+          const trimmed = (value ?? '').trim();
+          return trimmed.length > 0 ? trimmed : null;
+        };
+        const fallbackPrevNombre =
+          normalizePrevCobrador(prev.cobradorNombre) ??
+          normalizePrevCobrador(prev.duenoNombre) ??
+          normalizePrevCobrador(fullNameFromPrev);
+        const fallbackPrevEmail =
+          normalizePrevCobrador(prev.cobradorEmail) ??
+          normalizePrevCobrador(prev.duenoEmail);
+        const fallbackPrevCuil =
+          normalizePrevCobrador(prev.cobradorCuil) ??
+          normalizePrevCobrador(prev.duenoCuilCobrador) ??
+          normalizePrevCobrador(prev.duenoCuil);
+        const fallbackPrevCbuAlias =
+          normalizePrevCobrador(prev.cobradorCbuAlias) ??
+          normalizePrevCobrador(prev.duenoCbuAlias);
+        const cobradorNombreActualizado =
+          payload.data?.personalRecord?.cobradorNombre ??
+          fallbackPrevNombre;
+        const cobradorEmailActualizado =
+          payload.data?.personalRecord?.cobradorEmail ??
+          fallbackPrevEmail;
+        const cobradorCuilActualizado =
+          payload.data?.personalRecord?.cobradorCuil ??
+          fallbackPrevCuil;
+        const cobradorCbuAliasActualizado =
+          payload.data?.personalRecord?.cobradorCbuAlias ??
+          fallbackPrevCbuAlias;
 
         return {
           ...prev,
+          ...payload.data?.personalRecord,
           aprobado: true,
-          aprobadoAt: payload.data?.aprobadoAt ?? prev.aprobadoAt,
+          aprobadoAt: resolvedAprobadoAt,
           aprobadoPorId: resolvedAprobadoPorId,
           aprobadoPorNombre: resolvedAprobadoPorNombre,
           estadoId: resolvedEstadoId ?? prev.estadoId,
           estado: estadoActualizadoNombre,
           fechaAlta: resolvedFechaAlta,
-          comments: Array.isArray(prev.comments) ? prev.comments : [],
-          esSolicitud: false,
-        };
-      });
+          esCobrador: esCobradorActualizado,
+          cobradorNombre: cobradorNombreActualizado,
+          cobradorEmail: cobradorEmailActualizado,
+          cobradorCuil: cobradorCuilActualizado,
+          cobradorCbuAlias: cobradorCbuAliasActualizado,
+        comments: Array.isArray(prev.comments) ? prev.comments : [],
+        esSolicitud: false,
+      };
+    });
 
       setFlash({
         type: 'success',
         message: payload.message ?? 'Solicitud aprobada correctamente.',
       });
 
-      const personaNombreCompleto = [reviewPersonaDetail.nombres, reviewPersonaDetail.apellidos]
-        .filter((part) => part && part.trim().length > 0)
-        .join(' ')
-        .trim();
+      const personaNombreCompleto =
+        resolvedPersonalRecord.nombre ??
+        [reviewPersonaDetail.nombres, reviewPersonaDetail.apellidos]
+          .filter((part) => part && part.trim().length > 0)
+          .join(' ')
+          .trim();
       const agenteNombre =
-        reviewPersonaDetail.agente && reviewPersonaDetail.agente.trim().length > 0
-          ? reviewPersonaDetail.agente.trim()
+        resolvedPersonalRecord.agente && resolvedPersonalRecord.agente.trim().length > 0
+          ? resolvedPersonalRecord.agente.trim()
           : authUser?.name ?? null;
 
       window.dispatchEvent(
@@ -13033,9 +13233,13 @@ const sucursalOptions = useMemo(() => {
 
       window.dispatchEvent(new CustomEvent('notifications:updated'));
 
+      if (reviewPersonaDetail.solicitudData) {
+        writeCachedSolicitudData(resolvedPersonalRecord.id, reviewPersonaDetail.solicitudData);
+      }
+
       window.dispatchEvent(
         new CustomEvent('personal:updated', {
-          detail: { persona: payload.data?.personalRecord },
+          detail: { persona: resolvedPersonalRecord },
         })
       );
     } catch (err) {
@@ -14090,14 +14294,10 @@ const handleAdelantoFieldChange =
                     Marcar si los datos pertenecen a un cobrador
                   </div>
                 </label>
-                {altaForm.esCobrador ? (
-                  <>
-                    {renderAltaInput('Nombre completo del cobrador', 'cobradorNombre', true)}
-                    {renderAltaInput('Correo del cobrador', 'cobradorEmail', false, 'email')}
-                    {renderAltaInput('CUIL del cobrador', 'cobradorCuil')}
-                    {renderAltaInput('CBU/Alias del cobrador', 'cobradorCbuAlias')}
-                  </>
-                ) : null}
+                {renderAltaInput('Nombre completo del cobrador', 'cobradorNombre', altaForm.esCobrador)}
+                {renderAltaInput('Correo del cobrador', 'cobradorEmail', false, 'email')}
+                {renderAltaInput('CUIL del cobrador', 'cobradorCuil', altaForm.esCobrador)}
+                {renderAltaInput('CBU/Alias del cobrador', 'cobradorCbuAlias', altaForm.esCobrador)}
               </div>
             </div>
           </div>
@@ -16161,7 +16361,7 @@ const PersonalEditPage: React.FC = () => {
     observaciones: '',
     combustible: false,
     tarifaEspecial: false,
-    esCobrador: false,
+    esCobrador: true,
     cobradorNombre: '',
     cobradorEmail: '',
     cobradorCuil: '',
@@ -16219,9 +16419,6 @@ const PersonalEditPage: React.FC = () => {
     setFormValues((prev) => ({
       ...prev,
       esCobrador: checked,
-      ...(checked
-        ? {}
-        : { cobradorNombre: '', cobradorEmail: '', cobradorCuil: '', cobradorCbuAlias: '' }),
     }));
   };
 
@@ -16287,29 +16484,64 @@ const PersonalEditPage: React.FC = () => {
         throw new Error('Formato de respuesta inesperado');
       }
 
+      const cachedSolicitudData = payload.data.solicitudData ?? readCachedSolicitudData(payload.data.id);
+      const solicitudAltaForm = (cachedSolicitudData as { form?: AltaRequestForm } | null | undefined)?.form;
+
       setDetail({
         ...payload.data,
+        solicitudData: cachedSolicitudData ?? payload.data.solicitudData,
         documents: payload.data.documents ?? [],
         documentsDownloadAllUrl: payload.data.documentsDownloadAllUrl ?? null,
         documentsDownloadAllAbsoluteUrl: payload.data.documentsDownloadAllAbsoluteUrl ?? null,
         history: payload.data.history ?? [],
       });
-      const cobradorNombre = payload.data.cobradorNombre ?? payload.data.duenoNombre ?? payload.data.nombres ?? '';
-      const cobradorEmail = payload.data.cobradorEmail ?? payload.data.duenoEmail ?? payload.data.email ?? '';
-      const cobradorCuil =
-        payload.data.cobradorCuil
-        ?? payload.data.duenoCuilCobrador
-        ?? payload.data.duenoCuil
-        ?? payload.data.cuil
-        ?? '';
-      const cobradorCbuAlias = payload.data.cobradorCbuAlias ?? payload.data.duenoCbuAlias ?? payload.data.cbuAlias ?? '';
+      const hasCobradorData = Boolean(
+        payload.data.cobradorNombre
+        || payload.data.cobradorEmail
+        || payload.data.cobradorCuil
+        || payload.data.cobradorCbuAlias
+      );
+      const hasSolicitudCobradorData = Boolean(
+        solicitudAltaForm?.cobradorNombre
+        || solicitudAltaForm?.cobradorEmail
+        || solicitudAltaForm?.cobradorCuil
+        || solicitudAltaForm?.cobradorCbuAlias
+      );
+      const esCobrador = Boolean(payload.data.esCobrador || payload.data.perfilValue === 2 || hasCobradorData || hasSolicitudCobradorData);
+      const cobradorNombreRaw = esCobrador
+        ? (payload.data.cobradorNombre ?? payload.data.duenoNombre ?? solicitudAltaForm?.cobradorNombre ?? '')
+        : '';
+      const cobradorEmailRaw = esCobrador
+        ? (payload.data.cobradorEmail ?? payload.data.duenoEmail ?? solicitudAltaForm?.cobradorEmail ?? '')
+        : '';
+      const cobradorCuilRaw = esCobrador
+        ? (
+          payload.data.cobradorCuil
+          ?? payload.data.duenoCuilCobrador
+          ?? payload.data.duenoCuil
+          ?? solicitudAltaForm?.cobradorCuil
+          ?? ''
+        )
+        : '';
+      const cobradorCbuAliasRaw = esCobrador
+        ? (
+          payload.data.cobradorCbuAlias
+          ?? payload.data.duenoCbuAlias
+          ?? solicitudAltaForm?.cobradorCbuAlias
+          ?? ''
+        )
+        : '';
+      const fallbackNombre = (cobradorNombreRaw || '').trim();
+      const fallbackEmail = (cobradorEmailRaw || '').trim();
+      const fallbackCuil = (cobradorCuilRaw || '').trim();
+      const fallbackCbuAlias = (cobradorCbuAliasRaw || '').trim();
 
       setFormValues({
-        nombres: payload.data.nombres ?? '',
-        apellidos: payload.data.apellidos ?? '',
-        cuil: payload.data.cuil ?? '',
-        telefono: payload.data.telefono ?? '',
-        email: payload.data.email ?? '',
+        nombres: payload.data.nombres ?? solicitudAltaForm?.nombres ?? '',
+        apellidos: payload.data.apellidos ?? solicitudAltaForm?.apellidos ?? '',
+        cuil: payload.data.cuil ?? solicitudAltaForm?.cuil ?? '',
+        telefono: payload.data.telefono ?? solicitudAltaForm?.telefono ?? '',
+        email: payload.data.email ?? solicitudAltaForm?.email ?? '',
         perfilValue: payload.data.perfilValue ?? 0,
         agenteId: payload.data.agenteId ? String(payload.data.agenteId) : '',
         agenteResponsableId: payload.data.agenteResponsableId ? String(payload.data.agenteResponsableId) : '',
@@ -16319,30 +16551,23 @@ const PersonalEditPage: React.FC = () => {
         estadoId: payload.data.estadoId ? String(payload.data.estadoId) : '',
         fechaAlta: payload.data.fechaAlta ?? '',
         pago: payload.data.pago ?? '',
-        cbuAlias: payload.data.cbuAlias ?? '',
+        cbuAlias: payload.data.cbuAlias ?? solicitudAltaForm?.cbuAlias ?? '',
         patente: payload.data.patente ?? '',
         observacionTarifa: payload.data.observacionTarifa ?? '',
         observaciones: payload.data.observaciones ?? '',
-        esCobrador: Boolean(
-          payload.data.esCobrador
-          ?? payload.data.perfilValue === 2
-          ?? cobradorNombre
-          ?? cobradorEmail
-          ?? cobradorCuil
-          ?? cobradorCbuAlias
-        ),
-        cobradorNombre,
-        cobradorEmail,
-        cobradorCuil,
-        cobradorCbuAlias,
-        duenoNombre: payload.data.duenoNombre ?? '',
+        esCobrador,
+        cobradorNombre: fallbackNombre || solicitudAltaForm?.cobradorNombre || '',
+        cobradorEmail: fallbackEmail || solicitudAltaForm?.cobradorEmail || '',
+        cobradorCuil: fallbackCuil || solicitudAltaForm?.cobradorCuil || '',
+        cobradorCbuAlias: fallbackCbuAlias || solicitudAltaForm?.cobradorCbuAlias || '',
+        duenoNombre: payload.data.duenoNombre ?? solicitudAltaForm?.duenoNombre ?? '',
         duenoFechaNacimiento: payload.data.duenoFechaNacimiento ?? '',
-        duenoEmail: payload.data.duenoEmail ?? '',
-        duenoTelefono: payload.data.duenoTelefono ?? '',
-        duenoCuil: payload.data.duenoCuil ?? '',
-        duenoCuilCobrador: payload.data.duenoCuilCobrador ?? '',
-        duenoCbuAlias: payload.data.duenoCbuAlias ?? '',
-        duenoObservaciones: payload.data.duenoObservaciones ?? '',
+        duenoEmail: payload.data.duenoEmail ?? solicitudAltaForm?.duenoEmail ?? '',
+        duenoTelefono: payload.data.duenoTelefono ?? solicitudAltaForm?.duenoTelefono ?? '',
+        duenoCuil: payload.data.duenoCuil ?? solicitudAltaForm?.duenoCuil ?? '',
+        duenoCuilCobrador: payload.data.duenoCuilCobrador ?? solicitudAltaForm?.duenoCuilCobrador ?? '',
+        duenoCbuAlias: payload.data.duenoCbuAlias ?? solicitudAltaForm?.duenoCbuAlias ?? '',
+        duenoObservaciones: payload.data.duenoObservaciones ?? solicitudAltaForm?.duenoObservaciones ?? '',
         combustible: Boolean(payload.data.combustibleValue),
         tarifaEspecial: Boolean(payload.data.tarifaEspecialValue),
       });
@@ -16544,6 +16769,17 @@ const PersonalEditPage: React.FC = () => {
       setSaveSuccess(null);
       setSaving(true);
 
+      const cobradorNombre = formValues.cobradorNombre.trim() || null;
+      const cobradorEmail = formValues.cobradorEmail.trim() || null;
+      const cobradorCuil = formValues.cobradorCuil.trim() || null;
+      const cobradorCbuAlias = formValues.cobradorCbuAlias.trim() || null;
+      const hasCobradorFields = Boolean(cobradorNombre || cobradorEmail || cobradorCuil || cobradorCbuAlias);
+      const esCobradorFlag = formValues.esCobrador || hasCobradorFields || formValues.perfilValue === 2;
+      const duenoNombre = esCobradorFlag ? cobradorNombre : formValues.duenoNombre.trim() || null;
+      const duenoEmail = esCobradorFlag ? cobradorEmail : formValues.duenoEmail.trim() || null;
+      const duenoCuilCobrador = esCobradorFlag ? cobradorCuil : formValues.duenoCuilCobrador.trim() || null;
+      const duenoCbuAlias = esCobradorFlag ? cobradorCbuAlias : formValues.duenoCbuAlias.trim() || null;
+
       const response = await fetch(`${apiBaseUrl}/api/personal/${personaId}`, {
         method: 'PUT',
         headers: {
@@ -16570,18 +16806,18 @@ const PersonalEditPage: React.FC = () => {
           observaciones: formValues.observaciones.trim() || null,
           combustible: formValues.combustible,
           tarifaEspecial: formValues.tarifaEspecial,
-          esCobrador: formValues.esCobrador,
-          cobradorNombre: formValues.esCobrador ? formValues.cobradorNombre.trim() || null : null,
-          cobradorEmail: formValues.esCobrador ? formValues.cobradorEmail.trim() || null : null,
-          cobradorCuil: formValues.esCobrador ? formValues.cobradorCuil.trim() || null : null,
-          cobradorCbuAlias: formValues.esCobrador ? formValues.cobradorCbuAlias.trim() || null : null,
-          duenoNombre: formValues.esCobrador ? formValues.cobradorNombre.trim() || null : formValues.duenoNombre.trim() || null,
+          esCobrador: esCobradorFlag,
+          cobradorNombre,
+          cobradorEmail,
+          cobradorCuil,
+          cobradorCbuAlias,
+          duenoNombre,
           duenoFechaNacimiento: formValues.duenoFechaNacimiento || null,
-          duenoEmail: formValues.esCobrador ? formValues.cobradorEmail.trim() || null : formValues.duenoEmail.trim() || null,
+          duenoEmail,
           duenoTelefono: formValues.duenoTelefono.trim() || null,
           duenoCuil: formValues.duenoCuil.trim() || null,
-          duenoCuilCobrador: formValues.esCobrador ? formValues.cobradorCuil.trim() || null : formValues.duenoCuilCobrador.trim() || null,
-          duenoCbuAlias: formValues.esCobrador ? formValues.cobradorCbuAlias.trim() || null : formValues.duenoCbuAlias.trim() || null,
+          duenoCuilCobrador,
+          duenoCbuAlias,
           duenoObservaciones: formValues.duenoObservaciones.trim() || null,
         }),
       });
@@ -16609,22 +16845,60 @@ const PersonalEditPage: React.FC = () => {
       setSaveSuccess(payload.message ?? 'Información actualizada correctamente.');
 
       if (payload.data) {
-        const cobradorNombre = payload.data.cobradorNombre ?? payload.data.duenoNombre ?? payload.data.nombres ?? '';
-        const cobradorEmail = payload.data.cobradorEmail ?? payload.data.duenoEmail ?? payload.data.email ?? '';
-        const cobradorCuil =
+      const hasCobradorData = Boolean(
+        payload.data.cobradorNombre
+        || payload.data.cobradorEmail
+        || payload.data.cobradorCuil
+        || payload.data.cobradorCbuAlias
+      );
+      const esCobrador = Boolean(payload.data.esCobrador || payload.data.perfilValue === 2 || hasCobradorData);
+      const cobradorNombreRaw = esCobrador
+        ? (payload.data.cobradorNombre ?? payload.data.duenoNombre ?? '')
+        : '';
+      const cobradorEmailRaw = esCobrador
+        ? (payload.data.cobradorEmail ?? payload.data.duenoEmail ?? '')
+        : '';
+      const cobradorCuilRaw = esCobrador
+        ? (
           payload.data.cobradorCuil
           ?? payload.data.duenoCuilCobrador
           ?? payload.data.duenoCuil
           ?? payload.data.cuil
-          ?? '';
-        const cobradorCbuAlias =
-          payload.data.cobradorCbuAlias
-          ?? payload.data.duenoCbuAlias
-          ?? payload.data.cbuAlias
-          ?? '';
+          ?? ''
+        )
+        : '';
+      const cobradorCbuAliasRaw = esCobrador
+        ? (payload.data.cobradorCbuAlias ?? payload.data.duenoCbuAlias ?? '')
+        : '';
+
+        const fallbackNombre = (cobradorNombreRaw || payload.data.duenoNombre || formValues.cobradorNombre || '').trim();
+        const fallbackEmail = (
+          cobradorEmailRaw ||
+          payload.data.duenoEmail ||
+          payload.data.email ||
+          formValues.cobradorEmail ||
+          ''
+        ).trim();
+        const fallbackCuil = (
+          cobradorCuilRaw ||
+          payload.data.duenoCuilCobrador ||
+          payload.data.duenoCuil ||
+          formValues.cobradorCuil ||
+          ''
+        ).trim();
+        const fallbackCbuAlias = (
+          cobradorCbuAliasRaw ||
+          formValues.cobradorCbuAlias ||
+          payload.data.cobradorCbuAlias ||
+          payload.data.duenoCbuAlias ||
+          formValues.duenoCbuAlias ||
+          payload.data.cbuAlias ||
+          ''
+        ).trim();
 
         setDetail({
           ...payload.data,
+          cobradorCbuAlias: fallbackCbuAlias || null,
           documents: payload.data.documents ?? [],
           documentsDownloadAllUrl: payload.data.documentsDownloadAllUrl ?? null,
           documentsDownloadAllAbsoluteUrl: payload.data.documentsDownloadAllAbsoluteUrl ?? null,
@@ -16649,18 +16923,11 @@ const PersonalEditPage: React.FC = () => {
           patente: payload.data.patente ?? '',
           observacionTarifa: payload.data.observacionTarifa ?? '',
           observaciones: payload.data.observaciones ?? '',
-          esCobrador: Boolean(
-            payload.data.esCobrador
-            ?? payload.data.perfilValue === 2
-            ?? cobradorNombre
-            ?? cobradorEmail
-            ?? cobradorCuil
-            ?? cobradorCbuAlias
-          ),
-          cobradorNombre,
-          cobradorEmail,
-          cobradorCuil,
-          cobradorCbuAlias,
+          esCobrador,
+          cobradorNombre: fallbackNombre,
+          cobradorEmail: fallbackEmail,
+          cobradorCuil: fallbackCuil,
+          cobradorCbuAlias: fallbackCbuAlias,
           duenoNombre: payload.data.duenoNombre ?? '',
           duenoFechaNacimiento: payload.data.duenoFechaNacimiento ?? '',
           duenoEmail: payload.data.duenoEmail ?? '',
@@ -17389,7 +17656,7 @@ const PersonalCreatePage: React.FC = () => {
     observaciones: '',
     combustible: false,
     tarifaEspecial: false,
-    esCobrador: false,
+    esCobrador: true,
     cobradorNombre: '',
     cobradorEmail: '',
     cobradorCuil: '',
@@ -17467,6 +17734,17 @@ const PersonalCreatePage: React.FC = () => {
       setSaveError(null);
       setSaving(true);
 
+      const cobradorNombre = formValues.cobradorNombre.trim() || null;
+      const cobradorEmail = formValues.cobradorEmail.trim() || null;
+      const cobradorCuil = formValues.cobradorCuil.trim() || null;
+      const cobradorCbuAlias = formValues.cobradorCbuAlias.trim() || null;
+      const hasCobradorFields = Boolean(cobradorNombre || cobradorEmail || cobradorCuil || cobradorCbuAlias);
+      const esCobradorFlag = formValues.esCobrador || hasCobradorFields || formValues.perfilValue === 2;
+      const duenoNombre = esCobradorFlag ? cobradorNombre : formValues.duenoNombre.trim() || null;
+      const duenoEmail = esCobradorFlag ? cobradorEmail : formValues.duenoEmail.trim() || null;
+      const duenoCuilCobrador = esCobradorFlag ? cobradorCuil : formValues.duenoCuilCobrador.trim() || null;
+      const duenoCbuAlias = esCobradorFlag ? cobradorCbuAlias : formValues.duenoCbuAlias.trim() || null;
+
       const response = await fetch(`${apiBaseUrl}/api/personal`, {
         method: 'POST',
         headers: {
@@ -17492,17 +17770,17 @@ const PersonalCreatePage: React.FC = () => {
           observaciones: formValues.observaciones.trim() || null,
           combustible: formValues.combustible,
           tarifaEspecial: formValues.tarifaEspecial,
-          esCobrador: formValues.esCobrador,
-          cobradorNombre: formValues.esCobrador ? formValues.cobradorNombre.trim() || null : null,
-          cobradorEmail: formValues.esCobrador ? formValues.cobradorEmail.trim() || null : null,
-          cobradorCuil: formValues.esCobrador ? formValues.cobradorCuil.trim() || null : null,
-          cobradorCbuAlias: formValues.esCobrador ? formValues.cobradorCbuAlias.trim() || null : null,
-          duenoNombre: formValues.esCobrador ? formValues.cobradorNombre.trim() || null : formValues.duenoNombre.trim() || null,
+          esCobrador: esCobradorFlag,
+          cobradorNombre,
+          cobradorEmail,
+          cobradorCuil,
+          cobradorCbuAlias,
+          duenoNombre,
           duenoFechaNacimiento: formValues.duenoFechaNacimiento || null,
-          duenoEmail: formValues.esCobrador ? formValues.cobradorEmail.trim() || null : formValues.duenoEmail.trim() || null,
+          duenoEmail,
           duenoCuil: formValues.duenoCuil.trim() || null,
-          duenoCuilCobrador: formValues.esCobrador ? formValues.cobradorCuil.trim() || null : formValues.duenoCuilCobrador.trim() || null,
-          duenoCbuAlias: formValues.esCobrador ? formValues.cobradorCbuAlias.trim() || null : formValues.duenoCbuAlias.trim() || null,
+          duenoCuilCobrador,
+          duenoCbuAlias,
           duenoTelefono: formValues.duenoTelefono.trim() || null,
           duenoObservaciones: formValues.duenoObservaciones.trim() || null,
           autoApprove: true,
@@ -17582,14 +17860,10 @@ const PersonalCreatePage: React.FC = () => {
                     Marcar si los datos pertenecen a un cobrador
                   </div>
                 </label>
-                {formValues.esCobrador ? (
-                  <>
-                    {renderInput('Nombre completo del cobrador', 'cobradorNombre', true)}
-                    {renderInput('Correo del cobrador', 'cobradorEmail', false, 'email')}
-                    {renderInput('CUIL del cobrador', 'cobradorCuil')}
-                    {renderInput('CBU/Alias del cobrador', 'cobradorCbuAlias')}
-                  </>
-                ) : null}
+                {renderInput('Nombre completo del cobrador', 'cobradorNombre', formValues.esCobrador)}
+                {renderInput('Correo del cobrador', 'cobradorEmail', false, 'email')}
+                {renderInput('CUIL del cobrador', 'cobradorCuil', formValues.esCobrador)}
+                {renderInput('CBU/Alias del cobrador', 'cobradorCbuAlias', formValues.esCobrador)}
               </div>
             </div>
           </section>
