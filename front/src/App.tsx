@@ -14041,24 +14041,30 @@ const handleAdelantoFieldChange =
               {renderAltaInput('Observación tarifa', 'observacionTarifa')}
               {renderAltaInput('CUIL', 'cuil')}
               {renderAltaInput('CBU/Alias', 'cbuAlias')}
-              <label className="input-control">
-                <span>¿Es cobrador?</span>
-                <div className="checkbox-control">
-                  <input type="checkbox" checked={altaForm.esCobrador} onChange={handleAltaCobradorToggle} />
-                  Marcar si los datos pertenecen a un cobrador
-                </div>
-              </label>
-              {altaForm.esCobrador ? (
-                <>
-                  {renderAltaInput('Nombre completo del cobrador', 'cobradorNombre', true)}
-                  {renderAltaInput('Correo del cobrador', 'cobradorEmail', false, 'email')}
-                  {renderAltaInput('CUIL del cobrador', 'cobradorCuil')}
-                  {renderAltaInput('CBU/Alias del cobrador', 'cobradorCbuAlias')}
-                </>
-              ) : null}
               {renderAltaCheckbox('Combustible', 'combustible', 'Cuenta corrientes combustible')}
               {renderAltaInput('Fecha de alta', 'fechaAlta', false, 'date')}
               {renderAltaInput('Patente', 'patente')}
+            </div>
+
+            <div className="personal-subsection" style={{ marginTop: '1rem' }}>
+              <h4>Datos de cobrador</h4>
+              <div className="form-grid">
+                <label className="input-control">
+                  <span>¿Es cobrador?</span>
+                  <div className="checkbox-control">
+                    <input type="checkbox" checked={altaForm.esCobrador} onChange={handleAltaCobradorToggle} />
+                    Marcar si los datos pertenecen a un cobrador
+                  </div>
+                </label>
+                {altaForm.esCobrador ? (
+                  <>
+                    {renderAltaInput('Nombre completo del cobrador', 'cobradorNombre', true)}
+                    {renderAltaInput('Correo del cobrador', 'cobradorEmail', false, 'email')}
+                    {renderAltaInput('CUIL del cobrador', 'cobradorCuil')}
+                    {renderAltaInput('CBU/Alias del cobrador', 'cobradorCbuAlias')}
+                  </>
+                ) : null}
+              </div>
             </div>
           </div>
         );
@@ -17411,24 +17417,30 @@ const PersonalCreatePage: React.FC = () => {
               {renderInput('Observación tarifa', 'observacionTarifa')}
               {renderInput('CUIL', 'cuil')}
               {renderInput('CBU/Alias', 'cbuAlias')}
-              <label className="input-control">
-                <span>¿Es cobrador?</span>
-                <div className="checkbox-control">
-                  <input type="checkbox" checked={formValues.esCobrador} onChange={handleCobradorToggle} />
-                  Marcar si los datos pertenecen a un cobrador
-                </div>
-              </label>
-              {formValues.esCobrador ? (
-                <>
-                  {renderInput('Nombre completo del cobrador', 'cobradorNombre', true)}
-                  {renderInput('Correo del cobrador', 'cobradorEmail', false, 'email')}
-                  {renderInput('CUIL del cobrador', 'cobradorCuil')}
-                  {renderInput('CBU/Alias del cobrador', 'cobradorCbuAlias')}
-                </>
-              ) : null}
               {renderCheckbox('Combustible', 'combustible', 'Cuenta corrientes combustible')}
               {renderInput('Fecha de alta', 'fechaAlta', false, 'date')}
               {renderInput('Patente', 'patente')}
+            </div>
+
+            <div className="personal-subsection" style={{ marginTop: '1rem' }}>
+              <h4>Datos de cobrador</h4>
+              <div className="form-grid">
+                <label className="input-control">
+                  <span>¿Es cobrador?</span>
+                  <div className="checkbox-control">
+                    <input type="checkbox" checked={formValues.esCobrador} onChange={handleCobradorToggle} />
+                    Marcar si los datos pertenecen a un cobrador
+                  </div>
+                </label>
+                {formValues.esCobrador ? (
+                  <>
+                    {renderInput('Nombre completo del cobrador', 'cobradorNombre', true)}
+                    {renderInput('Correo del cobrador', 'cobradorEmail', false, 'email')}
+                    {renderInput('CUIL del cobrador', 'cobradorCuil')}
+                    {renderInput('CBU/Alias del cobrador', 'cobradorCbuAlias')}
+                  </>
+                ) : null}
+              </div>
             </div>
           </section>
         );
