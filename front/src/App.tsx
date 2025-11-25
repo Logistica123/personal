@@ -52,6 +52,34 @@ const writeCachedSolicitudData = (id: number | null | undefined, data: unknown) 
   }
 };
 
+const personalEditCacheKey = (id: number | null | undefined) =>
+  (id != null ? `personal:editCache:${id}` : '');
+
+const readPersonalEditCache = (id: number | null | undefined): Partial<PersonalDetail> | null => {
+  const key = personalEditCacheKey(id);
+  if (!key || typeof window === 'undefined') {
+    return null;
+  }
+  try {
+    const raw = window.localStorage.getItem(key);
+    return raw ? (JSON.parse(raw) as Partial<PersonalDetail>) : null;
+  } catch {
+    return null;
+  }
+};
+
+const writePersonalEditCache = (id: number | null | undefined, data: Partial<PersonalDetail>) => {
+  const key = personalEditCacheKey(id);
+  if (!key || typeof window === 'undefined' || !data) {
+    return;
+  }
+  try {
+    window.localStorage.setItem(key, JSON.stringify(data));
+  } catch {
+    // ignore
+  }
+};
+
 type Sucursal = {
   id: number | null;
   nombre: string | null;
@@ -16486,6 +16514,7 @@ const PersonalEditPage: React.FC = () => {
 
       const cachedSolicitudData = payload.data.solicitudData ?? readCachedSolicitudData(payload.data.id);
       const solicitudAltaForm = (cachedSolicitudData as { form?: AltaRequestForm } | null | undefined)?.form;
+      const cachedEdit = readPersonalEditCache(payload.data.id);
 
       setDetail({
         ...payload.data,
@@ -16500,6 +16529,10 @@ const PersonalEditPage: React.FC = () => {
         || payload.data.cobradorEmail
         || payload.data.cobradorCuil
         || payload.data.cobradorCbuAlias
+        || cachedEdit?.cobradorNombre
+        || cachedEdit?.cobradorEmail
+        || cachedEdit?.cobradorCuil
+        || cachedEdit?.cobradorCbuAlias
       );
       const hasSolicitudCobradorData = Boolean(
         solicitudAltaForm?.cobradorNombre
@@ -16509,14 +16542,27 @@ const PersonalEditPage: React.FC = () => {
       );
       const esCobrador = Boolean(payload.data.esCobrador || payload.data.perfilValue === 2 || hasCobradorData || hasSolicitudCobradorData);
       const cobradorNombreRaw = esCobrador
-        ? (payload.data.cobradorNombre ?? payload.data.duenoNombre ?? solicitudAltaForm?.cobradorNombre ?? '')
+        ? (
+          payload.data.cobradorNombre
+          ?? cachedEdit?.cobradorNombre
+          ?? payload.data.duenoNombre
+          ?? solicitudAltaForm?.cobradorNombre
+          ?? ''
+        )
         : '';
       const cobradorEmailRaw = esCobrador
-        ? (payload.data.cobradorEmail ?? payload.data.duenoEmail ?? solicitudAltaForm?.cobradorEmail ?? '')
+        ? (
+          payload.data.cobradorEmail
+          ?? cachedEdit?.cobradorEmail
+          ?? payload.data.duenoEmail
+          ?? solicitudAltaForm?.cobradorEmail
+          ?? ''
+        )
         : '';
       const cobradorCuilRaw = esCobrador
         ? (
           payload.data.cobradorCuil
+          ?? cachedEdit?.cobradorCuil
           ?? payload.data.duenoCuilCobrador
           ?? payload.data.duenoCuil
           ?? solicitudAltaForm?.cobradorCuil
@@ -16526,6 +16572,7 @@ const PersonalEditPage: React.FC = () => {
       const cobradorCbuAliasRaw = esCobrador
         ? (
           payload.data.cobradorCbuAlias
+          ?? cachedEdit?.cobradorCbuAlias
           ?? payload.data.duenoCbuAlias
           ?? solicitudAltaForm?.cobradorCbuAlias
           ?? ''
@@ -16845,31 +16892,43 @@ const PersonalEditPage: React.FC = () => {
       setSaveSuccess(payload.message ?? 'Información actualizada correctamente.');
 
       if (payload.data) {
-      const hasCobradorData = Boolean(
-        payload.data.cobradorNombre
-        || payload.data.cobradorEmail
-        || payload.data.cobradorCuil
-        || payload.data.cobradorCbuAlias
-      );
-      const esCobrador = Boolean(payload.data.esCobrador || payload.data.perfilValue === 2 || hasCobradorData);
-      const cobradorNombreRaw = esCobrador
-        ? (payload.data.cobradorNombre ?? payload.data.duenoNombre ?? '')
-        : '';
-      const cobradorEmailRaw = esCobrador
-        ? (payload.data.cobradorEmail ?? payload.data.duenoEmail ?? '')
-        : '';
-      const cobradorCuilRaw = esCobrador
-        ? (
-          payload.data.cobradorCuil
-          ?? payload.data.duenoCuilCobrador
-          ?? payload.data.duenoCuil
-          ?? payload.data.cuil
-          ?? ''
-        )
-        : '';
-      const cobradorCbuAliasRaw = esCobrador
-        ? (payload.data.cobradorCbuAlias ?? payload.data.duenoCbuAlias ?? '')
-        : '';
+        writePersonalEditCache(payload.data.id, {
+          esCobrador: payload.data.esCobrador,
+          cobradorNombre: payload.data.cobradorNombre ?? formValues.cobradorNombre ?? null,
+          cobradorEmail: payload.data.cobradorEmail ?? formValues.cobradorEmail ?? null,
+          cobradorCuil: payload.data.cobradorCuil ?? formValues.cobradorCuil ?? null,
+          cobradorCbuAlias: payload.data.cobradorCbuAlias ?? formValues.cobradorCbuAlias ?? null,
+          duenoNombre: payload.data.duenoNombre ?? formValues.duenoNombre ?? null,
+          duenoEmail: payload.data.duenoEmail ?? formValues.duenoEmail ?? null,
+          duenoCuil: payload.data.duenoCuil ?? formValues.duenoCuil ?? null,
+          duenoCuilCobrador: payload.data.duenoCuilCobrador ?? formValues.duenoCuilCobrador ?? null,
+          duenoCbuAlias: payload.data.duenoCbuAlias ?? formValues.duenoCbuAlias ?? null,
+        });
+        const hasCobradorData = Boolean(
+          payload.data.cobradorNombre
+          || payload.data.cobradorEmail
+          || payload.data.cobradorCuil
+          || payload.data.cobradorCbuAlias
+        );
+        const esCobrador = Boolean(payload.data.esCobrador || payload.data.perfilValue === 2 || hasCobradorData);
+        const cobradorNombreRaw = esCobrador
+          ? (payload.data.cobradorNombre ?? payload.data.duenoNombre ?? '')
+          : '';
+        const cobradorEmailRaw = esCobrador
+          ? (payload.data.cobradorEmail ?? payload.data.duenoEmail ?? '')
+          : '';
+        const cobradorCuilRaw = esCobrador
+          ? (
+            payload.data.cobradorCuil
+            ?? payload.data.duenoCuilCobrador
+            ?? payload.data.duenoCuil
+            ?? payload.data.cuil
+            ?? ''
+          )
+          : '';
+        const cobradorCbuAliasRaw = esCobrador
+          ? (payload.data.cobradorCbuAlias ?? payload.data.duenoCbuAlias ?? '')
+          : '';
 
         const fallbackNombre = (cobradorNombreRaw || payload.data.duenoNombre || formValues.cobradorNombre || '').trim();
         const fallbackEmail = (
