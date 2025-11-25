@@ -12191,6 +12191,20 @@ const ApprovalsRequestsPage: React.FC = () => {
         ? [reviewPersonaDetail.agenteResponsableId]
         : [];
 
+    const cobradorNombre = reviewPersonaDetail.cobradorNombre ?? reviewPersonaDetail.duenoNombre ?? reviewPersonaDetail.nombres ?? '';
+    const cobradorEmail = reviewPersonaDetail.cobradorEmail ?? reviewPersonaDetail.duenoEmail ?? reviewPersonaDetail.email ?? '';
+    const cobradorCuil =
+      reviewPersonaDetail.cobradorCuil
+      ?? reviewPersonaDetail.duenoCuilCobrador
+      ?? reviewPersonaDetail.duenoCuil
+      ?? reviewPersonaDetail.cuil
+      ?? '';
+    const cobradorCbuAlias =
+      reviewPersonaDetail.cobradorCbuAlias
+      ?? reviewPersonaDetail.duenoCbuAlias
+      ?? reviewPersonaDetail.cbuAlias
+      ?? '';
+
     setAltaForm((prev) => ({
       ...prev,
       perfilValue: reviewPersonaDetail.perfilValue ?? prev.perfilValue,
@@ -12203,11 +12217,18 @@ const ApprovalsRequestsPage: React.FC = () => {
       cuil: reviewPersonaDetail.cuil ?? '',
       cbuAlias: reviewPersonaDetail.cbuAlias ?? '',
       pago: reviewPersonaDetail.pago ?? '',
-      esCobrador: Boolean(reviewPersonaDetail.esCobrador ?? (reviewPersonaDetail.perfilValue === 2)),
-      cobradorNombre: reviewPersonaDetail.cobradorNombre ?? '',
-      cobradorEmail: reviewPersonaDetail.cobradorEmail ?? '',
-      cobradorCuil: reviewPersonaDetail.cobradorCuil ?? '',
-      cobradorCbuAlias: reviewPersonaDetail.cobradorCbuAlias ?? '',
+      esCobrador: Boolean(
+        reviewPersonaDetail.esCobrador
+        ?? reviewPersonaDetail.perfilValue === 2
+        ?? cobradorNombre
+        ?? cobradorEmail
+        ?? cobradorCuil
+        ?? cobradorCbuAlias
+      ),
+      cobradorNombre,
+      cobradorEmail,
+      cobradorCuil,
+      cobradorCbuAlias,
       combustible: Boolean(reviewPersonaDetail.combustibleValue),
       fechaAlta: reviewPersonaDetail.fechaAlta ?? '',
       fechaAltaVinculacion:
@@ -12443,65 +12464,78 @@ const sucursalOptions = useMemo(() => {
     }));
   };
 
-  const buildAltaRequestPayload = (form: AltaRequestForm) => ({
-    perfilValue: form.perfilValue,
-    nombres: form.nombres.trim(),
-    apellidos: form.apellidos.trim(),
-    telefono: form.telefono.trim() || null,
-    email: form.email.trim() || null,
-    tarifaEspecial: form.tarifaEspecial,
-    observacionTarifa: form.observacionTarifa.trim() || null,
-    cuil: form.cuil.trim() || null,
-    cbuAlias: form.cbuAlias.trim() || null,
-    esCobrador: form.esCobrador || form.perfilValue === 2,
-    cobradorNombre: form.esCobrador || form.perfilValue === 2 ? form.cobradorNombre.trim() || null : null,
-    cobradorEmail: form.esCobrador || form.perfilValue === 2 ? form.cobradorEmail.trim() || null : null,
-    cobradorCuil: form.esCobrador || form.perfilValue === 2 ? form.cobradorCuil.trim() || null : null,
-    cobradorCbuAlias: form.esCobrador || form.perfilValue === 2 ? form.cobradorCbuAlias.trim() || null : null,
-    pago: form.pago ? Number(form.pago) : null,
-    combustible: form.combustible,
-    fechaAlta: form.fechaAlta || null,
-    fechaAltaVinculacion: form.fechaAltaVinculacion || null,
-    patente: form.patente.trim() || null,
-    clienteId: form.clienteId ? Number(form.clienteId) : null,
-    sucursalId: form.sucursalId ? Number(form.sucursalId) : null,
-    agenteId: form.agenteId ? Number(form.agenteId) : null,
-    agenteResponsableId: (() => {
-      if (form.agenteResponsableId) {
-        return Number(form.agenteResponsableId);
-      }
-      const first = form.agenteResponsableIds?.[0];
-      return first ? Number(first) : null;
-    })(),
-    agenteResponsableIds: (() => {
-      const selected = Array.isArray(form.agenteResponsableIds)
-        ? form.agenteResponsableIds
-        : form.agenteResponsableId
-        ? [form.agenteResponsableId]
-        : [];
+  const buildAltaRequestPayload = (form: AltaRequestForm) => {
+    const esCobrador = form.esCobrador || form.perfilValue === 2;
+    const cobradorNombre = form.cobradorNombre.trim() || null;
+    const cobradorEmail = form.cobradorEmail.trim() || null;
+    const cobradorCuil = form.cobradorCuil.trim() || null;
+    const cobradorCbuAlias = form.cobradorCbuAlias.trim() || null;
 
-      const unique = Array.from(
-        new Set(
-          selected
-            .map((value) => Number(value))
-            .filter((num) => !Number.isNaN(num))
-        )
-      );
+    const duenoNombre = esCobrador ? cobradorNombre : form.duenoNombre.trim() || null;
+    const duenoEmail = esCobrador ? cobradorEmail : form.duenoEmail.trim() || null;
+    const duenoCuilCobrador = esCobrador ? cobradorCuil : form.duenoCuilCobrador.trim() || null;
+    const duenoCbuAlias = esCobrador ? cobradorCbuAlias : form.duenoCbuAlias.trim() || null;
 
-      return unique.length > 0 ? unique : null;
-    })(),
-    unidadId: form.unidadId ? Number(form.unidadId) : null,
-    estadoId: form.estadoId ? Number(form.estadoId) : null,
-    observaciones: form.observaciones.trim() || null,
-    duenoNombre: form.duenoNombre.trim() || null,
-    duenoFechaNacimiento: form.duenoFechaNacimiento || null,
-    duenoEmail: form.duenoEmail.trim() || null,
-    duenoCuil: form.duenoCuil.trim() || null,
-    duenoCuilCobrador: form.duenoCuilCobrador.trim() || null,
-    duenoCbuAlias: form.duenoCbuAlias.trim() || null,
-    duenoTelefono: form.duenoTelefono.trim() || null,
-    duenoObservaciones: form.duenoObservaciones.trim() || null,
-  });
+    return {
+      perfilValue: form.perfilValue,
+      nombres: form.nombres.trim(),
+      apellidos: form.apellidos.trim(),
+      telefono: form.telefono.trim() || null,
+      email: form.email.trim() || null,
+      tarifaEspecial: form.tarifaEspecial,
+      observacionTarifa: form.observacionTarifa.trim() || null,
+      cuil: form.cuil.trim() || null,
+      cbuAlias: form.cbuAlias.trim() || null,
+      esCobrador,
+      cobradorNombre: esCobrador ? cobradorNombre : null,
+      cobradorEmail: esCobrador ? cobradorEmail : null,
+      cobradorCuil: esCobrador ? cobradorCuil : null,
+      cobradorCbuAlias: esCobrador ? cobradorCbuAlias : null,
+      pago: form.pago ? Number(form.pago) : null,
+      combustible: form.combustible,
+      fechaAlta: form.fechaAlta || null,
+      fechaAltaVinculacion: form.fechaAltaVinculacion || null,
+      patente: form.patente.trim() || null,
+      clienteId: form.clienteId ? Number(form.clienteId) : null,
+      sucursalId: form.sucursalId ? Number(form.sucursalId) : null,
+      agenteId: form.agenteId ? Number(form.agenteId) : null,
+      agenteResponsableId: (() => {
+        if (form.agenteResponsableId) {
+          return Number(form.agenteResponsableId);
+        }
+        const first = form.agenteResponsableIds?.[0];
+        return first ? Number(first) : null;
+      })(),
+      agenteResponsableIds: (() => {
+        const selected = Array.isArray(form.agenteResponsableIds)
+          ? form.agenteResponsableIds
+          : form.agenteResponsableId
+          ? [form.agenteResponsableId]
+          : [];
+
+        const unique = Array.from(
+          new Set(
+            selected
+              .map((value) => Number(value))
+              .filter((num) => !Number.isNaN(num))
+          )
+        );
+
+        return unique.length > 0 ? unique : null;
+      })(),
+      unidadId: form.unidadId ? Number(form.unidadId) : null,
+      estadoId: form.estadoId ? Number(form.estadoId) : null,
+      observaciones: form.observaciones.trim() || null,
+      duenoNombre,
+      duenoEmail,
+      duenoCuilCobrador,
+      duenoCbuAlias,
+      duenoFechaNacimiento: form.duenoFechaNacimiento || null,
+      duenoCuil: form.duenoCuil.trim() || null,
+      duenoTelefono: form.duenoTelefono.trim() || null,
+      duenoObservaciones: form.duenoObservaciones.trim() || null,
+    };
+  };
 
   const handleAltaSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -16180,6 +16214,17 @@ const PersonalEditPage: React.FC = () => {
     setPendingUploads((prev) => prev.filter((item) => item.id !== id));
   }, []);
 
+  const handleCobradorToggle = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const { checked } = event.target;
+    setFormValues((prev) => ({
+      ...prev,
+      esCobrador: checked,
+      ...(checked
+        ? {}
+        : { cobradorNombre: '', cobradorEmail: '', cobradorCuil: '', cobradorCbuAlias: '' }),
+    }));
+  };
+
   const handlePendingFilesSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
     const files = event.target.files;
 
@@ -16249,6 +16294,16 @@ const PersonalEditPage: React.FC = () => {
         documentsDownloadAllAbsoluteUrl: payload.data.documentsDownloadAllAbsoluteUrl ?? null,
         history: payload.data.history ?? [],
       });
+      const cobradorNombre = payload.data.cobradorNombre ?? payload.data.duenoNombre ?? payload.data.nombres ?? '';
+      const cobradorEmail = payload.data.cobradorEmail ?? payload.data.duenoEmail ?? payload.data.email ?? '';
+      const cobradorCuil =
+        payload.data.cobradorCuil
+        ?? payload.data.duenoCuilCobrador
+        ?? payload.data.duenoCuil
+        ?? payload.data.cuil
+        ?? '';
+      const cobradorCbuAlias = payload.data.cobradorCbuAlias ?? payload.data.duenoCbuAlias ?? payload.data.cbuAlias ?? '';
+
       setFormValues({
         nombres: payload.data.nombres ?? '',
         apellidos: payload.data.apellidos ?? '',
@@ -16268,11 +16323,18 @@ const PersonalEditPage: React.FC = () => {
         patente: payload.data.patente ?? '',
         observacionTarifa: payload.data.observacionTarifa ?? '',
         observaciones: payload.data.observaciones ?? '',
-        esCobrador: Boolean(payload.data.esCobrador ?? (payload.data.perfilValue === 2)),
-        cobradorNombre: payload.data.cobradorNombre ?? '',
-        cobradorEmail: payload.data.cobradorEmail ?? '',
-        cobradorCuil: payload.data.cobradorCuil ?? '',
-        cobradorCbuAlias: payload.data.cobradorCbuAlias ?? '',
+        esCobrador: Boolean(
+          payload.data.esCobrador
+          ?? payload.data.perfilValue === 2
+          ?? cobradorNombre
+          ?? cobradorEmail
+          ?? cobradorCuil
+          ?? cobradorCbuAlias
+        ),
+        cobradorNombre,
+        cobradorEmail,
+        cobradorCuil,
+        cobradorCbuAlias,
         duenoNombre: payload.data.duenoNombre ?? '',
         duenoFechaNacimiento: payload.data.duenoFechaNacimiento ?? '',
         duenoEmail: payload.data.duenoEmail ?? '',
@@ -16513,13 +16575,13 @@ const PersonalEditPage: React.FC = () => {
           cobradorEmail: formValues.esCobrador ? formValues.cobradorEmail.trim() || null : null,
           cobradorCuil: formValues.esCobrador ? formValues.cobradorCuil.trim() || null : null,
           cobradorCbuAlias: formValues.esCobrador ? formValues.cobradorCbuAlias.trim() || null : null,
-          duenoNombre: formValues.duenoNombre.trim() || null,
+          duenoNombre: formValues.esCobrador ? formValues.cobradorNombre.trim() || null : formValues.duenoNombre.trim() || null,
           duenoFechaNacimiento: formValues.duenoFechaNacimiento || null,
-          duenoEmail: formValues.duenoEmail.trim() || null,
+          duenoEmail: formValues.esCobrador ? formValues.cobradorEmail.trim() || null : formValues.duenoEmail.trim() || null,
           duenoTelefono: formValues.duenoTelefono.trim() || null,
           duenoCuil: formValues.duenoCuil.trim() || null,
-          duenoCuilCobrador: formValues.duenoCuilCobrador.trim() || null,
-          duenoCbuAlias: formValues.duenoCbuAlias.trim() || null,
+          duenoCuilCobrador: formValues.esCobrador ? formValues.cobradorCuil.trim() || null : formValues.duenoCuilCobrador.trim() || null,
+          duenoCbuAlias: formValues.esCobrador ? formValues.cobradorCbuAlias.trim() || null : formValues.duenoCbuAlias.trim() || null,
           duenoObservaciones: formValues.duenoObservaciones.trim() || null,
         }),
       });
@@ -16547,6 +16609,20 @@ const PersonalEditPage: React.FC = () => {
       setSaveSuccess(payload.message ?? 'Información actualizada correctamente.');
 
       if (payload.data) {
+        const cobradorNombre = payload.data.cobradorNombre ?? payload.data.duenoNombre ?? payload.data.nombres ?? '';
+        const cobradorEmail = payload.data.cobradorEmail ?? payload.data.duenoEmail ?? payload.data.email ?? '';
+        const cobradorCuil =
+          payload.data.cobradorCuil
+          ?? payload.data.duenoCuilCobrador
+          ?? payload.data.duenoCuil
+          ?? payload.data.cuil
+          ?? '';
+        const cobradorCbuAlias =
+          payload.data.cobradorCbuAlias
+          ?? payload.data.duenoCbuAlias
+          ?? payload.data.cbuAlias
+          ?? '';
+
         setDetail({
           ...payload.data,
           documents: payload.data.documents ?? [],
@@ -16573,11 +16649,18 @@ const PersonalEditPage: React.FC = () => {
           patente: payload.data.patente ?? '',
           observacionTarifa: payload.data.observacionTarifa ?? '',
           observaciones: payload.data.observaciones ?? '',
-          esCobrador: Boolean(payload.data.esCobrador ?? (payload.data.perfilValue === 2)),
-          cobradorNombre: payload.data.cobradorNombre ?? '',
-          cobradorEmail: payload.data.cobradorEmail ?? '',
-          cobradorCuil: payload.data.cobradorCuil ?? '',
-          cobradorCbuAlias: payload.data.cobradorCbuAlias ?? '',
+          esCobrador: Boolean(
+            payload.data.esCobrador
+            ?? payload.data.perfilValue === 2
+            ?? cobradorNombre
+            ?? cobradorEmail
+            ?? cobradorCuil
+            ?? cobradorCbuAlias
+          ),
+          cobradorNombre,
+          cobradorEmail,
+          cobradorCuil,
+          cobradorCbuAlias,
           duenoNombre: payload.data.duenoNombre ?? '',
           duenoFechaNacimiento: payload.data.duenoFechaNacimiento ?? '',
           duenoEmail: payload.data.duenoEmail ?? '',
@@ -16817,6 +16900,68 @@ const PersonalEditPage: React.FC = () => {
               placeholder="Ingresar"
             />
           </label>
+        </div>
+      </section>
+
+      <section className="personal-edit-section">
+        <h2>Datos de cobrador</h2>
+        <div className="form-grid">
+          <label className="input-control">
+            <span>¿Es cobrador?</span>
+            <div className="checkbox-control">
+              <input
+                type="checkbox"
+                checked={formValues.esCobrador}
+                onChange={handleCobradorToggle}
+                disabled={isReadOnly}
+              />
+              Marcar si los datos pertenecen a un cobrador
+            </div>
+          </label>
+          {formValues.esCobrador ? (
+            <>
+              <label className="input-control">
+                <span>Nombre completo del cobrador</span>
+                <input
+                  type="text"
+                  value={formValues.cobradorNombre}
+                  onChange={(event) => setFormValues((prev) => ({ ...prev, cobradorNombre: event.target.value }))}
+                  placeholder="Ingresar"
+                  disabled={isReadOnly}
+                />
+              </label>
+              <label className="input-control">
+                <span>Correo del cobrador</span>
+                <input
+                  type="email"
+                  value={formValues.cobradorEmail}
+                  onChange={(event) => setFormValues((prev) => ({ ...prev, cobradorEmail: event.target.value }))}
+                  placeholder="Ingresar"
+                  disabled={isReadOnly}
+                />
+              </label>
+              <label className="input-control">
+                <span>CUIL del cobrador</span>
+                <input
+                  type="text"
+                  value={formValues.cobradorCuil}
+                  onChange={(event) => setFormValues((prev) => ({ ...prev, cobradorCuil: event.target.value }))}
+                  placeholder="Ingresar"
+                  disabled={isReadOnly}
+                />
+              </label>
+              <label className="input-control">
+                <span>CBU/Alias del cobrador</span>
+                <input
+                  type="text"
+                  value={formValues.cobradorCbuAlias}
+                  onChange={(event) => setFormValues((prev) => ({ ...prev, cobradorCbuAlias: event.target.value }))}
+                  placeholder="Ingresar"
+                  disabled={isReadOnly}
+                />
+              </label>
+            </>
+          ) : null}
         </div>
       </section>
 
@@ -17347,14 +17492,19 @@ const PersonalCreatePage: React.FC = () => {
           observaciones: formValues.observaciones.trim() || null,
           combustible: formValues.combustible,
           tarifaEspecial: formValues.tarifaEspecial,
-          duenoNombre: formValues.duenoNombre.trim() || null,
+          esCobrador: formValues.esCobrador,
+          cobradorNombre: formValues.esCobrador ? formValues.cobradorNombre.trim() || null : null,
+          cobradorEmail: formValues.esCobrador ? formValues.cobradorEmail.trim() || null : null,
+          cobradorCuil: formValues.esCobrador ? formValues.cobradorCuil.trim() || null : null,
+          cobradorCbuAlias: formValues.esCobrador ? formValues.cobradorCbuAlias.trim() || null : null,
+          duenoNombre: formValues.esCobrador ? formValues.cobradorNombre.trim() || null : formValues.duenoNombre.trim() || null,
           duenoFechaNacimiento: formValues.duenoFechaNacimiento || null,
-          duenoEmail: formValues.duenoEmail.trim() || null,
+          duenoEmail: formValues.esCobrador ? formValues.cobradorEmail.trim() || null : formValues.duenoEmail.trim() || null,
           duenoCuil: formValues.duenoCuil.trim() || null,
-          duenoCuilCobrador: formValues.duenoCuilCobrador.trim() || null,
-          duenoCbuAlias: formValues.duenoCbuAlias.trim() || null,
+          duenoCuilCobrador: formValues.esCobrador ? formValues.cobradorCuil.trim() || null : formValues.duenoCuilCobrador.trim() || null,
+          duenoCbuAlias: formValues.esCobrador ? formValues.cobradorCbuAlias.trim() || null : formValues.duenoCbuAlias.trim() || null,
           duenoTelefono: formValues.duenoTelefono.trim() || null,
-          duenoObservaciones: formValues.observaciones.trim() || null,
+          duenoObservaciones: formValues.duenoObservaciones.trim() || null,
           autoApprove: true,
           autoApproveUserId: authUser?.id ?? null,
         }),
