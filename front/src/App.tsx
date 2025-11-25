@@ -118,6 +118,11 @@ type PersonalRecord = {
   patente?: string | null;
   observacionTarifa?: string | null;
   observaciones?: string | null;
+  esCobrador?: boolean;
+  cobradorNombre?: string | null;
+  cobradorEmail?: string | null;
+  cobradorCuil?: string | null;
+  cobradorCbuAlias?: string | null;
   aprobado: boolean;
   aprobadoAt: string | null;
   aprobadoPor: string | null;
@@ -167,6 +172,11 @@ type PersonalDetail = {
   cbuAlias: string | null;
   observacionTarifa: string | null;
   observaciones: string | null;
+  esCobrador: boolean;
+  cobradorNombre: string | null;
+  cobradorEmail: string | null;
+  cobradorCuil: string | null;
+  cobradorCbuAlias: string | null;
   fechaAlta: string | null;
   fechaAltaVinculacion: string | null;
   aprobado: boolean;
@@ -346,6 +356,11 @@ type AltaRequestForm = {
   cuil: string;
   cbuAlias: string;
   pago: string;
+  esCobrador: boolean;
+  cobradorNombre: string;
+  cobradorEmail: string;
+  cobradorCuil: string;
+  cobradorCbuAlias: string;
   combustible: boolean;
   fechaAlta: string;
   patente: string;
@@ -424,7 +439,7 @@ type PolizaRequestForm = {
 
 type AltaEditableField = Exclude<
   keyof AltaRequestForm,
-  'tarifaEspecial' | 'combustible' | 'perfilValue' | 'agenteResponsableIds'
+  'tarifaEspecial' | 'combustible' | 'perfilValue' | 'agenteResponsableIds' | 'esCobrador'
 >;
 
 type AttendanceRecord = {
@@ -11666,6 +11681,11 @@ const ApprovalsRequestsPage: React.FC = () => {
   const authUser = useStoredAuthUser();
   const [activeTab, setActiveTab] = useState<'list' | 'altas' | 'combustible' | 'aumento_combustible' | 'adelanto' | 'poliza'>('list');
   const [meta, setMeta] = useState<PersonalMeta | null>(null);
+  const allowedAltaPerfiles = useMemo(() => {
+    const perfiles = meta?.perfiles ?? [];
+    const filtered = perfiles.filter((perfil) => perfil.value !== 2);
+    return filtered.length > 0 ? filtered : perfiles;
+  }, [meta?.perfiles]);
   const [loadingMeta, setLoadingMeta] = useState(true);
   const [metaError, setMetaError] = useState<string | null>(null);
   const [backendSolicitudes, setBackendSolicitudes] = useState<PersonalRecord[]>([]);
@@ -11893,6 +11913,11 @@ const ApprovalsRequestsPage: React.FC = () => {
     cuil: '',
     cbuAlias: '',
     pago: '',
+    esCobrador: false,
+    cobradorNombre: '',
+    cobradorEmail: '',
+    cobradorCuil: '',
+    cobradorCbuAlias: '',
     combustible: false,
     fechaAlta: '',
     patente: '',
@@ -12057,12 +12082,11 @@ const ApprovalsRequestsPage: React.FC = () => {
 
         const payload = (await response.json()) as PersonalMeta;
         setMeta(payload);
-        if (payload.perfiles.length > 0) {
-          setAltaForm((prev) => ({
-            ...prev,
-            perfilValue: prev.perfilValue !== 0 ? prev.perfilValue : payload.perfiles[0].value,
-          }));
-        }
+        const firstAvailable = payload.perfiles.find((perfil) => perfil.value !== 2) ?? payload.perfiles[0];
+        setAltaForm((prev) => ({
+          ...prev,
+          perfilValue: prev.perfilValue !== 0 ? prev.perfilValue : firstAvailable?.value ?? prev.perfilValue,
+        }));
       } catch (err) {
         if ((err as Error).name === 'AbortError') {
           return;
@@ -12179,6 +12203,11 @@ const ApprovalsRequestsPage: React.FC = () => {
       cuil: reviewPersonaDetail.cuil ?? '',
       cbuAlias: reviewPersonaDetail.cbuAlias ?? '',
       pago: reviewPersonaDetail.pago ?? '',
+      esCobrador: Boolean(reviewPersonaDetail.esCobrador ?? (reviewPersonaDetail.perfilValue === 2)),
+      cobradorNombre: reviewPersonaDetail.cobradorNombre ?? '',
+      cobradorEmail: reviewPersonaDetail.cobradorEmail ?? '',
+      cobradorCuil: reviewPersonaDetail.cobradorCuil ?? '',
+      cobradorCbuAlias: reviewPersonaDetail.cobradorCbuAlias ?? '',
       combustible: Boolean(reviewPersonaDetail.combustibleValue),
       fechaAlta: reviewPersonaDetail.fechaAlta ?? '',
       fechaAltaVinculacion:
@@ -12393,8 +12422,25 @@ const sucursalOptions = useMemo(() => {
     setAltaForm((prev) => ({ ...prev, [field]: checked }));
   };
 
+  const handleAltaCobradorToggle = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const { checked } = event.target;
+    setAltaForm((prev) => ({
+      ...prev,
+      esCobrador: checked,
+      ...(checked
+        ? {}
+        : { cobradorNombre: '', cobradorEmail: '', cobradorCuil: '', cobradorCbuAlias: '' }),
+    }));
+  };
+
   const handleAltaPerfilChange = (perfilValue: number) => {
-    setAltaForm((prev) => ({ ...prev, perfilValue }));
+    setAltaForm((prev) => ({
+      ...prev,
+      perfilValue,
+      ...(perfilValue === 2
+        ? { esCobrador: true }
+        : { esCobrador: prev.esCobrador }),
+    }));
   };
 
   const buildAltaRequestPayload = (form: AltaRequestForm) => ({
@@ -12407,6 +12453,11 @@ const sucursalOptions = useMemo(() => {
     observacionTarifa: form.observacionTarifa.trim() || null,
     cuil: form.cuil.trim() || null,
     cbuAlias: form.cbuAlias.trim() || null,
+    esCobrador: form.esCobrador || form.perfilValue === 2,
+    cobradorNombre: form.esCobrador || form.perfilValue === 2 ? form.cobradorNombre.trim() || null : null,
+    cobradorEmail: form.esCobrador || form.perfilValue === 2 ? form.cobradorEmail.trim() || null : null,
+    cobradorCuil: form.esCobrador || form.perfilValue === 2 ? form.cobradorCuil.trim() || null : null,
+    cobradorCbuAlias: form.esCobrador || form.perfilValue === 2 ? form.cobradorCbuAlias.trim() || null : null,
     pago: form.pago ? Number(form.pago) : null,
     combustible: form.combustible,
     fechaAlta: form.fechaAlta || null,
@@ -12592,7 +12643,10 @@ const sucursalOptions = useMemo(() => {
         message: payload.message ?? 'Solicitud de alta registrada correctamente.',
       });
 
-      const defaultPerfilValue = meta?.perfiles?.[0]?.value ?? 0;
+      const defaultPerfilValue =
+        (meta?.perfiles ?? []).find((perfil) => perfil.value !== 2)?.value
+        ?? meta?.perfiles?.[0]?.value
+        ?? 0;
 
       setAltaForm((prev) => ({
         perfilValue: defaultPerfilValue,
@@ -12605,6 +12659,11 @@ const sucursalOptions = useMemo(() => {
         cuil: '',
         cbuAlias: '',
         pago: '',
+        esCobrador: false,
+        cobradorNombre: '',
+        cobradorEmail: '',
+        cobradorCuil: '',
+        cobradorCbuAlias: '',
         combustible: false,
         fechaAlta: '',
         patente: '',
@@ -13982,7 +14041,21 @@ const handleAdelantoFieldChange =
               {renderAltaInput('Observación tarifa', 'observacionTarifa')}
               {renderAltaInput('CUIL', 'cuil')}
               {renderAltaInput('CBU/Alias', 'cbuAlias')}
-              {renderAltaInput('Pago', 'pago', false, 'number')}
+              <label className="input-control">
+                <span>¿Es cobrador?</span>
+                <div className="checkbox-control">
+                  <input type="checkbox" checked={altaForm.esCobrador} onChange={handleAltaCobradorToggle} />
+                  Marcar si los datos pertenecen a un cobrador
+                </div>
+              </label>
+              {altaForm.esCobrador ? (
+                <>
+                  {renderAltaInput('Nombre completo del cobrador', 'cobradorNombre', true)}
+                  {renderAltaInput('Correo del cobrador', 'cobradorEmail', false, 'email')}
+                  {renderAltaInput('CUIL del cobrador', 'cobradorCuil')}
+                  {renderAltaInput('CBU/Alias del cobrador', 'cobradorCbuAlias')}
+                </>
+              ) : null}
               {renderAltaCheckbox('Combustible', 'combustible', 'Cuenta corrientes combustible')}
               {renderAltaInput('Fecha de alta', 'fechaAlta', false, 'date')}
               {renderAltaInput('Patente', 'patente')}
@@ -14002,7 +14075,6 @@ const handleAdelantoFieldChange =
               {renderAltaInput('CUIL', 'cuil')}
               {renderAltaInput('CBU/Alias', 'cbuAlias')}
               {renderAltaCheckbox('Combustible', 'combustible', 'Cuenta corrientes combustible')}
-              {renderAltaInput('Pago', 'pago', false, 'number', '0.00')}
               {renderAltaInput('Fecha de alta', 'fechaAlta', false, 'date')}
               {renderAltaInput('Patente', 'patente')}
               {renderAltaSelect(
@@ -14104,7 +14176,6 @@ const handleAdelantoFieldChange =
               {renderAltaInput('Observación tarifa', 'observacionTarifa')}
               {renderAltaInput('Fecha de alta', 'fechaAlta', false, 'date')}
               {renderAltaInput('Patente', 'patente')}
-              {renderAltaInput('Pago', 'pago', false, 'number')}
             </div>
 
             <div className="placeholder-grid">
@@ -14132,7 +14203,6 @@ const handleAdelantoFieldChange =
               {renderAltaInput('Observación tarifa', 'observacionTarifa')}
               {renderAltaInput('CUIL', 'cuil')}
               {renderAltaInput('CBU/Alias', 'cbuAlias')}
-              {renderAltaInput('Pago', 'pago', false, 'number')}
               {renderAltaCheckbox('Combustible', 'combustible', 'Cuenta corrientes combustible')}
               {renderAltaInput('Fecha de alta', 'fechaAlta', false, 'date')}
               {renderAltaInput('Patente', 'patente')}
@@ -14643,7 +14713,7 @@ const handleAdelantoFieldChange =
         <div className="radio-group">
           <span>Seleccionar perfil</span>
           <div className="radio-options">
-            {(meta?.perfiles ?? []).map((perfil) => (
+            {allowedAltaPerfiles.map((perfil) => (
               <label
                 key={perfil.value}
                 className={`radio-option${altaForm.perfilValue === perfil.value ? ' is-active' : ''}`}
@@ -16051,6 +16121,11 @@ const PersonalEditPage: React.FC = () => {
     observaciones: '',
     combustible: false,
     tarifaEspecial: false,
+    esCobrador: false,
+    cobradorNombre: '',
+    cobradorEmail: '',
+    cobradorCuil: '',
+    cobradorCbuAlias: '',
     duenoNombre: '',
     duenoFechaNacimiento: '',
     duenoEmail: '',
@@ -16187,6 +16262,11 @@ const PersonalEditPage: React.FC = () => {
         patente: payload.data.patente ?? '',
         observacionTarifa: payload.data.observacionTarifa ?? '',
         observaciones: payload.data.observaciones ?? '',
+        esCobrador: Boolean(payload.data.esCobrador ?? (payload.data.perfilValue === 2)),
+        cobradorNombre: payload.data.cobradorNombre ?? '',
+        cobradorEmail: payload.data.cobradorEmail ?? '',
+        cobradorCuil: payload.data.cobradorCuil ?? '',
+        cobradorCbuAlias: payload.data.cobradorCbuAlias ?? '',
         duenoNombre: payload.data.duenoNombre ?? '',
         duenoFechaNacimiento: payload.data.duenoFechaNacimiento ?? '',
         duenoEmail: payload.data.duenoEmail ?? '',
@@ -16422,6 +16502,11 @@ const PersonalEditPage: React.FC = () => {
           observaciones: formValues.observaciones.trim() || null,
           combustible: formValues.combustible,
           tarifaEspecial: formValues.tarifaEspecial,
+          esCobrador: formValues.esCobrador,
+          cobradorNombre: formValues.esCobrador ? formValues.cobradorNombre.trim() || null : null,
+          cobradorEmail: formValues.esCobrador ? formValues.cobradorEmail.trim() || null : null,
+          cobradorCuil: formValues.esCobrador ? formValues.cobradorCuil.trim() || null : null,
+          cobradorCbuAlias: formValues.esCobrador ? formValues.cobradorCbuAlias.trim() || null : null,
           duenoNombre: formValues.duenoNombre.trim() || null,
           duenoFechaNacimiento: formValues.duenoFechaNacimiento || null,
           duenoEmail: formValues.duenoEmail.trim() || null,
@@ -16482,6 +16567,11 @@ const PersonalEditPage: React.FC = () => {
           patente: payload.data.patente ?? '',
           observacionTarifa: payload.data.observacionTarifa ?? '',
           observaciones: payload.data.observaciones ?? '',
+          esCobrador: Boolean(payload.data.esCobrador ?? (payload.data.perfilValue === 2)),
+          cobradorNombre: payload.data.cobradorNombre ?? '',
+          cobradorEmail: payload.data.cobradorEmail ?? '',
+          cobradorCuil: payload.data.cobradorCuil ?? '',
+          cobradorCbuAlias: payload.data.cobradorCbuAlias ?? '',
           duenoNombre: payload.data.duenoNombre ?? '',
           duenoFechaNacimiento: payload.data.duenoFechaNacimiento ?? '',
           duenoEmail: payload.data.duenoEmail ?? '',
@@ -17118,6 +17208,11 @@ const PersonalCreatePage: React.FC = () => {
   const apiBaseUrl = useMemo(() => resolveApiBaseUrl(), []);
   const authUser = useStoredAuthUser();
   const [meta, setMeta] = useState<PersonalMeta | null>(null);
+  const allowedPerfiles = useMemo(() => {
+    const perfiles = meta?.perfiles ?? [];
+    const filtered = perfiles.filter((perfil) => perfil.value !== 2);
+    return filtered.length > 0 ? filtered : perfiles;
+  }, [meta?.perfiles]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -17143,6 +17238,11 @@ const PersonalCreatePage: React.FC = () => {
     observaciones: '',
     combustible: false,
     tarifaEspecial: false,
+    esCobrador: false,
+    cobradorNombre: '',
+    cobradorEmail: '',
+    cobradorCuil: '',
+    cobradorCbuAlias: '',
     duenoNombre: '',
     duenoFechaNacimiento: '',
     duenoEmail: '',
@@ -17166,8 +17266,9 @@ const PersonalCreatePage: React.FC = () => {
 
         const payload = (await response.json()) as PersonalMeta;
         setMeta(payload);
-        if (payload.perfiles.length > 0) {
-          setFormValues((prev) => ({ ...prev, perfilValue: payload.perfiles[0].value }));
+        const firstAvailable = payload.perfiles.find((perfil) => perfil.value !== 2) ?? payload.perfiles[0];
+        if (firstAvailable) {
+          setFormValues((prev) => ({ ...prev, perfilValue: firstAvailable.value }));
         }
       } catch (err) {
         setLoadError((err as Error).message ?? 'No se pudo cargar la información.');
@@ -17195,6 +17296,17 @@ const PersonalCreatePage: React.FC = () => {
   const handleCheckboxChange = (field: 'combustible' | 'tarifaEspecial') => (event: React.ChangeEvent<HTMLInputElement>) => {
     const { checked } = event.target;
     setFormValues((prev) => ({ ...prev, [field]: checked }));
+  };
+
+  const handleCobradorToggle = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const { checked } = event.target;
+    setFormValues((prev) => ({
+      ...prev,
+      esCobrador: checked,
+      ...(checked
+        ? {}
+        : { cobradorNombre: '', cobradorEmail: '', cobradorCuil: '', cobradorCbuAlias: '' }),
+    }));
   };
 
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
@@ -17299,7 +17411,21 @@ const PersonalCreatePage: React.FC = () => {
               {renderInput('Observación tarifa', 'observacionTarifa')}
               {renderInput('CUIL', 'cuil')}
               {renderInput('CBU/Alias', 'cbuAlias')}
-              {renderInput('Pago', 'pago', false, 'number')}
+              <label className="input-control">
+                <span>¿Es cobrador?</span>
+                <div className="checkbox-control">
+                  <input type="checkbox" checked={formValues.esCobrador} onChange={handleCobradorToggle} />
+                  Marcar si los datos pertenecen a un cobrador
+                </div>
+              </label>
+              {formValues.esCobrador ? (
+                <>
+                  {renderInput('Nombre completo del cobrador', 'cobradorNombre', true)}
+                  {renderInput('Correo del cobrador', 'cobradorEmail', false, 'email')}
+                  {renderInput('CUIL del cobrador', 'cobradorCuil')}
+                  {renderInput('CBU/Alias del cobrador', 'cobradorCbuAlias')}
+                </>
+              ) : null}
               {renderCheckbox('Combustible', 'combustible', 'Cuenta corrientes combustible')}
               {renderInput('Fecha de alta', 'fechaAlta', false, 'date')}
               {renderInput('Patente', 'patente')}
@@ -17319,7 +17445,6 @@ const PersonalCreatePage: React.FC = () => {
               {renderInput('CUIL', 'cuil')}
               {renderInput('CBU/Alias', 'cbuAlias')}
               {renderCheckbox('Combustible', 'combustible', 'Cuenta corrientes combustible')}
-              {renderInput('Pago', 'pago', false, 'number')}
               {renderInput('Fecha de alta', 'fechaAlta', false, 'date')}
               {renderInput('Patente', 'patente')}
             </div>
@@ -17359,7 +17484,6 @@ const PersonalCreatePage: React.FC = () => {
               {renderInput('Observación tarifa', 'observacionTarifa')}
               {renderInput('Fecha de alta', 'fechaAlta', false, 'date')}
               {renderInput('Patente', 'patente')}
-              {renderInput('Pago', 'pago', false, 'number')}
             </div>
 
             <div className="placeholder-grid">
@@ -17449,7 +17573,7 @@ const PersonalCreatePage: React.FC = () => {
         <div className="radio-group">
           <span>Seleccionar perfil</span>
           <div className="radio-options">
-            {meta.perfiles.map((perfil) => (
+            {allowedPerfiles.map((perfil) => (
               <label key={perfil.value} className={`radio-option${formValues.perfilValue === perfil.value ? ' is-active' : ''}`}>
                 <input
                   type="radio"
