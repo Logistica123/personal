@@ -10353,6 +10353,7 @@ const NotificationsPage: React.FC = () => {
   const authUser = useStoredAuthUser();
   const [notifications, setNotifications] = useState<NotificationRecord[]>([]);
   const [deletedNotifications, setDeletedNotifications] = useState<NotificationDeletionRecord[]>([]);
+  const [deletedPage, setDeletedPage] = useState(1);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [historyError, setHistoryError] = useState<string | null>(null);
@@ -10412,6 +10413,7 @@ const NotificationsPage: React.FC = () => {
 
         const payload = (await response.json()) as { data?: NotificationDeletionRecord[] };
         setDeletedNotifications(payload.data ?? []);
+        setDeletedPage(1);
       } catch (err) {
         if ((err as Error).name === 'AbortError') {
           return;
@@ -10540,6 +10542,11 @@ const NotificationsPage: React.FC = () => {
       </button>
     </div>
   );
+  const deletedPageSize = 10;
+  const totalDeletedPages = Math.max(1, Math.ceil(deletedNotifications.length / deletedPageSize));
+  const safeDeletedPage = Math.min(deletedPage, totalDeletedPages);
+  const deletedStartIndex = (safeDeletedPage - 1) * deletedPageSize;
+  const deletedPageItems = deletedNotifications.slice(deletedStartIndex, deletedStartIndex + deletedPageSize);
 
   const renderStatusBadge = (notification: NotificationRecord) => {
     const isRead = Boolean(notification.readAt);
@@ -10689,24 +10696,54 @@ const NotificationsPage: React.FC = () => {
               <p className="form-info">No hay eliminaciones registradas.</p>
             ) : null}
             {!historyLoading && !historyError && deletedNotifications.length > 0 ? (
-              <table>
-                <thead>
-                  <tr>
-                    <th>Fecha</th>
-                    <th>Mensaje</th>
-                    <th>Eliminado por</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {deletedNotifications.map((item) => (
-                    <tr key={item.id}>
-                      <td>{item.deletedAtLabel ?? item.deletedAt ?? '—'}</td>
-                      <td>{item.message ?? '—'}</td>
-                      <td>{item.deletedByName ?? `Usuario #${item.deletedById ?? '—'}`}</td>
+              <>
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Fecha</th>
+                      <th>Mensaje</th>
+                      <th>Eliminado por</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {deletedPageItems.map((item) => (
+                      <tr key={item.id}>
+                        <td>{item.deletedAtLabel ?? item.deletedAt ?? '—'}</td>
+                        <td>{item.message ?? '—'}</td>
+                        <td>{item.deletedByName ?? `Usuario #${item.deletedById ?? '—'}`}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                <div className="table-footer" style={{ justifyContent: 'flex-end' }}>
+                  <span>
+                    Mostrando {deletedPageItems.length} de {deletedNotifications.length}
+                  </span>
+                  <div className="pagination">
+                    <button
+                      type="button"
+                      aria-label="Página anterior"
+                      disabled={safeDeletedPage <= 1}
+                      onClick={() => setDeletedPage((page) => Math.max(1, page - 1))}
+                    >
+                      ‹
+                    </button>
+                    <span style={{ padding: '0 0.5rem' }}>
+                      Página {safeDeletedPage} / {totalDeletedPages}
+                    </span>
+                    <button
+                      type="button"
+                      aria-label="Página siguiente"
+                      disabled={safeDeletedPage >= totalDeletedPages}
+                      onClick={() =>
+                        setDeletedPage((page) => Math.min(totalDeletedPages, page + 1))
+                      }
+                    >
+                      ›
+                    </button>
+                  </div>
+                </div>
+              </>
             ) : null}
           </section>
         </div>
@@ -16516,14 +16553,6 @@ const PersonalEditPage: React.FC = () => {
       const solicitudAltaForm = (cachedSolicitudData as { form?: AltaRequestForm } | null | undefined)?.form;
       const cachedEdit = readPersonalEditCache(payload.data.id);
 
-      setDetail({
-        ...payload.data,
-        solicitudData: cachedSolicitudData ?? payload.data.solicitudData,
-        documents: payload.data.documents ?? [],
-        documentsDownloadAllUrl: payload.data.documentsDownloadAllUrl ?? null,
-        documentsDownloadAllAbsoluteUrl: payload.data.documentsDownloadAllAbsoluteUrl ?? null,
-        history: payload.data.history ?? [],
-      });
       const hasCobradorData = Boolean(
         payload.data.cobradorNombre
         || payload.data.cobradorEmail
@@ -16534,13 +16563,25 @@ const PersonalEditPage: React.FC = () => {
         || cachedEdit?.cobradorCuil
         || cachedEdit?.cobradorCbuAlias
       );
+      const hasDuenoAsCobradorData = Boolean(
+        payload.data.duenoNombre
+        || payload.data.duenoEmail
+        || payload.data.duenoCuilCobrador
+        || payload.data.duenoCbuAlias
+      );
       const hasSolicitudCobradorData = Boolean(
         solicitudAltaForm?.cobradorNombre
         || solicitudAltaForm?.cobradorEmail
         || solicitudAltaForm?.cobradorCuil
         || solicitudAltaForm?.cobradorCbuAlias
       );
-      const esCobrador = Boolean(payload.data.esCobrador || payload.data.perfilValue === 2 || hasCobradorData || hasSolicitudCobradorData);
+      const esCobrador = Boolean(
+        payload.data.esCobrador
+        || payload.data.perfilValue === 2
+        || hasCobradorData
+        || hasSolicitudCobradorData
+        || hasDuenoAsCobradorData
+      );
       const cobradorNombreRaw = esCobrador
         ? (
           payload.data.cobradorNombre
@@ -16618,10 +16659,20 @@ const PersonalEditPage: React.FC = () => {
         combustible: Boolean(payload.data.combustibleValue),
         tarifaEspecial: Boolean(payload.data.tarifaEspecialValue),
       });
+      const documents = payload.data.documents ?? [];
+      setDetail({
+        ...payload.data,
+        esCobrador,
+        solicitudData: cachedSolicitudData ?? payload.data.solicitudData,
+        documents,
+        documentsDownloadAllUrl: payload.data.documentsDownloadAllUrl ?? null,
+        documentsDownloadAllAbsoluteUrl: payload.data.documentsDownloadAllAbsoluteUrl ?? null,
+        history: payload.data.history ?? [],
+      });
       setSaveSuccess(null);
       setSaveError(null);
-      if (payload.data.documents.length > 0) {
-        setSelectedDocumentId(payload.data.documents[0].id);
+      if (documents.length > 0) {
+        setSelectedDocumentId(documents[0].id);
       } else {
         setSelectedDocumentId(null);
       }
@@ -16892,8 +16943,26 @@ const PersonalEditPage: React.FC = () => {
       setSaveSuccess(payload.message ?? 'Información actualizada correctamente.');
 
       if (payload.data) {
+        const hasCobradorData = Boolean(
+          payload.data.cobradorNombre
+          || payload.data.cobradorEmail
+          || payload.data.cobradorCuil
+          || payload.data.cobradorCbuAlias
+        );
+        const hasDuenoAsCobradorData = Boolean(
+          payload.data.duenoNombre
+          || payload.data.duenoEmail
+          || payload.data.duenoCuilCobrador
+          || payload.data.duenoCbuAlias
+        );
+        const esCobrador = Boolean(
+          payload.data.esCobrador
+          || payload.data.perfilValue === 2
+          || hasCobradorData
+          || hasDuenoAsCobradorData
+        );
         writePersonalEditCache(payload.data.id, {
-          esCobrador: payload.data.esCobrador,
+          esCobrador,
           cobradorNombre: payload.data.cobradorNombre ?? formValues.cobradorNombre ?? null,
           cobradorEmail: payload.data.cobradorEmail ?? formValues.cobradorEmail ?? null,
           cobradorCuil: payload.data.cobradorCuil ?? formValues.cobradorCuil ?? null,
@@ -16904,13 +16973,6 @@ const PersonalEditPage: React.FC = () => {
           duenoCuilCobrador: payload.data.duenoCuilCobrador ?? formValues.duenoCuilCobrador ?? null,
           duenoCbuAlias: payload.data.duenoCbuAlias ?? formValues.duenoCbuAlias ?? null,
         });
-        const hasCobradorData = Boolean(
-          payload.data.cobradorNombre
-          || payload.data.cobradorEmail
-          || payload.data.cobradorCuil
-          || payload.data.cobradorCbuAlias
-        );
-        const esCobrador = Boolean(payload.data.esCobrador || payload.data.perfilValue === 2 || hasCobradorData);
         const cobradorNombreRaw = esCobrador
           ? (payload.data.cobradorNombre ?? payload.data.duenoNombre ?? '')
           : '';
@@ -16957,6 +17019,7 @@ const PersonalEditPage: React.FC = () => {
 
         setDetail({
           ...payload.data,
+          esCobrador,
           cobradorCbuAlias: fallbackCbuAlias || null,
           documents: payload.data.documents ?? [],
           documentsDownloadAllUrl: payload.data.documentsDownloadAllUrl ?? null,

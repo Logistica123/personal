@@ -159,6 +159,7 @@ class PersonalController extends Controller
             'duenoEmail' => ['nullable', 'email', 'max:255'],
             'duenoCuil' => ['nullable', 'string', 'max:255'],
             'duenoCuilCobrador' => ['nullable', 'string', 'max:255'],
+            'duenoCbuAlias' => ['nullable', 'string', 'max:255'],
             'duenoTelefono' => ['nullable', 'string', 'max:255'],
             'duenoObservaciones' => ['nullable', 'string'],
         ]);
@@ -447,36 +448,32 @@ class PersonalController extends Controller
             'es_solicitud' => ! $autoApprove,
         ]);
 
-        $shouldCreateOwner = ($validated['perfilValue'] ?? null) === 2;
+        $ownerPayload = [
+            'nombreapellido' => $request->input('duenoNombre'),
+            'fecha_nacimiento' => $request->input('duenoFechaNacimiento'),
+            'email' => $request->input('duenoEmail'),
+            'telefono' => $request->input('duenoTelefono'),
+            'cuil' => $request->input('duenoCuil'),
+            'cuil_cobrador' => $request->input('duenoCuilCobrador'),
+            'cbu_alias' => $request->input('duenoCbuAlias'),
+            'observaciones' => $request->input('duenoObservaciones'),
+        ];
 
-        if ($shouldCreateOwner) {
-            $ownerPayload = [
-                'nombreapellido' => $request->input('duenoNombre'),
-                'fecha_nacimiento' => $request->input('duenoFechaNacimiento'),
-                'email' => $request->input('duenoEmail'),
-                'telefono' => $request->input('duenoTelefono'),
-                'cuil' => $request->input('duenoCuil'),
-                'cuil_cobrador' => $request->input('duenoCuilCobrador'),
-                'cbu_alias' => $request->input('duenoCbuAlias'),
-                'observaciones' => $request->input('duenoObservaciones'),
-            ];
+        $hasOwnerData = collect($ownerPayload)
+            ->reject(fn ($value) => $value === null || $value === '')
+            ->isNotEmpty();
 
-            $hasOwnerData = collect($ownerPayload)
-                ->reject(fn ($value) => $value === null || $value === '')
-                ->isNotEmpty();
-
-            if ($hasOwnerData) {
-                $persona->dueno()->create([
-                    'nombreapellido' => $ownerPayload['nombreapellido'] ?: 'Sin nombre',
-                    'fecha_nacimiento' => $ownerPayload['fecha_nacimiento'] ?: null,
-                    'email' => $ownerPayload['email'] ?: null,
-                    'telefono' => $ownerPayload['telefono'] ?: null,
-                    'cuil' => $ownerPayload['cuil'] ?: null,
-                    'cuil_cobrador' => $ownerPayload['cuil_cobrador'] ?: null,
-                    'cbu_alias' => $ownerPayload['cbu_alias'] ?: null,
-                    'observaciones' => $ownerPayload['observaciones'] ?: null,
-                ]);
-            }
+        if ($hasOwnerData) {
+            $persona->dueno()->create([
+                'nombreapellido' => $ownerPayload['nombreapellido'] ?: 'Sin nombre',
+                'fecha_nacimiento' => $ownerPayload['fecha_nacimiento'] ?: null,
+                'email' => $ownerPayload['email'] ?: null,
+                'telefono' => $ownerPayload['telefono'] ?: null,
+                'cuil' => $ownerPayload['cuil'] ?: null,
+                'cuil_cobrador' => $ownerPayload['cuil_cobrador'] ?: null,
+                'cbu_alias' => $ownerPayload['cbu_alias'] ?: null,
+                'observaciones' => $ownerPayload['observaciones'] ?: null,
+            ]);
         }
 
         if ($autoApprove) {
@@ -852,6 +849,23 @@ class PersonalController extends Controller
         $perfil = $perfilValue !== null ? ($perfilMap[$perfilValue] ?? 'Perfil '.$perfilValue) : null;
         $responsableIds = $this->getResponsableIds($persona);
         $responsableNames = $this->resolveResponsableNames($responsableIds);
+        $duenoNombre = $persona->dueno?->nombreapellido;
+        $duenoEmail = $persona->dueno?->email;
+        $duenoCuil = $persona->dueno?->cuil;
+        $duenoCuilCobrador = $persona->dueno?->cuil_cobrador;
+        $duenoCbuAlias = $persona->dueno?->cbu_alias;
+
+        $cobradorNombre = $duenoNombre;
+        $cobradorEmail = $duenoEmail ?? $persona->email;
+        $cobradorCuil = $duenoCuilCobrador ?? $duenoCuil ?? $persona->cuil;
+        $cobradorCbuAlias = $duenoCbuAlias ?? $persona->cbu_alias;
+        $esCobrador = (bool) (
+            ($perfilValue === 2)
+            || $cobradorNombre
+            || $cobradorEmail
+            || $cobradorCuil
+            || $cobradorCbuAlias
+        );
 
         return [
             'id' => $persona->id,
@@ -884,6 +898,11 @@ class PersonalController extends Controller
             'patente' => $persona->patente,
             'observacionTarifa' => $persona->observaciontarifa,
             'observaciones' => $persona->observaciones,
+            'esCobrador' => $esCobrador,
+            'cobradorNombre' => $cobradorNombre,
+            'cobradorEmail' => $cobradorEmail,
+            'cobradorCuil' => $cobradorCuil,
+            'cobradorCbuAlias' => $cobradorCbuAlias,
             'fechaAlta' => $this->formatFechaAlta($persona->fecha_alta),
             'fechaAltaVinculacion' => $this->formatFechaAlta($persona->fecha_alta),
             'aprobado' => $persona->aprobado === null ? false : (bool) $persona->aprobado,
@@ -982,6 +1001,23 @@ class PersonalController extends Controller
         $aprobado = $aprobadoValor === null ? false : (bool) $aprobadoValor;
         $responsableIds = $this->getResponsableIds($persona);
         $responsableNames = $this->resolveResponsableNames($responsableIds);
+        $duenoNombre = $persona->dueno?->nombreapellido;
+        $duenoEmail = $persona->dueno?->email;
+        $duenoCuil = $persona->dueno?->cuil;
+        $duenoCuilCobrador = $persona->dueno?->cuil_cobrador;
+        $duenoCbuAlias = $persona->dueno?->cbu_alias;
+
+        $cobradorNombre = $duenoNombre;
+        $cobradorEmail = $duenoEmail ?? $persona->email;
+        $cobradorCuil = $duenoCuilCobrador ?? $duenoCuil ?? $persona->cuil;
+        $cobradorCbuAlias = $duenoCbuAlias ?? $persona->cbu_alias;
+        $esCobrador = (bool) (
+            ($persona->tipo === 2)
+            || $cobradorNombre
+            || $cobradorEmail
+            || $cobradorCuil
+            || $cobradorCbuAlias
+        );
 
         return [
             'id' => $persona->id,
@@ -1019,6 +1055,11 @@ class PersonalController extends Controller
             'patente' => $persona->patente,
             'observacionTarifa' => $persona->observaciontarifa,
             'observaciones' => $persona->observaciones,
+            'esCobrador' => $esCobrador,
+            'cobradorNombre' => $cobradorNombre,
+            'cobradorEmail' => $cobradorEmail,
+            'cobradorCuil' => $cobradorCuil,
+            'cobradorCbuAlias' => $cobradorCbuAlias,
             'aprobado' => $aprobado,
             'aprobadoAt' => optional($persona->aprobado_at)->format('Y-m-d H:i:s'),
             'aprobadoPor' => $persona->aprobadoPor?->name,
