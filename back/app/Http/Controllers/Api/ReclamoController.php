@@ -519,16 +519,17 @@ class ReclamoController extends Controller
     public function storeDocument(Request $request, Reclamo $reclamo): JsonResponse
     {
         $validator = Validator::make($request->all(), [
-            'archivo' => ['nullable', 'file', 'max:5120'],
+            // Allow larger uploads (20MB)
+            'archivo' => ['nullable', 'file', 'max:20480'],
             'archivos' => ['nullable', 'array'],
-            'archivos.*' => ['file', 'max:5120'],
+            'archivos.*' => ['file', 'max:20480'],
             'nombre' => ['nullable', 'string', 'max:255'],
             'nombres' => ['nullable', 'array'],
             'nombres.*' => ['nullable', 'string', 'max:255'],
             'creatorId' => ['nullable', 'integer', 'exists:users,id'],
         ], [
             'archivos.*.file' => 'Cada elemento debe ser un archivo válido.',
-            'archivos.*.max' => 'Cada archivo debe pesar como máximo 5MB.',
+            'archivos.*.max' => 'Cada archivo debe pesar como máximo 20MB.',
         ]);
 
         $validator->after(function ($validator) use ($request) {
