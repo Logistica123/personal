@@ -3392,6 +3392,12 @@ tbody tr:nth-child(even) {
   color: #6b7c93;
 }
 
+.reclamo-document-actions {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+
 .reclamo-history-item {
   display: flex;
   justify-content: space-between;

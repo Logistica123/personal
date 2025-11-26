@@ -671,6 +671,74 @@ class ReclamoController extends Controller
         ], 201);
     }
 
+    public function destroyDocument(Request $request, Reclamo $reclamo, ReclamoDocument $documento): JsonResponse
+    {
+        if ($documento->reclamo_id !== $reclamo->id) {
+            abort(404);
+        }
+
+        $validated = $request->validate([
+            'creatorId' => ['nullable', 'integer', 'exists:users,id'],
+        ]);
+
+        DB::transaction(function () use ($reclamo, $documento, $validated) {
+            $disk = $documento->disk ?? config('filesystems.default');
+            $path = $documento->path;
+
+            if ($path && $disk && Storage::disk($disk)->exists($path)) {
+                Storage::disk($disk)->delete($path);
+            }
+
+            $documento->delete();
+
+            $this->recordComment(
+                $reclamo,
+                sprintf('Documento "%s" eliminado.', $documento->nombre_original ?? basename($documento->path)),
+                [
+                    'document_id' => $documento->id,
+                    'path' => $documento->path,
+                ],
+                $validated['creatorId'] ?? null
+            );
+        });
+
+        $reclamo->refresh()->loadMissing([
+            'creator:id,name',
+            'agente:id,name',
+            'tipo:id,nombre',
+            'persona' => fn ($query) => $query->select(
+                'id',
+                'nombres',
+                'apellidos',
+                'cliente_id',
+                'cuil',
+                'telefono',
+                'email',
+                'patente',
+                'fecha_alta',
+                'sucursal_id',
+                'unidad_id',
+                'agente_id'
+            ),
+            'persona.cliente:id,nombre',
+            'persona.sucursal:id,nombre',
+            'persona.unidad:id,matricula,marca,modelo',
+            'persona.agente:id,name',
+            'comments' => fn ($query) => $query->orderBy('created_at'),
+            'comments.creator:id,name',
+            'comments.senderUser:id,name',
+            'comments.senderPersona:id,nombres,apellidos',
+            'logs' => fn ($query) => $query->orderBy('created_at'),
+            'logs.actor:id,name',
+            'documents' => fn ($query) => $query->orderByDesc('created_at'),
+        ]);
+
+        return response()->json([
+            'message' => 'Documento eliminado correctamente.',
+            'data' => $this->transformReclamo($reclamo, true),
+        ]);
+    }
+
     public function destroy(Reclamo $reclamo): JsonResponse
     {
         DB::transaction(function () use ($reclamo) {

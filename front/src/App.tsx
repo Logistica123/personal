@@ -6642,6 +6642,7 @@ const ReclamoDetailPage: React.FC = () => {
   const [commentSaving, setCommentSaving] = useState(false);
   const fileUploadInputRef = useRef<HTMLInputElement | null>(null);
   const [documentUploading, setDocumentUploading] = useState(false);
+  const [documentDeletingId, setDocumentDeletingId] = useState<number | null>(null);
   const [documentMessage, setDocumentMessage] = useState<string | null>(null);
   const [documentError, setDocumentError] = useState<string | null>(null);
   const transportistaInfo = detail?.transportistaDetail;
@@ -7025,6 +7026,56 @@ const ReclamoDetailPage: React.FC = () => {
     [apiBaseUrl, reclamoId, setDocumentError]
   );
 
+  const handleDocumentDelete = useCallback(
+    async (doc: ReclamoDocumentItem) => {
+      if (!reclamoId || !detail) {
+        return;
+      }
+
+      const confirmed = window.confirm('¿Seguro que deseas eliminar este documento?');
+      if (!confirmed) {
+        return;
+      }
+
+      try {
+        setDocumentError(null);
+        setDocumentMessage(null);
+        setDocumentDeletingId(doc.id ?? null);
+
+        const actorId = detail.agenteId ?? detail.creatorId;
+        const response = await fetch(`${apiBaseUrl}/api/reclamos/${reclamoId}/documentos/${doc.id}`, {
+          method: 'DELETE',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(actorId ? { creatorId: actorId } : {}),
+        });
+
+        if (!response.ok) {
+          let message = `Error ${response.status}: ${response.statusText}`;
+          try {
+            const payload = await response.json();
+            if (typeof payload?.message === 'string') {
+              message = payload.message;
+            }
+          } catch {
+            // ignore
+          }
+          throw new Error(message);
+        }
+
+        const payload = (await response.json()) as { message?: string; data: ReclamoDetail };
+        applyDetail(payload.data, { refreshForm: false });
+        setDocumentMessage(payload.message ?? 'Documento eliminado correctamente.');
+      } catch (err) {
+        setDocumentError((err as Error).message ?? 'No se pudo eliminar el documento.');
+      } finally {
+        setDocumentDeletingId(null);
+      }
+    },
+    [apiBaseUrl, reclamoId, detail, applyDetail]
+  );
+
   const handleCommentSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
 
@@ -7285,17 +7336,27 @@ const ReclamoDetailPage: React.FC = () => {
                       <strong>{document.nombre ?? `Documento #${document.id}`}</strong>
                       <span>{document.uploadedAtLabel ?? ''}</span>
                     </div>
-                    {document.downloadUrl ? (
+                    <div className="reclamo-document-actions">
+                      {document.downloadUrl ? (
+                        <button
+                          type="button"
+                          className="secondary-action secondary-action--ghost"
+                          onClick={() => handleDocumentDownload(document)}
+                        >
+                          Descargar
+                        </button>
+                      ) : (
+                        <span className="section-helper">Sin enlace</span>
+                      )}
                       <button
                         type="button"
-                        className="secondary-action secondary-action--ghost"
-                        onClick={() => handleDocumentDownload(document)}
+                        className="secondary-action secondary-action--danger"
+                        onClick={() => handleDocumentDelete(document)}
+                        disabled={documentDeletingId === document.id}
                       >
-                        Descargar
+                        {documentDeletingId === document.id ? 'Eliminando...' : 'Eliminar'}
                       </button>
-                    ) : (
-                      <span className="section-helper">Sin enlace</span>
-                    )}
+                    </div>
                   </li>
                 ))}
               </ul>

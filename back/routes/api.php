@@ -64,6 +64,7 @@ Route::delete('/reclamos/{reclamo}', [ReclamoController::class, 'destroy']);
 Route::post('/reclamos/{reclamo}/comments', [ReclamoController::class, 'storeComment']);
 Route::post('/reclamos/{reclamo}/documentos', [ReclamoController::class, 'storeDocument']);
 Route::get('/reclamos/{reclamo}/documentos/{documento}/descargar', [ReclamoController::class, 'downloadDocument']);
+Route::delete('/reclamos/{reclamo}/documentos/{documento}', [ReclamoController::class, 'destroyDocument']);
 
 Route::get('/notificaciones', [NotificationController::class, 'index']);
 Route::match(['GET', 'POST'], '/notificaciones/eliminadas', [NotificationController::class, 'deletions']);
