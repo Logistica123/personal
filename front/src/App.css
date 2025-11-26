@@ -3855,3 +3855,29 @@ tbody tr:nth-child(even) {
     gap: 1.5rem;
   }
 }
+.badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.15rem 0.5rem;
+  border-radius: 999px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.badge--success {
+  background: #e6f7ec;
+  color: #1a7f37;
+}
+
+.badge--warning {
+  background: #fff4e5;
+  color: #a15c00;
+}
+
+.badge--danger {
+  background: #ffe8e6;
+  color: #b42318;
+}

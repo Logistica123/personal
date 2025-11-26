@@ -150,9 +150,11 @@ class PersonalController extends Controller
             'patente' => ['nullable', 'string', 'max:100'],
             'fechaAlta' => ['nullable', 'date'],
             'fechaAltaVinculacion' => ['nullable', 'date'],
+            'fechaBaja' => ['nullable', 'date'],
             'observacionTarifa' => ['nullable', 'string'],
             'observaciones' => ['nullable', 'string'],
             'combustible' => ['nullable', 'boolean'],
+            'combustibleEstado' => ['nullable', 'string', 'in:activo,suspendido'],
             'tarifaEspecial' => ['nullable', 'boolean'],
             'duenoNombre' => ['nullable', 'string', 'max:255'],
             'duenoFechaNacimiento' => ['nullable', 'date'],
@@ -238,8 +240,19 @@ class PersonalController extends Controller
                 : null;
         }
 
+        if (array_key_exists('fechaBaja', $validated)) {
+            $persona->fecha_baja = $validated['fechaBaja'] ? Carbon::parse($validated['fechaBaja']) : null;
+        }
+
         if (array_key_exists('combustible', $validated)) {
             $persona->combustible = $validated['combustible'] ? 1 : 0;
+            $persona->combustible_estado = $persona->combustible
+                ? ($validated['combustibleEstado'] ?? $persona->combustible_estado)
+                : null;
+        }
+
+        if (array_key_exists('combustibleEstado', $validated) && $persona->combustible) {
+            $persona->combustible_estado = $validated['combustibleEstado'] ?? null;
         }
 
         if (array_key_exists('tarifaEspecial', $validated)) {
@@ -387,9 +400,11 @@ class PersonalController extends Controller
             'patente' => ['nullable', 'string', 'max:100'],
             'fechaAlta' => ['nullable', 'date'],
             'fechaAltaVinculacion' => ['nullable', 'date'],
+            'fechaBaja' => ['nullable', 'date'],
             'observacionTarifa' => ['nullable', 'string'],
             'observaciones' => ['nullable', 'string'],
             'combustible' => ['required', 'boolean'],
+            'combustibleEstado' => ['nullable', 'string', 'in:activo,suspendido'],
             'tarifaEspecial' => ['required', 'boolean'],
             'duenoNombre' => ['nullable', 'string', 'max:255'],
             'duenoFechaNacimiento' => ['nullable', 'date'],
@@ -407,6 +422,9 @@ class PersonalController extends Controller
         $autoApproveUserId = $validated['autoApproveUserId'] ?? null;
         $fechaAltaInput = $validated['fechaAlta'] ?? $validated['fechaAltaVinculacion'] ?? null;
         $fechaAltaValue = $fechaAltaInput ? Carbon::parse($fechaAltaInput) : null;
+        $fechaBajaValue = array_key_exists('fechaBaja', $validated) && $validated['fechaBaja']
+            ? Carbon::parse($validated['fechaBaja'])
+            : null;
         $responsableIds = collect(
             $this->normalizeResponsableIds($request->input('agenteResponsableIds') ?? [])
         );
@@ -441,9 +459,11 @@ class PersonalController extends Controller
             'cbu_alias' => $validated['cbuAlias'] ?? null,
             'patente' => $validated['patente'] ?? null,
             'fecha_alta' => $fechaAltaValue,
+            'fecha_baja' => $fechaBajaValue,
             'observaciontarifa' => $validated['observacionTarifa'] ?? null,
             'observaciones' => $validated['observaciones'] ?? null,
             'combustible' => $validated['combustible'],
+            'combustible_estado' => $validated['combustible'] ? ($validated['combustibleEstado'] ?? null) : null,
             'tarifaespecial' => $validated['tarifaEspecial'],
             'es_solicitud' => ! $autoApprove,
         ]);
@@ -854,6 +874,14 @@ class PersonalController extends Controller
         $duenoCuil = $persona->dueno?->cuil;
         $duenoCuilCobrador = $persona->dueno?->cuil_cobrador;
         $duenoCbuAlias = $persona->dueno?->cbu_alias;
+        $combustibleEstado = $persona->combustible_estado;
+        $fechaBaja = $this->formatFechaAlta($persona->fecha_baja);
+        $fechaBaja = $this->formatFechaAlta($persona->fecha_baja);
+        $fechaBaja = $this->formatFechaAlta($persona->fecha_baja);
+        $fechaBaja = $this->formatFechaAlta($persona->fecha_baja);
+        $fechaBaja = $this->formatFechaAlta($persona->fecha_baja);
+        $fechaBaja = $this->formatFechaAlta($persona->fecha_baja);
+        $fechaBaja = $this->formatFechaAlta($persona->fecha_baja);
 
         $cobradorNombre = $duenoNombre;
         $cobradorEmail = $duenoEmail ?? $persona->email;
@@ -892,6 +920,7 @@ class PersonalController extends Controller
             'estado' => $persona->estado?->nombre,
             'estadoId' => $persona->estado_id,
             'combustibleValue' => (bool) $persona->combustible,
+            'combustibleEstado' => $combustibleEstado,
             'tarifaEspecialValue' => (bool) $persona->tarifaespecial,
             'pago' => $persona->pago !== null ? (string) $persona->pago : null,
             'cbuAlias' => $persona->cbu_alias,
@@ -905,6 +934,7 @@ class PersonalController extends Controller
             'cobradorCbuAlias' => $cobradorCbuAlias,
             'fechaAlta' => $this->formatFechaAlta($persona->fecha_alta),
             'fechaAltaVinculacion' => $this->formatFechaAlta($persona->fecha_alta),
+            'fechaBaja' => $fechaBaja,
             'aprobado' => $persona->aprobado === null ? false : (bool) $persona->aprobado,
             'aprobadoAt' => optional($persona->aprobado_at)->toIso8601String(),
             'aprobadoPorId' => $persona->aprobado_por,
@@ -1006,6 +1036,8 @@ class PersonalController extends Controller
         $duenoCuil = $persona->dueno?->cuil;
         $duenoCuilCobrador = $persona->dueno?->cuil_cobrador;
         $duenoCbuAlias = $persona->dueno?->cbu_alias;
+        $combustibleEstado = $persona->combustible_estado;
+        $fechaBaja = $this->formatFechaAlta($persona->fecha_baja);
 
         $cobradorNombre = $duenoNombre;
         $cobradorEmail = $duenoEmail ?? $persona->email;
@@ -1034,6 +1066,7 @@ class PersonalController extends Controller
             'unidadId' => $persona->unidad_id,
             'fechaAlta' => $this->formatFechaAlta($persona->fecha_alta),
             'fechaAltaVinculacion' => $this->formatFechaAlta($persona->fecha_alta),
+            'fechaBaja' => $fechaBaja,
             'sucursal' => $persona->sucursal?->nombre,
             'sucursalId' => $persona->sucursal_id,
             'perfil' => $perfil,
@@ -1048,6 +1081,7 @@ class PersonalController extends Controller
             'estadoId' => $persona->estado_id,
             'combustible' => $persona->combustible ? 'Sí' : 'No',
             'combustibleValue' => (bool) $persona->combustible,
+            'combustibleEstado' => $combustibleEstado,
             'tarifaEspecial' => $persona->tarifaespecial ? 'Sí' : 'No',
             'tarifaEspecialValue' => (bool) $persona->tarifaespecial,
             'pago' => $persona->pago !== null ? (string) $persona->pago : null,

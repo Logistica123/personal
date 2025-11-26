@@ -152,6 +152,7 @@ type PersonalRecord = {
   unidadDetalle: string | null;
   unidadId?: number | null;
   fechaAltaVinculacion?: string | null;
+  fechaBaja?: string | null;
   sucursal: string | null;
   sucursalId?: number | null;
   fechaAlta: string | null;
@@ -167,6 +168,7 @@ type PersonalRecord = {
   estadoId?: number | null;
   combustible: string | null;
   combustibleValue: boolean;
+  combustibleEstado?: string | null;
   tarifaEspecial: string | null;
   tarifaEspecialValue: boolean;
   pago?: string | null;
@@ -225,6 +227,8 @@ type PersonalDetail = {
   estadoId: number | null;
   combustible?: string | null;
   combustibleValue: boolean;
+  combustibleEstado?: string | null;
+  fechaBaja?: string | null;
   tarifaEspecial?: string | null;
   tarifaEspecialValue: boolean;
   pago: string | null;
@@ -7838,6 +7842,7 @@ const PersonalPage: React.FC = () => {
       { header: 'Unidad detalle', resolve: (registro) => registro.unidadDetalle ?? '' },
       { header: 'Fecha alta', resolve: (registro) => registro.fechaAlta ?? '' },
       { header: 'Combustible', resolve: (registro) => booleanLabel(registro.combustibleValue) },
+      { header: 'Estado combustible', resolve: (registro) => registro.combustibleEstado ?? '' },
       { header: 'Tarifa especial', resolve: (registro) => booleanLabel(registro.tarifaEspecialValue) },
       { header: 'Pago', resolve: (registro) => registro.pago ?? '' },
       { header: 'CBU alias', resolve: (registro) => registro.cbuAlias ?? '' },
@@ -8032,24 +8037,26 @@ const PersonalPage: React.FC = () => {
               <th>Agente</th>
               <th>Estado</th>
               <th>Combustible</th>
+              <th>Estado combustible</th>
               <th>Tarifa especial</th>
               <th>Cliente</th>
               <th>Unidad</th>
               <th>Sucursal</th>
               <th>Fecha alta</th>
+              <th>Fecha baja</th>
               <th>Acciones</th>
             </tr>
           </thead>
           <tbody>
             {loading && (
               <tr>
-                <td colSpan={9}>Cargando personal...</td>
+                <td colSpan={17}>Cargando personal...</td>
               </tr>
             )}
 
             {error && !loading && (
               <tr>
-                <td colSpan={9} className="error-cell">
+                <td colSpan={17} className="error-cell">
                   {error}
                 </td>
               </tr>
@@ -8057,7 +8064,7 @@ const PersonalPage: React.FC = () => {
 
             {!loading && !error && filteredPersonal.length === 0 && (
               <tr>
-                <td colSpan={9}>No hay registros para mostrar.</td>
+                <td colSpan={17}>No hay registros para mostrar.</td>
               </tr>
             )}
 
@@ -8081,12 +8088,32 @@ const PersonalPage: React.FC = () => {
                       '—'
                     )}
                   </td>
-                  <td>{registro.combustible ?? '—'}</td>
+                  <td>
+                    {registro.combustibleValue ? (
+                      <span className="badge badge--success">Sí</span>
+                    ) : (
+                      <span className="badge badge--danger">No</span>
+                    )}
+                  </td>
+                  <td>
+                    {registro.combustibleValue && registro.combustibleEstado ? (
+                      <span
+                        className={
+                          registro.combustibleEstado === 'suspendido' ? 'badge badge--warning' : 'badge badge--success'
+                        }
+                      >
+                        {registro.combustibleEstado === 'suspendido' ? 'Suspendido' : 'Activo'}
+                      </span>
+                    ) : (
+                      '—'
+                    )}
+                  </td>
                   <td>{registro.tarifaEspecial ?? '—'}</td>
                   <td>{registro.cliente ?? '—'}</td>
                   <td>{registro.unidad ?? '—'}</td>
                   <td>{registro.sucursal ?? '—'}</td>
                   <td>{registro.fechaAlta ?? '—'}</td>
+                  <td>{registro.fechaBaja ?? '—'}</td>
                   <td>
                     <div className="action-buttons">
                       <button
@@ -16425,6 +16452,8 @@ const PersonalEditPage: React.FC = () => {
     observacionTarifa: '',
     observaciones: '',
     combustible: false,
+    combustibleEstado: '',
+    fechaBaja: '',
     tarifaEspecial: false,
     esCobrador: true,
     cobradorNombre: '',
@@ -16657,6 +16686,8 @@ const PersonalEditPage: React.FC = () => {
         duenoCbuAlias: payload.data.duenoCbuAlias ?? solicitudAltaForm?.duenoCbuAlias ?? '',
         duenoObservaciones: payload.data.duenoObservaciones ?? solicitudAltaForm?.duenoObservaciones ?? '',
         combustible: Boolean(payload.data.combustibleValue),
+        combustibleEstado: payload.data.combustibleEstado ?? '',
+        fechaBaja: payload.data.fechaBaja ?? '',
         tarifaEspecial: Boolean(payload.data.tarifaEspecialValue),
       });
       const documents = payload.data.documents ?? [];
@@ -16668,6 +16699,8 @@ const PersonalEditPage: React.FC = () => {
         documentsDownloadAllUrl: payload.data.documentsDownloadAllUrl ?? null,
         documentsDownloadAllAbsoluteUrl: payload.data.documentsDownloadAllAbsoluteUrl ?? null,
         history: payload.data.history ?? [],
+        combustibleEstado: payload.data.combustibleEstado ?? null,
+        fechaBaja: payload.data.fechaBaja ?? null,
       });
       setSaveSuccess(null);
       setSaveError(null);
@@ -16800,6 +16833,21 @@ const PersonalEditPage: React.FC = () => {
     return perfil?.label ?? (detail?.perfil ?? '');
   }, [meta, formValues.perfilValue, detail?.perfil]);
 
+  const isEstadoBaja = useMemo(() => {
+    const estadoNombre = (() => {
+      if (meta && formValues.estadoId) {
+        const targetId = Number(formValues.estadoId);
+        const estado = meta.estados.find((item) => item.id === targetId);
+        if (estado?.nombre) {
+          return estado.nombre;
+        }
+      }
+      return detail?.estado ?? '';
+    })();
+
+    return estadoNombre.trim().toLowerCase().includes('baja');
+  }, [meta, formValues.estadoId, detail?.estado]);
+
   const handleDownloadFicha = useCallback((record: PersonalDetail) => {
     const lines = [
       ['Nombre', [record.nombres, record.apellidos].filter(Boolean).join(' ').trim()],
@@ -16873,6 +16921,8 @@ const PersonalEditPage: React.FC = () => {
       const cobradorCbuAlias = formValues.cobradorCbuAlias.trim() || null;
       const hasCobradorFields = Boolean(cobradorNombre || cobradorEmail || cobradorCuil || cobradorCbuAlias);
       const esCobradorFlag = formValues.esCobrador || hasCobradorFields || formValues.perfilValue === 2;
+      const combustibleEstado = formValues.combustible ? formValues.combustibleEstado || null : null;
+      const fechaBaja = formValues.fechaBaja || null;
       const duenoNombre = esCobradorFlag ? cobradorNombre : formValues.duenoNombre.trim() || null;
       const duenoEmail = esCobradorFlag ? cobradorEmail : formValues.duenoEmail.trim() || null;
       const duenoCuilCobrador = esCobradorFlag ? cobradorCuil : formValues.duenoCuilCobrador.trim() || null;
@@ -16897,12 +16947,14 @@ const PersonalEditPage: React.FC = () => {
           unidadId: formValues.unidadId ? Number(formValues.unidadId) : null,
           estadoId: formValues.estadoId ? Number(formValues.estadoId) : null,
           fechaAlta: formValues.fechaAlta || null,
+          fechaBaja,
           pago: formValues.pago ? Number(formValues.pago) : null,
           cbuAlias: formValues.cbuAlias.trim() || null,
           patente: formValues.patente.trim() || null,
           observacionTarifa: formValues.observacionTarifa.trim() || null,
           observaciones: formValues.observaciones.trim() || null,
           combustible: formValues.combustible,
+          combustibleEstado,
           tarifaEspecial: formValues.tarifaEspecial,
           esCobrador: esCobradorFlag,
           cobradorNombre,
@@ -17020,6 +17072,8 @@ const PersonalEditPage: React.FC = () => {
         setDetail({
           ...payload.data,
           esCobrador,
+          combustibleEstado: payload.data.combustibleEstado ?? null,
+          fechaBaja: payload.data.fechaBaja ?? null,
           cobradorCbuAlias: fallbackCbuAlias || null,
           documents: payload.data.documents ?? [],
           documentsDownloadAllUrl: payload.data.documentsDownloadAllUrl ?? null,
@@ -17046,6 +17100,8 @@ const PersonalEditPage: React.FC = () => {
           observacionTarifa: payload.data.observacionTarifa ?? '',
           observaciones: payload.data.observaciones ?? '',
           esCobrador,
+          combustibleEstado: payload.data.combustibleEstado ?? '',
+          fechaBaja: payload.data.fechaBaja ?? '',
           cobradorNombre: fallbackNombre,
           cobradorEmail: fallbackEmail,
           cobradorCuil: fallbackCuil,
@@ -17264,10 +17320,28 @@ const PersonalEditPage: React.FC = () => {
               <input
                 type="checkbox"
                 checked={formValues.combustible}
-                onChange={(event) => setFormValues((prev) => ({ ...prev, combustible: event.target.checked }))}
+                onChange={(event) =>
+                  setFormValues((prev) => ({
+                    ...prev,
+                    combustible: event.target.checked,
+                    combustibleEstado: event.target.checked ? prev.combustibleEstado : '',
+                  }))
+                }
               />
               Cuenta corrientes combustible
             </div>
+            {formValues.combustible ? (
+              <select
+                value={formValues.combustibleEstado}
+                onChange={(event) => setFormValues((prev) => ({ ...prev, combustibleEstado: event.target.value }))}
+                disabled={isReadOnly}
+                style={{ marginTop: '0.5rem' }}
+              >
+                <option value="">Seleccionar estado</option>
+                <option value="activo">Activo</option>
+                <option value="suspendido">Suspendido</option>
+              </select>
+            ) : null}
           </label>
           <label className="input-control">
             <span>Tarifa especial</span>
@@ -17452,6 +17526,17 @@ const PersonalEditPage: React.FC = () => {
               ))}
             </select>
           </label>
+          {isEstadoBaja ? (
+            <label className="input-control">
+              <span>Fecha de baja</span>
+              <input
+                type="date"
+                value={formValues.fechaBaja}
+                onChange={(event) => setFormValues((prev) => ({ ...prev, fechaBaja: event.target.value }))}
+                disabled={isReadOnly}
+              />
+            </label>
+          ) : null}
         </div>
       </section>
 
@@ -17774,9 +17859,11 @@ const PersonalCreatePage: React.FC = () => {
     unidadId: '',
     estadoId: '',
     fechaAlta: '',
+    fechaBaja: '',
     observacionTarifa: '',
     observaciones: '',
     combustible: false,
+    combustibleEstado: '',
     tarifaEspecial: false,
     esCobrador: true,
     cobradorNombre: '',
@@ -17835,7 +17922,11 @@ const PersonalCreatePage: React.FC = () => {
 
   const handleCheckboxChange = (field: 'combustible' | 'tarifaEspecial') => (event: React.ChangeEvent<HTMLInputElement>) => {
     const { checked } = event.target;
-    setFormValues((prev) => ({ ...prev, [field]: checked }));
+    setFormValues((prev) => ({
+      ...prev,
+      [field]: checked,
+      ...(field === 'combustible' && !checked ? { combustibleEstado: '' } : {}),
+    }));
   };
 
   const handleCobradorToggle = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -17862,6 +17953,7 @@ const PersonalCreatePage: React.FC = () => {
       const cobradorCbuAlias = formValues.cobradorCbuAlias.trim() || null;
       const hasCobradorFields = Boolean(cobradorNombre || cobradorEmail || cobradorCuil || cobradorCbuAlias);
       const esCobradorFlag = formValues.esCobrador || hasCobradorFields || formValues.perfilValue === 2;
+      const combustibleEstado = formValues.combustible ? formValues.combustibleEstado || null : null;
       const duenoNombre = esCobradorFlag ? cobradorNombre : formValues.duenoNombre.trim() || null;
       const duenoEmail = esCobradorFlag ? cobradorEmail : formValues.duenoEmail.trim() || null;
       const duenoCuilCobrador = esCobradorFlag ? cobradorCuil : formValues.duenoCuilCobrador.trim() || null;
@@ -17888,9 +17980,11 @@ const PersonalCreatePage: React.FC = () => {
           unidadId: formValues.unidadId ? Number(formValues.unidadId) : null,
           estadoId: formValues.estadoId ? Number(formValues.estadoId) : null,
           fechaAlta: formValues.fechaAlta || null,
+          fechaBaja: formValues.fechaBaja || null,
           observacionTarifa: formValues.observacionTarifa.trim() || null,
           observaciones: formValues.observaciones.trim() || null,
           combustible: formValues.combustible,
+          combustibleEstado,
           tarifaEspecial: formValues.tarifaEspecial,
           esCobrador: esCobradorFlag,
           cobradorNombre,
@@ -17968,6 +18062,21 @@ const PersonalCreatePage: React.FC = () => {
               {renderInput('CUIL', 'cuil')}
               {renderInput('CBU/Alias', 'cbuAlias')}
               {renderCheckbox('Combustible', 'combustible', 'Cuenta corrientes combustible')}
+              {formValues.combustible ? (
+                <label className="input-control">
+                  <span>Estado combustible</span>
+                  <select
+                    value={formValues.combustibleEstado}
+                    onChange={(event) =>
+                      setFormValues((prev) => ({ ...prev, combustibleEstado: event.target.value }))
+                    }
+                  >
+                    <option value="">Seleccionar estado</option>
+                    <option value="activo">Activo</option>
+                    <option value="suspendido">Suspendido</option>
+                  </select>
+                </label>
+              ) : null}
               {renderInput('Fecha de alta', 'fechaAlta', false, 'date')}
               {renderInput('Patente', 'patente')}
             </div>
@@ -18003,6 +18112,21 @@ const PersonalCreatePage: React.FC = () => {
               {renderInput('CUIL', 'cuil')}
               {renderInput('CBU/Alias', 'cbuAlias')}
               {renderCheckbox('Combustible', 'combustible', 'Cuenta corrientes combustible')}
+              {formValues.combustible ? (
+                <label className="input-control">
+                  <span>Estado combustible</span>
+                  <select
+                    value={formValues.combustibleEstado}
+                    onChange={(event) =>
+                      setFormValues((prev) => ({ ...prev, combustibleEstado: event.target.value }))
+                    }
+                  >
+                    <option value="">Seleccionar estado</option>
+                    <option value="activo">Activo</option>
+                    <option value="suspendido">Suspendido</option>
+                  </select>
+                </label>
+              ) : null}
               {renderInput('Fecha de alta', 'fechaAlta', false, 'date')}
               {renderInput('Patente', 'patente')}
             </div>
@@ -18038,6 +18162,21 @@ const PersonalCreatePage: React.FC = () => {
               {renderInput('Correo electrónico', 'email', false, 'email')}
               {renderInput('Teléfono', 'telefono')}
               {renderCheckbox('Combustible', 'combustible', 'Cuenta corrientes combustible')}
+              {formValues.combustible ? (
+                <label className="input-control">
+                  <span>Estado combustible</span>
+                  <select
+                    value={formValues.combustibleEstado}
+                    onChange={(event) =>
+                      setFormValues((prev) => ({ ...prev, combustibleEstado: event.target.value }))
+                    }
+                  >
+                    <option value="">Seleccionar estado</option>
+                    <option value="activo">Activo</option>
+                    <option value="suspendido">Suspendido</option>
+                  </select>
+                </label>
+              ) : null}
               {renderCheckbox('Tarifa especial', 'tarifaEspecial', 'Tiene tarifa especial')}
               {renderInput('Observación tarifa', 'observacionTarifa')}
               {renderInput('Fecha de alta', 'fechaAlta', false, 'date')}

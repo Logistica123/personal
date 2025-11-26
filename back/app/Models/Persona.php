@@ -31,6 +31,7 @@ class Persona extends Model
         'pago',
         'cbu_alias',
         'combustible',
+        'combustible_estado',
         'unidad_id',
         'cliente_id',
         'sucursal_id',
@@ -47,11 +48,13 @@ class Persona extends Model
         'aprobado_at',
         'aprobado_por',
         'fecha_alta',
+        'fecha_baja',
         'es_solicitud',
     ];
 
     protected $dates = [
         'fecha_alta',
+        'fecha_baja',
         'aprobado_at',
         'created_at',
         'updated_at',
