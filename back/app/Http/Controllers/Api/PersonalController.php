@@ -156,6 +156,11 @@ class PersonalController extends Controller
             'combustible' => ['nullable', 'boolean'],
             'combustibleEstado' => ['nullable', 'string', 'in:activo,suspendido'],
             'tarifaEspecial' => ['nullable', 'boolean'],
+            'esCobrador' => ['nullable', 'boolean'],
+            'cobradorNombre' => ['nullable', 'string', 'max:255'],
+            'cobradorEmail' => ['nullable', 'email', 'max:255'],
+            'cobradorCuil' => ['nullable', 'string', 'max:255'],
+            'cobradorCbuAlias' => ['nullable', 'string', 'max:255'],
             'duenoNombre' => ['nullable', 'string', 'max:255'],
             'duenoFechaNacimiento' => ['nullable', 'date'],
             'duenoEmail' => ['nullable', 'email', 'max:255'],
@@ -196,6 +201,10 @@ class PersonalController extends Controller
             'patente' => 'patente',
             'observacionTarifa' => 'observaciontarifa',
             'observaciones' => 'observaciones',
+            'cobradorNombre' => 'cobrador_nombre',
+            'cobradorEmail' => 'cobrador_email',
+            'cobradorCuil' => 'cobrador_cuil',
+            'cobradorCbuAlias' => 'cobrador_cbu_alias',
         ];
 
         foreach ($stringAssignments as $inputKey => $attribute) {
@@ -257,6 +266,14 @@ class PersonalController extends Controller
 
         if (array_key_exists('tarifaEspecial', $validated)) {
             $persona->tarifaespecial = $validated['tarifaEspecial'] ? 1 : 0;
+        }
+
+        if (array_key_exists('esCobrador', $validated)) {
+            $persona->es_cobrador = $validated['esCobrador'] ? 1 : 0;
+            $persona->cobrador_nombre = $validated['esCobrador'] ? ($validated['cobradorNombre'] ?? null) : null;
+            $persona->cobrador_email = $validated['esCobrador'] ? ($validated['cobradorEmail'] ?? null) : null;
+            $persona->cobrador_cuil = $validated['esCobrador'] ? ($validated['cobradorCuil'] ?? null) : null;
+            $persona->cobrador_cbu_alias = $validated['esCobrador'] ? ($validated['cobradorCbuAlias'] ?? null) : null;
         }
 
         $persona->save();
@@ -406,6 +423,11 @@ class PersonalController extends Controller
             'combustible' => ['required', 'boolean'],
             'combustibleEstado' => ['nullable', 'string', 'in:activo,suspendido'],
             'tarifaEspecial' => ['required', 'boolean'],
+            'esCobrador' => ['nullable', 'boolean'],
+            'cobradorNombre' => ['nullable', 'string', 'max:255'],
+            'cobradorEmail' => ['nullable', 'email', 'max:255'],
+            'cobradorCuil' => ['nullable', 'string', 'max:255'],
+            'cobradorCbuAlias' => ['nullable', 'string', 'max:255'],
             'duenoNombre' => ['nullable', 'string', 'max:255'],
             'duenoFechaNacimiento' => ['nullable', 'date'],
             'duenoEmail' => ['nullable', 'email', 'max:255'],
@@ -465,6 +487,11 @@ class PersonalController extends Controller
             'combustible' => $validated['combustible'],
             'combustible_estado' => $validated['combustible'] ? ($validated['combustibleEstado'] ?? null) : null,
             'tarifaespecial' => $validated['tarifaEspecial'],
+            'es_cobrador' => $validated['esCobrador'] ?? false,
+            'cobrador_nombre' => $validated['esCobrador'] ? ($validated['cobradorNombre'] ?? null) : null,
+            'cobrador_email' => $validated['esCobrador'] ? ($validated['cobradorEmail'] ?? null) : null,
+            'cobrador_cuil' => $validated['esCobrador'] ? ($validated['cobradorCuil'] ?? null) : null,
+            'cobrador_cbu_alias' => $validated['esCobrador'] ? ($validated['cobradorCbuAlias'] ?? null) : null,
             'es_solicitud' => ! $autoApprove,
         ]);
 
@@ -876,24 +903,22 @@ class PersonalController extends Controller
         $duenoCbuAlias = $persona->dueno?->cbu_alias;
         $combustibleEstado = $persona->combustible_estado;
         $fechaBaja = $this->formatFechaAlta($persona->fecha_baja);
-        $fechaBaja = $this->formatFechaAlta($persona->fecha_baja);
-        $fechaBaja = $this->formatFechaAlta($persona->fecha_baja);
-        $fechaBaja = $this->formatFechaAlta($persona->fecha_baja);
-        $fechaBaja = $this->formatFechaAlta($persona->fecha_baja);
-        $fechaBaja = $this->formatFechaAlta($persona->fecha_baja);
-        $fechaBaja = $this->formatFechaAlta($persona->fecha_baja);
 
-        $cobradorNombre = $duenoNombre;
-        $cobradorEmail = $duenoEmail ?? $persona->email;
-        $cobradorCuil = $duenoCuilCobrador ?? $duenoCuil ?? $persona->cuil;
-        $cobradorCbuAlias = $duenoCbuAlias ?? $persona->cbu_alias;
-        $esCobrador = (bool) (
-            ($perfilValue === 2)
-            || $cobradorNombre
-            || $cobradorEmail
-            || $cobradorCuil
-            || $cobradorCbuAlias
+        $hasExplicitCobrador = (
+            $persona->cobrador_nombre
+            || $persona->cobrador_email
+            || $persona->cobrador_cuil
+            || $persona->cobrador_cbu_alias
         );
+        $esCobrador = (bool) (
+            ($persona->es_cobrador ?? false)
+            || ($perfilValue === 2)
+            || $hasExplicitCobrador
+        );
+        $cobradorNombre = $hasExplicitCobrador ? $persona->cobrador_nombre : null;
+        $cobradorEmail = $hasExplicitCobrador ? $persona->cobrador_email : null;
+        $cobradorCuil = $hasExplicitCobrador ? $persona->cobrador_cuil : null;
+        $cobradorCbuAlias = $hasExplicitCobrador ? $persona->cobrador_cbu_alias : null;
 
         return [
             'id' => $persona->id,
@@ -1039,17 +1064,21 @@ class PersonalController extends Controller
         $combustibleEstado = $persona->combustible_estado;
         $fechaBaja = $this->formatFechaAlta($persona->fecha_baja);
 
-        $cobradorNombre = $duenoNombre;
-        $cobradorEmail = $duenoEmail ?? $persona->email;
-        $cobradorCuil = $duenoCuilCobrador ?? $duenoCuil ?? $persona->cuil;
-        $cobradorCbuAlias = $duenoCbuAlias ?? $persona->cbu_alias;
-        $esCobrador = (bool) (
-            ($persona->tipo === 2)
-            || $cobradorNombre
-            || $cobradorEmail
-            || $cobradorCuil
-            || $cobradorCbuAlias
+        $hasExplicitCobrador = (
+            $persona->cobrador_nombre
+            || $persona->cobrador_email
+            || $persona->cobrador_cuil
+            || $persona->cobrador_cbu_alias
         );
+        $esCobrador = (bool) (
+            ($persona->es_cobrador ?? false)
+            || ($persona->tipo === 2)
+            || $hasExplicitCobrador
+        );
+        $cobradorNombre = $hasExplicitCobrador ? $persona->cobrador_nombre : null;
+        $cobradorEmail = $hasExplicitCobrador ? $persona->cobrador_email : null;
+        $cobradorCuil = $hasExplicitCobrador ? $persona->cobrador_cuil : null;
+        $cobradorCbuAlias = $hasExplicitCobrador ? $persona->cobrador_cbu_alias : null;
 
         return [
             'id' => $persona->id,
