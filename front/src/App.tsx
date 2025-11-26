@@ -558,20 +558,26 @@ const formatRoleLabel = (role: string | null | undefined): string => {
 };
 
 const normalizeUserRole = (role: string | null | undefined): UserRole => {
-  const normalized = role?.trim().toLowerCase();
-  if (normalized === 'admin' || normalized === 'administrador') {
-    return 'admin';
+  const normalized = role?.trim().toLowerCase() ?? '';
+
+  if (normalized.includes('admin')) {
+    return normalized.includes('2') ? 'admin2' : 'admin';
   }
-  if (normalized === 'admin2' || normalized === 'administrador2' || normalized === 'administrador 2') {
-    return 'admin2';
-  }
-  if (normalized === 'asesor' || normalized === 'asesores') {
-    return 'asesor';
-  }
-  if (normalized === 'encargado' || normalized === 'encargados') {
+
+  if (normalized.includes('encarg')) {
     return 'encargado';
   }
-  return 'operator';
+
+  if (normalized.includes('oper')) {
+    return 'operator';
+  }
+
+  if (normalized.includes('asesor')) {
+    return 'asesor';
+  }
+
+  // Fallback: si no hay rol definido lo tratamos como asesor para no bloquear reclamos.
+  return 'asesor';
 };
 
 const getUserRole = (authUser: AuthUser | null | undefined): UserRole => normalizeUserRole(authUser?.role);
@@ -598,7 +604,7 @@ const canAccessSection = (role: UserRole, section: AccessSection): boolean => {
     case 'unidades':
       return role !== 'operator' && role !== 'asesor';
     case 'reclamos':
-      return role !== 'operator';
+      return true; // Todos los roles pueden crear/ver reclamos (incluido asesor)
     default:
       return true;
   }
@@ -5657,12 +5663,6 @@ const CreateReclamoPage: React.FC = () => {
     [authUser?.name, authUser?.email]
   );
   const normalizedRole = useMemo(() => authUser?.role?.toLowerCase().trim() ?? '', [authUser?.role]);
-  const isAdmin = useMemo(() => normalizedRole.includes('admin'), [normalizedRole]);
-  const isOperator = useMemo(
-    () => normalizedRole.includes('operador') || normalizedRole.includes('operator'),
-    [normalizedRole]
-  );
-  const shouldRedirect = Boolean(authUser?.role && !isAdmin && !isOperator);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -6233,10 +6233,6 @@ const CreateReclamoPage: React.FC = () => {
       </button>
     </div>
   );
-
-  if (shouldRedirect) {
-    return <Navigate to="/clientes" replace />;
-  }
 
   if (metaLoading) {
     return (
@@ -19740,6 +19736,11 @@ const RequireAccess: React.FC<{ section: AccessSection; children: React.ReactEle
 }) => {
   const authUser = useStoredAuthUser();
   const userRole = useMemo(() => getUserRole(authUser), [authUser]);
+
+  // Para reclamos permitimos acceso a todos los roles (evitar redirección a personal)
+  if (section === 'reclamos') {
+    return children;
+  }
 
   if (!authUser?.role) {
     return <Navigate to="/" replace />;
