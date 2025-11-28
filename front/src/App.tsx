@@ -984,7 +984,7 @@ const buildPersonalFiltersStorageKey = (userId: number | null | undefined): stri
 
 const readStoredPersonalFilters = (
   storageKey: string | null
-): { cliente?: string; sucursal?: string } => {
+): { cliente?: string; sucursal?: string; fechaAltaPreset?: string; fechaAltaFrom?: string; fechaAltaTo?: string } => {
   if (!storageKey || typeof window === 'undefined') {
     return {};
   }
@@ -1002,6 +1002,9 @@ const readStoredPersonalFilters = (
     return {
       cliente: typeof parsed.cliente === 'string' ? parsed.cliente : '',
       sucursal: typeof parsed.sucursal === 'string' ? parsed.sucursal : '',
+      fechaAltaPreset: typeof parsed.fechaAltaPreset === 'string' ? parsed.fechaAltaPreset : '',
+      fechaAltaFrom: typeof parsed.fechaAltaFrom === 'string' ? parsed.fechaAltaFrom : '',
+      fechaAltaTo: typeof parsed.fechaAltaTo === 'string' ? parsed.fechaAltaTo : '',
     };
   } catch {
     return {};
@@ -7530,6 +7533,9 @@ const PersonalPage: React.FC = () => {
   const itemsPerPage = 50;
   const [clienteFilter, setClienteFilter] = useState(() => resolveStoredFilters().cliente ?? '');
   const [sucursalFilter, setSucursalFilter] = useState(() => resolveStoredFilters().sucursal ?? '');
+  const [altaDatePreset, setAltaDatePreset] = useState(() => resolveStoredFilters().fechaAltaPreset ?? '');
+  const [altaDateFrom, setAltaDateFrom] = useState(() => resolveStoredFilters().fechaAltaFrom ?? '');
+  const [altaDateTo, setAltaDateTo] = useState(() => resolveStoredFilters().fechaAltaTo ?? '');
   const [perfilFilter, setPerfilFilter] = useState('');
   const [agenteFilter, setAgenteFilter] = useState('');
   const [unidadFilter, setUnidadFilter] = useState('');
@@ -7581,6 +7587,9 @@ const PersonalPage: React.FC = () => {
     const stored = resolveStoredFilters();
     setClienteFilter(stored.cliente ?? '');
     setSucursalFilter(stored.sucursal ?? '');
+    setAltaDatePreset(stored.fechaAltaPreset ?? '');
+    setAltaDateFrom(stored.fechaAltaFrom ?? '');
+    setAltaDateTo(stored.fechaAltaTo ?? '');
   }, [resolveStoredFilters]);
 
   useEffect(() => {
@@ -7591,12 +7600,18 @@ const PersonalPage: React.FC = () => {
     try {
       window.localStorage.setItem(
         personalFiltersStorageKey,
-        JSON.stringify({ cliente: clienteFilter, sucursal: sucursalFilter })
+        JSON.stringify({
+          cliente: clienteFilter,
+          sucursal: sucursalFilter,
+          fechaAltaPreset: altaDatePreset,
+          fechaAltaFrom: altaDateFrom,
+          fechaAltaTo: altaDateTo,
+        })
       );
     } catch {
       // ignore write errors (storage full, etc.)
     }
-  }, [personalFiltersStorageKey, clienteFilter, sucursalFilter]);
+  }, [personalFiltersStorageKey, clienteFilter, sucursalFilter, altaDatePreset, altaDateFrom, altaDateTo]);
 
   useEffect(() => {
     const handler = (event: Event) => {
@@ -7639,6 +7654,77 @@ const PersonalPage: React.FC = () => {
     const term = searchTerm.trim().toLowerCase();
     const resolvePerfilLabel = (registro: PersonalRecord) =>
       getPerfilDisplayLabel(registro.perfilValue ?? null, registro.perfil ?? '');
+    const parseDateOnlyUtc = (value: string | null | undefined): number | null => {
+      if (!value) {
+        return null;
+      }
+      const normalized = value.trim();
+      if (!normalized) {
+        return null;
+      }
+      const [datePart] = normalized.split('T');
+      const [yearStr, monthStr, dayStr] = datePart.split('-');
+      const year = Number(yearStr);
+      const month = Number(monthStr);
+      const day = Number(dayStr);
+
+      if ([year, month, day].every((part) => Number.isFinite(part))) {
+        return Date.UTC(year, month - 1, day);
+      }
+
+      const parsed = new Date(normalized);
+      if (Number.isNaN(parsed.getTime())) {
+        return null;
+      }
+
+      return Date.UTC(parsed.getUTCFullYear(), parsed.getUTCMonth(), parsed.getUTCDate());
+    };
+    const msInDay = 24 * 60 * 60 * 1000;
+    const today = new Date();
+    const todayUtc = Date.UTC(today.getFullYear(), today.getMonth(), today.getDate());
+    const startOfWeekUtc = todayUtc - ((today.getUTCDay() + 6) % 7) * msInDay;
+    const startOfMonthUtc = Date.UTC(today.getFullYear(), today.getMonth(), 1);
+    const matchesAltaDate = (fechaAlta: string | null | undefined): boolean => {
+      const target = parseDateOnlyUtc(fechaAlta);
+      const presetMatches = (() => {
+        if (!altaDatePreset) {
+          return true;
+        }
+        if (target === null) {
+          return false;
+        }
+        switch (altaDatePreset) {
+          case 'today':
+            return target === todayUtc;
+          case 'week':
+            return target >= startOfWeekUtc && target <= todayUtc;
+          case 'month':
+            return target >= startOfMonthUtc && target <= todayUtc;
+          default:
+            return true;
+        }
+      })();
+
+      const rangeMatches = (() => {
+        const fromUtc = parseDateOnlyUtc(altaDateFrom);
+        const toUtc = parseDateOnlyUtc(altaDateTo);
+        if (fromUtc === null && toUtc === null) {
+          return true;
+        }
+        if (target === null) {
+          return false;
+        }
+        if (fromUtc !== null && target < fromUtc) {
+          return false;
+        }
+        if (toUtc !== null && target > toUtc) {
+          return false;
+        }
+        return true;
+      })();
+
+      return presetMatches && rangeMatches;
+    };
 
     return personal.filter((registro) => {
       if (registro.esSolicitud) {
@@ -7683,6 +7769,10 @@ const PersonalPage: React.FC = () => {
         if (registro.tarifaEspecialValue !== target) {
           return false;
         }
+      }
+
+      if (!matchesAltaDate(registro.fechaAlta)) {
+        return false;
       }
 
       if (term.length === 0) {
@@ -7732,6 +7822,9 @@ const PersonalPage: React.FC = () => {
     estadoFilter,
     combustibleFilter,
     tarifaFilter,
+    altaDatePreset,
+    altaDateFrom,
+    altaDateTo,
     perfilNames,
   ]);
 
@@ -7747,6 +7840,9 @@ const PersonalPage: React.FC = () => {
     estadoFilter,
     combustibleFilter,
     tarifaFilter,
+    altaDatePreset,
+    altaDateFrom,
+    altaDateTo,
   ]);
 
   useEffect(() => {
@@ -7805,6 +7901,9 @@ const PersonalPage: React.FC = () => {
     setEstadoFilter('');
     setCombustibleFilter('');
     setTarifaFilter('');
+    setAltaDatePreset('');
+    setAltaDateFrom('');
+    setAltaDateTo('');
     setSearchTerm('');
     setCurrentPage(1);
     if (personalFiltersStorageKey && typeof window !== 'undefined') {
@@ -8054,6 +8153,31 @@ const PersonalPage: React.FC = () => {
             <option value="true">Sí</option>
             <option value="false">No</option>
           </select>
+        </label>
+        <label className="filter-field">
+          <span>Fecha alta</span>
+          <select value={altaDatePreset} onChange={(event) => setAltaDatePreset(event.target.value)}>
+            <option value="">Todas</option>
+            <option value="today">Hoy</option>
+            <option value="week">Esta semana</option>
+            <option value="month">Este mes</option>
+          </select>
+        </label>
+        <label className="filter-field">
+          <span>Fecha alta desde</span>
+          <input
+            type="date"
+            value={altaDateFrom}
+            onChange={(event) => setAltaDateFrom(event.target.value)}
+          />
+        </label>
+        <label className="filter-field">
+          <span>Fecha alta hasta</span>
+          <input
+            type="date"
+            value={altaDateTo}
+            onChange={(event) => setAltaDateTo(event.target.value)}
+          />
         </label>
       </div>
 
