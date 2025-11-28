@@ -3674,6 +3674,51 @@ tbody tr:nth-child(even) {
   align-self: end;
 }
 
+.workflow-responsable-input {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.workflow-responsables__helper {
+  margin: 0.35rem 0 0;
+  color: #6c7a99;
+  font-size: 0.8rem;
+}
+
+.workflow-responsables__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.35rem;
+}
+
+.workflow-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  background: #eef3ff;
+  color: #1d3a76;
+  padding: 0.35rem 0.65rem;
+  border-radius: 999px;
+  font-size: 0.85rem;
+}
+
+.workflow-chip button {
+  border: none;
+  background: transparent;
+  color: #1d3a76;
+  cursor: pointer;
+  font-size: 0.9rem;
+  line-height: 1;
+}
+
+.workflow-card__responsables {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
 .workflow-board {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));

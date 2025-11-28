@@ -186,6 +186,8 @@ type PersonalRecord = {
   aprobadoPor: string | null;
   aprobadoPorId?: number | null;
   aprobadoPorNombre?: string | null;
+  createdAt?: string | null;
+  createdAtLabel?: string | null;
   esSolicitud: boolean;
   solicitudTipo?: 'alta' | 'combustible' | 'aumento_combustible' | 'adelanto' | 'poliza';
   solicitudData?: unknown;
@@ -534,6 +536,7 @@ type WorkflowTaskRecord = {
   creatorNombre: string | null;
   responsableId: number | null;
   responsableNombre: string | null;
+  responsables?: Array<{ id: number | null; nombre: string | null }>;
   createdAt: string | null;
 };
 
@@ -4136,6 +4139,14 @@ const ChatPage: React.FC = () => {
     }
   };
 
+  const normalizeMultilineText = (value: string): string => {
+    if (!value) {
+      return '';
+    }
+    // Normaliza saltos de línea que pudieron quedar como \r\n, \r o \n.
+    return value.replace(/\r\n?/g, '\n');
+  };
+
   const handleSendMessage = async () => {
     if (!selectedContactId) {
       return;
@@ -4148,7 +4159,8 @@ const ChatPage: React.FC = () => {
     if (!targetContact) {
       return;
     }
-    const trimmed = messageInput.trim();
+    const normalizedText = normalizeMultilineText(messageInput);
+    const trimmed = normalizedText.trim();
     const hasImage = Boolean(pendingImage?.data);
     if (trimmed.length === 0 && !hasImage) {
       return;
@@ -4158,7 +4170,7 @@ const ChatPage: React.FC = () => {
     const newMessage: ChatMessage = {
       id: uniqueKey(),
       author: 'self',
-      text: trimmed,
+      text: normalizedText,
       timestamp,
       imageData: pendingImage?.data,
       imageName: pendingImage?.name,
@@ -4181,7 +4193,7 @@ const ChatPage: React.FC = () => {
               ...contact,
               lastMessage:
                 trimmed.length > 0
-                  ? trimmed
+                  ? normalizedText
                   : hasImage
                   ? '📷 Imagen'
                   : contact.lastMessage ?? 'Mensaje enviado',
@@ -4195,7 +4207,7 @@ const ChatPage: React.FC = () => {
       id: newMessage.id,
       senderId: currentUserId,
       recipientId: targetContact.id,
-      text: trimmed,
+      text: normalizedText,
       timestamp,
       imageData: pendingImage?.data ?? null,
       imageName: pendingImage?.name ?? null,
@@ -4214,7 +4226,7 @@ const ChatPage: React.FC = () => {
         body: JSON.stringify({
           senderId: currentUserId,
           recipientId: targetContact.id,
-          text: trimmed,
+          text: normalizedText,
           imageData: pendingImage?.data ?? null,
           imageName: pendingImage?.name ?? null,
         }),
@@ -4397,7 +4409,16 @@ const ChatPage: React.FC = () => {
                     key={message.id}
                     className={`chat-message chat-message--${message.author}`}
                   >
-                    {message.text ? <p>{message.text}</p> : null}
+                    {message.text ? (
+                      <p>
+                        {message.text.split('\n').map((line, index, array) => (
+                          <React.Fragment key={index}>
+                            {line}
+                            {index < array.length - 1 ? <br /> : null}
+                          </React.Fragment>
+                        ))}
+                      </p>
+                    ) : null}
                     {message.imageData ? (
                       <figure className="chat-message__media">
                         <img src={message.imageData} alt={message.imageName ?? 'Imagen enviada'} />
@@ -11476,7 +11497,8 @@ const WorkflowPage: React.FC = () => {
   const [agents, setAgents] = useState<Array<{ id: number; nombre: string | null; email: string | null }>>([]);
   const [formTitle, setFormTitle] = useState('');
   const [formDescription, setFormDescription] = useState('');
-  const [formResponsibleId, setFormResponsibleId] = useState('');
+  const [pendingResponsibleId, setPendingResponsibleId] = useState('');
+  const [selectedResponsibles, setSelectedResponsibles] = useState<Array<{ id: number; label: string }>>([]);
   const [responsableQuery, setResponsableQuery] = useState('');
   const [refreshTick, setRefreshTick] = useState(0);
   const [exporting, setExporting] = useState(false);
@@ -11585,14 +11607,42 @@ const WorkflowPage: React.FC = () => {
   );
 
   useEffect(() => {
-    if (!formResponsibleId) {
+    if (!responsableQuery) {
+      setPendingResponsibleId('');
       return;
     }
-    const match = agentOptions.find((option) => String(option.id) === String(formResponsibleId));
-    if (match && responsableQuery !== match.label) {
-      setResponsableQuery(match.label);
-    }
-  }, [agentOptions, formResponsibleId, responsableQuery]);
+    const match = agentOptions.find(
+      (option) => option.label.toLowerCase() === responsableQuery.trim().toLowerCase()
+    );
+    setPendingResponsibleId(match ? String(match.id) : '');
+  }, [agentOptions, responsableQuery]);
+
+  const addResponsable = useCallback(
+    (targetId: string | number) => {
+      const numericId = Number(targetId);
+      if (Number.isNaN(numericId)) {
+        return false;
+      }
+      const match = agentOptions.find((option) => option.id === numericId);
+      if (!match) {
+        return false;
+      }
+      setSelectedResponsibles((prev) => {
+        if (prev.some((item) => item.id === numericId)) {
+          return prev;
+        }
+        return [...prev, { id: numericId, label: match.label }];
+      });
+      setResponsableQuery('');
+      setPendingResponsibleId('');
+      return true;
+    },
+    [agentOptions]
+  );
+
+  const removeResponsable = (id: number) => {
+    setSelectedResponsibles((prev) => prev.filter((item) => item.id !== id));
+  };
 
   const columns = useMemo(
     () =>
@@ -11607,14 +11657,51 @@ const WorkflowPage: React.FC = () => {
     [tasks]
   );
 
+  const resolveTaskResponsables = useCallback((task: WorkflowTaskRecord) => {
+    const fromArray =
+      task.responsables
+        ?.map((item) => ({
+          id: item.id ?? null,
+          nombre: item.nombre ?? null,
+        }))
+        .filter((item) => item.id !== null || item.nombre) ?? [];
+
+    if (fromArray.length > 0) {
+      return fromArray;
+    }
+
+    const fallbackName =
+      task.responsableNombre ??
+      (task.responsableId != null ? `Agente #${task.responsableId}` : null);
+
+    if (fallbackName) {
+      return [{ id: task.responsableId ?? null, nombre: fallbackName }];
+    }
+
+    return [] as Array<{ id: number | null; nombre: string | null }>;
+  }, []);
+
   const handleAddTask = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (currentActorId == null) {
       window.alert('Debes iniciar sesión para crear tareas.');
       return;
     }
-    if (!formResponsibleId) {
-      window.alert('Selecciona un responsable para la tarea.');
+
+    let taskResponsibles = selectedResponsibles;
+    if (pendingResponsibleId && !taskResponsibles.some((item) => String(item.id) === String(pendingResponsibleId))) {
+      const numericId = Number(pendingResponsibleId);
+      const match = agentOptions.find((option) => option.id === numericId);
+      if (!match) {
+        window.alert('Selecciona un responsable válido para la tarea.');
+        return;
+      }
+      addResponsable(pendingResponsibleId);
+      taskResponsibles = [...taskResponsibles, { id: numericId, label: match.label }];
+    }
+
+    if (taskResponsibles.length === 0) {
+      window.alert('Selecciona al menos un responsable para la tarea.');
       return;
     }
 
@@ -11632,7 +11719,8 @@ const WorkflowPage: React.FC = () => {
           titulo: formTitle.trim(),
           descripcion: formDescription.trim() || null,
           creatorId: currentActorId,
-          responsableId: Number(formResponsibleId),
+          responsableId: taskResponsibles[0]?.id ?? null,
+          responsableIds: taskResponsibles.map((item) => item.id),
         }),
       });
 
@@ -11653,7 +11741,8 @@ const WorkflowPage: React.FC = () => {
 
       setFormTitle('');
       setFormDescription('');
-      setFormResponsibleId('');
+      setSelectedResponsibles([]);
+      setPendingResponsibleId('');
       setResponsableQuery('');
       setRefreshTick((value) => value + 1);
     } catch (err) {
@@ -11846,26 +11935,53 @@ const WorkflowPage: React.FC = () => {
           </label>
           <label>
             <span>Responsable</span>
-            <input
-              type="text"
-              list="workflow-responsables"
-              value={responsableQuery}
-              onChange={(event) => {
-                const { value } = event.target;
-                setResponsableQuery(value);
-                const match = agentOptions.find(
-                  (option) => option.label.toLowerCase() === value.trim().toLowerCase()
-                );
-                setFormResponsibleId(match ? String(match.id) : '');
-              }}
-              placeholder="Busca o selecciona al agente"
-              required
-            />
+            <div className="workflow-responsable-input">
+              <input
+                type="text"
+                list="workflow-responsables"
+                value={responsableQuery}
+                onChange={(event) => setResponsableQuery(event.target.value)}
+                placeholder="Busca o selecciona al agente"
+              />
+              <button
+                type="button"
+                className="secondary-action"
+                onClick={() => {
+                  if (pendingResponsibleId) {
+                    const added = addResponsable(pendingResponsibleId);
+                    if (!added) {
+                      window.alert('Selecciona un responsable válido de la lista.');
+                    }
+                    return;
+                  }
+                  window.alert('Elegí un responsable de la lista para agregarlo.');
+                }}
+              >
+                Agregar responsable
+              </button>
+            </div>
             <datalist id="workflow-responsables">
               {agentOptions.map((option) => (
                 <option key={option.id} value={option.label} />
               ))}
             </datalist>
+            <p className="workflow-responsables__helper">Podés asignar varios responsables a la misma tarea.</p>
+            {selectedResponsibles.length > 0 ? (
+              <div className="workflow-responsables__chips">
+                {selectedResponsibles.map((responsable) => (
+                  <span key={responsable.id} className="workflow-chip">
+                    {responsable.label}
+                    <button
+                      type="button"
+                      aria-label={`Quitar ${responsable.label}`}
+                      onClick={() => removeResponsable(responsable.id)}
+                    >
+                      ×
+                    </button>
+                  </span>
+                ))}
+              </div>
+            ) : null}
           </label>
           <button type="submit" className="primary-action" disabled={loading}>
             {loading ? 'Guardando...' : 'Agregar tarea'}
@@ -11929,7 +12045,16 @@ const WorkflowPage: React.FC = () => {
                           ? new Date(task.createdAt).toLocaleDateString('es-AR')
                           : '—'}
                       </span>
-                      {task.responsableNombre ? <span>👤 {task.responsableNombre}</span> : null}
+                      {(() => {
+                        const responsibles = resolveTaskResponsables(task);
+                        if (responsibles.length === 0) {
+                          return null;
+                        }
+                        const label = responsibles
+                          .map((item) => item.nombre ?? (item.id != null ? `Agente #${item.id}` : 'Responsable'))
+                          .join(', ');
+                        return <span className="workflow-card__responsables">👤 {label}</span>;
+                      })()}
                     </footer>
                   </article>
                 ))
@@ -11994,6 +12119,54 @@ const ApprovalsRequestsPage: React.FC = () => {
   const [loadingMeta, setLoadingMeta] = useState(true);
   const [metaError, setMetaError] = useState<string | null>(null);
   const [backendSolicitudes, setBackendSolicitudes] = useState<PersonalRecord[]>([]);
+  const normalizeSolicitudRecord = (
+    record: PersonalRecord & { created_at?: string | null; created_at_label?: string | null; solicitudData?: any }
+  ): PersonalRecord => {
+    const resolveRawCreated = () => {
+      const data = record.solicitudData as any;
+
+      const candidates: Array<string | null | undefined> = [
+        record.createdAt,
+        (record as any).created_at,
+        (record as any).created,
+        (record as any).createdAtLabel,
+        (record as any).created_at_label,
+        (record as any).fechaCreacion,
+        (record as any).fecha_creacion,
+        record.fechaAlta,
+        record.fechaAltaVinculacion,
+        data?.createdAt,
+        data?.created_at,
+        data?.created,
+        data?.fechaCreacion,
+        data?.fecha_creacion,
+        data?.form?.createdAt,
+        data?.form?.created_at,
+        data?.form?.fechaSolicitud,
+        data?.form?.fechaAlta,
+        data?.form?.fechaAltaVinculacion,
+        data?.form?.fecha,
+      ];
+
+      const found = candidates.find((value) => typeof value === 'string' && value.trim().length > 0);
+      return found ?? null;
+    };
+
+    const rawCreated = resolveRawCreated();
+    const parsed = rawCreated ? new Date(rawCreated) : null;
+    const parsedValid = parsed && !Number.isNaN(parsed.getTime());
+    const fallbackNowIso = new Date().toISOString();
+    const createdAt = parsedValid ? parsed.toISOString() : rawCreated ?? fallbackNowIso;
+    const createdAtLabel = parsedValid
+      ? parsed.toLocaleString('es-AR')
+      : rawCreated ?? new Date(fallbackNowIso).toLocaleString('es-AR');
+
+    return {
+      ...record,
+      createdAt,
+      createdAtLabel,
+    };
+  };
   const [localSolicitudes, setLocalSolicitudes] = useState<PersonalRecord[]>(() => {
     if (typeof window === 'undefined') {
       return [];
@@ -12006,7 +12179,9 @@ const ApprovalsRequestsPage: React.FC = () => {
       }
       const parsed = JSON.parse(raw);
       if (Array.isArray(parsed)) {
-        return parsed.filter((item) => typeof item === 'object' && item !== null) as PersonalRecord[];
+        return parsed
+          .filter((item) => typeof item === 'object' && item !== null)
+          .map((item) => normalizeSolicitudRecord(item as PersonalRecord));
       }
     } catch {
       // ignore parse errors
@@ -12022,6 +12197,9 @@ const ApprovalsRequestsPage: React.FC = () => {
   const [solicitudesEstadoFilter, setSolicitudesEstadoFilter] = useState('');
   const [solicitudesClienteFilter, setSolicitudesClienteFilter] = useState('');
   const [solicitudesSucursalFilter, setSolicitudesSucursalFilter] = useState('');
+  const [solicitudesFechaPreset, setSolicitudesFechaPreset] = useState('');
+  const [solicitudesFechaFrom, setSolicitudesFechaFrom] = useState('');
+  const [solicitudesFechaTo, setSolicitudesFechaTo] = useState('');
   const [flash, setFlash] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
   const [deletingSolicitudId, setDeletingSolicitudId] = useState<number | null>(null);
   const perfilNames: Record<number, string> = useMemo(
@@ -12034,7 +12212,11 @@ const ApprovalsRequestsPage: React.FC = () => {
   );
   const createSyntheticId = () => -Math.floor(Date.now() + Math.random() * 1000);
   const appendLocalSolicitud = (record: PersonalRecord) => {
-    setLocalSolicitudes((prev) => [record, ...prev]);
+    const withCreated = normalizeSolicitudRecord({
+      ...record,
+      createdAt: record.createdAt ?? new Date().toISOString(),
+    });
+    setLocalSolicitudes((prev) => [withCreated, ...prev]);
   };
 
   const agentesPorId = useMemo(() => {
@@ -12440,7 +12622,7 @@ const ApprovalsRequestsPage: React.FC = () => {
           throw new Error('Formato de respuesta inesperado');
         }
 
-        setBackendSolicitudes(payload.data);
+        setBackendSolicitudes(payload.data.map((item) => normalizeSolicitudRecord(item)));
       } catch (err) {
         if ((err as Error).name === 'AbortError') {
           return;
@@ -12470,7 +12652,7 @@ const ApprovalsRequestsPage: React.FC = () => {
         setBackendSolicitudes((prev) => {
           const withoutPersona = prev.filter((item) => item.id !== persona.id);
           if (persona.esSolicitud) {
-            return [persona, ...withoutPersona];
+            return [normalizeSolicitudRecord(persona), ...withoutPersona];
           }
           return withoutPersona;
         });
@@ -14123,8 +14305,99 @@ const handleAdelantoFieldChange =
     return Array.from(labels).sort((a, b) => a.localeCompare(b));
   }, [combinedSolicitudes]);
 
+  const resolveSolicitudCreated = useCallback((registro: PersonalRecord): string | null => {
+    const data = registro.solicitudData as any;
+    const candidates: Array<string | null | undefined> = [
+      registro.createdAt,
+      (registro as any).created_at,
+      registro.createdAtLabel,
+      (registro as any).created_at_label,
+      (registro as any).created,
+      (registro as any).fechaCreacion,
+      (registro as any).fecha_creacion,
+      registro.fechaAlta,
+      registro.fechaAltaVinculacion,
+      data?.createdAt,
+      data?.created_at,
+      data?.created,
+      data?.fechaCreacion,
+      data?.fecha_creacion,
+      data?.form?.createdAt,
+      data?.form?.created_at,
+      data?.form?.fechaSolicitud,
+      data?.form?.fechaAlta,
+      data?.form?.fechaAltaVinculacion,
+      data?.form?.fecha,
+    ];
+    const found = candidates.find((value) => typeof value === 'string' && value.trim().length > 0);
+    return found ? String(found) : null;
+  }, []);
+
   const filteredSolicitudes = useMemo(() => {
     const term = solicitudesSearchTerm.trim().toLowerCase();
+    const parseDateOnlyUtc = (value: string | null | undefined): number | null => {
+      if (!value) {
+        return null;
+      }
+      const normalized = value.trim();
+      if (!normalized) {
+        return null;
+      }
+      const parsed = new Date(normalized);
+      if (Number.isNaN(parsed.getTime())) {
+        return null;
+      }
+      return Date.UTC(parsed.getUTCFullYear(), parsed.getUTCMonth(), parsed.getUTCDate());
+    };
+    const msInDay = 24 * 60 * 60 * 1000;
+    const today = new Date();
+    const todayUtc = Date.UTC(today.getFullYear(), today.getMonth(), today.getDate());
+    const startOfWeekUtc = todayUtc - ((today.getUTCDay() + 6) % 7) * msInDay;
+    const startOfMonthUtc = Date.UTC(today.getFullYear(), today.getMonth(), 1);
+
+    const matchesCreationDate = (registro: PersonalRecord): boolean => {
+      const rawCreated = resolveSolicitudCreated(registro);
+      const target = parseDateOnlyUtc(rawCreated);
+
+      const presetOk = (() => {
+        if (!solicitudesFechaPreset) {
+          return true;
+        }
+        if (target === null) {
+          return false;
+        }
+        switch (solicitudesFechaPreset) {
+          case 'today':
+            return target === todayUtc;
+          case 'week':
+            return target >= startOfWeekUtc && target <= todayUtc;
+          case 'month':
+            return target >= startOfMonthUtc && target <= todayUtc;
+          default:
+            return true;
+        }
+      })();
+
+      const rangeOk = (() => {
+        const fromUtc = parseDateOnlyUtc(solicitudesFechaFrom);
+        const toUtc = parseDateOnlyUtc(solicitudesFechaTo);
+        if (fromUtc === null && toUtc === null) {
+          return true;
+        }
+        if (target === null) {
+          return false;
+        }
+        if (fromUtc !== null && target < fromUtc) {
+          return false;
+        }
+        if (toUtc !== null && target > toUtc) {
+          return false;
+        }
+        return true;
+      })();
+
+      return presetOk && rangeOk;
+    };
 
     return combinedSolicitudes.filter((registro) => {
       const perfilLabel = perfilNames[registro.perfilValue ?? 0] ?? registro.perfil ?? '';
@@ -14146,6 +14419,10 @@ const handleAdelantoFieldChange =
       }
 
       if (solicitudesSucursalFilter && registro.sucursal !== solicitudesSucursalFilter) {
+        return false;
+      }
+
+      if (!matchesCreationDate(registro)) {
         return false;
       }
 
@@ -14177,7 +14454,11 @@ const handleAdelantoFieldChange =
     solicitudesEstadoFilter,
     solicitudesClienteFilter,
     solicitudesSucursalFilter,
+    solicitudesFechaPreset,
+    solicitudesFechaFrom,
+    solicitudesFechaTo,
     perfilNames,
+    resolveSolicitudCreated,
   ]);
 
   const solicitudesFooterLabel = useMemo(() => {
@@ -14207,6 +14488,9 @@ const handleAdelantoFieldChange =
     setSolicitudesEstadoFilter('');
     setSolicitudesClienteFilter('');
     setSolicitudesSucursalFilter('');
+    setSolicitudesFechaPreset('');
+    setSolicitudesFechaFrom('');
+    setSolicitudesFechaTo('');
   };
 
   const handleDeleteSolicitud = async (registro: PersonalRecord) => {
@@ -14429,6 +14713,34 @@ const handleAdelantoFieldChange =
               ))}
             </select>
           </label>
+          <label className="filter-field">
+            <span>Creada</span>
+            <select
+              value={solicitudesFechaPreset}
+              onChange={(event) => setSolicitudesFechaPreset(event.target.value)}
+            >
+              <option value="">Todas</option>
+              <option value="today">Hoy</option>
+              <option value="week">Esta semana</option>
+              <option value="month">Este mes</option>
+            </select>
+          </label>
+          <label className="filter-field">
+            <span>Creada desde</span>
+            <input
+              type="date"
+              value={solicitudesFechaFrom}
+              onChange={(event) => setSolicitudesFechaFrom(event.target.value)}
+            />
+          </label>
+          <label className="filter-field">
+            <span>Creada hasta</span>
+            <input
+              type="date"
+              value={solicitudesFechaTo}
+              onChange={(event) => setSolicitudesFechaTo(event.target.value)}
+            />
+          </label>
         </div>
       </div>
 
@@ -14444,6 +14756,7 @@ const handleAdelantoFieldChange =
               <th>Sucursal</th>
               <th>Agente</th>
               <th>Estado</th>
+              <th>Creada</th>
               <th>Fecha alta</th>
               <th>Acciones</th>
             </tr>
@@ -14494,13 +14807,29 @@ const handleAdelantoFieldChange =
                     <td>{registro.cliente ?? '—'}</td>
                     <td>{registro.sucursal ?? '—'}</td>
                     <td>{registro.agente ?? '—'}</td>
-                  <td>{registro.estado ?? '—'}</td>
-                  <td>{registro.fechaAlta ?? '—'}</td>
-                  <td>
-                    <div className="action-buttons">
-                      <button
-                        type="button"
-                        aria-label={`Abrir solicitud ${registro.nombre ?? registro.id}`}
+                    <td>{registro.estado ?? '—'}</td>
+                    <td>
+                      {(() => {
+                        const created = resolveSolicitudCreated(registro);
+                        if (!created) {
+                          return '—';
+                        }
+                        const parsed = new Date(created);
+                        if (Number.isNaN(parsed.getTime())) {
+                          return created;
+                        }
+                        return parsed.toLocaleString('es-AR', {
+                          dateStyle: 'short',
+                          timeStyle: 'short',
+                        });
+                      })()}
+                    </td>
+                    <td>{registro.fechaAlta ?? '—'}</td>
+                    <td>
+                      <div className="action-buttons">
+                        <button
+                          type="button"
+                          aria-label={`Abrir solicitud ${registro.nombre ?? registro.id}`}
                         onClick={() => handleOpenSolicitud(registro)}
                       >
                         {registro.solicitudTipo && registro.solicitudTipo !== 'alta' ? '↗' : '👁️'}
