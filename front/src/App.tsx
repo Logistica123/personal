@@ -11705,46 +11705,59 @@ const WorkflowPage: React.FC = () => {
       return;
     }
 
+    const responsiblesIds = taskResponsibles.map((item) => item.id);
+
     try {
       setLoading(true);
       setError(null);
 
-      const response = await fetch(`${apiBaseUrl}/api/workflow-tasks`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Accept: 'application/json',
-        },
-        body: JSON.stringify({
-          titulo: formTitle.trim(),
-          descripcion: formDescription.trim() || null,
-          creatorId: currentActorId,
-          responsableId: taskResponsibles[0]?.id ?? null,
-          responsableIds: taskResponsibles.map((item) => item.id),
-        }),
-      });
+      const errors: string[] = [];
 
-      if (!response.ok) {
-        let message = `Error ${response.status}: ${response.statusText}`;
-
+      for (const responsableId of responsiblesIds) {
         try {
-          const payload = await response.json();
-          if (typeof payload?.message === 'string') {
-            message = payload.message;
-          }
-        } catch {
-          // ignore
-        }
+          const response = await fetch(`${apiBaseUrl}/api/workflow-tasks`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Accept: 'application/json',
+            },
+            body: JSON.stringify({
+              titulo: formTitle.trim(),
+              descripcion: formDescription.trim() || null,
+              creatorId: currentActorId,
+              responsableId,
+            }),
+          });
 
-        throw new Error(message);
+          if (!response.ok) {
+            let message = `Error ${response.status}: ${response.statusText}`;
+
+            try {
+              const payload = await response.json();
+              if (typeof payload?.message === 'string') {
+                message = payload.message;
+              }
+            } catch {
+              // ignore
+            }
+
+            throw new Error(message);
+          }
+        } catch (err) {
+          errors.push((err as Error).message ?? `No se pudo asignar al responsable ${responsableId}`);
+        }
       }
 
-      setFormTitle('');
-      setFormDescription('');
-      setSelectedResponsibles([]);
-      setPendingResponsibleId('');
-      setResponsableQuery('');
-      setRefreshTick((value) => value + 1);
+      if (errors.length > 0) {
+        setError(errors.join(' | '));
+      } else {
+        setFormTitle('');
+        setFormDescription('');
+        setSelectedResponsibles([]);
+        setPendingResponsibleId('');
+        setResponsableQuery('');
+        setRefreshTick((value) => value + 1);
+      }
     } catch (err) {
       setError((err as Error).message ?? 'No se pudo crear la tarea.');
     } finally {
