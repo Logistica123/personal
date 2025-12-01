@@ -4565,10 +4565,17 @@ const DashboardPage: React.FC<{ showPersonalPanel?: boolean }> = ({ showPersonal
   const [searchTerm, setSearchTerm] = useState('');
   const [deletingClienteId, setDeletingClienteId] = useState<number | null>(null);
   const [personalStatsData, setPersonalStatsData] = useState<PersonalRecord[]>([]);
-  const [personalStats, setPersonalStats] = useState<{ activo: number; baja: number; suspendido: number; total: number }>({
+  const [personalStats, setPersonalStats] = useState<{
+    activo: number;
+    baja: number;
+    suspendido: number;
+    otros: number;
+    total: number;
+  }>({
     activo: 0,
     baja: 0,
     suspendido: 0,
+    otros: 0,
     total: 0,
   });
   const [statsLoading, setStatsLoading] = useState(showPersonalPanel);
@@ -4599,7 +4606,7 @@ const DashboardPage: React.FC<{ showPersonalPanel?: boolean }> = ({ showPersonal
   );
 
   const computePersonalStats = useCallback((data: PersonalRecord[]) => {
-    return data.reduce(
+    const stats = data.reduce(
       (acc, registro) => {
         const estado = (registro.estado ?? '').trim().toLowerCase();
         if (estado.includes('activo')) {
@@ -4608,12 +4615,15 @@ const DashboardPage: React.FC<{ showPersonalPanel?: boolean }> = ({ showPersonal
           acc.baja += 1;
         } else if (estado.includes('suspend')) {
           acc.suspendido += 1;
+        } else {
+          acc.otros += 1;
         }
-        acc.total += 1;
         return acc;
       },
-      { activo: 0, baja: 0, suspendido: 0, total: 0 }
+      { activo: 0, baja: 0, suspendido: 0, otros: 0, total: 0 }
     );
+    stats.total = stats.activo + stats.baja + stats.suspendido + stats.otros;
+    return stats;
   }, []);
 
   useEffect(() => {
@@ -4916,6 +4926,14 @@ const DashboardPage: React.FC<{ showPersonalPanel?: boolean }> = ({ showPersonal
                   {statsLoading ? '—' : personalStats.suspendido}
                 </strong>
               </div>
+              {personalStats.otros > 0 ? (
+                <div className="summary-card summary-card--neutral">
+                  <span className="summary-card__label">Sin estado</span>
+                  <strong className="summary-card__value">
+                    {statsLoading ? '—' : personalStats.otros}
+                  </strong>
+                </div>
+              ) : null}
               <div className="summary-card summary-card--muted">
                 <span className="summary-card__label">Total personal</span>
                 <strong className="summary-card__value">
@@ -4951,7 +4969,7 @@ const DashboardPage: React.FC<{ showPersonalPanel?: boolean }> = ({ showPersonal
                   <div key={clienteNombre} className="client-card">
                     <header>
                       <h4>{clienteNombre}</h4>
-                      <span>{counts.total} en total</span>
+                      <span>{counts.total} en total{counts.otros > 0 ? ` · ${counts.otros} sin estado` : ''}</span>
                     </header>
                     <div className="client-card__stats">
                       <div>

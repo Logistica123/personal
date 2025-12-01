@@ -4022,6 +4022,11 @@ tbody tr:nth-child(even) {
   border-color: #ffcfd5;
 }
 
+.summary-card--neutral {
+  background: linear-gradient(135deg, #ecf0f5, #f4f6fa);
+  border-color: #d6deeb;
+}
+
 .client-cards {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
