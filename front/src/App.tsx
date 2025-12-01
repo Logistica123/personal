@@ -1862,7 +1862,8 @@ const DashboardLayout: React.FC<{
   subtitle?: string;
   headerContent?: React.ReactNode;
   children: React.ReactNode;
-}> = ({ title, subtitle, headerContent, children }) => {
+  layoutVariant?: 'default' | 'panel';
+}> = ({ title, subtitle, headerContent, children, layoutVariant = 'default' }) => {
   const navigate = useNavigate();
   const apiBaseUrl = useMemo(() => resolveApiBaseUrl(), []);
   const [authUser, setAuthUser] = useState<AuthUser | null>(() => readAuthUserFromStorage());
@@ -2897,7 +2898,11 @@ const DashboardLayout: React.FC<{
         </div>
       ) : null}
 
-      <div className={`dashboard-shell${isSidebarOpen ? ' is-sidebar-open' : ''}`}>
+      <div
+        className={`dashboard-shell${isSidebarOpen ? ' is-sidebar-open' : ''}${
+          layoutVariant !== 'default' ? ` dashboard-shell--${layoutVariant}` : ''
+        }`}
+      >
         <aside className="dashboard-sidebar">
           <button
             type="button"
@@ -2916,6 +2921,12 @@ const DashboardLayout: React.FC<{
           className={({ isActive }) => `sidebar-info-card${isActive ? ' is-active' : ''}`}
         >
           <span className="sidebar-info-card__title">Información general</span>
+        </NavLink>
+        <NavLink
+          to="/dashboard"
+          className={({ isActive }) => `sidebar-info-card${isActive ? ' is-active' : ''}`}
+        >
+          <span className="sidebar-info-card__title">Panel general</span>
         </NavLink>
 
         <nav className="sidebar-nav" onClick={closeSidebar}>
@@ -4546,14 +4557,64 @@ const ChatPage: React.FC = () => {
     </DashboardLayout>
   );
 };
-const DashboardPage: React.FC = () => {
+const DashboardPage: React.FC<{ showPersonalPanel?: boolean }> = ({ showPersonalPanel = false }) => {
   const navigate = useNavigate();
   const [clientes, setClientes] = useState<Cliente[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [deletingClienteId, setDeletingClienteId] = useState<number | null>(null);
+  const [personalStatsData, setPersonalStatsData] = useState<PersonalRecord[]>([]);
+  const [personalStats, setPersonalStats] = useState<{ activo: number; baja: number; suspendido: number; total: number }>({
+    activo: 0,
+    baja: 0,
+    suspendido: 0,
+    total: 0,
+  });
+  const [statsLoading, setStatsLoading] = useState(showPersonalPanel);
+  const [statsError, setStatsError] = useState<string | null>(null);
+  const [statsClienteFilter, setStatsClienteFilter] = useState('');
+  const [statsEstadoFilter, setStatsEstadoFilter] = useState('');
+  const [statsAgenteFilter, setStatsAgenteFilter] = useState('');
   const apiBaseUrl = useMemo(() => resolveApiBaseUrl(), []);
+
+  const filterPersonalRecords = useCallback(
+    (data: PersonalRecord[], clienteFilter: string, estadoFilter: string, agenteFilter: string) =>
+      data.filter((registro) => {
+        if (clienteFilter && registro.cliente !== clienteFilter) {
+          return false;
+        }
+        if (estadoFilter) {
+          const estado = (registro.estado ?? '').trim().toLowerCase();
+          if (estado !== estadoFilter.trim().toLowerCase()) {
+            return false;
+          }
+        }
+        if (agenteFilter && registro.agente !== agenteFilter) {
+          return false;
+        }
+        return true;
+      }),
+    []
+  );
+
+  const computePersonalStats = useCallback((data: PersonalRecord[]) => {
+    return data.reduce(
+      (acc, registro) => {
+        const estado = (registro.estado ?? '').trim().toLowerCase();
+        if (estado.includes('activo')) {
+          acc.activo += 1;
+        } else if (estado.includes('baja')) {
+          acc.baja += 1;
+        } else if (estado.includes('suspend')) {
+          acc.suspendido += 1;
+        }
+        acc.total += 1;
+        return acc;
+      },
+      { activo: 0, baja: 0, suspendido: 0, total: 0 }
+    );
+  }, []);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -4594,6 +4655,65 @@ const DashboardPage: React.FC = () => {
     return () => controller.abort();
   }, [apiBaseUrl]);
 
+  useEffect(() => {
+    if (!showPersonalPanel) {
+      return;
+    }
+
+    const controller = new AbortController();
+
+    const fetchPersonalStats = async () => {
+      try {
+        setStatsLoading(true);
+        setStatsError(null);
+
+        const response = await fetch(`${apiBaseUrl}/api/personal?includePending=1`, {
+          signal: controller.signal,
+        });
+
+        if (!response.ok) {
+          throw new Error(`Error ${response.status}: ${response.statusText}`);
+        }
+
+        const payload = (await response.json()) as { data: PersonalRecord[] };
+        if (!payload || !Array.isArray(payload.data)) {
+          throw new Error('Formato de respuesta inesperado');
+        }
+
+        setPersonalStatsData(payload.data);
+        const filtered = filterPersonalRecords(payload.data, statsClienteFilter, statsEstadoFilter, statsAgenteFilter);
+        setPersonalStats(computePersonalStats(filtered));
+      } catch (err) {
+        if ((err as Error).name === 'AbortError') {
+          return;
+        }
+        setStatsError((err as Error).message ?? 'No se pudieron cargar los datos de personal.');
+      } finally {
+        setStatsLoading(false);
+      }
+    };
+
+    fetchPersonalStats();
+
+    return () => controller.abort();
+  }, [apiBaseUrl, showPersonalPanel, computePersonalStats, statsClienteFilter, statsEstadoFilter]);
+
+  useEffect(() => {
+    if (!showPersonalPanel) {
+      return;
+    }
+    const filtered = filterPersonalRecords(personalStatsData, statsClienteFilter, statsEstadoFilter, statsAgenteFilter);
+    setPersonalStats(computePersonalStats(filtered));
+  }, [
+    showPersonalPanel,
+    personalStatsData,
+    statsClienteFilter,
+    statsEstadoFilter,
+    statsAgenteFilter,
+    filterPersonalRecords,
+    computePersonalStats,
+  ]);
+
   const filteredClientes = useMemo(() => {
     const term = searchTerm.trim().toLowerCase();
     if (term.length === 0) {
@@ -4633,25 +4753,27 @@ const DashboardPage: React.FC = () => {
     return `Mostrando ${filteredClientes.length} de ${clientes.length} clientes`;
   }, [loading, error, filteredClientes.length, clientes.length]);
 
-  const headerContent = (
-    <div className="card-header">
-      <div className="search-wrapper">
-        <input
-          type="search"
-          placeholder="Buscar"
-          value={searchTerm}
-          onChange={(event) => setSearchTerm(event.target.value)}
-        />
+  const headerContent = showPersonalPanel
+    ? null
+    : (
+      <div className="card-header">
+        <div className="search-wrapper">
+          <input
+            type="search"
+            placeholder="Buscar"
+            value={searchTerm}
+            onChange={(event) => setSearchTerm(event.target.value)}
+          />
+        </div>
+        <button
+          className="primary-action"
+          type="button"
+          onClick={() => navigate('/clientes/nuevo')}
+        >
+          Registrar cliente
+        </button>
       </div>
-      <button
-        className="primary-action"
-        type="button"
-        onClick={() => navigate('/clientes/nuevo')}
-      >
-        Registrar cliente
-      </button>
-    </div>
-  );
+    );
 
   const handleDeleteCliente = async (cliente: Cliente) => {
     if (!window.confirm(`¿Seguro que deseas eliminar el cliente "${cliente.nombre ?? cliente.codigo ?? cliente.id}"?`)) {
@@ -4685,101 +4807,272 @@ const DashboardPage: React.FC = () => {
     }
   };
 
+  const clienteStatsOptions = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          personalStatsData
+            .map((registro) => registro.cliente)
+            .filter((value): value is string => Boolean(value))
+        )
+      ).sort(),
+    [personalStatsData]
+  );
+
+  const estadoStatsOptions = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          personalStatsData
+            .map((registro) => registro.estado)
+            .filter((value): value is string => Boolean(value))
+        )
+      ).sort(),
+    [personalStatsData]
+  );
+  const agenteStatsOptions = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          personalStatsData
+            .map((registro) => registro.agente)
+            .filter((value): value is string => Boolean(value))
+        )
+      ).sort(),
+    [personalStatsData]
+  );
+
+  const resolvedTitle = showPersonalPanel ? 'Panel general' : 'Gestionar clientes';
+  const resolvedSubtitle = showPersonalPanel ? 'Resumen de personal y clientes' : 'Gestionar clientes';
+
   return (
-    <DashboardLayout title="Gestionar clientes" subtitle="Gestionar clientes" headerContent={headerContent}>
-      <div className="table-wrapper">
-        <table>
-          <thead>
-            <tr>
-              <th>Código</th>
-              <th>Nombre</th>
-              <th>Documento fiscal</th>
-              <th>Dirección</th>
-              <th>Sucursales</th>
-              <th>Acciones</th>
-            </tr>
-          </thead>
-          <tbody>
-            {loading && (
-              <tr>
-                <td colSpan={6}>Cargando clientes...</td>
-              </tr>
-            )}
+    <DashboardLayout
+      title={resolvedTitle}
+      subtitle={resolvedSubtitle}
+      headerContent={headerContent}
+      layoutVariant={showPersonalPanel ? 'panel' : 'default'}
+    >
+      {showPersonalPanel ? (
+        <>
+              <div className="summary-panel">
+                <div className="summary-panel__header">
+                  <div>
+                    <h3>Radar de personal</h3>
+                <p>Filtrá por cliente, estado o agente para ver los totales y cortes por cliente.</p>
+                  </div>
+                  <div className="summary-filters">
+                <label className="filter-field">
+                  <span>Cliente</span>
+                  <select value={statsClienteFilter} onChange={(event) => setStatsClienteFilter(event.target.value)}>
+                    <option value="">Todos</option>
+                    {clienteStatsOptions.map((option) => (
+                      <option key={option} value={option}>
+                        {option}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="filter-field">
+                  <span>Estado</span>
+                  <select value={statsEstadoFilter} onChange={(event) => setStatsEstadoFilter(event.target.value)}>
+                    <option value="">Todos</option>
+                    {estadoStatsOptions.map((option) => (
+                      <option key={option} value={option}>
+                        {option}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="filter-field">
+                  <span>Agente</span>
+                  <select value={statsAgenteFilter} onChange={(event) => setStatsAgenteFilter(event.target.value)}>
+                    <option value="">Todos</option>
+                    {agenteStatsOptions.map((option) => (
+                      <option key={option} value={option}>
+                        {option}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+            </div>
 
-            {error && !loading && (
-              <tr>
-                <td colSpan={6} className="error-cell">
-                  {error}
-                </td>
-              </tr>
-            )}
+            <div className="summary-cards">
+              <div className="summary-card summary-card--accent">
+                <span className="summary-card__label">Activos</span>
+                <strong className="summary-card__value">
+                  {statsLoading ? '—' : personalStats.activo}
+                </strong>
+              </div>
+              <div className="summary-card summary-card--warning">
+                <span className="summary-card__label">Baja</span>
+                <strong className="summary-card__value">
+                  {statsLoading ? '—' : personalStats.baja}
+                </strong>
+              </div>
+              <div className="summary-card summary-card--danger">
+                <span className="summary-card__label">Suspendido</span>
+                <strong className="summary-card__value">
+                  {statsLoading ? '—' : personalStats.suspendido}
+                </strong>
+              </div>
+              <div className="summary-card summary-card--muted">
+                <span className="summary-card__label">Total personal</span>
+                <strong className="summary-card__value">
+                  {statsLoading ? '—' : personalStats.total}
+                </strong>
+              </div>
+            {statsError ? (
+              <p className="form-info form-info--error" style={{ gridColumn: '1 / -1' }}>
+                {statsError}
+              </p>
+            ) : null}
+          </div>
 
-            {!loading && !error && filteredClientes.length === 0 && (
-              <tr>
-                <td colSpan={6}>No hay clientes para mostrar.</td>
-              </tr>
-            )}
+          <div className="client-cards">
+            {(() => {
+              const grouped = filterPersonalRecords(
+                personalStatsData,
+                statsClienteFilter,
+                statsEstadoFilter,
+                statsAgenteFilter
+              ).reduce((acc, registro) => {
+                const key = registro.cliente ?? 'Sin cliente';
+                if (!acc[key]) {
+                  acc[key] = [];
+                }
+                acc[key].push(registro);
+                return acc;
+              }, {} as Record<string, PersonalRecord[]>);
 
-            {!loading &&
-              !error &&
-              filteredClientes.map((cliente) => (
-                <tr key={cliente.id}>
-                  <td>{cliente.codigo ?? '—'}</td>
-                  <td>{cliente.nombre ?? '—'}</td>
-                  <td>{cliente.documento_fiscal ?? '—'}</td>
-                  <td>{cliente.direccion ?? '—'}</td>
-                  <td>
-                    <div className="tag-list">
-                      {cliente.sucursales.map((sucursal) => {
-                        const labelParts = [
-                          sucursal.nombre ?? undefined,
-                          sucursal.direccion ?? undefined,
-                        ].filter(Boolean);
-
-                        return (
-                          <span key={`${cliente.id}-${sucursal.id ?? uniqueKey()}`} className="tag">
-                            {labelParts.length > 0 ? labelParts.join(' - ') : 'Sin datos'}
-                          </span>
-                        );
-                      })}
+              return Object.entries(grouped).map(([clienteNombre, registros]) => {
+                const counts = computePersonalStats(registros);
+                return (
+                  <div key={clienteNombre} className="client-card">
+                    <header>
+                      <h4>{clienteNombre}</h4>
+                      <span>{counts.total} en total</span>
+                    </header>
+                    <div className="client-card__stats">
+                      <div>
+                        <small>Activos</small>
+                        <strong>{counts.activo}</strong>
+                      </div>
+                      <div>
+                        <small>Baja</small>
+                        <strong>{counts.baja}</strong>
+                      </div>
+                      <div>
+                        <small>Suspendido</small>
+                        <strong>{counts.suspendido}</strong>
+                      </div>
                     </div>
-                  </td>
-                  <td>
-                    <div className="action-buttons">
-                      <button
-                        type="button"
-                        aria-label={`Editar cliente ${cliente.nombre ?? ''}`}
-                        onClick={() => navigate(`/clientes/${cliente.id}/editar`)}
-                      >
-                        ✏️
-                      </button>
-                      <button
-                        type="button"
-                        aria-label={`Eliminar cliente ${cliente.nombre ?? ''}`}
-                        onClick={() => handleDeleteCliente(cliente)}
-                        disabled={deletingClienteId === cliente.id}
-                      >
-                        🗑️
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-          </tbody>
-        </table>
-      </div>
-
-      <footer className="table-footer">
-        <span>{footerLabel}</span>
-        <div className="pagination">
-          <button disabled aria-label="Anterior">
-            ‹
-          </button>
-          <button disabled aria-label="Siguiente">
-            ›
-          </button>
+                  </div>
+                );
+              });
+            })()}
+          </div>
         </div>
-      </footer>
+        </>
+      ) : null}
+
+      {!showPersonalPanel ? (
+        <>
+          <div className="table-wrapper">
+            <table>
+              <thead>
+                <tr>
+                  <th>Código</th>
+                  <th>Nombre</th>
+                  <th>Documento fiscal</th>
+                  <th>Dirección</th>
+                  <th>Sucursales</th>
+                  <th>Acciones</th>
+                </tr>
+              </thead>
+              <tbody>
+                {loading && (
+                  <tr>
+                    <td colSpan={6}>Cargando clientes...</td>
+                  </tr>
+                )}
+
+                {error && !loading && (
+                  <tr>
+                    <td colSpan={6} className="error-cell">
+                      {error}
+                    </td>
+                  </tr>
+                )}
+
+                {!loading && !error && filteredClientes.length === 0 && (
+                  <tr>
+                    <td colSpan={6}>No hay clientes para mostrar.</td>
+                  </tr>
+                )}
+
+                {!loading &&
+                  !error &&
+                  filteredClientes.map((cliente) => (
+                    <tr key={cliente.id}>
+                      <td>{cliente.codigo ?? '—'}</td>
+                      <td>{cliente.nombre ?? '—'}</td>
+                      <td>{cliente.documento_fiscal ?? '—'}</td>
+                      <td>{cliente.direccion ?? '—'}</td>
+                      <td>
+                        <div className="tag-list">
+                          {cliente.sucursales.map((sucursal) => {
+                            const labelParts = [
+                              sucursal.nombre ?? undefined,
+                              sucursal.direccion ?? undefined,
+                            ].filter(Boolean);
+
+                            return (
+                              <span key={`${cliente.id}-${sucursal.id ?? uniqueKey()}`} className="tag">
+                                {labelParts.length > 0 ? labelParts.join(' - ') : 'Sin datos'}
+                              </span>
+                            );
+                          })}
+                        </div>
+                      </td>
+                      <td>
+                        <div className="action-buttons">
+                          <button
+                            type="button"
+                            aria-label={`Editar cliente ${cliente.nombre ?? ''}`}
+                            onClick={() => navigate(`/clientes/${cliente.id}/editar`)}
+                          >
+                            ✏️
+                          </button>
+                          <button
+                            type="button"
+                            aria-label={`Eliminar cliente ${cliente.nombre ?? ''}`}
+                            onClick={() => handleDeleteCliente(cliente)}
+                            disabled={deletingClienteId === cliente.id}
+                          >
+                            🗑️
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+              </tbody>
+            </table>
+          </div>
+
+          <footer className="table-footer">
+            <span>{footerLabel}</span>
+            <div className="pagination">
+              <button disabled aria-label="Anterior">
+                ‹
+              </button>
+              <button disabled aria-label="Siguiente">
+                ›
+              </button>
+            </div>
+          </footer>
+        </>
+      ) : null}
     </DashboardLayout>
   );
 };
@@ -20443,7 +20736,14 @@ const App: React.FC = () => {
   return (
     <Routes>
       <Route path="/" element={<LoginPage />} />
-      <Route path="/dashboard" element={<Navigate to="/clientes" replace />} />
+      <Route
+        path="/dashboard"
+        element={
+          <RequireAccess section="clientes">
+            <DashboardPage showPersonalPanel />
+          </RequireAccess>
+        }
+      />
       <Route path="/chat" element={<ChatPage />} />
       <Route path="/chat/:contactId" element={<ChatPage />} />
       <Route path="/informacion-general" element={<GeneralInfoPage />} />
