@@ -765,6 +765,27 @@ type AuthUser = {
   role?: string | null;
 };
 
+const PERSONAL_EDITOR_EMAILS = [
+  'dgimenez@logisticaargentinasrl.com.ar',
+  'msanchez@logisticaargentinasrl.com.ar',
+  'morellfrancisco@gmail.com',
+];
+
+const normalizeEmail = (email: string | null | undefined): string | null => {
+  const normalized = email?.trim().toLowerCase() ?? '';
+  return normalized.length > 0 ? normalized : null;
+};
+
+const isPersonalEditor = (authUser: AuthUser | null | undefined): boolean => {
+  const email = normalizeEmail(authUser?.email);
+  return email ? PERSONAL_EDITOR_EMAILS.includes(email) : false;
+};
+
+const buildActorHeaders = (authUser: AuthUser | null | undefined): Record<string, string> => {
+  const email = normalizeEmail(authUser?.email);
+  return email ? { 'X-Actor-Email': email } : {};
+};
+
 type NotificationMetadata = {
   celebration?: boolean;
   celebration_title?: string | null;
@@ -985,9 +1006,16 @@ const buildPersonalFiltersStorageKey = (userId: number | null | undefined): stri
   return `personal:filters:${userId}`;
 };
 
-const readStoredPersonalFilters = (
-  storageKey: string | null
-): { cliente?: string; sucursal?: string; fechaAltaPreset?: string; fechaAltaFrom?: string; fechaAltaTo?: string } => {
+type StoredPersonalFilters = {
+  cliente?: string;
+  sucursal?: string;
+  fechaAltaPreset?: string;
+  fechaAltaFrom?: string;
+  fechaAltaTo?: string;
+  patente?: string;
+};
+
+const readStoredPersonalFilters = (storageKey: string | null): StoredPersonalFilters => {
   if (!storageKey || typeof window === 'undefined') {
     return {};
   }
@@ -1008,6 +1036,7 @@ const readStoredPersonalFilters = (
       fechaAltaPreset: typeof parsed.fechaAltaPreset === 'string' ? parsed.fechaAltaPreset : '',
       fechaAltaFrom: typeof parsed.fechaAltaFrom === 'string' ? parsed.fechaAltaFrom : '',
       fechaAltaTo: typeof parsed.fechaAltaTo === 'string' ? parsed.fechaAltaTo : '',
+      patente: typeof parsed.patente === 'string' ? parsed.patente : '',
     };
   } catch {
     return {};
@@ -7541,6 +7570,8 @@ const PersonalPage: React.FC = () => {
   const navigate = useNavigate();
   const apiBaseUrl = useMemo(() => resolveApiBaseUrl(), []);
   const authUser = useStoredAuthUser();
+  const canManagePersonal = useMemo(() => isPersonalEditor(authUser), [authUser]);
+  const actorHeaders = useMemo(() => buildActorHeaders(authUser), [authUser]);
   const personalFiltersStorageKey = useMemo(
     () => buildPersonalFiltersStorageKey(authUser?.id ?? null),
     [authUser?.id]
@@ -7563,6 +7594,7 @@ const PersonalPage: React.FC = () => {
   const [estadoFilter, setEstadoFilter] = useState('');
   const [combustibleFilter, setCombustibleFilter] = useState('');
   const [tarifaFilter, setTarifaFilter] = useState('');
+  const [patenteFilter, setPatenteFilter] = useState('');
   const [deletingPersonalId, setDeletingPersonalId] = useState<number | null>(null);
 
   const fetchPersonal = useCallback(
@@ -7611,6 +7643,7 @@ const PersonalPage: React.FC = () => {
     setAltaDatePreset(stored.fechaAltaPreset ?? '');
     setAltaDateFrom(stored.fechaAltaFrom ?? '');
     setAltaDateTo(stored.fechaAltaTo ?? '');
+    setPatenteFilter(stored.patente ?? '');
   }, [resolveStoredFilters]);
 
   useEffect(() => {
@@ -7627,12 +7660,13 @@ const PersonalPage: React.FC = () => {
           fechaAltaPreset: altaDatePreset,
           fechaAltaFrom: altaDateFrom,
           fechaAltaTo: altaDateTo,
+          patente: patenteFilter,
         })
       );
     } catch {
       // ignore write errors (storage full, etc.)
     }
-  }, [personalFiltersStorageKey, clienteFilter, sucursalFilter, altaDatePreset, altaDateFrom, altaDateTo]);
+  }, [personalFiltersStorageKey, clienteFilter, sucursalFilter, altaDatePreset, altaDateFrom, altaDateTo, patenteFilter]);
 
   useEffect(() => {
     const handler = (event: Event) => {
@@ -7774,6 +7808,13 @@ const PersonalPage: React.FC = () => {
         return false;
       }
 
+      if (patenteFilter) {
+        const normalizedPatente = (registro.patente ?? '').trim().toLowerCase();
+        if (!normalizedPatente.includes(patenteFilter.trim().toLowerCase())) {
+          return false;
+        }
+      }
+
       if (estadoFilter && registro.estado !== estadoFilter) {
         return false;
       }
@@ -7858,6 +7899,7 @@ const PersonalPage: React.FC = () => {
     perfilFilter,
     agenteFilter,
     unidadFilter,
+    patenteFilter,
     estadoFilter,
     combustibleFilter,
     tarifaFilter,
@@ -7907,6 +7949,11 @@ const PersonalPage: React.FC = () => {
       Array.from(new Set(personal.map((registro) => registro.unidad).filter((value): value is string => Boolean(value)))).sort(),
     [personal]
   );
+  const patenteOptions = useMemo(
+    () =>
+      Array.from(new Set(personal.map((registro) => registro.patente).filter((value): value is string => Boolean(value)))).sort(),
+    [personal]
+  );
   const estadoOptions = useMemo(
     () =>
       Array.from(new Set(personal.map((registro) => registro.estado).filter((value): value is string => Boolean(value)))).sort(),
@@ -7919,6 +7966,7 @@ const PersonalPage: React.FC = () => {
     setPerfilFilter('');
     setAgenteFilter('');
     setUnidadFilter('');
+    setPatenteFilter('');
     setEstadoFilter('');
     setCombustibleFilter('');
     setTarifaFilter('');
@@ -7933,6 +7981,10 @@ const PersonalPage: React.FC = () => {
   };
 
   const handleDeletePersonal = async (registro: PersonalRecord) => {
+    if (!canManagePersonal) {
+      window.alert('Solo los usuarios autorizados pueden eliminar personal.');
+      return;
+    }
     if (deletingPersonalId !== null) {
       return;
     }
@@ -7949,6 +8001,9 @@ const PersonalPage: React.FC = () => {
 
       const response = await fetch(`${apiBaseUrl}/api/personal/${registro.id}`, {
         method: 'DELETE',
+        headers: {
+          ...actorHeaders,
+        },
       });
 
       if (!response.ok) {
@@ -8149,6 +8204,21 @@ const PersonalPage: React.FC = () => {
           </select>
         </label>
         <label className="filter-field">
+          <span>Patente</span>
+          <input
+            type="text"
+            list="patente-options"
+            placeholder="Patente"
+            value={patenteFilter}
+            onChange={(event) => setPatenteFilter(event.target.value)}
+          />
+          <datalist id="patente-options">
+            {patenteOptions.map((option) => (
+              <option key={option} value={option} />
+            ))}
+          </datalist>
+        </label>
+        <label className="filter-field">
           <span>Estado</span>
           <select value={estadoFilter} onChange={(event) => setEstadoFilter(event.target.value)}>
             <option value="">Estado</option>
@@ -8217,7 +8287,17 @@ const PersonalPage: React.FC = () => {
         <button type="button" className="secondary-action" onClick={handleExportCsv}>
           Exportar CSV
         </button>
-        <button className="primary-action" type="button" onClick={() => navigate('/personal/nuevo')}>
+        <button
+          className="primary-action"
+          type="button"
+          onClick={() => navigate('/personal/nuevo')}
+          disabled={!canManagePersonal}
+          title={
+            canManagePersonal
+              ? undefined
+              : 'Solo los usuarios autorizados pueden cargar personal.'
+          }
+        >
           Agregar personal
         </button>
       </div>
@@ -8226,6 +8306,11 @@ const PersonalPage: React.FC = () => {
 
   return (
     <DashboardLayout title="Gestionar personal" subtitle="Gestionar personal" headerContent={headerContent}>
+      {!canManagePersonal ? (
+        <p className="form-info">
+          Solo los usuarios autorizados pueden crear o editar personal. Estás en modo lectura.
+        </p>
+      ) : null}
       <div className="table-wrapper">
         <table>
           <thead>
@@ -8322,6 +8407,7 @@ const PersonalPage: React.FC = () => {
                         type="button"
                         aria-label={`Editar personal ${registro.nombre ?? ''}`}
                         onClick={() => navigate(`/personal/${registro.id}/editar`)}
+                        disabled={!canManagePersonal}
                       >
                         ✏️
                       </button>
@@ -8329,7 +8415,7 @@ const PersonalPage: React.FC = () => {
                         type="button"
                         aria-label={`Eliminar personal ${registro.nombre ?? ''}`}
                         onClick={() => handleDeletePersonal(registro)}
-                        disabled={deletingPersonalId === registro.id}
+                        disabled={!canManagePersonal || deletingPersonalId === registro.id}
                       >
                         🗑️
                       </button>
@@ -12122,6 +12208,8 @@ const ApprovalsRequestsPage: React.FC = () => {
   const location = useLocation();
   const apiBaseUrl = useMemo(() => resolveApiBaseUrl(), []);
   const authUser = useStoredAuthUser();
+  const canManagePersonal = useMemo(() => isPersonalEditor(authUser), [authUser]);
+  const actorHeaders = useMemo(() => buildActorHeaders(authUser), [authUser]);
   const [activeTab, setActiveTab] = useState<'list' | 'altas' | 'combustible' | 'aumento_combustible' | 'adelanto' | 'poliza'>('list');
   const [meta, setMeta] = useState<PersonalMeta | null>(null);
   const allowedAltaPerfiles = useMemo(() => {
@@ -12319,6 +12407,13 @@ const ApprovalsRequestsPage: React.FC = () => {
 
     return altaDocumentType.trim().toLowerCase();
   }, [altaDocumentType, altaSelectedDocumentType?.id]);
+  const canEditSolicitud = useMemo(() => {
+    if (!reviewPersonaDetail) {
+      return canManagePersonal;
+    }
+    const isPendingSolicitud = (reviewPersonaDetail.esSolicitud ?? false) && reviewPersonaDetail.aprobado !== true;
+    return canManagePersonal || isPendingSolicitud;
+  }, [canManagePersonal, reviewPersonaDetail]);
   const altaDocumentTypeName = useMemo(() => {
     if (altaSelectedDocumentType?.nombre) {
       return altaSelectedDocumentType.nombre;
@@ -12843,7 +12938,7 @@ const sucursalOptions = useMemo(() => {
       const init: RequestInit = {
         method: 'POST',
         body: formData,
-        headers: { Accept: 'application/json' },
+        headers: { Accept: 'application/json', ...actorHeaders },
       };
 
       if (typeof window !== 'undefined') {
@@ -12859,7 +12954,7 @@ const sucursalOptions = useMemo(() => {
 
       return init;
     },
-    [apiBaseUrl]
+    [actorHeaders, apiBaseUrl]
   );
 
   const handleAltaFilesChange = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -13050,6 +13145,7 @@ const sucursalOptions = useMemo(() => {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          ...actorHeaders,
         },
         body: JSON.stringify(requestPayload),
       });
@@ -13261,6 +13357,7 @@ const sucursalOptions = useMemo(() => {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
+          ...actorHeaders,
         },
         body: JSON.stringify(requestPayload),
       });
@@ -13402,6 +13499,11 @@ const sucursalOptions = useMemo(() => {
       return;
     }
 
+    if (!canManagePersonal) {
+      setFlash({ type: 'error', message: 'Solo los usuarios autorizados pueden aprobar o editar personal.' });
+      return;
+    }
+
     const resolvedActivoEstadoId = (() => {
       const match = (meta?.estados ?? []).find(
         (estado) => (estado.nombre ?? '').trim().toLowerCase() === 'activo'
@@ -13427,6 +13529,7 @@ const sucursalOptions = useMemo(() => {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          ...actorHeaders,
         },
         body: JSON.stringify(payloadBody),
       });
@@ -14530,7 +14633,7 @@ const handleAdelantoFieldChange =
 
       const response = await fetch(`${apiBaseUrl}/api/personal/${registro.id}`, {
         method: 'DELETE',
-        headers: { Accept: 'application/json' },
+        headers: { Accept: 'application/json', ...actorHeaders },
       });
 
       if (!response.ok) {
@@ -15391,6 +15494,11 @@ const handleAdelantoFieldChange =
               </div>
 
               <div className="review-actions">
+                {!canEditSolicitud ? (
+                  <p className="form-info">
+                    Solo los usuarios autorizados pueden editar o aprobar personal. Estás en modo lectura.
+                  </p>
+                ) : null}
                 {!reviewEditMode ? (
                   <button
                     type="button"
@@ -15399,6 +15507,7 @@ const handleAdelantoFieldChange =
                       populateAltaFormFromReview();
                       setReviewEditMode(true);
                     }}
+                    disabled={!canEditSolicitud}
                   >
                     Editar datos
                   </button>
@@ -15424,7 +15533,14 @@ const handleAdelantoFieldChange =
                   type="button"
                   className="primary-action"
                   onClick={handleApproveSolicitud}
-                  disabled={approveLoading || reviewPersonaDetail.aprobado || reviewEditMode}
+                  disabled={
+                    approveLoading || reviewPersonaDetail.aprobado || reviewEditMode || !canManagePersonal
+                  }
+                  title={
+                    canManagePersonal
+                      ? undefined
+                      : 'Solo los usuarios autorizados pueden aprobar personal.'
+                  }
                 >
                   {reviewPersonaDetail.aprobado
                     ? 'Solicitud aprobada'
@@ -16951,7 +17067,9 @@ const PersonalEditPage: React.FC = () => {
   const apiBaseUrl = useMemo(() => resolveApiBaseUrl(), []);
   const authUser = useStoredAuthUser();
   const userRole = useMemo(() => getUserRole(authUser), [authUser]);
-  const isReadOnly = userRole === 'operator';
+  const canManagePersonal = useMemo(() => isPersonalEditor(authUser), [authUser]);
+  const actorHeaders = useMemo(() => buildActorHeaders(authUser), [authUser]);
+  const isReadOnly = userRole === 'operator' || !canManagePersonal;
   const [detail, setDetail] = useState<PersonalDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -17396,7 +17514,11 @@ const PersonalEditPage: React.FC = () => {
 
   const handleSave = async () => {
     if (isReadOnly) {
-      setSaveError('Tu rol actual solo permite visualizar la información.');
+      setSaveError(
+        canManagePersonal
+          ? 'Tu rol actual solo permite visualizar la información.'
+          : 'Solo los usuarios autorizados pueden editar personal.'
+      );
       return;
     }
     if (!personaId) {
@@ -17425,6 +17547,7 @@ const PersonalEditPage: React.FC = () => {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
+          ...actorHeaders,
         },
         body: JSON.stringify({
           nombres: formValues.nombres.trim() || null,
@@ -17651,7 +17774,12 @@ const PersonalEditPage: React.FC = () => {
 
   const handleUploadDocumentos = async () => {
     if (isReadOnly) {
-      setUploadStatus({ type: 'error', message: 'Tu rol actual solo permite visualizar la información.' });
+      setUploadStatus({
+        type: 'error',
+        message: canManagePersonal
+          ? 'Tu rol actual solo permite visualizar la información.'
+          : 'Solo los usuarios autorizados pueden editar personal.',
+      });
       return;
     }
     if (!personaId || pendingUploads.length === 0) {
@@ -17673,6 +17801,9 @@ const PersonalEditPage: React.FC = () => {
 
         const response = await fetch(`${apiBaseUrl}/api/personal/${personaId}/documentos`, {
           method: 'POST',
+          headers: {
+            ...actorHeaders,
+          },
           body: formData,
         });
 
@@ -17725,7 +17856,9 @@ const PersonalEditPage: React.FC = () => {
       {metaError ? <p className="form-info form-info--error">{metaError}</p> : null}
       {metaLoading ? <p className="form-info">Cargando datos de referencia...</p> : null}
       {isReadOnly ? (
-        <p className="form-info">Estás en modo solo lectura por tu rol. Podés visualizar la información pero no editarla.</p>
+        <p className="form-info">
+          Solo los usuarios autorizados pueden editar personal. Estás en modo lectura.
+        </p>
       ) : null}
       <fieldset disabled={isReadOnly} className="personal-edit-fieldset">
       <section className="personal-edit-section">
@@ -18334,6 +18467,8 @@ const PersonalCreatePage: React.FC = () => {
   const navigate = useNavigate();
   const apiBaseUrl = useMemo(() => resolveApiBaseUrl(), []);
   const authUser = useStoredAuthUser();
+  const canManagePersonal = useMemo(() => isPersonalEditor(authUser), [authUser]);
+  const actorHeaders = useMemo(() => buildActorHeaders(authUser), [authUser]);
   const [meta, setMeta] = useState<PersonalMeta | null>(null);
   const allowedPerfiles = useMemo(() => {
     const perfiles = meta?.perfiles ?? [];
@@ -18383,7 +18518,12 @@ const PersonalCreatePage: React.FC = () => {
   });
 
   useEffect(() => {
-  const fetchMeta = async () => {
+    if (!canManagePersonal) {
+      setLoading(false);
+      return;
+    }
+
+    const fetchMeta = async () => {
       try {
         setLoading(true);
         setLoadError(null);
@@ -18407,7 +18547,7 @@ const PersonalCreatePage: React.FC = () => {
     };
 
     fetchMeta();
-  }, [apiBaseUrl]);
+  }, [apiBaseUrl, canManagePersonal]);
 
   const sucursalOptions = useMemo(() => {
     if (!meta) {
@@ -18445,6 +18585,11 @@ const PersonalCreatePage: React.FC = () => {
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
 
+    if (!canManagePersonal) {
+      setSaveError('Solo los usuarios autorizados pueden cargar personal.');
+      return;
+    }
+
     try {
       setSaveError(null);
       setSaving(true);
@@ -18465,6 +18610,7 @@ const PersonalCreatePage: React.FC = () => {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          ...actorHeaders,
         },
         body: JSON.stringify({
           perfilValue: formValues.perfilValue,
@@ -18736,6 +18882,19 @@ const PersonalCreatePage: React.FC = () => {
       <input type={type} disabled placeholder="—" />
     </label>
   );
+
+  if (!canManagePersonal) {
+    return (
+      <DashboardLayout title="Registrar personal" subtitle="Personal" headerContent={null}>
+        <p className="form-info form-info--error">
+          Solo los usuarios autorizados pueden cargar personal.
+        </p>
+        <button type="button" className="secondary-action" onClick={() => navigate('/personal')}>
+          ← Volver a personal
+        </button>
+      </DashboardLayout>
+    );
+  }
 
   if (loading) {
     return (

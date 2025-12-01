@@ -25,6 +25,67 @@ use Illuminate\Support\Str;
 
 class PersonalController extends Controller
 {
+    protected array $personalEditorEmails = [
+        'dgimenez@logisticaargentinasrl.com.ar',
+        'msanchez@logisticaargentinasrl.com.ar',
+        'morellfrancisco@gmail.com',
+    ];
+
+    protected function resolveActorEmail(Request $request): ?string
+    {
+        $candidates = [
+            $request->header('X-Actor-Email'),
+            $request->input('actorEmail'),
+            $request->input('userEmail'),
+            $request->input('email'),
+            $request->user()?->email,
+        ];
+
+        $actorIds = collect([
+            $request->input('actorId'),
+            $request->input('userId'),
+            $request->input('autoApproveUserId'),
+        ])
+            ->filter()
+            ->map(fn ($value) => (int) $value)
+            ->unique();
+
+        foreach ($actorIds as $actorId) {
+            $user = User::query()->find($actorId);
+            if ($user && $user->email) {
+                $candidates[] = $user->email;
+            }
+        }
+
+        foreach ($candidates as $candidate) {
+            if (! is_string($candidate)) {
+                continue;
+            }
+
+            $normalized = strtolower(trim($candidate));
+            if ($normalized !== '') {
+                return $normalized;
+            }
+        }
+
+        return null;
+    }
+
+    protected function ensureCanManagePersonal(Request $request, ?Persona $persona = null): void
+    {
+        $actorEmail = $this->resolveActorEmail($request);
+        $isAllowed = $actorEmail && in_array($actorEmail, $this->personalEditorEmails, true);
+        $isPendingSolicitud = $persona && (! $persona->aprobado) && ($persona->es_solicitud ?? false);
+
+        if ($isAllowed || $isPendingSolicitud) {
+            return;
+        }
+
+        abort(response()->json([
+            'message' => 'No tenés permisos para gestionar personal.',
+        ], 403));
+    }
+
     public function index(Request $request): JsonResponse
     {
         $liquidacionTypeIds = $this->resolveLiquidacionTypeIds();
@@ -130,6 +191,8 @@ class PersonalController extends Controller
 
     public function update(Request $request, Persona $persona): JsonResponse
     {
+        $this->ensureCanManagePersonal($request, $persona);
+
         $validated = $request->validate([
             'nombres' => ['nullable', 'string', 'max:255'],
             'apellidos' => ['nullable', 'string', 'max:255'],
@@ -351,8 +414,10 @@ class PersonalController extends Controller
         ]);
     }
 
-    public function destroy(Persona $persona): JsonResponse
+    public function destroy(Request $request, Persona $persona): JsonResponse
     {
+        $this->ensureCanManagePersonal($request, $persona);
+
         $persona->delete();
 
         return response()->json([
@@ -388,6 +453,13 @@ class PersonalController extends Controller
 
     public function store(Request $request): JsonResponse
     {
+        $autoApproveInput = $request->input('autoApprove', false);
+        $autoApprove = array_key_exists('autoApprove', $request->all()) ? (bool) $autoApproveInput : false;
+
+        if ($autoApprove) {
+            $this->ensureCanManagePersonal($request);
+        }
+
         $perfilValue = (int) $request->input('perfilValue', 0);
         $apellidosRules = ['string', 'max:255'];
 
@@ -554,6 +626,8 @@ class PersonalController extends Controller
 
     public function approve(Request $request, Persona $persona): JsonResponse
     {
+        $this->ensureCanManagePersonal($request);
+
         $validated = $request->validate([
             'userId' => ['nullable', 'integer', 'exists:users,id'],
             'estadoId' => ['nullable', 'integer', 'exists:estados,id'],
