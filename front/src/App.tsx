@@ -769,6 +769,8 @@ const PERSONAL_EDITOR_EMAILS = [
   'dgimenez@logisticaargentinasrl.com.ar',
   'msanchez@logisticaargentinasrl.com.ar',
   'morellfrancisco@gmail.com',
+  'xmaldonado@logisticaargentinasrl.com.ar',
+  'monica@logisticaargentinasrl.com.ar',
 ];
 
 const normalizeEmail = (email: string | null | undefined): string | null => {

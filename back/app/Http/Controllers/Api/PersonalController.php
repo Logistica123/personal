@@ -29,6 +29,8 @@ class PersonalController extends Controller
         'dgimenez@logisticaargentinasrl.com.ar',
         'msanchez@logisticaargentinasrl.com.ar',
         'morellfrancisco@gmail.com',
+        'xmaldonado@logisticaargentinasrl.com.ar',
+        'monica@logisticaargentinasrl.com.ar',
     ];
 
     protected function resolveActorEmail(Request $request): ?string
