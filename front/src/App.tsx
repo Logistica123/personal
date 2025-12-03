@@ -8523,7 +8523,8 @@ const PersonalPage: React.FC = () => {
       .map((row) => row.join('\t'))
       .join('\n');
 
-    const blob = new Blob([tsv], { type: 'application/vnd.ms-excel' });
+    const BOM = '\ufeff';
+    const blob = new Blob([BOM + tsv], { type: 'application/vnd.ms-excel' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
