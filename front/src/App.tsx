@@ -4598,7 +4598,7 @@ const DashboardPage: React.FC<{ showPersonalPanel?: boolean }> = ({ showPersonal
   const apiBaseUrl = useMemo(() => resolveApiBaseUrl(), []);
   const fidelizacion1Users = useMemo(
     () => [
-      { id: 'dgonzalez@logisticaargentinasrl.com.ar', label: 'Dario Gonzales' },
+      { id: 'dgonzalez@logisticaargentinasrl.com.ar', label: 'Dario Gonzalez' },
       { id: 'florenciakind@gmail.com', label: 'Florencia Kindwerler' },
       { id: 'ezequielb@logisticaargentinasrl.com.ar', label: 'Ezequiel Bordon' },
     ],
