@@ -4642,6 +4642,9 @@ const DashboardPage: React.FC<{ showPersonalPanel?: boolean }> = ({ showPersonal
   const filterPersonalRecords = useCallback(
     (data: PersonalRecord[], clienteFilter: string, estadoFilter: string, agenteFilter: string) =>
       data.filter((registro) => {
+        if (registro.esSolicitud) {
+          return false;
+        }
         if (clienteFilter && registro.cliente !== clienteFilter) {
           return false;
         }
