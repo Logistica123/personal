@@ -1707,6 +1707,7 @@ const LoginPage: React.FC = () => {
   const apiBaseUrl = useMemo(() => resolveApiBaseUrl(), []);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [rememberMe, setRememberMe] = useState(false);
   const [loading, setLoading] = useState(false);
   const [loginError, setLoginError] = useState<string | null>(null);
@@ -1802,10 +1803,10 @@ const LoginPage: React.FC = () => {
               />
             </label>
 
-            <label className="field">
+            <label className="field password-field">
               <span className="field-label">Contraseña</span>
               <input
-                type="password"
+                type={showPassword ? 'text' : 'password'}
                 name="password"
                 value={password}
                 onChange={(event) => setPassword(event.target.value)}
@@ -1814,6 +1815,15 @@ const LoginPage: React.FC = () => {
                 required
                 disabled={loading}
               />
+              <button
+                type="button"
+                className="password-toggle"
+                onClick={() => setShowPassword((prev) => !prev)}
+                aria-label={showPassword ? 'Ocultar contraseña' : 'Mostrar contraseña'}
+                disabled={loading}
+              >
+                {showPassword ? '🙈' : '👁️'}
+              </button>
             </label>
 
             <div className="form-meta">

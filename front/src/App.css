@@ -84,7 +84,8 @@
 }
 
 .field input[type='email'],
-.field input[type='password'] {
+.field input[type='password'],
+.field input[type='text'] {
   width: 100%;
   padding: 0.85rem 1rem;
   border-radius: 12px;
@@ -95,11 +96,41 @@
 }
 
 .field input[type='email']:focus,
-.field input[type='password']:focus {
+.field input[type='password']:focus,
+.field input[type='text']:focus {
   outline: none;
   border-color: #1d74f5;
   box-shadow: 0 0 0 4px rgba(29, 116, 245, 0.15);
   background-color: #ffffff;
+}
+
+.password-field {
+  position: relative;
+}
+
+.password-field input {
+  padding-right: 2.75rem;
+  padding-top: 0.95rem;
+  padding-bottom: 0.95rem;
+}
+
+.password-toggle {
+  position: absolute;
+  right: 0.6rem;
+  top: 66%;
+  transform: translateY(-50%);
+  border: none;
+  background: transparent;
+  color: #516277;
+  cursor: pointer;
+  font-size: 1rem;
+  display: inline-flex;
+  align-items: center;
+}
+
+.password-toggle:focus {
+  outline: none;
+  color: #1d74f5;
 }
 
 .form-meta {
