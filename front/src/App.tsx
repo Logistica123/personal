@@ -13025,6 +13025,24 @@ const ApprovalsRequestsPage: React.FC = () => {
   const [solicitudCreatedCache, setSolicitudCreatedCache] = useState<Map<number, string>>(
     () => readSolicitudCreatedCache()
   );
+  const cacheSolicitudCreated = useCallback(
+    (id: number | null | undefined, created: string | null | undefined) => {
+      if (id == null || !Number.isFinite(Number(id)) || !created) {
+        return;
+      }
+      setSolicitudCreatedCache((prev) => {
+        const prevValue = prev.get(Number(id));
+        if (prevValue === created) {
+          return prev;
+        }
+        const next = new Map(prev);
+        next.set(Number(id), created);
+        writeSolicitudCreatedCache(next);
+        return next;
+      });
+    },
+    []
+  );
   const allowedAltaPerfiles = useMemo(() => {
     const perfiles = meta?.perfiles ?? [];
     const filtered = perfiles.filter((perfil) => perfil.value !== 2);
@@ -13126,6 +13144,7 @@ const ApprovalsRequestsPage: React.FC = () => {
   ): PersonalRecord => {
     const resolveRawCreated = () => {
       const data = record.solicitudData as any;
+      const isSolicitudAlta = record.esSolicitud && (record.solicitudTipo === 'alta' || !record.solicitudTipo);
 
       const candidates: Array<string | null | undefined> = [
         record.createdAt,
@@ -13135,8 +13154,8 @@ const ApprovalsRequestsPage: React.FC = () => {
         (record as any).created_at_label,
         (record as any).fechaCreacion,
         (record as any).fecha_creacion,
-        record.fechaAlta,
-        record.fechaAltaVinculacion,
+        // Para solicitudes de alta, muchos backends usan fechaAlta/fechaAltaVinculacion como creación.
+        ...(isSolicitudAlta ? [record.fechaAlta, record.fechaAltaVinculacion] : []),
         data?.createdAt,
         data?.created_at,
         data?.created,
@@ -13157,9 +13176,14 @@ const ApprovalsRequestsPage: React.FC = () => {
     const rawCreated = resolveRawCreated();
     const parsed = rawCreated ? new Date(rawCreated) : null;
     const parsedValid = parsed && !Number.isNaN(parsed.getTime());
+    const numericId = Number(record.id);
+    const isSynthetic = Number.isFinite(numericId) && numericId < 0;
+
     let resolvedCreated = parsedValid ? parsed.toISOString() : rawCreated ?? null;
-    if (!resolvedCreated && Number.isFinite(Number(record.id))) {
-      const cached = solicitudCreatedCache.get(Number(record.id));
+
+    // Para solicitudes locales (ID negativo) inventamos fecha y la cacheamos.
+    if (!resolvedCreated && isSynthetic) {
+      const cached = solicitudCreatedCache.get(numericId);
       if (cached) {
         resolvedCreated = cached;
       } else {
@@ -13167,11 +13191,24 @@ const ApprovalsRequestsPage: React.FC = () => {
         resolvedCreated = nowIso;
         setSolicitudCreatedCache((prev) => {
           const next = new Map(prev);
-          next.set(Number(record.id), nowIso);
+          next.set(numericId, nowIso);
           writeSolicitudCreatedCache(next);
           return next;
         });
       }
+    }
+
+    // Para solicitudes reales, no inventamos; usamos cache si ya la teníamos.
+    if (!resolvedCreated && Number.isFinite(numericId) && numericId > 0) {
+      const cached = solicitudCreatedCache.get(numericId);
+      if (cached) {
+        resolvedCreated = cached;
+      }
+    }
+
+    // Si viene creada desde el backend, la guardamos en cache para próximos renders.
+    if (resolvedCreated && Number.isFinite(numericId) && numericId > 0) {
+      cacheSolicitudCreated(numericId, resolvedCreated);
     }
     const createdAt = resolvedCreated;
     const createdAtLabel = createdAt
@@ -14817,33 +14854,9 @@ const sucursalOptions = useMemo(() => {
     })();
 
     if (!rechazoEstadoId) {
-      const updatedDetail = {
-        ...reviewPersonaDetail,
-        estado: 'Rechazado',
-        estadoId: null,
-        esSolicitud: true,
-        aprobado: false,
-        aprobadoAt: null,
-        aprobadoPor: null,
-        aprobadoPorId: null,
-        aprobadoPorNombre: null,
-      };
-      setReviewPersonaDetail(updatedDetail);
-      setRejectedIds((prev) => {
-        const next = new Set(prev);
-        next.add(updatedDetail.id);
-        return next;
-      });
-      sendRejectionNotification(updatedDetail);
-      window.dispatchEvent(
-        new CustomEvent('personal:updated', {
-          detail: { persona: updatedDetail },
-        })
-      );
-      window.dispatchEvent(new CustomEvent('notifications:updated'));
       setFlash({
-        type: 'success',
-        message: 'Solicitud rechazada correctamente.',
+        type: 'error',
+        message: 'No se encontró un estado de rechazo configurado. Agregá uno en la administración de estados.',
       });
       return;
     }
@@ -15521,6 +15534,7 @@ const handleAdelantoFieldChange =
 
   const resolveSolicitudCreated = useCallback((registro: PersonalRecord): string | null => {
     const data = registro.solicitudData as any;
+    const isSolicitudAlta = registro.esSolicitud && (registro.solicitudTipo === 'alta' || !registro.solicitudTipo);
     const candidates: Array<string | null | undefined> = [
       registro.createdAt,
       (registro as any).created_at,
@@ -15529,8 +15543,7 @@ const handleAdelantoFieldChange =
       (registro as any).created,
       (registro as any).fechaCreacion,
       (registro as any).fecha_creacion,
-      registro.fechaAlta,
-      registro.fechaAltaVinculacion,
+      ...(isSolicitudAlta ? [registro.fechaAlta, registro.fechaAltaVinculacion] : []),
       data?.createdAt,
       data?.created_at,
       data?.created,
@@ -15544,8 +15557,18 @@ const handleAdelantoFieldChange =
       data?.form?.fecha,
     ];
     const found = candidates.find((value) => typeof value === 'string' && value.trim().length > 0);
-    return found ? String(found) : null;
-  }, []);
+    if (found) {
+      return String(found);
+    }
+    const numericId = Number(registro.id);
+    if (Number.isFinite(numericId)) {
+      const cached = solicitudCreatedCache.get(numericId);
+      if (cached) {
+        return cached;
+      }
+    }
+    return null;
+  }, [solicitudCreatedCache]);
 
   const filteredSolicitudes = useMemo(() => {
     const term = solicitudesSearchTerm.trim().toLowerCase();
