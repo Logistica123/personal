@@ -4085,3 +4085,20 @@ tbody tr:nth-child(even) {
   color: #0f1f3a;
   font-size: 1.2rem;
 }
+
+.secondary-panels {
+  margin-top: 1rem;
+  background: rgba(255, 255, 255, 0.9);
+  border: 1px dashed #d2dbea;
+  box-shadow: none;
+}
+
+.secondary-panels h3 {
+  margin-top: 0;
+  color: #0f1f3a;
+}
+
+.secondary-panels p {
+  color: #516277;
+  margin-bottom: 0;
+}

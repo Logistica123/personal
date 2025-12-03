@@ -4586,6 +4586,28 @@ const DashboardPage: React.FC<{ showPersonalPanel?: boolean }> = ({ showPersonal
   const [statsEstadoFilter, setStatsEstadoFilter] = useState('');
   const [statsAgenteFilter, setStatsAgenteFilter] = useState('');
   const apiBaseUrl = useMemo(() => resolveApiBaseUrl(), []);
+  const fidelizacion1Users = useMemo(
+    () => [
+      { id: 'dgonzalez@logisticaargentinasrl.com.ar', label: 'Dario Gonzalez' },
+      { id: 'ezequielb@logisticaargentinasrl.com.ar', label: 'Ezequiel Bordon' },
+      { id: 'florenciakind@gmail.com', label: 'Florencia Kind' },
+    ],
+    []
+  );
+  const matchesFidelizacionUser = useCallback(
+    (registro: PersonalRecord, targetLabel: string) => {
+      const normalizedTarget = targetLabel.trim().toLowerCase();
+      const agenteName = (registro.agente ?? '').trim().toLowerCase();
+      const responsableName = (registro.agenteResponsable ?? '').trim().toLowerCase();
+      const responsables = (registro.agentesResponsables ?? []).map((item) => (item ?? '').trim().toLowerCase());
+      return (
+        (agenteName && agenteName.includes(normalizedTarget)) ||
+        (responsableName && responsableName.includes(normalizedTarget)) ||
+        responsables.some((name) => name.includes(normalizedTarget))
+      );
+    },
+    []
+  );
 
   const filterPersonalRecords = useCallback(
     (data: PersonalRecord[], clienteFilter: string, estadoFilter: string, agenteFilter: string) =>
@@ -4857,6 +4879,35 @@ const DashboardPage: React.FC<{ showPersonalPanel?: boolean }> = ({ showPersonal
   const resolvedTitle = showPersonalPanel ? 'Panel general' : 'Gestionar clientes';
   const resolvedSubtitle = showPersonalPanel ? 'Resumen de personal y clientes' : 'Gestionar clientes';
 
+  const baseFilteredPersonal = useMemo(
+    () =>
+      filterPersonalRecords(
+        personalStatsData,
+        statsClienteFilter,
+        statsEstadoFilter,
+        statsAgenteFilter
+      ),
+    [personalStatsData, statsClienteFilter, statsEstadoFilter, statsAgenteFilter, filterPersonalRecords]
+  );
+
+  const fidelizacionUserStats = useMemo(
+    () =>
+      fidelizacion1Users.map((user) => {
+        const records = baseFilteredPersonal.filter((registro) =>
+          matchesFidelizacionUser(registro, user.label)
+        );
+        return { user, stats: computePersonalStats(records) };
+      }),
+    [baseFilteredPersonal, computePersonalStats, fidelizacion1Users, matchesFidelizacionUser]
+  );
+
+  const fidelizacionGroupStats = useMemo(() => {
+    const groupRecords = baseFilteredPersonal.filter((registro) =>
+      fidelizacion1Users.some((user) => matchesFidelizacionUser(registro, user.label))
+    );
+    return computePersonalStats(groupRecords);
+  }, [baseFilteredPersonal, computePersonalStats, fidelizacion1Users, matchesFidelizacionUser]);
+
   return (
     <DashboardLayout
       title={resolvedTitle}
@@ -4866,13 +4917,13 @@ const DashboardPage: React.FC<{ showPersonalPanel?: boolean }> = ({ showPersonal
     >
       {showPersonalPanel ? (
         <>
-              <div className="summary-panel">
-                <div className="summary-panel__header">
-                  <div>
-                    <h3>Radar de personal</h3>
+          <div className="summary-panel">
+            <div className="summary-panel__header">
+              <div>
+                <h3>Radar de personal</h3>
                 <p>Filtrá por cliente, estado o agente para ver los totales y cortes por cliente.</p>
-                  </div>
-                  <div className="summary-filters">
+              </div>
+              <div className="summary-filters">
                 <label className="filter-field">
                   <span>Cliente</span>
                   <select value={statsClienteFilter} onChange={(event) => setStatsClienteFilter(event.target.value)}>
@@ -4942,57 +4993,96 @@ const DashboardPage: React.FC<{ showPersonalPanel?: boolean }> = ({ showPersonal
                   {statsLoading ? '—' : personalStats.total}
                 </strong>
               </div>
-            {statsError ? (
-              <p className="form-info form-info--error" style={{ gridColumn: '1 / -1' }}>
-                {statsError}
-              </p>
-            ) : null}
-          </div>
+              {statsError ? (
+                <p className="form-info form-info--error" style={{ gridColumn: '1 / -1' }}>
+                  {statsError}
+                </p>
+              ) : null}
+            </div>
 
-          <div className="client-cards">
-            {(() => {
-              const grouped = filterPersonalRecords(
-                personalStatsData,
-                statsClienteFilter,
-                statsEstadoFilter,
-                statsAgenteFilter
-              ).reduce((acc, registro) => {
-                const key = registro.cliente ?? 'Sin cliente';
-                if (!acc[key]) {
-                  acc[key] = [];
-                }
-                acc[key].push(registro);
-                return acc;
-              }, {} as Record<string, PersonalRecord[]>);
+            <div className="client-cards">
+              {(() => {
+                const grouped = baseFilteredPersonal.reduce((acc, registro) => {
+                  const key = registro.cliente ?? 'Sin cliente';
+                  if (!acc[key]) {
+                    acc[key] = [];
+                  }
+                  acc[key].push(registro);
+                  return acc;
+                }, {} as Record<string, PersonalRecord[]>);
 
-              return Object.entries(grouped).map(([clienteNombre, registros]) => {
-                const counts = computePersonalStats(registros);
-                return (
-                  <div key={clienteNombre} className="client-card">
-                    <header>
-                      <h4>{clienteNombre}</h4>
-                      <span>{counts.total} en total{counts.otros > 0 ? ` · ${counts.otros} sin estado` : ''}</span>
-                    </header>
-                    <div className="client-card__stats">
-                      <div>
-                        <small>Activos</small>
-                        <strong>{counts.activo}</strong>
-                      </div>
-                      <div>
-                        <small>Baja</small>
-                        <strong>{counts.baja}</strong>
-                      </div>
-                      <div>
-                        <small>Suspendido</small>
-                        <strong>{counts.suspendido}</strong>
+                return Object.entries(grouped).map(([clienteNombre, registros]) => {
+                  const counts = computePersonalStats(registros);
+                  return (
+                    <div key={clienteNombre} className="client-card">
+                      <header>
+                        <h4>{clienteNombre}</h4>
+                        <span>
+                          {counts.total} en total{counts.otros > 0 ? ` · ${counts.otros} sin estado` : ''}
+                        </span>
+                      </header>
+                      <div className="client-card__stats">
+                        <div>
+                          <small>Activos</small>
+                          <strong>{counts.activo}</strong>
+                        </div>
+                        <div>
+                          <small>Baja</small>
+                          <strong>{counts.baja}</strong>
+                        </div>
+                        <div>
+                          <small>Suspendido</small>
+                          <strong>{counts.suspendido}</strong>
+                        </div>
                       </div>
                     </div>
-                  </div>
-                );
-              });
-            })()}
+                  );
+                });
+              })()}
+            </div>
           </div>
-        </div>
+
+          <div className="summary-panel secondary-panels">
+            <div className="secondary-panels__header">
+              <h3>Fidelización 1</h3>
+              <span>{fidelizacionGroupStats.total} en total</span>
+            </div>
+            <div className="client-cards fidelizacion-cards">
+              {fidelizacionUserStats.map(({ user, stats }) => (
+                <div key={user.id} className="client-card">
+                  <header>
+                    <h4>{user.label}</h4>
+                    <span>
+                      {stats.total} en total
+                      {stats.otros > 0 ? ` · ${stats.otros} sin estado` : ''}
+                    </span>
+                  </header>
+                  <div className="client-card__stats">
+                    <div>
+                      <small>Activos</small>
+                      <strong>{stats.activo}</strong>
+                    </div>
+                    <div>
+                      <small>Baja</small>
+                      <strong>{stats.baja}</strong>
+                    </div>
+                    <div>
+                      <small>Suspendido</small>
+                      <strong>{stats.suspendido}</strong>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+          <div className="summary-panel secondary-panels">
+            <h3>Fidelización 2</h3>
+            <p>Espacio reservado para métricas de fidelización. Definí aquí lo que quieras seguir.</p>
+          </div>
+            <div className="summary-panel secondary-panels">
+            <h3>Expansión 1</h3>
+            <p>Espacio reservado para métricas de expansión. Definí aquí lo que quieras seguir.</p>
+          </div>
         </>
       ) : null}
 
@@ -8410,32 +8500,34 @@ const PersonalPage: React.FC = () => {
       { header: 'Dueño observaciones', resolve: (registro) => registro.duenoObservaciones ?? '' },
     ];
 
-    const headerRow = columns.map((column) => column.header);
-    const valueRows = dataset.map((registro) =>
+    const sanitizeCell = (raw: string): string => {
+      const cleaned = raw.replace(/[\t\r\n]+/g, ' ').trim();
+      if (/^\d+$/.test(cleaned) && (cleaned.length >= 10 || cleaned.startsWith('0'))) {
+        // Prefijo invisible (word joiner) para que Excel lo trate como texto sin mostrar comillas ni signo igual
+        return `\u2060${cleaned}`;
+      }
+      return cleaned;
+    };
+
+    const rows = dataset.map((registro) =>
       columns.map((column) => {
         const value = column.resolve(registro);
-        return value === null || value === undefined ? '' : String(value);
+        const text = value === null || value === undefined ? '' : String(value);
+        return sanitizeCell(text);
       })
     );
 
-    const csv = [headerRow, ...valueRows]
-      .map((row) =>
-        row
-          .map((cell) => {
-            if (cell.includes('"') || cell.includes(',') || cell.includes('\n') || cell.includes('\r')) {
-              return `"${cell.replace(/"/g, '""')}"`;
-            }
-            return cell;
-          })
-          .join(',')
-      )
+    const headerRow = columns.map((column) => column.header);
+
+    const tsv = [headerRow, ...rows]
+      .map((row) => row.join('\t'))
       .join('\n');
 
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const blob = new Blob([tsv], { type: 'application/vnd.ms-excel' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `personal-${Date.now()}.csv`;
+    link.download = `personal-${Date.now()}.xls`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -8598,7 +8690,7 @@ const PersonalPage: React.FC = () => {
           Limpiar
         </button>
         <button type="button" className="secondary-action" onClick={handleExportCsv}>
-          Exportar CSV
+          Exportar Excel
         </button>
         <button
           className="primary-action"
