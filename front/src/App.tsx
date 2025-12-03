@@ -4598,29 +4598,29 @@ const DashboardPage: React.FC<{ showPersonalPanel?: boolean }> = ({ showPersonal
   const apiBaseUrl = useMemo(() => resolveApiBaseUrl(), []);
   const fidelizacion1Users = useMemo(
     () => [
-      { id: 'dgonzalez@logisticaargentinasrl.com.ar', label: 'Dario Gonzalez' },
+      { id: 'dgonzalez@logisticaargentinasrl.com.ar', label: 'Dario Gonzales' },
+      { id: 'florenciakind@gmail.com', label: 'Florencia Kindwerler' },
       { id: 'ezequielb@logisticaargentinasrl.com.ar', label: 'Ezequiel Bordon' },
-      { id: 'florenciakind@gmail.com', label: 'Florencia Kind' },
     ],
     []
   );
   const fidelizacion2Users = useMemo(
     () => [
-      { id: 'lmartinez@logisticaargentinasrl.com.ar', label: 'Leandro Martinez' },
+      { id: 'lmartinez@logisticaargentinasrl.com.ar', label: 'Leandro Exequiel Martinez' },
       { id: 'gmino@logisticaargentinasrl.com.ar', label: 'Gerardo Miño' },
+      { id: 'Benitezn@logisticaargentinasrl.com', label: 'Nelson Benitez' },
       { id: 'ceciliaf@logisticaargentinasrl.com.ar', label: 'Cecilia F' },
-      { id: 'Benitezn@logisticaargentinasrl.com', label: 'Benitez N' },
     ],
     []
   );
   const expansionUsers = useMemo(
     () => [
       { id: 'jromero@logisticaargentinasrl.com.ar', label: 'Joel Romero' },
-      { id: 'yasminr@logisticaargentinasrl.com.ar', label: 'Yasmin R' },
-      { id: 'rubenv@logisticaargentinasrl.com.ar', label: 'Ruben V' },
+      { id: 'yasminr@logisticaargentinasrl.com.ar', label: 'Yasmin Roy Nacer' },
+      { id: 'rubenv@logisticaargentinasrl.com.ar', label: 'Ruben Andres Vargas' },
       { id: 'enzoespindola@logisticaargentinasrl.com.ar', label: 'Enzo Espindola' },
-      { id: 'sbogado@logisticaargentinasrl.com.ar', label: 'S. Bogado' },
-      { id: 'jmiranda@logisticaargentinasrl.com.ar', label: 'J. Miranda' },
+      { id: 'sbogado@logisticaargentinasrl.com.ar', label: 'Sofia Bogado' },
+      { id: 'jmiranda@logisticaargentinasrl.com.ar', label: 'Juan Miranda' },
     ],
     []
   );
