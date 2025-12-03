@@ -4017,6 +4017,8 @@ tbody tr:nth-child(even) {
   border-radius: 20px;
   padding: 1.5rem 1.5rem;
   box-shadow: 0 20px 55px rgba(15, 31, 58, 0.18);
+  position: relative;
+  overflow: hidden;
 }
 
 .summary-panel__header {
@@ -4038,18 +4040,18 @@ tbody tr:nth-child(even) {
 }
 
 .summary-card--accent {
-  background: linear-gradient(135deg, #dff1ff, #f3f9ff);
+  background: linear-gradient(135deg, #dff1ff, #f1f7ff);
   border-color: #bddfff;
   color: #0f1f3a;
 }
 
 .summary-card--warning {
-  background: linear-gradient(135deg, #fff3df, #fff8ef);
+  background: linear-gradient(135deg, #fff2e0, #fff7ed);
   border-color: #ffdcb4;
 }
 
 .summary-card--danger {
-  background: linear-gradient(135deg, #ffe2e4, #fff1f2);
+  background: linear-gradient(135deg, #ffe1e5, #fff0f3);
   border-color: #ffcfd5;
 }
 
@@ -4071,6 +4073,12 @@ tbody tr:nth-child(even) {
   border-radius: 14px;
   padding: 1rem;
   box-shadow: 0 16px 36px rgba(15, 31, 58, 0.14);
+  position: relative;
+  overflow: hidden;
+}
+
+.fidelizacion-clients-block {
+  margin-top: 1rem;
 }
 
 .client-card header {
@@ -4117,11 +4125,57 @@ tbody tr:nth-child(even) {
   font-size: 1.2rem;
 }
 
+.client-card__clients {
+  margin-top: 0.5rem;
+}
+
+.client-card__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.3rem 0.6rem;
+  border-radius: 999px;
+  background: #eef3ff;
+  color: #1d3565;
+  font-size: 0.85rem;
+  border: 1px solid rgba(29, 116, 245, 0.12);
+}
+
+.chip--muted {
+  background: #f3f5fa;
+  color: #516277;
+  border-color: #e6ecf5;
+}
+
 .secondary-panels {
   margin-top: 1rem;
   background: rgba(255, 255, 255, 0.9);
   border: 1px dashed #d2dbea;
   box-shadow: none;
+}
+
+.fidelizacion-panel--1 {
+  background: linear-gradient(145deg, rgba(229, 240, 255, 0.95), rgba(210, 226, 255, 0.92));
+  border: 1px solid #c0d6ff;
+  box-shadow: 0 18px 48px rgba(45, 96, 180, 0.18);
+}
+
+.secondary-panels.fidelizacion-panel--2 {
+  background: linear-gradient(145deg, rgba(255, 239, 225, 0.95), rgba(255, 230, 210, 0.9));
+  border: 1px solid #ffd9b8;
+  box-shadow: 0 18px 48px rgba(192, 124, 58, 0.18);
+}
+
+.secondary-panels.expansion-panel {
+  background: linear-gradient(145deg, rgba(226, 245, 235, 0.95), rgba(209, 238, 222, 0.9));
+  border: 1px solid #b9e2c7;
+  box-shadow: 0 18px 48px rgba(52, 132, 92, 0.18);
 }
 
 .secondary-panels h3 {

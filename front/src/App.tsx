@@ -4604,6 +4604,26 @@ const DashboardPage: React.FC<{ showPersonalPanel?: boolean }> = ({ showPersonal
     ],
     []
   );
+  const fidelizacion2Users = useMemo(
+    () => [
+      { id: 'lmartinez@logisticaargentinasrl.com.ar', label: 'Leandro Martinez' },
+      { id: 'gmino@logisticaargentinasrl.com.ar', label: 'Gerardo Miño' },
+      { id: 'ceciliaf@logisticaargentinasrl.com.ar', label: 'Cecilia F' },
+      { id: 'Benitezn@logisticaargentinasrl.com', label: 'Benitez N' },
+    ],
+    []
+  );
+  const expansionUsers = useMemo(
+    () => [
+      { id: 'jromero@logisticaargentinasrl.com.ar', label: 'Joel Romero' },
+      { id: 'yasminr@logisticaargentinasrl.com.ar', label: 'Yasmin R' },
+      { id: 'rubenv@logisticaargentinasrl.com.ar', label: 'Ruben V' },
+      { id: 'enzoespindola@logisticaargentinasrl.com.ar', label: 'Enzo Espindola' },
+      { id: 'sbogado@logisticaargentinasrl.com.ar', label: 'S. Bogado' },
+      { id: 'jmiranda@logisticaargentinasrl.com.ar', label: 'J. Miranda' },
+    ],
+    []
+  );
   const matchesFidelizacionUser = useCallback(
     (registro: PersonalRecord, targetLabel: string) => {
       const normalizedTarget = targetLabel.trim().toLowerCase();
@@ -4918,6 +4938,99 @@ const DashboardPage: React.FC<{ showPersonalPanel?: boolean }> = ({ showPersonal
     return computePersonalStats(groupRecords);
   }, [baseFilteredPersonal, computePersonalStats, fidelizacion1Users, matchesFidelizacionUser]);
 
+  const fidelizacionClientGroups = useMemo(() => {
+    const records = baseFilteredPersonal.filter((registro) =>
+      fidelizacion1Users.some((user) => matchesFidelizacionUser(registro, user.label))
+    );
+    const grouped = records.reduce<Record<string, PersonalRecord[]>>((acc, registro) => {
+      const key = registro.cliente ?? 'Sin cliente';
+      if (!acc[key]) {
+        acc[key] = [];
+      }
+      acc[key].push(registro);
+      return acc;
+    }, {});
+
+    return Object.entries(grouped).map(([clienteNombre, registros]) => ({
+      clienteNombre,
+      stats: computePersonalStats(registros),
+    }));
+  }, [baseFilteredPersonal, fidelizacion1Users, matchesFidelizacionUser, computePersonalStats]);
+
+  const fidelizacion2UserStats = useMemo(
+    () =>
+      fidelizacion2Users.map((user) => {
+        const records = baseFilteredPersonal.filter((registro) =>
+          matchesFidelizacionUser(registro, user.label)
+        );
+        return { user, stats: computePersonalStats(records) };
+      }),
+    [baseFilteredPersonal, computePersonalStats, fidelizacion2Users, matchesFidelizacionUser]
+  );
+
+  const fidelizacion2GroupStats = useMemo(() => {
+    const groupRecords = baseFilteredPersonal.filter((registro) =>
+      fidelizacion2Users.some((user) => matchesFidelizacionUser(registro, user.label))
+    );
+    return computePersonalStats(groupRecords);
+  }, [baseFilteredPersonal, computePersonalStats, fidelizacion2Users, matchesFidelizacionUser]);
+
+  const fidelizacion2ClientGroups = useMemo(() => {
+    const records = baseFilteredPersonal.filter((registro) =>
+      fidelizacion2Users.some((user) => matchesFidelizacionUser(registro, user.label))
+    );
+    const grouped = records.reduce<Record<string, PersonalRecord[]>>((acc, registro) => {
+      const key = registro.cliente ?? 'Sin cliente';
+      if (!acc[key]) {
+        acc[key] = [];
+      }
+      acc[key].push(registro);
+      return acc;
+    }, {});
+
+    return Object.entries(grouped).map(([clienteNombre, registros]) => ({
+      clienteNombre,
+      stats: computePersonalStats(registros),
+    }));
+  }, [baseFilteredPersonal, fidelizacion2Users, matchesFidelizacionUser, computePersonalStats]);
+
+  const expansionUserStats = useMemo(
+    () =>
+      expansionUsers.map((user) => {
+        const records = baseFilteredPersonal.filter((registro) =>
+          matchesFidelizacionUser(registro, user.label)
+        );
+        return { user, stats: computePersonalStats(records) };
+      }),
+    [baseFilteredPersonal, computePersonalStats, expansionUsers, matchesFidelizacionUser]
+  );
+
+  const expansionGroupStats = useMemo(() => {
+    const groupRecords = baseFilteredPersonal.filter((registro) =>
+      expansionUsers.some((user) => matchesFidelizacionUser(registro, user.label))
+    );
+    return computePersonalStats(groupRecords);
+  }, [baseFilteredPersonal, computePersonalStats, expansionUsers, matchesFidelizacionUser]);
+
+  const expansionClientGroups = useMemo(() => {
+    const records = baseFilteredPersonal.filter((registro) =>
+      expansionUsers.some((user) => matchesFidelizacionUser(registro, user.label))
+    );
+    const grouped = records.reduce<Record<string, PersonalRecord[]>>((acc, registro) => {
+      const key = registro.cliente ?? 'Sin cliente';
+      if (!acc[key]) {
+        acc[key] = [];
+      }
+      acc[key].push(registro);
+      return acc;
+    }, {});
+
+    return Object.entries(grouped).map(([clienteNombre, registros]) => ({
+      clienteNombre,
+      stats: computePersonalStats(registros),
+    }));
+  }, [baseFilteredPersonal, expansionUsers, matchesFidelizacionUser, computePersonalStats]);
+
   return (
     <DashboardLayout
       title={resolvedTitle}
@@ -5052,7 +5165,7 @@ const DashboardPage: React.FC<{ showPersonalPanel?: boolean }> = ({ showPersonal
             </div>
           </div>
 
-          <div className="summary-panel secondary-panels">
+          <div className="summary-panel secondary-panels fidelizacion-panel fidelizacion-panel--1">
             <div className="secondary-panels__header">
               <h3>Fidelización 1</h3>
               <span>{fidelizacionGroupStats.total} en total</span>
@@ -5081,17 +5194,218 @@ const DashboardPage: React.FC<{ showPersonalPanel?: boolean }> = ({ showPersonal
                       <strong>{stats.suspendido}</strong>
                     </div>
                   </div>
+                  <div className="client-card__clients">
+                    <small>Clientes</small>
+                    <div className="client-card__chips">
+                      {(() => {
+                        const grouped = baseFilteredPersonal
+                          .filter((registro) => matchesFidelizacionUser(registro, user.label))
+                          .reduce<Record<string, number>>((acc, registro) => {
+                            const key = registro.cliente ?? 'Sin cliente';
+                            acc[key] = (acc[key] ?? 0) + 1;
+                            return acc;
+                          }, {});
+                        const entries = Object.entries(grouped);
+                        if (entries.length === 0) {
+                          return <span className="chip chip--muted">Sin clientes</span>;
+                        }
+                        return entries.map(([cliente, total]) => (
+                          <span key={cliente} className="chip">
+                            {cliente} · {total}
+                          </span>
+                        ));
+                      })()}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div className="client-cards fidelizacion-cards fidelizacion-clients-block">
+              {fidelizacionClientGroups.map(({ clienteNombre, stats }) => (
+                <div key={clienteNombre} className="client-card">
+                  <header>
+                    <h4>{clienteNombre}</h4>
+                    <span>
+                      {stats.total} en total{stats.otros > 0 ? ` · ${stats.otros} sin estado` : ''}
+                    </span>
+                  </header>
+                  <div className="client-card__stats">
+                    <div>
+                      <small>Activos</small>
+                      <strong>{stats.activo}</strong>
+                    </div>
+                    <div>
+                      <small>Baja</small>
+                      <strong>{stats.baja}</strong>
+                    </div>
+                    <div>
+                      <small>Suspendido</small>
+                      <strong>{stats.suspendido}</strong>
+                    </div>
+                  </div>
                 </div>
               ))}
             </div>
           </div>
-          <div className="summary-panel secondary-panels">
+          <div className="summary-panel secondary-panels fidelizacion-panel fidelizacion-panel--2">
             <h3>Fidelización 2</h3>
-            <p>Espacio reservado para métricas de fidelización. Definí aquí lo que quieras seguir.</p>
+            <p style={{ marginTop: 0 }}>{fidelizacion2GroupStats.total} en total</p>
+            <div className="client-cards fidelizacion-cards">
+              {fidelizacion2UserStats.map(({ user, stats }) => (
+                <div key={user.id} className="client-card">
+                  <header>
+                    <h4>{user.label}</h4>
+                    <span>
+                      {stats.total} en total
+                      {stats.otros > 0 ? ` · ${stats.otros} sin estado` : ''}
+                    </span>
+                  </header>
+                  <div className="client-card__stats">
+                    <div>
+                      <small>Activos</small>
+                      <strong>{stats.activo}</strong>
+                    </div>
+                    <div>
+                      <small>Baja</small>
+                      <strong>{stats.baja}</strong>
+                    </div>
+                    <div>
+                      <small>Suspendido</small>
+                      <strong>{stats.suspendido}</strong>
+                    </div>
+                  </div>
+                  <div className="client-card__clients">
+                    <small>Clientes</small>
+                    <div className="client-card__chips">
+                      {(() => {
+                        const grouped = baseFilteredPersonal
+                          .filter((registro) => matchesFidelizacionUser(registro, user.label))
+                          .reduce<Record<string, number>>((acc, registro) => {
+                            const key = registro.cliente ?? 'Sin cliente';
+                            acc[key] = (acc[key] ?? 0) + 1;
+                            return acc;
+                          }, {});
+                        const entries = Object.entries(grouped);
+                        if (entries.length === 0) {
+                          return <span className="chip chip--muted">Sin clientes</span>;
+                        }
+                        return entries.map(([cliente, total]) => (
+                          <span key={cliente} className="chip">
+                            {cliente} · {total}
+                          </span>
+                        ));
+                      })()}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div className="client-cards fidelizacion-cards fidelizacion-clients-block">
+              {fidelizacion2ClientGroups.map(({ clienteNombre, stats }) => (
+                <div key={clienteNombre} className="client-card">
+                  <header>
+                    <h4>{clienteNombre}</h4>
+                    <span>
+                      {stats.total} en total{stats.otros > 0 ? ` · ${stats.otros} sin estado` : ''}
+                    </span>
+                  </header>
+                  <div className="client-card__stats">
+                    <div>
+                      <small>Activos</small>
+                      <strong>{stats.activo}</strong>
+                    </div>
+                    <div>
+                      <small>Baja</small>
+                      <strong>{stats.baja}</strong>
+                    </div>
+                    <div>
+                      <small>Suspendido</small>
+                      <strong>{stats.suspendido}</strong>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
           </div>
-            <div className="summary-panel secondary-panels">
+          <div className="summary-panel secondary-panels expansion-panel">
             <h3>Expansión 1</h3>
-            <p>Espacio reservado para métricas de expansión. Definí aquí lo que quieras seguir.</p>
+            <p style={{ marginTop: 0 }}>{expansionGroupStats.total} en total</p>
+            <div className="client-cards fidelizacion-cards">
+              {expansionUserStats.map(({ user, stats }) => (
+                <div key={user.id} className="client-card">
+                  <header>
+                    <h4>{user.label}</h4>
+                    <span>
+                      {stats.total} en total
+                      {stats.otros > 0 ? ` · ${stats.otros} sin estado` : ''}
+                    </span>
+                  </header>
+                  <div className="client-card__stats">
+                    <div>
+                      <small>Activos</small>
+                      <strong>{stats.activo}</strong>
+                    </div>
+                    <div>
+                      <small>Baja</small>
+                      <strong>{stats.baja}</strong>
+                    </div>
+                    <div>
+                      <small>Suspendido</small>
+                      <strong>{stats.suspendido}</strong>
+                    </div>
+                  </div>
+                  <div className="client-card__clients">
+                    <small>Clientes</small>
+                    <div className="client-card__chips">
+                      {(() => {
+                        const grouped = baseFilteredPersonal
+                          .filter((registro) => matchesFidelizacionUser(registro, user.label))
+                          .reduce<Record<string, number>>((acc, registro) => {
+                            const key = registro.cliente ?? 'Sin cliente';
+                            acc[key] = (acc[key] ?? 0) + 1;
+                            return acc;
+                          }, {});
+                        const entries = Object.entries(grouped);
+                        if (entries.length === 0) {
+                          return <span className="chip chip--muted">Sin clientes</span>;
+                        }
+                        return entries.map(([cliente, total]) => (
+                          <span key={cliente} className="chip">
+                            {cliente} · {total}
+                          </span>
+                        ));
+                      })()}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div className="client-cards fidelizacion-cards fidelizacion-clients-block">
+              {expansionClientGroups.map(({ clienteNombre, stats }) => (
+                <div key={clienteNombre} className="client-card">
+                  <header>
+                    <h4>{clienteNombre}</h4>
+                    <span>
+                      {stats.total} en total{stats.otros > 0 ? ` · ${stats.otros} sin estado` : ''}
+                    </span>
+                  </header>
+                  <div className="client-card__stats">
+                    <div>
+                      <small>Activos</small>
+                      <strong>{stats.activo}</strong>
+                    </div>
+                    <div>
+                      <small>Baja</small>
+                      <strong>{stats.baja}</strong>
+                    </div>
+                    <div>
+                      <small>Suspendido</small>
+                      <strong>{stats.suspendido}</strong>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
           </div>
         </>
       ) : null}
