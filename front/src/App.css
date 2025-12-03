@@ -1617,6 +1617,28 @@ tbody tr:nth-child(even) {
   box-shadow: none;
 }
 
+.danger-action {
+  border: 1px solid #fca5a5;
+  background: #fef2f2;
+  color: #b42318;
+  border-radius: 12px;
+  padding: 0.7rem 1.1rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color 0.2s ease, box-shadow 0.2s ease, color 0.2s ease;
+}
+
+.danger-action:hover {
+  background: #ffe4e6;
+  box-shadow: 0 8px 20px rgba(220, 38, 38, 0.12);
+}
+
+.danger-action:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
 .secondary-action--add {
   align-self: end;
 }

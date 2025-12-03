@@ -1000,12 +1000,43 @@ const CHAT_BADGE_UPDATED_EVENT = 'dashboard-chat:badge-updated';
 const CHAT_LAST_READ_STORAGE_KEY = 'dashboard-chat:last-read';
 const CHAT_LAST_READ_UPDATED_EVENT = 'dashboard-chat:last-read-updated';
 const WORKFLOW_DELETE_HISTORY_KEY = 'workflow:delete-history';
+const SOLICITUD_CREATED_CACHE_KEY = 'personal:solicitudes:createdAt';
 
 const buildPersonalFiltersStorageKey = (userId: number | null | undefined): string | null => {
   if (userId == null) {
     return null;
   }
   return `personal:filters:${userId}`;
+};
+
+const RECHAZADOS_STORAGE_KEY = 'personal:rechazados';
+const readRejectedIds = (): Set<number> => {
+  if (typeof window === 'undefined') {
+    return new Set();
+  }
+  try {
+    const raw = window.localStorage.getItem(RECHAZADOS_STORAGE_KEY);
+    if (!raw) {
+      return new Set();
+    }
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) {
+      return new Set();
+    }
+    return new Set(parsed.map((value) => Number(value)).filter((id) => Number.isFinite(id)));
+  } catch {
+    return new Set();
+  }
+};
+const writeRejectedIds = (ids: Set<number>) => {
+  if (typeof window === 'undefined') {
+    return;
+  }
+  try {
+    window.localStorage.setItem(RECHAZADOS_STORAGE_KEY, JSON.stringify(Array.from(ids)));
+  } catch {
+    // ignore
+  }
 };
 
 type StoredPersonalFilters = {
@@ -1042,6 +1073,45 @@ const readStoredPersonalFilters = (storageKey: string | null): StoredPersonalFil
     };
   } catch {
     return {};
+  }
+};
+
+const readSolicitudCreatedCache = (): Map<number, string> => {
+  if (typeof window === 'undefined') {
+    return new Map();
+  }
+  try {
+    const raw = window.localStorage.getItem(SOLICITUD_CREATED_CACHE_KEY);
+    if (!raw) {
+      return new Map();
+    }
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === 'object') {
+      const entries = Object.entries(parsed)
+        .map(([key, value]) => [Number(key), String(value)] as [number, string])
+        .filter(([id, value]) => Number.isFinite(id) && value.trim().length > 0);
+      return new Map(entries);
+    }
+  } catch {
+    // ignore
+  }
+  return new Map();
+};
+
+const writeSolicitudCreatedCache = (cache: Map<number, string>) => {
+  if (typeof window === 'undefined') {
+    return;
+  }
+  try {
+    const payload: Record<string, string> = {};
+    cache.forEach((value, key) => {
+      if (value) {
+        payload[String(key)] = value;
+      }
+    });
+    window.localStorage.setItem(SOLICITUD_CREATED_CACHE_KEY, JSON.stringify(payload));
+  } catch {
+    // ignore
   }
 };
 
@@ -6507,6 +6577,12 @@ const CreateReclamoPage: React.FC = () => {
 
     return () => controller.abort();
   }, [apiBaseUrl]);
+
+  useEffect(() => {
+    if (!meta?.estados || meta.estados.length === 0) {
+      return;
+    }
+  }, [meta?.estados]);
 
   useEffect(() => {
     if (!meta) {
@@ -12945,11 +13021,103 @@ const ApprovalsRequestsPage: React.FC = () => {
   const actorHeaders = useMemo(() => buildActorHeaders(authUser), [authUser]);
   const [activeTab, setActiveTab] = useState<'list' | 'altas' | 'combustible' | 'aumento_combustible' | 'adelanto' | 'poliza'>('list');
   const [meta, setMeta] = useState<PersonalMeta | null>(null);
+  const [rejectedIds, setRejectedIds] = useState<Set<number>>(() => readRejectedIds());
+  const [solicitudCreatedCache, setSolicitudCreatedCache] = useState<Map<number, string>>(
+    () => readSolicitudCreatedCache()
+  );
   const allowedAltaPerfiles = useMemo(() => {
     const perfiles = meta?.perfiles ?? [];
     const filtered = perfiles.filter((perfil) => perfil.value !== 2);
     return filtered.length > 0 ? filtered : perfiles;
   }, [meta?.perfiles]);
+  const resolveSolicitudAgenteId = useCallback((detail: PersonalDetail | PersonalRecord | null | undefined) => {
+    if (!detail) {
+      return null;
+    }
+    const fromDetail = detail.agenteId ?? (detail as any)?.agente_id ?? null;
+    if (fromDetail != null && !Number.isNaN(Number(fromDetail))) {
+      return Number(fromDetail);
+    }
+    const data = detail.solicitudData as { form?: { agenteId?: string | number | null } } | undefined;
+    const fromForm = data?.form?.agenteId ?? null;
+    if (fromForm != null && !Number.isNaN(Number(fromForm))) {
+      return Number(fromForm);
+    }
+    return null;
+  }, []);
+  const resolveSolicitudFullName = useCallback((detail: PersonalDetail | PersonalRecord | null | undefined) => {
+    if (!detail) {
+      return '';
+    }
+    const parts = [detail.nombres ?? (detail as any)?.nombre, detail.apellidos];
+    const joined = parts.filter((part) => part && String(part).trim().length > 0).join(' ').trim();
+    const nombreAlt = (detail as PersonalRecord).nombre ?? (detail as any)?.nombre ?? '';
+    return joined || nombreAlt || '';
+  }, []);
+  const sendRejectionNotification = useCallback(
+    async (detail: PersonalDetail | PersonalRecord) => {
+      const targetUserId = resolveSolicitudAgenteId(detail);
+      if (!targetUserId) {
+        return;
+      }
+      const personaNombre = resolveSolicitudFullName(detail);
+      const message = personaNombre
+        ? `La solicitud de ${personaNombre} fue rechazada.`
+        : 'Una de tus solicitudes fue rechazada.';
+      try {
+        await fetch(`${apiBaseUrl}/api/notificaciones`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...actorHeaders,
+          },
+          body: JSON.stringify({
+            userId: targetUserId,
+            message,
+            personaId: detail.id,
+            personaNombre,
+            metadata: {
+              persona_full_name: personaNombre || null,
+              agente_nombre: authUser?.name ?? null,
+            },
+          }),
+        });
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.error('Error enviando notificación de rechazo', err);
+      }
+    },
+    [actorHeaders, apiBaseUrl, authUser?.name, resolveSolicitudAgenteId, resolveSolicitudFullName]
+  );
+  const isExplicitRejection = useCallback(
+    (estadoId?: number | null, estado?: string | null) => {
+      const normalizedEstado = (estado ?? '').toLowerCase();
+      if (normalizedEstado.includes('rechaz')) {
+        return true;
+      }
+      if (estadoId && meta?.estados) {
+        const match = meta.estados.find((item) => Number(item.id) === Number(estadoId));
+        const matchNombre = (match?.nombre ?? '').toLowerCase();
+        if (matchNombre.includes('rechaz')) {
+          return true;
+        }
+      }
+      return false;
+    },
+    [meta?.estados]
+  );
+  const resolveEstadoNombre = (estadoId?: number | null, estado?: string | null) => {
+    const normalized = (estado ?? '').trim();
+    if (normalized) {
+      return normalized;
+    }
+    if (!meta?.estados || estadoId == null) {
+      return normalized || null;
+    }
+    const match = meta.estados.find((item) => Number(item.id) === Number(estadoId));
+    const matchNombre = (match?.nombre ?? '').trim();
+    return matchNombre || null;
+  };
   const [loadingMeta, setLoadingMeta] = useState(true);
   const [metaError, setMetaError] = useState<string | null>(null);
   const [backendSolicitudes, setBackendSolicitudes] = useState<PersonalRecord[]>([]);
@@ -12989,14 +13157,36 @@ const ApprovalsRequestsPage: React.FC = () => {
     const rawCreated = resolveRawCreated();
     const parsed = rawCreated ? new Date(rawCreated) : null;
     const parsedValid = parsed && !Number.isNaN(parsed.getTime());
-    const fallbackNowIso = new Date().toISOString();
-    const createdAt = parsedValid ? parsed.toISOString() : rawCreated ?? fallbackNowIso;
-    const createdAtLabel = parsedValid
-      ? parsed.toLocaleString('es-AR')
-      : rawCreated ?? new Date(fallbackNowIso).toLocaleString('es-AR');
+    let resolvedCreated = parsedValid ? parsed.toISOString() : rawCreated ?? null;
+    if (!resolvedCreated && Number.isFinite(Number(record.id))) {
+      const cached = solicitudCreatedCache.get(Number(record.id));
+      if (cached) {
+        resolvedCreated = cached;
+      } else {
+        const nowIso = new Date().toISOString();
+        resolvedCreated = nowIso;
+        setSolicitudCreatedCache((prev) => {
+          const next = new Map(prev);
+          next.set(Number(record.id), nowIso);
+          writeSolicitudCreatedCache(next);
+          return next;
+        });
+      }
+    }
+    const createdAt = resolvedCreated;
+    const createdAtLabel = createdAt
+      ? new Date(createdAt).toLocaleString('es-AR')
+      : null;
+    const isLocallyRejected = rejectedIds.has(Number(record.id));
+    const estadoNombre =
+      resolveEstadoNombre(record.estadoId, record.estado) ??
+      ((isExplicitRejection(record.estadoId, record.estado) || isLocallyRejected) && record.esSolicitud
+        ? 'Rechazado'
+        : null);
 
     return {
       ...record,
+      estado: estadoNombre ?? record.estado ?? null,
       createdAt,
       createdAtLabel,
     };
@@ -13023,6 +13213,12 @@ const ApprovalsRequestsPage: React.FC = () => {
 
     return [];
   });
+  useEffect(() => {
+    writeRejectedIds(rejectedIds);
+  }, [rejectedIds]);
+  useEffect(() => {
+    writeSolicitudCreatedCache(solicitudCreatedCache);
+  }, [solicitudCreatedCache]);
   const [solicitudesLoading, setSolicitudesLoading] = useState(true);
   const [solicitudesError, setSolicitudesError] = useState<string | null>(null);
   const [solicitudesSearchTerm, setSolicitudesSearchTerm] = useState('');
@@ -13358,8 +13554,16 @@ const ApprovalsRequestsPage: React.FC = () => {
         }
 
         const payload = (await response.json()) as { data: PersonalDetail };
+        const resolvedEstado =
+          resolveEstadoNombre(payload.data.estadoId, payload.data.estado) ??
+          ((isExplicitRejection(payload.data.estadoId, payload.data.estado) ||
+            rejectedIds.has(payload.data.id)) &&
+          payload.data.esSolicitud
+            ? 'Rechazado'
+            : payload.data.estado ?? null);
         setReviewPersonaDetail({
           ...payload.data,
+          estado: resolvedEstado,
           comments: Array.isArray(payload.data.comments) ? payload.data.comments : [],
           documentsDownloadAllUrl: payload.data.documentsDownloadAllUrl ?? null,
           documentsDownloadAllAbsoluteUrl: payload.data.documentsDownloadAllAbsoluteUrl ?? null,
@@ -13429,6 +13633,27 @@ const ApprovalsRequestsPage: React.FC = () => {
 
     return () => controller.abort();
   }, [apiBaseUrl]);
+
+  useEffect(() => {
+    if (!meta?.estados || meta.estados.length === 0) {
+      return;
+    }
+
+    setBackendSolicitudes((prev) => prev.map((item) => normalizeSolicitudRecord(item)));
+    setLocalSolicitudes((prev) => prev.map((item) => normalizeSolicitudRecord(item)));
+    setReviewPersonaDetail((prev) =>
+      prev
+        ? {
+            ...prev,
+            estado:
+              resolveEstadoNombre(prev.estadoId, prev.estado) ??
+              ((isExplicitRejection(prev.estadoId, prev.estado) || rejectedIds.has(prev.id)) && prev.esSolicitud
+                ? 'Rechazado'
+                : prev.estado ?? null),
+          }
+        : prev
+    );
+  }, [meta?.estados, isExplicitRejection, resolveEstadoNombre, rejectedIds]);
 
   useEffect(() => {
     if (!authUser?.id || personaIdFromQuery) {
@@ -14227,7 +14452,7 @@ const sucursalOptions = useMemo(() => {
     }
   };
 
-  const handleApproveSolicitud = async () => {
+  const handleApproveSolicitud = async (forcedEstadoId?: number) => {
     if (!reviewPersonaDetail) {
       return;
     }
@@ -14252,10 +14477,12 @@ const sucursalOptions = useMemo(() => {
         userId: authUser?.id ?? null,
       };
 
-      if (approvalEstadoId) {
-        payloadBody.estadoId = Number(approvalEstadoId);
-      } else if (resolvedActivoEstadoId) {
-        payloadBody.estadoId = Number(resolvedActivoEstadoId);
+      const effectiveEstadoId =
+        forcedEstadoId ??
+        (approvalEstadoId ? Number(approvalEstadoId) : resolvedActivoEstadoId ? Number(resolvedActivoEstadoId) : null);
+
+      if (effectiveEstadoId) {
+        payloadBody.estadoId = effectiveEstadoId;
       }
 
       const response = await fetch(`${apiBaseUrl}/api/personal/${reviewPersonaDetail.id}/aprobar`, {
@@ -14293,18 +14520,15 @@ const sucursalOptions = useMemo(() => {
       };
 
       const resolvedEstadoId = (() => {
-        if (approvalEstadoId) {
-          return Number(approvalEstadoId);
-        }
-        if (resolvedActivoEstadoId) {
-          return Number(resolvedActivoEstadoId);
+        if (effectiveEstadoId) {
+          return effectiveEstadoId;
         }
         return reviewPersonaDetail.estadoId ?? payload.data?.personalRecord?.estadoId ?? null;
       })();
 
       const estadoActualizadoNombre = (() => {
-        if (approvalEstadoId || resolvedActivoEstadoId) {
-          const targetId = approvalEstadoId || resolvedActivoEstadoId;
+        if (effectiveEstadoId) {
+          const targetId = String(effectiveEstadoId);
           return (
             meta?.estados?.find((estado) => String(estado.id) === targetId)?.nombre ??
             payload.data?.personalRecord?.estado ??
@@ -14505,9 +14729,22 @@ const sucursalOptions = useMemo(() => {
       };
     });
 
+      const rejectionMatch = meta?.estados?.find((estado) => {
+        const normalized = (estado.nombre ?? '').trim().toLowerCase();
+        return effectiveEstadoId ? String(estado.id) === String(effectiveEstadoId) : normalized.includes('rechaz');
+      });
+      const isRejection = Boolean(rejectionMatch);
+      if (!isRejection && resolvedPersonalRecord?.id) {
+        setRejectedIds((prev) => {
+          const next = new Set(prev);
+          next.delete(resolvedPersonalRecord.id);
+          return next;
+        });
+      }
+
       setFlash({
         type: 'success',
-        message: payload.message ?? 'Solicitud aprobada correctamente.',
+        message: payload.message ?? (isRejection ? 'Solicitud rechazada correctamente.' : 'Solicitud aprobada correctamente.'),
       });
 
       const personaNombreCompleto =
@@ -14521,19 +14758,21 @@ const sucursalOptions = useMemo(() => {
           ? resolvedPersonalRecord.agente.trim()
           : authUser?.name ?? null;
 
-      window.dispatchEvent(
-        new CustomEvent('celebration:trigger', {
-          detail: {
-            title: '¡Felicitaciones!',
-            message: agenteNombre
-              ? `${agenteNombre}, ¡la solicitud fue aprobada con éxito!`
-              : '¡La solicitud fue aprobada con éxito!',
-            detail: personaNombreCompleto
-              ? `El alta de ${personaNombreCompleto} ya está activa.`
-              : undefined,
-          },
-        })
-      );
+      if (!isRejection) {
+        window.dispatchEvent(
+          new CustomEvent('celebration:trigger', {
+            detail: {
+              title: '¡Felicitaciones!',
+              message: agenteNombre
+                ? `${agenteNombre}, ¡la solicitud fue aprobada con éxito!`
+                : '¡La solicitud fue aprobada con éxito!',
+              detail: personaNombreCompleto
+                ? `El alta de ${personaNombreCompleto} ya está activa.`
+                : undefined,
+            },
+          })
+        );
+      }
 
       window.dispatchEvent(new CustomEvent('notifications:updated'));
 
@@ -14550,6 +14789,132 @@ const sucursalOptions = useMemo(() => {
       setFlash({
         type: 'error',
         message: (err as Error).message ?? 'No se pudo aprobar la solicitud.',
+      });
+    } finally {
+      setApproveLoading(false);
+    }
+  };
+
+  const handleRejectSolicitud = async () => {
+    if (!reviewPersonaDetail) {
+      return;
+    }
+    if (!canManagePersonal) {
+      setFlash({ type: 'error', message: 'Solo los usuarios autorizados pueden aprobar o editar personal.' });
+      return;
+    }
+
+    const estados = meta?.estados ?? [];
+    const rechazoEstadoId = (() => {
+      const match = estados.find((estado) => (estado.nombre ?? '').toLowerCase().includes('rechaz'));
+      if (match?.id) {
+        return Number(match.id);
+      }
+      if (approvalEstadoId) {
+        return Number(approvalEstadoId);
+      }
+      return null;
+    })();
+
+    if (!rechazoEstadoId) {
+      const updatedDetail = {
+        ...reviewPersonaDetail,
+        estado: 'Rechazado',
+        estadoId: null,
+        esSolicitud: true,
+        aprobado: false,
+        aprobadoAt: null,
+        aprobadoPor: null,
+        aprobadoPorId: null,
+        aprobadoPorNombre: null,
+      };
+      setReviewPersonaDetail(updatedDetail);
+      setRejectedIds((prev) => {
+        const next = new Set(prev);
+        next.add(updatedDetail.id);
+        return next;
+      });
+      sendRejectionNotification(updatedDetail);
+      window.dispatchEvent(
+        new CustomEvent('personal:updated', {
+          detail: { persona: updatedDetail },
+        })
+      );
+      window.dispatchEvent(new CustomEvent('notifications:updated'));
+      setFlash({
+        type: 'success',
+        message: 'Solicitud rechazada correctamente.',
+      });
+      return;
+    }
+
+    try {
+      setApproveLoading(true);
+      setFlash(null);
+
+      const response = await fetch(`${apiBaseUrl}/api/personal/${reviewPersonaDetail.id}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          ...actorHeaders,
+        },
+        body: JSON.stringify({ estadoId: rechazoEstadoId }),
+      });
+
+      if (!response.ok) {
+        let message = `Error ${response.status}: ${response.statusText}`;
+        try {
+          const payload = await response.json();
+          if (typeof payload?.message === 'string') {
+            message = payload.message;
+          }
+        } catch {
+          // ignore parse errors
+        }
+        throw new Error(message);
+      }
+
+      const payload = (await response.json()) as { message?: string; data?: PersonalDetail };
+
+      if (payload.data) {
+        const estadoNombre =
+          estados.find((estado) => Number(estado.id) === rechazoEstadoId)?.nombre ??
+          payload.data.estado ??
+          'Rechazado';
+        const updatedDetail = {
+          ...payload.data,
+          estadoId: rechazoEstadoId,
+          estado: estadoNombre,
+          esSolicitud: true,
+          aprobado: false,
+          aprobadoAt: null,
+          aprobadoPor: null,
+          aprobadoPorId: null,
+          aprobadoPorNombre: null,
+        };
+        setReviewPersonaDetail(updatedDetail);
+        setRejectedIds((prev) => {
+          const next = new Set(prev);
+          next.add(updatedDetail.id);
+          return next;
+        });
+        sendRejectionNotification(updatedDetail);
+        window.dispatchEvent(
+          new CustomEvent('personal:updated', {
+            detail: { persona: updatedDetail },
+          })
+        );
+        window.dispatchEvent(new CustomEvent('notifications:updated'));
+      }
+
+      setFlash({
+        type: 'success',
+        message: payload.message ?? 'Solicitud rechazada correctamente.',
+      });
+    } catch (err) {
+      setFlash({
+        type: 'error',
+        message: (err as Error).message ?? 'No se pudo rechazar la solicitud.',
       });
     } finally {
       setApproveLoading(false);
@@ -15356,6 +15721,11 @@ const handleAdelantoFieldChange =
     if (registro.id < 0) {
       setDeletingSolicitudId(registro.id);
       setLocalSolicitudes((prev) => prev.filter((item) => item.id !== registro.id));
+      setRejectedIds((prev) => {
+        const next = new Set(prev);
+        next.delete(registro.id);
+        return next;
+      });
       setDeletingSolicitudId(null);
       setFlash({ type: 'success', message: 'Solicitud eliminada correctamente.' });
       return;
@@ -15383,6 +15753,11 @@ const handleAdelantoFieldChange =
       }
 
       setBackendSolicitudes((prev) => prev.filter((item) => item.id !== registro.id));
+      setRejectedIds((prev) => {
+        const next = new Set(prev);
+        next.delete(registro.id);
+        return next;
+      });
       setFlash({ type: 'success', message: 'Solicitud eliminada correctamente.' });
     } catch (err) {
       window.alert((err as Error).message ?? 'No se pudo eliminar la solicitud.');
@@ -16265,7 +16640,7 @@ const handleAdelantoFieldChange =
                 <button
                   type="button"
                   className="primary-action"
-                  onClick={handleApproveSolicitud}
+                  onClick={() => handleApproveSolicitud()}
                   disabled={
                     approveLoading || reviewPersonaDetail.aprobado || reviewEditMode || !canManagePersonal
                   }
@@ -16280,6 +16655,14 @@ const handleAdelantoFieldChange =
                     : approveLoading
                     ? 'Aprobando...'
                     : 'Aprobar solicitud'}
+                </button>
+                <button
+                  type="button"
+                  className="danger-action"
+                  onClick={handleRejectSolicitud}
+                  disabled={approveLoading || reviewPersonaDetail.aprobado || reviewEditMode || !canManagePersonal}
+                >
+                  Rechazado
                 </button>
               </div>
 
