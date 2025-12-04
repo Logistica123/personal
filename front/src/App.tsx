@@ -13583,6 +13583,10 @@ const ApprovalsRequestsPage: React.FC = () => {
     agenteId: '',
   }));
   const [altaFormDirty, setAltaFormDirty] = useState(false);
+  const [personalLookup, setPersonalLookup] = useState<PersonalRecord[]>([]);
+  const [personalLookupLoading, setPersonalLookupLoading] = useState(false);
+  const [personalLookupError, setPersonalLookupError] = useState<string | null>(null);
+  const [altaLookupTerm, setAltaLookupTerm] = useState('');
 
   useEffect(() => {
     if (!personaIdFromQuery) {
@@ -13617,6 +13621,31 @@ const ApprovalsRequestsPage: React.FC = () => {
     setReviewEditMode(false);
     setAltaFormDirty(false);
     const controller = new AbortController();
+
+    const fetchLookup = async () => {
+      try {
+        setPersonalLookupLoading(true);
+        setPersonalLookupError(null);
+        const response = await fetch(`${apiBaseUrl}/api/personal?includePending=1`, {
+          signal: controller.signal,
+        });
+        if (!response.ok) {
+          throw new Error(`Error ${response.status}: ${response.statusText}`);
+        }
+        const payload = (await response.json()) as { data: PersonalRecord[] };
+        if (!payload || !Array.isArray(payload.data)) {
+          throw new Error('Formato de respuesta inesperado');
+        }
+        setPersonalLookup(payload.data);
+      } catch (err) {
+        if ((err as Error).name === 'AbortError') {
+          return;
+        }
+        setPersonalLookupError((err as Error).message ?? 'No se pudo cargar el listado de personal.');
+      } finally {
+        setPersonalLookupLoading(false);
+      }
+    };
 
     const fetchDetail = async () => {
       try {
@@ -13669,10 +13698,70 @@ const ApprovalsRequestsPage: React.FC = () => {
       }
     };
 
+    fetchLookup();
     fetchDetail();
 
     return () => controller.abort();
   }, [apiBaseUrl, personaIdFromQuery]);
+
+  useEffect(() => {
+    if (personalLookupLoading || personalLookup.length > 0) {
+      return;
+    }
+    const controller = new AbortController();
+    const fetchLookup = async () => {
+      try {
+        setPersonalLookupLoading(true);
+        setPersonalLookupError(null);
+        const response = await fetch(`${apiBaseUrl}/api/personal?includePending=1`, {
+          signal: controller.signal,
+        });
+        if (!response.ok) {
+          throw new Error(`Error ${response.status}: ${response.statusText}`);
+        }
+        const payload = (await response.json()) as { data: PersonalRecord[] };
+        if (!payload || !Array.isArray(payload.data)) {
+          throw new Error('Formato de respuesta inesperado');
+        }
+        setPersonalLookup(payload.data);
+      } catch (err) {
+        if ((err as Error).name === 'AbortError') {
+          return;
+        }
+        setPersonalLookupError((err as Error).message ?? 'No se pudo cargar el listado de personal.');
+      } finally {
+        setPersonalLookupLoading(false);
+      }
+    };
+    fetchLookup();
+    return () => controller.abort();
+  }, [apiBaseUrl, personalLookup.length, personalLookupLoading]);
+
+  const altaLookupResults = useMemo(() => {
+    const term = altaLookupTerm.trim().toLowerCase();
+    if (!term) {
+      return [] as PersonalRecord[];
+    }
+    const scored = personalLookup
+      .map((item) => {
+        const fields = [
+          item.nombre,
+          item.cuil,
+          item.email,
+          item.cliente,
+          item.sucursal,
+          item.unidadDetalle,
+          item.unidad,
+          String(item.id ?? ''),
+        ]
+          .filter(Boolean)
+          .map((v) => String(v).toLowerCase());
+        const match = fields.some((field) => field.includes(term));
+        return match ? item : null;
+      })
+      .filter((item): item is PersonalRecord => Boolean(item));
+    return scored.slice(0, 10);
+  }, [altaLookupTerm, personalLookup]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -13959,19 +14048,6 @@ const sucursalOptions = useMemo(() => {
       }));
     };
 
-  const handleAltaResponsablesChange = (event: React.ChangeEvent<HTMLSelectElement>) => {
-    const selectedValues = Array.from(event.target.selectedOptions)
-      .map((option) => option.value)
-      .filter((value) => value !== '');
-
-    setAltaFormDirty(true);
-    setAltaForm((prev) => ({
-      ...prev,
-      agenteResponsableIds: selectedValues,
-      agenteResponsableId: selectedValues[0] ?? '',
-    }));
-  };
-
   const filesFromEvent = (fileList: FileList | null) => (fileList ? Array.from(fileList) : []);
 
   const buildPersonalUploadRequestInit = useCallback(
@@ -14089,6 +14165,14 @@ const sucursalOptions = useMemo(() => {
     }));
   };
 
+  const handleAltaLookupSelect = (registro: PersonalRecord) => {
+    setAltaLookupTerm('');
+    navigate(`/aprobaciones?personaId=${registro.id}`);
+    setActiveTab('altas');
+    setReviewEditMode(false);
+    setAltaFormDirty(false);
+  };
+
   const handleAltaPerfilChange = (perfilValue: number) => {
     setAltaForm((prev) => ({
       ...prev,
@@ -14172,6 +14256,7 @@ const sucursalOptions = useMemo(() => {
       duenoCuil: form.duenoCuil.trim() || null,
       duenoTelefono: form.duenoTelefono.trim() || null,
       duenoObservaciones: form.duenoObservaciones.trim() || null,
+      esSolicitud: true,
     };
   };
 
@@ -14182,7 +14267,10 @@ const sucursalOptions = useMemo(() => {
       setAltaSubmitting(true);
       setFlash(null);
 
-      const requestPayload = buildAltaRequestPayload(altaForm);
+      const requestPayload = {
+        ...buildAltaRequestPayload(altaForm),
+        esSolicitud: true,
+      };
 
       const response = await fetch(`${apiBaseUrl}/api/personal`, {
         method: 'POST',
@@ -14399,7 +14487,10 @@ const sucursalOptions = useMemo(() => {
       setAltaSubmitting(true);
       setFlash(null);
 
-      const requestPayload = buildAltaRequestPayload(altaForm);
+      const requestPayload = {
+        ...buildAltaRequestPayload(altaForm),
+        esSolicitud: true,
+      };
 
       const response = await fetch(`${apiBaseUrl}/api/personal/${reviewPersonaDetail.id}`, {
         method: 'PUT',
@@ -16288,14 +16379,42 @@ const handleAdelantoFieldChange =
                   label: agente.name ?? `Agente #${agente.id}`,
                 }))
               )}
-              {renderAltaSelect(
-                'Agente responsable',
-                'agenteResponsableId',
-                (meta?.agentes ?? []).map((agente) => ({
-                  value: String(agente.id),
-                  label: agente.name ?? `Agente #${agente.id}`,
-                }))
-              )}
+              <label className="input-control">
+                <span>Agente responsable</span>
+                <div className="checkbox-list" style={{ maxHeight: '8rem', overflowY: 'auto', padding: '0.25rem 0' }}>
+                  {(meta?.agentes ?? []).map((agente) => {
+                    const value = String(agente.id);
+                    const checked = (altaForm.agenteResponsableIds ?? []).includes(value);
+                    return (
+                      <label key={value} style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', padding: '0.15rem 0' }}>
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={() => {
+                            setAltaFormDirty(true);
+                            setAltaForm((prev) => {
+                              const current = new Set(prev.agenteResponsableIds ?? []);
+                              if (current.has(value)) {
+                                current.delete(value);
+                              } else {
+                                current.add(value);
+                              }
+                              const nextIds = Array.from(current);
+                              return {
+                                ...prev,
+                                agenteResponsableIds: nextIds,
+                                agenteResponsableId: nextIds[0] ?? '',
+                              };
+                            });
+                          }}
+                        />
+                        <span>{agente.name ?? `Agente #${agente.id}`}</span>
+                      </label>
+                    );
+                  })}
+                </div>
+                <small>Podés seleccionar uno o varios.</small>
+              </label>
               {renderAltaSelect(
                 'Unidad',
                 'unidadId',
@@ -16996,18 +17115,41 @@ const handleAdelantoFieldChange =
               </label>
               <label className="input-control">
                 <span>Agente responsable</span>
-                <select
-                  multiple
-                  size={Math.max(3, Math.min(6, (meta?.agentes?.length ?? 0) || 3))}
-                  value={altaForm.agenteResponsableIds}
-                  onChange={handleAltaResponsablesChange}
-                >
-                  {(meta?.agentes ?? []).map((agente) => (
-                    <option key={agente.id} value={agente.id}>
-                      {agente.name ?? `Agente #${agente.id}`}
-                    </option>
-                  ))}
-                </select>
+                <div className="checkbox-list" style={{ maxHeight: '8rem', overflowY: 'auto', padding: '0.25rem 0' }}>
+                  {(meta?.agentes ?? []).map((agente) => {
+                    const value = String(agente.id);
+                    const checked = (altaForm.agenteResponsableIds ?? []).includes(value);
+                    return (
+                      <label
+                        key={value}
+                        style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', padding: '0.15rem 0' }}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={() => {
+                            setAltaFormDirty(true);
+                            setAltaForm((prev) => {
+                              const current = new Set(prev.agenteResponsableIds ?? []);
+                              if (current.has(value)) {
+                                current.delete(value);
+                              } else {
+                                current.add(value);
+                              }
+                              const nextIds = Array.from(current);
+                              return {
+                                ...prev,
+                                agenteResponsableIds: nextIds,
+                                agenteResponsableId: nextIds[0] ?? '',
+                              };
+                            });
+                          }}
+                        />
+                        <span>{agente.name ?? `Agente #${agente.id}`}</span>
+                      </label>
+                    );
+                  })}
+                </div>
                 <small>Podés seleccionar uno o varios.</small>
               </label>
               <label className="input-control">
@@ -17159,10 +17301,51 @@ const handleAdelantoFieldChange =
   };
 
   const renderAltasTab = () => {
+    const renderLookupBox = () => (
+      <div className="card" style={{ marginBottom: '1rem' }}>
+        <div className="filters-bar">
+          <div className="filters-grid">
+            <label className="filter-field" style={{ gridColumn: '1 / -1' }}>
+              <span>Buscar personal existente</span>
+              <input
+                type="search"
+                placeholder="Nombre, CUIL, cliente, sucursal o ID"
+                value={altaLookupTerm}
+                onChange={(event) => setAltaLookupTerm(event.target.value)}
+              />
+            </label>
+          </div>
+        </div>
+        {personalLookupLoading ? <p className="form-info">Cargando personal...</p> : null}
+        {personalLookupError ? <p className="form-info form-info--error">{personalLookupError}</p> : null}
+        {altaLookupTerm.trim() && altaLookupResults.length === 0 && !personalLookupLoading ? (
+          <p className="form-info">No se encontraron coincidencias.</p>
+        ) : null}
+        {altaLookupResults.length > 0 ? (
+          <ul className="review-comment-list" style={{ marginTop: '0.5rem' }}>
+            {altaLookupResults.map((item) => (
+              <li key={item.id} className="review-comment-item" style={{ cursor: 'pointer' }} onClick={() => handleAltaLookupSelect(item)}>
+                <div className="review-comment-header">
+                  <span>{item.nombre ?? `Personal #${item.id}`}</span>
+                  <span>{item.cuil ?? '—'}</span>
+                </div>
+                <p style={{ marginBottom: 0, display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
+                  <span>Cliente: {item.cliente ?? '—'}</span>
+                  <span>Sucursal: {item.sucursal ?? '—'}</span>
+                  <span>Perfil: {getPerfilDisplayLabel(item.perfilValue ?? null, item.perfil ?? '—') || '—'}</span>
+                </p>
+              </li>
+            ))}
+          </ul>
+        ) : null}
+      </div>
+    );
+
     if (isReviewMode) {
       if (reviewEditMode && reviewPersonaDetail) {
         return (
           <form className="approvals-form" onSubmit={handleAltaUpdateSubmit}>
+            {renderLookupBox()}
             {renderAltaEditorSections()}
             <div className="form-actions">
               <button type="button" className="secondary-action" onClick={handleCancelAltaEdit} disabled={altaSubmitting}>
@@ -17176,11 +17359,17 @@ const handleAdelantoFieldChange =
         );
       }
 
-      return <div className="approvals-form">{renderReviewSection()}</div>;
+      return (
+        <div className="approvals-form">
+          {renderLookupBox()}
+          {renderReviewSection()}
+        </div>
+      );
     }
 
     return (
       <form className="approvals-form" onSubmit={handleAltaSubmit}>
+        {renderLookupBox()}
         {renderAltaEditorSections()}
         <div className="form-actions">
           <button type="button" className="secondary-action" onClick={() => navigate('/personal')} disabled={altaSubmitting}>
