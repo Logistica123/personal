@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Routes,
   Route,
@@ -786,6 +786,90 @@ const isPersonalEditor = (authUser: AuthUser | null | undefined): boolean => {
 const buildActorHeaders = (authUser: AuthUser | null | undefined): Record<string, string> => {
   const email = normalizeEmail(authUser?.email);
   return email ? { 'X-Actor-Email': email } : {};
+};
+
+// --- Branding (logos configurables) ---
+const DEFAULT_LOGO_SRC = `${process.env.PUBLIC_URL ?? ''}/logo-empresa.png`;
+const BRAND_LOGO_KEY = 'branding.brandLogo';
+const PROMO_LOGO_KEY = 'branding.promoLogo';
+
+type BrandingContextValue = {
+  brandLogoSrc: string;
+  promoLogoSrc: string;
+  setBrandLogo: (src: string | null) => void;
+  setPromoLogo: (src: string | null) => void;
+  resetBranding: () => void;
+};
+
+const BrandingContext = createContext<BrandingContextValue | undefined>(undefined);
+
+const safeReadStorage = (key: string): string | null => {
+  try {
+    return window.localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+};
+
+const BrandingProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const [brandLogoSrc, setBrandLogoSrc] = useState<string>(() => safeReadStorage(BRAND_LOGO_KEY) ?? DEFAULT_LOGO_SRC);
+  const [promoLogoSrc, setPromoLogoSrc] = useState<string>(() => safeReadStorage(PROMO_LOGO_KEY) ?? DEFAULT_LOGO_SRC);
+
+  const persistLogo = useCallback((key: string, setter: (value: string) => void) => {
+    return (value: string | null) => {
+      const nextValue = value ?? DEFAULT_LOGO_SRC;
+      try {
+        if (value) {
+          window.localStorage.setItem(key, value);
+        } else {
+          window.localStorage.removeItem(key);
+        }
+      } catch {
+        // Ignorar errores de almacenamiento (modo incógnito, etc).
+      }
+      setter(nextValue);
+    };
+  }, []);
+
+  const setBrandLogo = useMemo(() => persistLogo(BRAND_LOGO_KEY, setBrandLogoSrc), [persistLogo]);
+  const setPromoLogo = useMemo(() => persistLogo(PROMO_LOGO_KEY, setPromoLogoSrc), [persistLogo]);
+
+  useEffect(() => {
+    // Asegurar que el watermark del chat use el logo configurado
+    document.documentElement.style.setProperty('--chat-watermark', `url(${promoLogoSrc})`);
+  }, [promoLogoSrc]);
+
+  const resetBranding = useCallback(() => {
+    setBrandLogo(null);
+    setPromoLogo(null);
+  }, [setBrandLogo, setPromoLogo]);
+
+  const value = useMemo(
+    () => ({
+      brandLogoSrc,
+      promoLogoSrc,
+      setBrandLogo,
+      setPromoLogo,
+      resetBranding,
+    }),
+    [brandLogoSrc, promoLogoSrc, setBrandLogo, setPromoLogo, resetBranding]
+  );
+
+  return <BrandingContext.Provider value={value}>{children}</BrandingContext.Provider>;
+};
+
+const useBranding = (): BrandingContextValue => {
+  const ctx = useContext(BrandingContext);
+  if (!ctx) {
+    return {
+      brandLogoSrc: DEFAULT_LOGO_SRC,
+      promoLogoSrc: DEFAULT_LOGO_SRC,
+      setBrandLogo: () => undefined,
+      setPromoLogo: () => undefined,
+      resetBranding: () => undefined,
+    };
+  }
+  return ctx;
 };
 
 type NotificationMetadata = {
@@ -1781,6 +1865,7 @@ const LoginPage: React.FC = () => {
   const [rememberMe, setRememberMe] = useState(false);
   const [loading, setLoading] = useState(false);
   const [loginError, setLoginError] = useState<string | null>(null);
+  const { brandLogoSrc, promoLogoSrc } = useBranding();
 
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -1848,7 +1933,7 @@ const LoginPage: React.FC = () => {
     <main className="login-page">
       <section className="login-panel">
         <div className="login-brand">
-          <img src="/logo-empresa.png" alt="Logo de la empresa" className="brand-logo" />
+          <img src={brandLogoSrc} alt="Logo de la empresa" className="brand-logo" />
         </div>
 
         <div className="login-content">
@@ -1926,7 +2011,7 @@ const LoginPage: React.FC = () => {
         <div className="promo-decoration promo-decoration--bottom-right" />
 
         <div className="promo-content">
-          <img src="/logo-empresa.png" alt="Logo de la empresa" className="promo-logo" />
+          <img src={promoLogoSrc} alt="Logo de la empresa" className="promo-logo" />
           <h2>Panel de control fácil de usar para administrar su negocio.</h2>
           <p>
             Optimice la gestión de su negocio con nuestro panel de control
@@ -1958,6 +2043,7 @@ const DashboardLayout: React.FC<{
   const notificationToastTimeoutRef = useRef<number | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
   const lastToastIdRef = useRef<number | null>(null);
+  const { brandLogoSrc } = useBranding();
   const unreadInitializedRef = useRef(false);
   const previousUnreadCountRef = useRef(0);
   const previousLatestNotificationIdRef = useRef<number | null>(null);
@@ -2995,7 +3081,7 @@ const DashboardLayout: React.FC<{
             ×
           </button>
           <div className="sidebar-logo">
-            <img src="/logo-empresa.png" alt="Logo de la empresa" className="brand-logo" />
+            <img src={brandLogoSrc} alt="Logo de la empresa" className="brand-logo" />
           </div>
 
         <NavLink
@@ -3066,9 +3152,9 @@ const DashboardLayout: React.FC<{
           <NavLink to="/documentos" className={({ isActive }) => `sidebar-link${isActive ? ' is-active' : ''}`}>
             Documentos
           </NavLink>
-          <a className="sidebar-link" href="#config" onClick={(event) => event.preventDefault()}>
+          <NavLink to="/configuracion" className={({ isActive }) => `sidebar-link${isActive ? ' is-active' : ''}`}>
             Configuración
-          </a>
+          </NavLink>
           <a className="sidebar-link" href="#ayuda" onClick={(event) => event.preventDefault()}>
             Ayuda
           </a>
@@ -4393,12 +4479,14 @@ const ChatPage: React.FC = () => {
     });
   }, [messagesByContact, playIncomingTone]);
 
+  const { promoLogoSrc } = useBranding();
+
   const watermarkStyle = useMemo(
     () =>
       ({
-        '--chat-watermark': `url(${(process.env.PUBLIC_URL ?? '') + '/logo-empresa.png'})`,
+        '--chat-watermark': `url(${promoLogoSrc})`,
       } as React.CSSProperties),
-    []
+    [promoLogoSrc]
   );
 
   const handleMessagesScroll = useCallback(() => {
@@ -21931,6 +22019,98 @@ const EditClientPage: React.FC = () => {
   );
 };
 
+const ConfigurationPage: React.FC = () => {
+  const { brandLogoSrc, promoLogoSrc, setBrandLogo, setPromoLogo, resetBranding } = useBranding();
+  const [brandPreview, setBrandPreview] = useState(brandLogoSrc);
+  const [promoPreview, setPromoPreview] = useState(promoLogoSrc);
+  const [savingMessage, setSavingMessage] = useState<string | null>(null);
+
+  useEffect(() => {
+    setBrandPreview(brandLogoSrc);
+  }, [brandLogoSrc]);
+
+  useEffect(() => {
+    setPromoPreview(promoLogoSrc);
+  }, [promoLogoSrc]);
+
+  const readFileAsDataUrl = (file: File): Promise<string> =>
+    new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result));
+      reader.onerror = () => reject(reader.error);
+      reader.readAsDataURL(file);
+    });
+
+  const handleUpload =
+    (setter: (value: string | null) => void, previewSetter: (value: string) => void) =>
+    async (event: React.ChangeEvent<HTMLInputElement>) => {
+      const file = event.target.files?.[0];
+      if (!file) {
+        return;
+      }
+      try {
+        const dataUrl = await readFileAsDataUrl(file);
+        setter(dataUrl);
+        previewSetter(dataUrl);
+        setSavingMessage('Logo actualizado localmente.');
+      } catch (err) {
+        window.alert((err as Error).message ?? 'No se pudo leer el archivo.');
+      } finally {
+        event.target.value = '';
+      }
+    };
+
+  const handleReset = () => {
+    resetBranding();
+    setBrandPreview(DEFAULT_LOGO_SRC);
+    setPromoPreview(DEFAULT_LOGO_SRC);
+    setSavingMessage('Se restauraron los logos por defecto.');
+  };
+
+  return (
+    <DashboardLayout title="Configuración" subtitle="Actualiza los logos visibles en la app" layoutVariant="panel">
+      <div className="card-grid">
+        <div className="card card--padded">
+          <h3>Logo principal (sidebar / login)</h3>
+          <p className="form-info">Usá imágenes en PNG o SVG. Tamaño recomendado 220x60.</p>
+          <div
+            className="logo-preview"
+            style={{ border: '1px dashed #d6d9e0', padding: '12px', borderRadius: '10px', background: '#f9fbff' }}
+          >
+            <img src={brandPreview} alt="Logo principal" className="brand-logo" />
+          </div>
+          <label className="input-control">
+            <span>Subir nuevo logo</span>
+            <input type="file" accept="image/*" onChange={handleUpload(setBrandLogo, setBrandPreview)} />
+          </label>
+        </div>
+
+        <div className="card card--padded">
+          <h3>Logo secundario (watermark / promo)</h3>
+          <p className="form-info">Se usa en el panel de login y watermark del chat.</p>
+          <div
+            className="logo-preview"
+            style={{ border: '1px dashed #d6d9e0', padding: '12px', borderRadius: '10px', background: '#f9fbff' }}
+          >
+            <img src={promoPreview} alt="Logo secundario" className="promo-logo" />
+          </div>
+          <label className="input-control">
+            <span>Subir logo secundario</span>
+            <input type="file" accept="image/*" onChange={handleUpload(setPromoLogo, setPromoPreview)} />
+          </label>
+        </div>
+      </div>
+
+      <div className="form-actions" style={{ marginTop: '1rem' }}>
+        <button type="button" className="secondary-action" onClick={handleReset}>
+          Restaurar logos por defecto
+        </button>
+        {savingMessage ? <p className="form-info">{savingMessage}</p> : null}
+      </div>
+    </DashboardLayout>
+  );
+};
+
 const RequireAccess: React.FC<{ section: AccessSection; children: React.ReactElement }> = ({
   section,
   children,
@@ -21954,10 +22134,9 @@ const RequireAccess: React.FC<{ section: AccessSection; children: React.ReactEle
   return children;
 };
 
-const App: React.FC = () => {
-  return (
-    <Routes>
-      <Route path="/" element={<LoginPage />} />
+const AppRoutes: React.FC = () => (
+  <Routes>
+    <Route path="/" element={<LoginPage />} />
       <Route
         path="/dashboard"
         element={
@@ -22098,16 +22277,24 @@ const App: React.FC = () => {
           </RequireAccess>
         }
       />
-      <Route
-        path="/clientes/:clienteId/editar"
-        element={
-          <RequireAccess section="clientes">
-            <EditClientPage />
-          </RequireAccess>
-        }
-      />
-      <Route path="*" element={<Navigate to="/" replace />} />
-    </Routes>
+    <Route
+      path="/clientes/:clienteId/editar"
+      element={
+        <RequireAccess section="clientes">
+          <EditClientPage />
+        </RequireAccess>
+      }
+    />
+    <Route path="/configuracion" element={<ConfigurationPage />} />
+    <Route path="*" element={<Navigate to="/" replace />} />
+  </Routes>
+);
+
+const App: React.FC = () => {
+  return (
+    <BrandingProvider>
+      <AppRoutes />
+    </BrandingProvider>
   );
 };
 
