@@ -13139,14 +13139,23 @@ const ApprovalsRequestsPage: React.FC = () => {
   const [loadingMeta, setLoadingMeta] = useState(true);
   const [metaError, setMetaError] = useState<string | null>(null);
   const [backendSolicitudes, setBackendSolicitudes] = useState<PersonalRecord[]>([]);
+  const estadoOptionsWithRechazo = useMemo(() => {
+    const estados = meta?.estados ?? [];
+    const hasRechazo = estados.some((estado) => (estado.nombre ?? '').toLowerCase().includes('rechaz'));
+    if (hasRechazo) {
+      return estados;
+    }
+    return [...estados, { id: 'synthetic_rechazado' as unknown as number, nombre: 'Rechazado' }];
+  }, [meta?.estados]);
   const normalizeSolicitudRecord = (
     record: PersonalRecord & { created_at?: string | null; created_at_label?: string | null; solicitudData?: any }
   ): PersonalRecord => {
+    const numericId = Number(record.id);
     const resolveRawCreated = () => {
       const data = record.solicitudData as any;
       const isSolicitudAlta = record.esSolicitud && (record.solicitudTipo === 'alta' || !record.solicitudTipo);
 
-      const candidates: Array<string | null | undefined> = [
+      const primaryCandidates: Array<string | null | undefined> = [
         record.createdAt,
         (record as any).created_at,
         (record as any).created,
@@ -13154,8 +13163,6 @@ const ApprovalsRequestsPage: React.FC = () => {
         (record as any).created_at_label,
         (record as any).fechaCreacion,
         (record as any).fecha_creacion,
-        // Para solicitudes de alta, muchos backends usan fechaAlta/fechaAltaVinculacion como creación.
-        ...(isSolicitudAlta ? [record.fechaAlta, record.fechaAltaVinculacion] : []),
         data?.createdAt,
         data?.created_at,
         data?.created,
@@ -13164,19 +13171,35 @@ const ApprovalsRequestsPage: React.FC = () => {
         data?.form?.createdAt,
         data?.form?.created_at,
         data?.form?.fechaSolicitud,
-        data?.form?.fechaAlta,
-        data?.form?.fechaAltaVinculacion,
         data?.form?.fecha,
       ];
 
-      const found = candidates.find((value) => typeof value === 'string' && value.trim().length > 0);
-      return found ?? null;
+      const foundPrimary = primaryCandidates.find((value) => typeof value === 'string' && value.trim().length > 0);
+      if (foundPrimary) {
+        return foundPrimary;
+      }
+
+      const cached = Number.isFinite(numericId) ? solicitudCreatedCache.get(numericId) : null;
+      if (cached) {
+        return cached;
+      }
+
+      const altaFallbacks = isSolicitudAlta
+        ? [
+            record.fechaAlta,
+            record.fechaAltaVinculacion,
+            data?.form?.fechaAlta,
+            data?.form?.fechaAltaVinculacion,
+          ]
+        : [];
+      const foundFallback = altaFallbacks.find((value) => typeof value === 'string' && value.trim().length > 0);
+
+      return foundFallback ?? null;
     };
 
     const rawCreated = resolveRawCreated();
     const parsed = rawCreated ? new Date(rawCreated) : null;
     const parsedValid = parsed && !Number.isNaN(parsed.getTime());
-    const numericId = Number(record.id);
     const isSynthetic = Number.isFinite(numericId) && numericId < 0;
 
     let resolvedCreated = parsedValid ? parsed.toISOString() : rawCreated ?? null;
@@ -13211,15 +13234,21 @@ const ApprovalsRequestsPage: React.FC = () => {
       cacheSolicitudCreated(numericId, resolvedCreated);
     }
     const createdAt = resolvedCreated;
-    const createdAtLabel = createdAt
-      ? new Date(createdAt).toLocaleString('es-AR')
-      : null;
+    const createdAtLabel = createdAt ? new Date(createdAt).toLocaleString('es-AR') : null;
     const isLocallyRejected = rejectedIds.has(Number(record.id));
-    const estadoNombre =
-      resolveEstadoNombre(record.estadoId, record.estado) ??
-      ((isExplicitRejection(record.estadoId, record.estado) || isLocallyRejected) && record.esSolicitud
-        ? 'Rechazado'
-        : null);
+    const estadoNombreBase = resolveEstadoNombre(record.estadoId, record.estado);
+    const estadoNombre = (() => {
+      const estadoLower = (estadoNombreBase ?? '').toLowerCase();
+      const isRejectionByName =
+        estadoLower.includes('rechaz') || estadoLower.includes('baja') || estadoLower.includes('suspend');
+      if (record.esSolicitud && (isExplicitRejection(record.estadoId, record.estado) || isLocallyRejected || isRejectionByName)) {
+        return 'Rechazado';
+      }
+      if (record.esSolicitud && isLocallyRejected) {
+        return 'Rechazado';
+      }
+      return estadoNombreBase ?? record.estado ?? null;
+    })();
 
     return {
       ...record,
@@ -14167,6 +14196,10 @@ const sucursalOptions = useMemo(() => {
 
       const payload = (await response.json()) as { message?: string; data?: { id?: number } };
       const personaId = payload.data?.id ?? null;
+      // Algunos backends no devuelven created_at; guardamos el timestamp de creación apenas recibimos el ID.
+      if (personaId) {
+        cacheSolicitudCreated(personaId, new Date().toISOString());
+      }
 
       const uploadErrors: string[] = [];
       const completedUploadIds: string[] = [];
@@ -14514,9 +14547,12 @@ const sucursalOptions = useMemo(() => {
         userId: authUser?.id ?? null,
       };
 
+      const parsedApprovalEstadoId =
+        approvalEstadoId && !Number.isNaN(Number(approvalEstadoId)) ? Number(approvalEstadoId) : null;
+
       const effectiveEstadoId =
         forcedEstadoId ??
-        (approvalEstadoId ? Number(approvalEstadoId) : resolvedActivoEstadoId ? Number(resolvedActivoEstadoId) : null);
+        (parsedApprovalEstadoId ? parsedApprovalEstadoId : resolvedActivoEstadoId ? Number(resolvedActivoEstadoId) : null);
 
       if (effectiveEstadoId) {
         payloadBody.estadoId = effectiveEstadoId;
@@ -14842,21 +14878,51 @@ const sucursalOptions = useMemo(() => {
     }
 
     const estados = meta?.estados ?? [];
-    const rechazoEstadoId = (() => {
-      const match = estados.find((estado) => (estado.nombre ?? '').toLowerCase().includes('rechaz'));
-      if (match?.id) {
-        return Number(match.id);
+    const { rechazoEstadoId, rechazoDisplayNameFallback } = (() => {
+      const result: { rechazoEstadoId: number | null; rechazoDisplayNameFallback: string | null } = {
+        rechazoEstadoId: null,
+        rechazoDisplayNameFallback: null,
+      };
+
+      const parsedApprovalEstadoId =
+        approvalEstadoId && !Number.isNaN(Number(approvalEstadoId)) ? Number(approvalEstadoId) : null;
+      const approvalIsSynthetic = approvalEstadoId === 'synthetic_rechazado';
+
+      if (parsedApprovalEstadoId) {
+        result.rechazoEstadoId = parsedApprovalEstadoId;
+        return result;
       }
-      if (approvalEstadoId) {
-        return Number(approvalEstadoId);
+      if (approvalIsSynthetic) {
+        result.rechazoDisplayNameFallback = 'Rechazado';
       }
-      return null;
+      const normalizedEstados = estados.map((estado) => ({
+        id: estado.id,
+        nombre: (estado.nombre ?? '').toLowerCase(),
+      }));
+      const matchRechazo = normalizedEstados.find((estado) => estado.nombre.includes('rechaz'));
+      if (matchRechazo?.id) {
+        result.rechazoEstadoId = Number(matchRechazo.id);
+        result.rechazoDisplayNameFallback = null;
+        return result;
+      }
+
+      const matchBaja = normalizedEstados.find(
+        (estado) => estado.nombre.includes('baja') || estado.nombre.includes('suspend')
+      );
+      if (matchBaja?.id) {
+        result.rechazoEstadoId = Number(matchBaja.id);
+        result.rechazoDisplayNameFallback = 'Rechazado';
+        return result;
+      }
+
+      return result;
     })();
 
     if (!rechazoEstadoId) {
       setFlash({
         type: 'error',
-        message: 'No se encontró un estado de rechazo configurado. Agregá uno en la administración de estados.',
+        message:
+          'No hay un estado de rechazo disponible. Elegí uno manualmente en "Actualizar estado" o agregá uno en la administración de estados.',
       });
       return;
     }
@@ -14890,10 +14956,20 @@ const sucursalOptions = useMemo(() => {
       const payload = (await response.json()) as { message?: string; data?: PersonalDetail };
 
       if (payload.data) {
-        const estadoNombre =
+        const chosenNombre =
           estados.find((estado) => Number(estado.id) === rechazoEstadoId)?.nombre ??
           payload.data.estado ??
-          'Rechazado';
+          null;
+        const estadoNombre = (() => {
+          if (rechazoDisplayNameFallback) {
+            return rechazoDisplayNameFallback;
+          }
+          const normalized = (chosenNombre ?? '').toLowerCase();
+          if (normalized.includes('baja') || normalized.includes('suspend')) {
+            return 'Rechazado';
+          }
+          return chosenNombre ?? 'Rechazado';
+        })();
         const updatedDetail = {
           ...payload.data,
           estadoId: rechazoEstadoId,
@@ -16653,7 +16729,7 @@ const handleAdelantoFieldChange =
                     }
                   >
                     <option value="">Mantener estado actual</option>
-                    {(meta?.estados ?? []).map((estado) => (
+                    {estadoOptionsWithRechazo.map((estado) => (
                       <option key={estado.id} value={estado.id}>
                         {estado.nombre ?? `Estado #${estado.id}`}
                       </option>
