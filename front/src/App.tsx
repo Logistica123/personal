@@ -13229,6 +13229,14 @@ const ApprovalsRequestsPage: React.FC = () => {
       }
     }
 
+    // Si aún no hay fecha (backend no la envió) guardamos la fecha de primera vista
+    // para tener consistencia en este equipo/navegador.
+    if (!resolvedCreated && Number.isFinite(numericId) && numericId > 0) {
+      const nowIso = new Date().toISOString();
+      resolvedCreated = nowIso;
+      cacheSolicitudCreated(numericId, nowIso);
+    }
+
     // Si viene creada desde el backend, la guardamos en cache para próximos renders.
     if (resolvedCreated && Number.isFinite(numericId) && numericId > 0) {
       cacheSolicitudCreated(numericId, resolvedCreated);
