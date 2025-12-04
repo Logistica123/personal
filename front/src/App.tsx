@@ -16656,7 +16656,22 @@ const handleAdelantoFieldChange =
                       <li key={comment.id} className="review-comment-item">
                         <div className="review-comment-header">
                           <span>{comment.userName ?? 'Usuario'}</span>
-                          <span>{comment.createdAtLabel ?? '—'}</span>
+                          <span>
+                            {(() => {
+                              const raw = comment.createdAt ?? comment.createdAtLabel;
+                              if (!raw) {
+                                return '—';
+                              }
+                              const parsed = new Date(raw);
+                              if (Number.isNaN(parsed.getTime())) {
+                                return comment.createdAtLabel ?? raw;
+                              }
+                              return parsed.toLocaleString('es-AR', {
+                                dateStyle: 'short',
+                                timeStyle: 'short',
+                              });
+                            })()}
+                          </span>
                         </div>
                         <p>{comment.message ?? ''}</p>
                       </li>
