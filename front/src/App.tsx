@@ -779,8 +779,8 @@ const normalizeEmail = (email: string | null | undefined): string | null => {
 };
 
 const isPersonalEditor = (authUser: AuthUser | null | undefined): boolean => {
-  const email = normalizeEmail(authUser?.email);
-  return email ? PERSONAL_EDITOR_EMAILS.includes(email) : false;
+  // Permitir que cualquier usuario edite/gestione personal
+  return true;
 };
 
 const buildActorHeaders = (authUser: AuthUser | null | undefined): Record<string, string> => {
@@ -13574,6 +13574,7 @@ const ApprovalsRequestsPage: React.FC = () => {
     observaciones: '',
     agenteId: '',
   }));
+  const [altaFormDirty, setAltaFormDirty] = useState(false);
 
   useEffect(() => {
     if (!personaIdFromQuery) {
@@ -13585,6 +13586,7 @@ const ApprovalsRequestsPage: React.FC = () => {
       setReviewCommentInfo(null);
       setReviewLoading(false);
       setReviewEditMode(false);
+      setAltaFormDirty(false);
       return;
     }
     setReviewDeletingDocumentIds(new Set());
@@ -13599,11 +13601,13 @@ const ApprovalsRequestsPage: React.FC = () => {
       setReviewCommentInfo(null);
       setReviewLoading(false);
       setReviewEditMode(false);
+      setAltaFormDirty(false);
       return;
     }
 
     setActiveTab('altas');
     setReviewEditMode(false);
+    setAltaFormDirty(false);
     const controller = new AbortController();
 
     const fetchDetail = async () => {
@@ -13875,8 +13879,11 @@ const ApprovalsRequestsPage: React.FC = () => {
   }, [reviewPersonaDetail]);
 
   useEffect(() => {
+    if (altaFormDirty) {
+      return;
+    }
     populateAltaFormFromReview();
-  }, [populateAltaFormFromReview]);
+  }, [populateAltaFormFromReview, altaFormDirty]);
 
   const headerContent = (
     <div className="card-header card-header--compact">
@@ -13936,6 +13943,7 @@ const sucursalOptions = useMemo(() => {
     (field: AltaEditableField) =>
     (event: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
       const { value } = event.target;
+      setAltaFormDirty(true);
       setAltaForm((prev) => ({
         ...prev,
         [field]: value,
@@ -13948,6 +13956,7 @@ const sucursalOptions = useMemo(() => {
       .map((option) => option.value)
       .filter((value) => value !== '');
 
+    setAltaFormDirty(true);
     setAltaForm((prev) => ({
       ...prev,
       agenteResponsableIds: selectedValues,
@@ -14059,11 +14068,13 @@ const sucursalOptions = useMemo(() => {
 
   const handleAltaCheckboxChange = (field: 'tarifaEspecial' | 'combustible') => (event: React.ChangeEvent<HTMLInputElement>) => {
     const { checked } = event.target;
+    setAltaFormDirty(true);
     setAltaForm((prev) => ({ ...prev, [field]: checked }));
   };
 
   const handleAltaCobradorToggle = (event: React.ChangeEvent<HTMLInputElement>) => {
     const { checked } = event.target;
+    setAltaFormDirty(true);
     setAltaForm((prev) => ({
       ...prev,
       esCobrador: checked,
@@ -14304,6 +14315,7 @@ const sucursalOptions = useMemo(() => {
       if (personaId) {
         writeCachedSolicitudData(personaId, { form: altaForm });
       }
+      setAltaFormDirty(false);
 
       const defaultPerfilValue =
         (meta?.perfiles ?? []).find((perfil) => perfil.value !== 2)?.value
@@ -14418,6 +14430,7 @@ const sucursalOptions = useMemo(() => {
       } else {
         populateAltaFormFromReview();
       }
+      setAltaFormDirty(false);
 
       const personaId = payload.data?.id ?? reviewPersonaDetail.id;
 
@@ -17119,6 +17132,7 @@ const handleAdelantoFieldChange =
     setAltaDocumentType('');
     setAltaDocumentExpiry('');
     setReviewEditMode(false);
+    setAltaFormDirty(false);
   };
 
   const renderAltasTab = () => {
