@@ -34,6 +34,7 @@ Route::get('/personal', [PersonalController::class, 'index']);
 Route::post('/personal', [PersonalController::class, 'store']);
 Route::get('/personal/{persona}', [PersonalController::class, 'show']);
 Route::put('/personal/{persona}', [PersonalController::class, 'update']);
+Route::post('/personal/{persona}/contact-reveal', [PersonalController::class, 'logContactReveal']);
 Route::delete('/personal/{persona}', [PersonalController::class, 'destroy']);
 
 Route::get('/clientes', [ClienteController::class, 'index']);

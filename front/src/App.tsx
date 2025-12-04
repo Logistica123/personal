@@ -8402,6 +8402,7 @@ const PersonalPage: React.FC = () => {
   const [tarifaFilter, setTarifaFilter] = useState('');
   const [patenteFilter, setPatenteFilter] = useState('');
   const [deletingPersonalId, setDeletingPersonalId] = useState<number | null>(null);
+  const [revealedContacts, setRevealedContacts] = useState<Record<number, { phone: boolean; email: boolean }>>({});
 
   const fetchPersonal = useCallback(
     async (options?: { signal?: AbortSignal }) => {
@@ -8954,6 +8955,70 @@ const PersonalPage: React.FC = () => {
     return `Mostrando ${startIndex + 1} - ${endIndex} de ${totalRecords} registros`;
   }, [loading, error, totalRecords, startIndex, endIndex]);
 
+  const logContactReveal = useCallback(
+    async (personaId: number, field: 'phone' | 'email') => {
+      try {
+        await fetch(`${apiBaseUrl}/api/personal/${personaId}/contact-reveal`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...actorHeaders,
+          },
+          body: JSON.stringify({
+            campo: field === 'phone' ? 'telefono' : 'email',
+            actorId: authUser?.id ?? null,
+            actorName: authUser?.name ?? null,
+          }),
+        });
+      } catch (err) {
+        console.warn('No se pudo registrar la visualización de contacto', err);
+      }
+    },
+    [actorHeaders, apiBaseUrl, authUser?.id, authUser?.name]
+  );
+
+  const toggleContactVisibility = (registroId: number, field: 'phone' | 'email') => {
+    const isCurrentlyRevealed =
+      revealedContacts[registroId]?.[field === 'phone' ? 'phone' : 'email'] ?? false;
+    setRevealedContacts((prev) => {
+      const current = prev[registroId] ?? { phone: false, email: false };
+      const nextValue = field === 'phone' ? !current.phone : !current.email;
+      return {
+        ...prev,
+        [registroId]: {
+          phone: field === 'phone' ? nextValue : current.phone,
+          email: field === 'email' ? nextValue : current.email,
+        },
+      };
+    });
+    if (!isCurrentlyRevealed) {
+      logContactReveal(registroId, field);
+    }
+  };
+
+  const renderProtectedValue = (registroId: number, field: 'phone' | 'email', value?: string | null) => {
+    const hasValue = Boolean(value);
+    const isRevealed = revealedContacts[registroId]?.[field === 'phone' ? 'phone' : 'email'] ?? false;
+    const displayValue = hasValue ? (isRevealed ? value : '••••••••') : '—';
+
+    return (
+      <div className="protected-cell">
+        <span>{displayValue}</span>
+        {hasValue ? (
+          <button
+            type="button"
+            className="secondary-action secondary-action--ghost"
+            style={{ marginLeft: '0.5rem', padding: '2px 8px', fontSize: '0.85rem' }}
+            onClick={() => toggleContactVisibility(registroId, field)}
+            title={isRevealed ? 'Ocultar' : 'Ver'}
+          >
+            {isRevealed ? 'Ocultar' : 'Ver'}
+          </button>
+        ) : null}
+      </div>
+    );
+  };
+
   const headerContent = (
     <div className="filters-bar">
       <div className="filters-grid">
@@ -9171,8 +9236,8 @@ const PersonalPage: React.FC = () => {
                   <td>{registro.id}</td>
                   <td>{registro.nombre ?? '—'}</td>
                   <td>{registro.cuil ?? '—'}</td>
-                  <td>{registro.telefono ?? '—'}</td>
-                  <td>{registro.email ?? '—'}</td>
+                  <td>{renderProtectedValue(registro.id, 'phone', registro.telefono)}</td>
+                  <td>{renderProtectedValue(registro.id, 'email', registro.email)}</td>
                   <td>{getPerfilDisplayLabel(registro.perfilValue ?? null, registro.perfil ?? '—') || '—'}</td>
                   <td>{registro.agente ?? '—'}</td>
                   <td>
@@ -9270,6 +9335,8 @@ const LiquidacionesPage: React.FC = () => {
     return Number.isNaN(parsed) ? null : parsed;
   }, [personaIdParam]);
   const apiBaseUrl = useMemo(() => resolveApiBaseUrl(), []);
+  const authUser = useStoredAuthUser();
+  const actorHeaders = useMemo(() => buildActorHeaders(authUser), [authUser]);
   const [personal, setPersonal] = useState<PersonalRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);

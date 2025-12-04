@@ -15,6 +15,7 @@ use App\Models\Dueno;
 use App\Models\PersonaComment;
 use App\Models\PersonaHistory;
 use App\Models\Archivo;
+use App\Models\ContactReveal;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Database\QueryException;
@@ -185,10 +186,51 @@ class PersonalController extends Controller
         ], 404);
     }
 
-    return response()->json([
-        'data' => $this->buildPersonaDetail($persona),
-    ]);
-}
+        return response()->json([
+            'data' => $this->buildPersonaDetail($persona),
+        ]);
+    }
+
+    public function logContactReveal(Request $request, Persona $persona): JsonResponse
+    {
+        $validated = $request->validate([
+            'campo' => ['required', 'string', 'in:telefono,email'],
+            'actorId' => ['nullable', 'integer', 'exists:users,id'],
+            'actorName' => ['nullable', 'string', 'max:255'],
+        ]);
+
+        $actorEmail = $this->resolveActorEmail($request);
+        $actorId = $validated['actorId'] ?? $request->user()?->id;
+        $actorName = $validated['actorName'] ?? $request->user()?->name;
+
+        if ($actorId && (! $actorEmail || ! $actorName)) {
+            $actorUser = User::query()->find($actorId);
+            if (! $actorEmail) {
+                $actorEmail = $actorUser?->email ? strtolower(trim($actorUser->email)) : null;
+            }
+            if (! $actorName) {
+                $actorName = $actorUser?->name;
+            }
+        }
+
+        $record = ContactReveal::create([
+            'persona_id' => $persona->id,
+            'campo' => $validated['campo'],
+            'actor_id' => $actorId,
+            'actor_name' => $actorName,
+            'actor_email' => $actorEmail,
+            'ip_address' => $request->ip(),
+        ]);
+
+        return response()->json([
+            'message' => 'Registro de visualización guardado',
+            'data' => [
+                'id' => $record->id,
+                'campo' => $record->campo,
+                'personaId' => $record->persona_id,
+            ],
+        ]);
+    }
 
 
     public function update(Request $request, Persona $persona): JsonResponse
