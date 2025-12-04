@@ -13704,11 +13704,15 @@ const ApprovalsRequestsPage: React.FC = () => {
     return () => controller.abort();
   }, [apiBaseUrl, personaIdFromQuery]);
 
+  const personalLookupFetchedRef = useRef(false);
+
   useEffect(() => {
-    if (personalLookupLoading || personalLookup.length > 0) {
+    if (personalLookupFetchedRef.current || personalLookup.length > 0) {
       return;
     }
+
     const controller = new AbortController();
+
     const fetchLookup = async () => {
       try {
         setPersonalLookupLoading(true);
@@ -13724,6 +13728,7 @@ const ApprovalsRequestsPage: React.FC = () => {
           throw new Error('Formato de respuesta inesperado');
         }
         setPersonalLookup(payload.data);
+        personalLookupFetchedRef.current = true;
       } catch (err) {
         if ((err as Error).name === 'AbortError') {
           return;
@@ -13733,9 +13738,11 @@ const ApprovalsRequestsPage: React.FC = () => {
         setPersonalLookupLoading(false);
       }
     };
+
     fetchLookup();
+
     return () => controller.abort();
-  }, [apiBaseUrl, personalLookup.length, personalLookupLoading]);
+  }, [apiBaseUrl, personalLookup.length]);
 
   const altaLookupResults = useMemo(() => {
     const term = altaLookupTerm.trim().toLowerCase();
