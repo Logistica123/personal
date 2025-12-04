@@ -2044,6 +2044,7 @@ const DashboardLayout: React.FC<{
   const audioContextRef = useRef<AudioContext | null>(null);
   const lastToastIdRef = useRef<number | null>(null);
   const { brandLogoSrc } = useBranding();
+  const userRole = useMemo(() => getUserRole(authUser), [authUser]);
   const unreadInitializedRef = useRef(false);
   const previousUnreadCountRef = useRef(0);
   const previousLatestNotificationIdRef = useRef<number | null>(null);
@@ -2566,8 +2567,6 @@ const DashboardLayout: React.FC<{
   const roleLabel = useMemo(() => {
     return formatRoleLabel(authUser?.role);
   }, [authUser]);
-
-  const userRole = useMemo(() => getUserRole(authUser), [authUser]);
 
   const avatarInitials = useMemo(
     () => computeInitials(authUser?.name ?? authUser?.email),
@@ -3152,9 +3151,11 @@ const DashboardLayout: React.FC<{
           <NavLink to="/documentos" className={({ isActive }) => `sidebar-link${isActive ? ' is-active' : ''}`}>
             Documentos
           </NavLink>
-          <NavLink to="/configuracion" className={({ isActive }) => `sidebar-link${isActive ? ' is-active' : ''}`}>
-            Configuración
-          </NavLink>
+          {userRole === 'admin' ? (
+            <NavLink to="/configuracion" className={({ isActive }) => `sidebar-link${isActive ? ' is-active' : ''}`}>
+              Configuración
+            </NavLink>
+          ) : null}
           <a className="sidebar-link" href="#ayuda" onClick={(event) => event.preventDefault()}>
             Ayuda
           </a>
@@ -22020,6 +22021,8 @@ const EditClientPage: React.FC = () => {
 };
 
 const ConfigurationPage: React.FC = () => {
+  const authUser = useStoredAuthUser();
+  const userRole = useMemo(() => getUserRole(authUser), [authUser]);
   const { brandLogoSrc, promoLogoSrc, setBrandLogo, setPromoLogo, resetBranding } = useBranding();
   const [brandPreview, setBrandPreview] = useState(brandLogoSrc);
   const [promoPreview, setPromoPreview] = useState(promoLogoSrc);
@@ -22067,46 +22070,54 @@ const ConfigurationPage: React.FC = () => {
     setSavingMessage('Se restauraron los logos por defecto.');
   };
 
+  const isAdmin = userRole === 'admin';
+
   return (
     <DashboardLayout title="Configuración" subtitle="Actualiza los logos visibles en la app" layoutVariant="panel">
-      <div className="card-grid">
-        <div className="card card--padded">
-          <h3>Logo principal (sidebar / login)</h3>
-          <p className="form-info">Usá imágenes en PNG o SVG. Tamaño recomendado 220x60.</p>
-          <div
-            className="logo-preview"
-            style={{ border: '1px dashed #d6d9e0', padding: '12px', borderRadius: '10px', background: '#f9fbff' }}
-          >
-            <img src={brandPreview} alt="Logo principal" className="brand-logo" />
-          </div>
-          <label className="input-control">
-            <span>Subir nuevo logo</span>
-            <input type="file" accept="image/*" onChange={handleUpload(setBrandLogo, setBrandPreview)} />
-          </label>
-        </div>
+      {!isAdmin ? (
+        <p className="form-info form-info--error">Solo los administradores pueden modificar los logos.</p>
+      ) : (
+        <>
+          <div className="card-grid">
+            <div className="card card--padded">
+              <h3>Logo principal (sidebar / login)</h3>
+              <p className="form-info">Usá imágenes en PNG o SVG. Tamaño recomendado 220x60.</p>
+              <div
+                className="logo-preview"
+                style={{ border: '1px dashed #d6d9e0', padding: '12px', borderRadius: '10px', background: '#f9fbff' }}
+              >
+                <img src={brandPreview} alt="Logo principal" className="brand-logo" />
+              </div>
+              <label className="input-control">
+                <span>Subir nuevo logo</span>
+                <input type="file" accept="image/*" onChange={handleUpload(setBrandLogo, setBrandPreview)} />
+              </label>
+            </div>
 
-        <div className="card card--padded">
-          <h3>Logo secundario (watermark / promo)</h3>
-          <p className="form-info">Se usa en el panel de login y watermark del chat.</p>
-          <div
-            className="logo-preview"
-            style={{ border: '1px dashed #d6d9e0', padding: '12px', borderRadius: '10px', background: '#f9fbff' }}
-          >
-            <img src={promoPreview} alt="Logo secundario" className="promo-logo" />
+            <div className="card card--padded">
+              <h3>Logo secundario (watermark / promo)</h3>
+              <p className="form-info">Se usa en el panel de login y watermark del chat.</p>
+              <div
+                className="logo-preview"
+                style={{ border: '1px dashed #d6d9e0', padding: '12px', borderRadius: '10px', background: '#f9fbff' }}
+              >
+                <img src={promoPreview} alt="Logo secundario" className="promo-logo" />
+              </div>
+              <label className="input-control">
+                <span>Subir logo secundario</span>
+                <input type="file" accept="image/*" onChange={handleUpload(setPromoLogo, setPromoPreview)} />
+              </label>
+            </div>
           </div>
-          <label className="input-control">
-            <span>Subir logo secundario</span>
-            <input type="file" accept="image/*" onChange={handleUpload(setPromoLogo, setPromoPreview)} />
-          </label>
-        </div>
-      </div>
 
-      <div className="form-actions" style={{ marginTop: '1rem' }}>
-        <button type="button" className="secondary-action" onClick={handleReset}>
-          Restaurar logos por defecto
-        </button>
-        {savingMessage ? <p className="form-info">{savingMessage}</p> : null}
-      </div>
+          <div className="form-actions" style={{ marginTop: '1rem' }}>
+            <button type="button" className="secondary-action" onClick={handleReset}>
+              Restaurar logos por defecto
+            </button>
+            {savingMessage ? <p className="form-info">{savingMessage}</p> : null}
+          </div>
+        </>
+      )}
     </DashboardLayout>
   );
 };
