@@ -8538,6 +8538,10 @@ const PersonalPage: React.FC = () => {
   const [patenteFilter, setPatenteFilter] = useState('');
   const [deletingPersonalId, setDeletingPersonalId] = useState<number | null>(null);
   const [revealedContacts, setRevealedContacts] = useState<Record<number, { phone: boolean; email: boolean }>>({});
+  const bypassContactGuard = useMemo(
+    () => (authUser?.email ?? '').trim().toLowerCase() === 'xmaldonado@logisticaargentinasrl.com.ar',
+    [authUser?.email]
+  );
 
   const fetchPersonal = useCallback(
     async (options?: { signal?: AbortSignal }) => {
@@ -9133,6 +9137,10 @@ const PersonalPage: React.FC = () => {
 
   const renderProtectedValue = (registroId: number, field: 'phone' | 'email', value?: string | null) => {
     const hasValue = Boolean(value);
+    if (bypassContactGuard) {
+      return <span>{hasValue ? value : '—'}</span>;
+    }
+
     const isRevealed = revealedContacts[registroId]?.[field === 'phone' ? 'phone' : 'email'] ?? false;
     const displayValue = hasValue ? (isRevealed ? value : '••••••••') : '—';
 
