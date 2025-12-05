@@ -13,6 +13,7 @@ use App\Http\Controllers\Api\PersonalCommentController;
 use App\Http\Controllers\Api\AttendanceController;
 use App\Http\Controllers\Api\WorkflowTaskController;
 use App\Http\Controllers\Api\GeneralInfoController;
+use App\Http\Controllers\Api\AuditController;
 use Illuminate\Support\Facades\Route;
 
 Route::get('/personal/documentos/tipos', [PersonalDocumentController::class, 'types']);
@@ -92,5 +93,8 @@ Route::get('/chat/messages', [ChatMessageController::class, 'index']);
 Route::post('/chat/messages', [ChatMessageController::class, 'store']);
 
 Route::post('/login', [AuthController::class, 'login']);
+Route::post('/twofactor/setup', [AuthController::class, 'setupTotp']);
+Route::post('/twofactor/enable', [AuthController::class, 'enableTotp']);
+Route::get('/auditoria', [AuditController::class, 'index']);
 
 Route::options('/{any}', fn () => response()->noContent())->where('any', '.*');

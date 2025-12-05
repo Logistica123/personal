@@ -16,6 +16,7 @@ use App\Models\PersonaComment;
 use App\Models\PersonaHistory;
 use App\Models\Archivo;
 use App\Models\ContactReveal;
+use App\Services\AuditLogger;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Database\QueryException;
@@ -71,7 +72,7 @@ class PersonalController extends Controller
             }
         }
 
-        return null;
+        return AuditLogger::resolveActorEmail($request, $request->user());
     }
 
     protected function ensureCanManagePersonal(Request $request, ?Persona $persona = null): void
@@ -220,6 +221,12 @@ class PersonalController extends Controller
             'actor_name' => $actorName,
             'actor_email' => $actorEmail,
             'ip_address' => $request->ip(),
+        ]);
+
+        AuditLogger::log($request, 'contact_reveal', 'persona', $persona->id, [
+            'campo' => $validated['campo'],
+            'actor_id' => $actorId,
+            'actor_email' => $actorEmail,
         ]);
 
         return response()->json([
@@ -436,6 +443,33 @@ class PersonalController extends Controller
                 'user_id' => $request->user()?->id,
                 'description' => 'Actualización de datos del personal',
                 'changes' => $historyChanges,
+            ]);
+        }
+
+        $changed = $persona->getChanges();
+        $trackedFields = [
+            'nombres',
+            'apellidos',
+            'cuil',
+            'telefono',
+            'email',
+            'cbu_alias',
+            'dueno_cbu_alias',
+            'dueno_cuil',
+            'dueno_cuil_cobrador',
+        ];
+        $diff = [];
+        foreach ($trackedFields as $field) {
+            if (array_key_exists($field, $changed)) {
+                $diff[$field] = [
+                    'old' => $originalPersonaSnapshot[$field] ?? null,
+                    'new' => $persona->{$field},
+                ];
+            }
+        }
+        if (! empty($diff)) {
+            AuditLogger::log($request, 'persona_update', 'persona', $persona->id, [
+                'changes' => $diff,
             ]);
         }
 

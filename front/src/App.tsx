@@ -119,7 +119,8 @@ type AccessSection =
   | 'usuarios'
   | 'reclamos'
   | 'control-horario'
-  | 'liquidaciones';
+  | 'liquidaciones'
+  | 'auditoria';
 
 type PersonalHistoryChange = {
   field: string | null;
@@ -603,6 +604,8 @@ const canAccessSection = (role: UserRole, section: AccessSection): boolean => {
       return role === 'admin';
     case 'liquidaciones':
       return role === 'admin' || role === 'admin2';
+    case 'auditoria':
+      return role === 'admin';
     case 'clientes':
     case 'unidades':
       return role !== 'operator' && role !== 'asesor';
@@ -906,6 +909,19 @@ type NotificationDeletionRecord = {
   deletedByName: string | null;
   deletedAt: string | null;
   deletedAtLabel?: string | null;
+};
+
+type AuditLogRecord = {
+  id: number;
+  action: string;
+  entityType: string | null;
+  entityId: number | null;
+  actorEmail: string | null;
+  actorName: string | null;
+  metadata: unknown;
+  ipAddress: string | null;
+  userAgent: string | null;
+  createdAt: string | null;
 };
 
 type ChatContact = {
@@ -1865,6 +1881,8 @@ const LoginPage: React.FC = () => {
   const [rememberMe, setRememberMe] = useState(false);
   const [loading, setLoading] = useState(false);
   const [loginError, setLoginError] = useState<string | null>(null);
+  const [totpCode, setTotpCode] = useState('');
+  const [requireTotp, setRequireTotp] = useState(false);
   const { brandLogoSrc, promoLogoSrc } = useBranding();
 
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
@@ -1882,6 +1900,7 @@ const LoginPage: React.FC = () => {
         body: JSON.stringify({
           email: email.trim(),
           password,
+          totpCode: totpCode.trim() || undefined,
         }),
       });
 
@@ -1891,6 +1910,10 @@ const LoginPage: React.FC = () => {
           const payload = await response.json();
           if (typeof payload?.message === 'string') {
             message = payload.message;
+          }
+          if (payload?.requireTotp) {
+            setRequireTotp(true);
+            message = 'Ingresa el código de tu app autenticadora.';
           }
         } catch {
           // ignore parse errors
@@ -1906,17 +1929,18 @@ const LoginPage: React.FC = () => {
           name: string | null;
           email: string | null;
           role?: string | null;
+          totpEnabled?: boolean;
         };
       };
 
       const storage = rememberMe ? window.localStorage : window.sessionStorage;
       const otherStorage = rememberMe ? window.sessionStorage : window.localStorage;
-      const authPayload: AuthUser = {
-        id: payload.data.id,
-        name: payload.data.name ?? null,
-        email: payload.data.email ?? null,
-        role: payload.data.role ?? null,
-      };
+  const authPayload: AuthUser = {
+    id: payload.data.id,
+    name: payload.data.name ?? null,
+    email: payload.data.email ?? null,
+    role: payload.data.role ?? null,
+  };
       storage.setItem('authUser', JSON.stringify(authPayload));
       otherStorage.removeItem('authUser');
       window.dispatchEvent(new CustomEvent('auth:updated'));
@@ -1972,14 +1996,31 @@ const LoginPage: React.FC = () => {
               />
               <button
                 type="button"
-                className="password-toggle"
-                onClick={() => setShowPassword((prev) => !prev)}
-                aria-label={showPassword ? 'Ocultar contraseña' : 'Mostrar contraseña'}
-                disabled={loading}
-              >
-                {showPassword ? '🙈' : '👁️'}
-              </button>
-            </label>
+            className="password-toggle"
+            onClick={() => setShowPassword((prev) => !prev)}
+            aria-label={showPassword ? 'Ocultar contraseña' : 'Mostrar contraseña'}
+            disabled={loading}
+          >
+            {showPassword ? '🙈' : '👁️'}
+          </button>
+        </label>
+
+            {requireTotp ? (
+              <label className="field">
+                <span className="field-label">Código 2FA</span>
+                <input
+                  type="text"
+                  name="totpCode"
+                  value={totpCode}
+                  onChange={(event) => setTotpCode(event.target.value)}
+                  placeholder="Ingresa el código de 6 dígitos"
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  required
+                  disabled={loading}
+                />
+              </label>
+            ) : null}
 
             <div className="form-meta">
               <label className="remember-me">
@@ -3127,6 +3168,11 @@ const DashboardLayout: React.FC<{
           {canAccessSection(userRole, 'control-horario') ? (
             <NavLink to="/control-horario" className={({ isActive }) => `sidebar-link${isActive ? ' is-active' : ''}`}>
               Control horario
+            </NavLink>
+          ) : null}
+          {canAccessSection(userRole, 'auditoria') ? (
+            <NavLink to="/auditoria" className={({ isActive }) => `sidebar-link${isActive ? ' is-active' : ''}`}>
+              Auditoría
             </NavLink>
           ) : null}
           <NavLink to="/flujo-trabajo" className={({ isActive }) => `sidebar-link${isActive ? ' is-active' : ''}`}>
@@ -22027,6 +22073,13 @@ const ConfigurationPage: React.FC = () => {
   const [brandPreview, setBrandPreview] = useState(brandLogoSrc);
   const [promoPreview, setPromoPreview] = useState(promoLogoSrc);
   const [savingMessage, setSavingMessage] = useState<string | null>(null);
+  const [tfEmail, setTfEmail] = useState(authUser?.email ?? '');
+  const [tfPassword, setTfPassword] = useState('');
+  const [tfSecret, setTfSecret] = useState<string | null>(null);
+  const [tfOtpAuthUrl, setTfOtpAuthUrl] = useState<string | null>(null);
+  const [tfCode, setTfCode] = useState('');
+  const [tfInfo, setTfInfo] = useState<string | null>(null);
+  const [tfError, setTfError] = useState<string | null>(null);
 
   useEffect(() => {
     setBrandPreview(brandLogoSrc);
@@ -22116,8 +22169,245 @@ const ConfigurationPage: React.FC = () => {
             </button>
             {savingMessage ? <p className="form-info">{savingMessage}</p> : null}
           </div>
+
+          <div className="card card--padded" style={{ marginTop: '1.5rem' }}>
+            <h3>Activar 2FA (TOTP)</h3>
+            <p className="form-info">
+              Genera un secreto, agrégalo en Google Authenticator u otra app TOTP y confirma con un código de 6 dígitos.
+            </p>
+            <div className="form-grid">
+              <label className="input-control">
+                <span>Email</span>
+                <input
+                  type="email"
+                  value={tfEmail}
+                  onChange={(e) => setTfEmail(e.target.value)}
+                  placeholder="Email"
+                />
+              </label>
+              <label className="input-control">
+                <span>Contraseña</span>
+                <input
+                  type="password"
+                  value={tfPassword}
+                  onChange={(e) => setTfPassword(e.target.value)}
+                  placeholder="Tu contraseña actual"
+                />
+              </label>
+              <div className="input-control">
+                <span>Secreto</span>
+                <div className="input-with-action">
+                  <input type="text" readOnly value={tfSecret ?? ''} placeholder="Genera un secreto" />
+                  <button
+                    type="button"
+                    className="secondary-action"
+                    onClick={async () => {
+                      try {
+                        setTfError(null);
+                        setTfInfo(null);
+                        const response = await fetch(`${resolveApiBaseUrl()}/api/twofactor/setup`, {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ email: tfEmail.trim(), password: tfPassword }),
+                        });
+                        if (!response.ok) {
+                          let msg = `Error ${response.status}`;
+                          try {
+                            const payload = await response.json();
+                            if (payload?.message) msg = payload.message;
+                          } catch {
+                            // ignore
+                          }
+                          throw new Error(msg);
+                        }
+                        const payload = await response.json();
+                        setTfSecret(payload?.data?.secret ?? null);
+                        setTfOtpAuthUrl(payload?.data?.otpauth_url ?? null);
+                        setTfInfo('Secreto generado. Cópialo a tu app y luego ingresa el código para confirmarlo.');
+                      } catch (err) {
+                        setTfError((err as Error).message ?? 'No se pudo generar el secreto.');
+                      }
+                    }}
+                  >
+                    Generar secreto
+                  </button>
+                </div>
+              </div>
+              <label className="input-control">
+                <span>Código 2FA</span>
+                <input
+                  type="text"
+                  value={tfCode}
+                  onChange={(e) => setTfCode(e.target.value)}
+                  placeholder="Código de 6 dígitos"
+                  inputMode="numeric"
+                />
+              </label>
+            </div>
+            {tfOtpAuthUrl ? (
+              <p className="form-info">
+                URL otpauth: <code>{tfOtpAuthUrl}</code>
+              </p>
+            ) : null}
+            {tfInfo ? <p className="form-info">{tfInfo}</p> : null}
+            {tfError ? <p className="form-info form-info--error">{tfError}</p> : null}
+            <div className="form-actions">
+              <button
+                type="button"
+                className="primary-action"
+                onClick={async () => {
+                  try {
+                    setTfError(null);
+                    setTfInfo(null);
+                    const response = await fetch(`${resolveApiBaseUrl()}/api/twofactor/enable`, {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({
+                        email: tfEmail.trim(),
+                        password: tfPassword,
+                        secret: tfSecret,
+                        code: tfCode,
+                      }),
+                    });
+                    if (!response.ok) {
+                      let msg = `Error ${response.status}`;
+                      try {
+                        const payload = await response.json();
+                        if (payload?.message) msg = payload.message;
+                      } catch {
+                        // ignore
+                      }
+                      throw new Error(msg);
+                    }
+                    setTfInfo('2FA activado correctamente.');
+                  } catch (err) {
+                    setTfError((err as Error).message ?? 'No se pudo activar 2FA.');
+                  }
+                }}
+                disabled={!tfSecret || !tfCode || !tfPassword || !tfEmail}
+              >
+                Confirmar 2FA
+              </button>
+            </div>
+          </div>
         </>
       )}
+    </DashboardLayout>
+  );
+};
+
+const AuditPage: React.FC = () => {
+  const authUser = useStoredAuthUser();
+  const userRole = useMemo(() => getUserRole(authUser), [authUser]);
+  const apiBaseUrl = useMemo(() => resolveApiBaseUrl(), []);
+  const [logs, setLogs] = useState<
+    Array<{
+      id: number;
+      action: string;
+      entityType: string | null;
+      entityId: number | null;
+      actorEmail: string | null;
+      actorName: string | null;
+      metadata: unknown;
+      ipAddress: string | null;
+      userAgent: string | null;
+      createdAt: string | null;
+    }>
+  >([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [refreshTick, setRefreshTick] = useState(0);
+
+  useEffect(() => {
+    if (userRole !== 'admin') {
+      return;
+    }
+    const controller = new AbortController();
+    const fetchLogs = async () => {
+      try {
+        setLoading(true);
+        setError(null);
+        const response = await fetch(`${apiBaseUrl}/api/auditoria?limit=200`, { signal: controller.signal });
+        if (!response.ok) {
+          throw new Error(`Error ${response.status}: ${response.statusText}`);
+        }
+        const payload = (await response.json()) as { data: AuditLogRecord[] };
+        setLogs(Array.isArray(payload.data) ? payload.data : []);
+      } catch (err) {
+        if ((err as Error).name === 'AbortError') {
+          return;
+        }
+        setError((err as Error).message ?? 'No se pudo cargar la auditoría.');
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetchLogs();
+    return () => controller.abort();
+  }, [apiBaseUrl, userRole, refreshTick]);
+
+  if (!canAccessSection(userRole, 'auditoria')) {
+    return (
+      <DashboardLayout title="Auditoría" subtitle="Acceso restringido">
+        <p className="form-info form-info--error">Solo los administradores pueden acceder a Auditoría.</p>
+      </DashboardLayout>
+    );
+  }
+
+  return (
+    <DashboardLayout title="Auditoría" subtitle="Revisá los eventos registrados">
+      <div className="card-header card-header--compact" style={{ marginBottom: '0.5rem' }}>
+        <button type="button" className="secondary-action" onClick={() => setRefreshTick((prev) => prev + 1)} disabled={loading}>
+          {loading ? 'Actualizando...' : 'Actualizar'}
+        </button>
+      </div>
+      {loading ? <p className="form-info">Cargando auditoría...</p> : null}
+      {error ? <p className="form-info form-info--error">{error}</p> : null}
+      {!loading && !error ? (
+        <div className="table-wrapper">
+          <table>
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>Acción</th>
+                <th>Entidad</th>
+                <th>Actor</th>
+                <th>IP</th>
+                <th>Fecha</th>
+                <th>Detalle</th>
+              </tr>
+            </thead>
+            <tbody>
+              {logs.length === 0 ? (
+                <tr>
+                  <td colSpan={7}>No hay eventos de auditoría.</td>
+                </tr>
+              ) : (
+                logs.map((log) => (
+                  <tr key={log.id}>
+                    <td>{log.id}</td>
+                    <td>{log.action}</td>
+                    <td>
+                      {log.entityType ?? '—'}
+                      {log.entityId ? ` #${log.entityId}` : ''}
+                    </td>
+                    <td>
+                      {log.actorName ?? '—'}
+                      <br />
+                      <small>{log.actorEmail ?? '—'}</small>
+                    </td>
+                    <td>{log.ipAddress ?? '—'}</td>
+                    <td>{log.createdAt ?? '—'}</td>
+                    <td>
+                      <pre className="json-cell">{JSON.stringify(log.metadata ?? {}, null, 2)}</pre>
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      ) : null}
     </DashboardLayout>
   );
 };
@@ -22293,6 +22583,14 @@ const AppRoutes: React.FC = () => (
       element={
         <RequireAccess section="clientes">
           <EditClientPage />
+        </RequireAccess>
+      }
+    />
+    <Route
+      path="/auditoria"
+      element={
+        <RequireAccess section="auditoria">
+          <AuditPage />
         </RequireAccess>
       }
     />

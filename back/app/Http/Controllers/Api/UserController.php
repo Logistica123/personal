@@ -7,6 +7,7 @@ use App\Models\User;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
+use App\Services\AuditLogger;
 
 class UserController extends Controller
 {
@@ -105,13 +106,22 @@ class UserController extends Controller
             $updated = true;
         }
 
+        $passwordChanged = false;
         if (!empty($validated['password'])) {
             $usuario->password = Hash::make($validated['password']);
             $updated = true;
+            $passwordChanged = true;
         }
 
         if ($updated) {
             $usuario->save();
+
+            AuditLogger::log($request, 'user_update', 'user', $usuario->id, [
+                'name' => $validated['name'] ?? null,
+                'email' => $validated['email'] ?? null,
+                'role' => $validated['role'] ?? null,
+                'password_changed' => $passwordChanged,
+            ]);
         }
 
         return response()->json([

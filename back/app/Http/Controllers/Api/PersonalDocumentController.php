@@ -17,6 +17,7 @@ use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 use ZipArchive;
+use App\Services\AuditLogger;
 
 class PersonalDocumentController extends Controller
 {
@@ -273,6 +274,13 @@ class PersonalDocumentController extends Controller
             'size' => $documento->size,
             'parent_document_id' => $parentDocumentId,
             'origin' => $request->header('User-Agent'),
+        ]);
+
+        AuditLogger::log($request, 'document_create', 'documento', $documento->id, [
+            'persona_id' => $persona->id,
+            'nombre' => $documento->nombre_original,
+            'tipo_archivo_id' => $documento->tipo_archivo_id,
+            'size' => $documento->size,
         ]);
 
         return response()->json([
@@ -781,6 +789,12 @@ class PersonalDocumentController extends Controller
         $this->deleteStoredFile($documento);
 
         $documento->delete();
+
+        AuditLogger::log($request, 'document_delete', 'documento', $documento->id, [
+            'persona_id' => $persona->id,
+            'nombre' => $documento->nombre_original,
+            'tipo_archivo_id' => $documento->tipo_archivo_id,
+        ]);
 
         return response()->json([
             'message' => 'Liquidación eliminada correctamente.',
