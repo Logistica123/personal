@@ -5358,11 +5358,13 @@ const DashboardPage: React.FC<{ showPersonalPanel?: boolean }> = ({ showPersonal
 
   const matchesTeamMember = useCallback(
     (registro: PersonalRecord, member: TeamGroupMember) => {
-      const target = (member.name ?? '').trim().toLowerCase();
-      if (!target) {
+      const targetName = (member.name ?? '').trim().toLowerCase();
+      const targetEmail = (member.email ?? '').trim().toLowerCase();
+      if (!targetName && !targetEmail) {
         return false;
       }
-      const candidates = [
+
+      const candidateNames = [
         registro.agente,
         registro.agenteResponsable,
         ...(registro.agentesResponsables ?? []),
@@ -5370,7 +5372,14 @@ const DashboardPage: React.FC<{ showPersonalPanel?: boolean }> = ({ showPersonal
         .filter(Boolean)
         .map((value) => (value ?? '').trim().toLowerCase());
 
-      return candidates.some((candidate) => candidate.includes(target));
+      const nameMatches = targetName
+        ? candidateNames.some((candidate) => candidate === targetName)
+        : false;
+
+      // Actualmente no tenemos email del agente en el registro, pero mantenemos la comparación futura.
+      const emailMatches = targetEmail ? false : false;
+
+      return nameMatches || emailMatches;
     },
     []
   );
