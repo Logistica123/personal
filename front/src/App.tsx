@@ -806,6 +806,27 @@ type BrandingContextValue = {
 
 const BrandingContext = createContext<BrandingContextValue | undefined>(undefined);
 
+type ThemeMode = 'light' | 'dark';
+type ThemeContextValue = {
+  mode: ThemeMode;
+  toggleTheme: () => void;
+  setTheme: (mode: ThemeMode) => void;
+};
+
+const THEME_STORAGE_KEY = 'app.theme';
+const ThemeContext = createContext<ThemeContextValue | undefined>(undefined);
+
+const resolveStoredTheme = (): ThemeMode => {
+  if (typeof window === 'undefined') {
+    return 'light';
+  }
+  const stored = window.localStorage.getItem(THEME_STORAGE_KEY);
+  if (stored === 'dark' || stored === 'light') {
+    return stored;
+  }
+  return 'light';
+};
+
 const safeReadStorage = (key: string): string | null => {
   try {
     return window.localStorage.getItem(key);
@@ -880,6 +901,44 @@ const useBranding = (): BrandingContextValue => {
       setBrandLogo: () => undefined,
       setPromoLogo: () => undefined,
       resetBranding: () => undefined,
+    };
+  }
+  return ctx;
+};
+
+const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const [mode, setMode] = useState<ThemeMode>(() => resolveStoredTheme());
+
+  useEffect(() => {
+    if (typeof document === 'undefined') {
+      return;
+    }
+    document.documentElement.setAttribute('data-theme', mode);
+    try {
+      window.localStorage.setItem(THEME_STORAGE_KEY, mode);
+    } catch {
+      /* ignore */
+    }
+  }, [mode]);
+
+  const toggleTheme = useCallback(() => {
+    setMode((prev) => (prev === 'light' ? 'dark' : 'light'));
+  }, []);
+
+  const setTheme = useCallback((value: ThemeMode) => setMode(value), []);
+
+  const value = useMemo(() => ({ mode, toggleTheme, setTheme }), [mode, toggleTheme, setTheme]);
+
+  return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>;
+};
+
+const useTheme = (): ThemeContextValue => {
+  const ctx = useContext(ThemeContext);
+  if (!ctx) {
+    return {
+      mode: 'light',
+      toggleTheme: () => undefined,
+      setTheme: () => undefined,
     };
   }
   return ctx;
@@ -2647,6 +2706,7 @@ const DashboardLayout: React.FC<{
     () => computeInitials(authUser?.name ?? authUser?.email),
     [authUser?.name, authUser?.email]
   );
+  const { mode: themeMode, toggleTheme } = useTheme();
 
   const dismissChatToast = useCallback(() => {
     if (chatToastTimeoutRef.current) {
@@ -3392,6 +3452,14 @@ const DashboardLayout: React.FC<{
                   {chatBadgeCount > 99 ? '99+' : chatBadgeCount}
                 </span>
               ) : null}
+            </button>
+            <button
+              type="button"
+              className="topbar-button theme-toggle"
+              onClick={toggleTheme}
+              aria-label="Cambiar tema"
+            >
+              {themeMode === 'dark' ? '☀️ Claro' : '🌙 Oscuro'}
             </button>
             <button
               type="button"
@@ -22883,9 +22951,11 @@ const AppRoutes: React.FC = () => (
 
 const App: React.FC = () => {
   return (
-    <BrandingProvider>
-      <AppRoutes />
-    </BrandingProvider>
+    <ThemeProvider>
+      <BrandingProvider>
+        <AppRoutes />
+      </BrandingProvider>
+    </ThemeProvider>
   );
 };
 
