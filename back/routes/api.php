@@ -14,6 +14,7 @@ use App\Http\Controllers\Api\AttendanceController;
 use App\Http\Controllers\Api\WorkflowTaskController;
 use App\Http\Controllers\Api\GeneralInfoController;
 use App\Http\Controllers\Api\AuditController;
+use App\Http\Controllers\Api\TeamGroupController;
 use Illuminate\Support\Facades\Route;
 
 Route::get('/personal/documentos/tipos', [PersonalDocumentController::class, 'types']);
@@ -96,5 +97,9 @@ Route::post('/login', [AuthController::class, 'login']);
 Route::post('/twofactor/setup', [AuthController::class, 'setupTotp']);
 Route::post('/twofactor/enable', [AuthController::class, 'enableTotp']);
 Route::get('/auditoria', [AuditController::class, 'index']);
+Route::get('/team-groups', [TeamGroupController::class, 'index']);
+Route::post('/team-groups', [TeamGroupController::class, 'store']);
+Route::put('/team-groups/{teamGroup}', [TeamGroupController::class, 'update']);
+Route::delete('/team-groups/{teamGroup}', [TeamGroupController::class, 'destroy']);
 
 Route::options('/{any}', fn () => response()->noContent())->where('any', '.*');

@@ -921,6 +921,19 @@ type NotificationDeletionRecord = {
   deletedAtLabel?: string | null;
 };
 
+type TeamGroupMember = {
+  id: number;
+  name: string;
+  email: string | null;
+};
+
+type TeamGroup = {
+  id: number;
+  name: string;
+  color: string | null;
+  members: TeamGroupMember[];
+};
+
 type AuditLogRecord = {
   id: number;
   action: string;
@@ -4825,50 +4838,20 @@ const DashboardPage: React.FC<{ showPersonalPanel?: boolean }> = ({ showPersonal
   const [statsClienteFilter, setStatsClienteFilter] = useState('');
   const [statsEstadoFilter, setStatsEstadoFilter] = useState('');
   const [statsAgenteFilter, setStatsAgenteFilter] = useState('');
+  const [teamGroups, setTeamGroups] = useState<TeamGroup[]>([]);
+  const [teamLoading, setTeamLoading] = useState(false);
+  const [teamError, setTeamError] = useState<string | null>(null);
+  const [teamInfo, setTeamInfo] = useState<string | null>(null);
+  const [usersOptions, setUsersOptions] = useState<Usuario[]>([]);
+  const [usersLoading, setUsersLoading] = useState(false);
+  const [usersError, setUsersError] = useState<string | null>(null);
+  const [editingTeamId, setEditingTeamId] = useState<number | null>(null);
+  const [editingTeamName, setEditingTeamName] = useState('');
+  const [editingTeamColor, setEditingTeamColor] = useState<string | null>(null);
+  const [editingMembers, setEditingMembers] = useState<Array<{ id?: number; name: string; email: string }>>([]);
+  const [savingTeam, setSavingTeam] = useState(false);
+  const [deletingTeam, setDeletingTeam] = useState(false);
   const apiBaseUrl = useMemo(() => resolveApiBaseUrl(), []);
-  const fidelizacion1Users = useMemo(
-    () => [
-      { id: 'dgonzalez@logisticaargentinasrl.com.ar', label: 'Dario Gonzalez' },
-      { id: 'florenciakind@gmail.com', label: 'Florencia Kindwerler' },
-      { id: 'ezequielb@logisticaargentinasrl.com.ar', label: 'Ezequiel Bordon' },
-    ],
-    []
-  );
-  const fidelizacion2Users = useMemo(
-    () => [
-      { id: 'lmartinez@logisticaargentinasrl.com.ar', label: 'Leandro Exequiel Martinez' },
-      { id: 'gmino@logisticaargentinasrl.com.ar', label: 'Gerardo Miño' },
-      { id: 'Benitezn@logisticaargentinasrl.com', label: 'Nelson Benitez' },
-      { id: 'ceciliaf@logisticaargentinasrl.com.ar', label: 'Cecilia F' },
-    ],
-    []
-  );
-  const expansionUsers = useMemo(
-    () => [
-      { id: 'jromero@logisticaargentinasrl.com.ar', label: 'Joel Romero' },
-      { id: 'yasminr@logisticaargentinasrl.com.ar', label: 'Yasmin Roy Nacer' },
-      { id: 'rubenv@logisticaargentinasrl.com.ar', label: 'Ruben Andres Vargas' },
-      { id: 'enzoespindola@logisticaargentinasrl.com.ar', label: 'Enzo Espindola' },
-      { id: 'sbogado@logisticaargentinasrl.com.ar', label: 'Sofia Bogado' },
-      { id: 'jmiranda@logisticaargentinasrl.com.ar', label: 'Juan Miranda' },
-    ],
-    []
-  );
-  const matchesFidelizacionUser = useCallback(
-    (registro: PersonalRecord, targetLabel: string) => {
-      const normalizedTarget = targetLabel.trim().toLowerCase();
-      const agenteName = (registro.agente ?? '').trim().toLowerCase();
-      const responsableName = (registro.agenteResponsable ?? '').trim().toLowerCase();
-      const responsables = (registro.agentesResponsables ?? []).map((item) => (item ?? '').trim().toLowerCase());
-      return (
-        (agenteName && agenteName.includes(normalizedTarget)) ||
-        (responsableName && responsableName.includes(normalizedTarget)) ||
-        responsables.some((name) => name.includes(normalizedTarget))
-      );
-    },
-    []
-  );
-
   const filterPersonalRecords = useCallback(
     (data: PersonalRecord[], clienteFilter: string, estadoFilter: string, agenteFilter: string) =>
       data.filter((registro) => {
@@ -4999,6 +4982,64 @@ const DashboardPage: React.FC<{ showPersonalPanel?: boolean }> = ({ showPersonal
     if (!showPersonalPanel) {
       return;
     }
+    const controller = new AbortController();
+
+    const fetchTeams = async () => {
+      try {
+        setTeamLoading(true);
+        setTeamError(null);
+        const response = await fetch(`${apiBaseUrl}/api/team-groups`, { signal: controller.signal });
+        if (!response.ok) {
+          throw new Error(`Error ${response.status}: ${response.statusText}`);
+        }
+        const payload = (await response.json()) as { data?: TeamGroup[] };
+        setTeamGroups(Array.isArray(payload?.data) ? payload.data : []);
+      } catch (err) {
+        if ((err as Error).name === 'AbortError') {
+          return;
+        }
+        setTeamError((err as Error).message ?? 'No se pudieron cargar los equipos.');
+      } finally {
+        setTeamLoading(false);
+      }
+    };
+
+    fetchTeams();
+    return () => controller.abort();
+  }, [apiBaseUrl, showPersonalPanel]);
+
+  useEffect(() => {
+    if (!showPersonalPanel) {
+      return;
+    }
+    const controller = new AbortController();
+    const fetchUsers = async () => {
+      try {
+        setUsersLoading(true);
+        setUsersError(null);
+        const response = await fetch(`${apiBaseUrl}/api/usuarios`, { signal: controller.signal });
+        if (!response.ok) {
+          throw new Error(`Error ${response.status}: ${response.statusText}`);
+        }
+        const payload = (await response.json()) as { data?: Usuario[] };
+        setUsersOptions(Array.isArray(payload?.data) ? payload.data : []);
+      } catch (err) {
+        if ((err as Error).name === 'AbortError') {
+          return;
+        }
+        setUsersError((err as Error).message ?? 'No se pudieron cargar los usuarios.');
+      } finally {
+        setUsersLoading(false);
+      }
+    };
+    fetchUsers();
+    return () => controller.abort();
+  }, [apiBaseUrl, showPersonalPanel]);
+
+  useEffect(() => {
+    if (!showPersonalPanel) {
+      return;
+    }
     const filtered = filterPersonalRecords(personalStatsData, statsClienteFilter, statsEstadoFilter, statsAgenteFilter);
     setPersonalStats(computePersonalStats(filtered));
   }, [
@@ -5010,6 +5051,168 @@ const DashboardPage: React.FC<{ showPersonalPanel?: boolean }> = ({ showPersonal
     filterPersonalRecords,
     computePersonalStats,
   ]);
+
+  const resetTeamForm = useCallback(() => {
+    setEditingTeamId(null);
+    setEditingTeamName('');
+    setEditingTeamColor(null);
+    setEditingMembers([]);
+    setTeamInfo(null);
+    setTeamError(null);
+  }, []);
+
+  const populateTeamForm = useCallback(
+    (team: TeamGroup | null) => {
+      if (!team) {
+        resetTeamForm();
+        return;
+      }
+      setEditingTeamId(team.id);
+      setEditingTeamName(team.name);
+      setEditingTeamColor(team.color ?? null);
+      setEditingMembers(
+        (team.members ?? []).map((member) => ({
+          id: member.id,
+          name: member.name,
+          email: member.email ?? '',
+        }))
+      );
+      setTeamInfo(null);
+      setTeamError(null);
+    },
+    [resetTeamForm]
+  );
+
+  const addEmptyMember = () => {
+    setEditingMembers((prev) => [...prev, { name: '', email: '' }]);
+  };
+
+  const updateMemberField = (index: number, field: 'name' | 'email', value: string) => {
+    setEditingMembers((prev) =>
+      prev.map((member, idx) => (idx === index ? { ...member, [field]: value } : member))
+    );
+  };
+
+  const handleMemberSelect = (index: number, userId: string) => {
+    const selected = usersOptions.find((user) => String(user.id) === userId);
+    if (!selected) {
+      return;
+    }
+    setEditingMembers((prev) =>
+      prev.map((member, idx) =>
+        idx === index
+          ? {
+              ...member,
+              name: selected.name ?? member.name,
+              email: selected.email ?? member.email,
+            }
+          : member
+      )
+    );
+  };
+
+  const removeMember = (index: number) => {
+    setEditingMembers((prev) => prev.filter((_, idx) => idx !== index));
+  };
+
+  const handleSaveTeam = async () => {
+    const trimmedName = editingTeamName.trim();
+    if (!trimmedName) {
+      setTeamError('Ingresá un nombre de equipo.');
+      return;
+    }
+    const membersPayload = editingMembers
+      .map((member) => ({
+        id: member.id,
+        name: member.name.trim(),
+        email: member.email.trim(),
+      }))
+      .filter((member) => member.name.length > 0);
+
+    try {
+      setSavingTeam(true);
+      setTeamError(null);
+      setTeamInfo(null);
+
+      const payload = {
+        name: trimmedName,
+        color: editingTeamColor?.trim() || null,
+        members: membersPayload,
+      };
+
+      const endpoint =
+        editingTeamId === null
+          ? `${apiBaseUrl}/api/team-groups`
+          : `${apiBaseUrl}/api/team-groups/${editingTeamId}`;
+      const method = editingTeamId === null ? 'POST' : 'PUT';
+
+      const response = await fetch(endpoint, {
+        method,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+
+      if (!response.ok) {
+        let msg = `Error ${response.status}`;
+        try {
+          const errorPayload = await response.json();
+          if (typeof errorPayload?.message === 'string') {
+            msg = errorPayload.message;
+          }
+        } catch {
+          // ignore parse errors
+        }
+        throw new Error(msg);
+      }
+
+      const result = (await response.json()) as { data?: TeamGroup };
+      if (result?.data) {
+        setTeamGroups((prev) => {
+          const exists = prev.some((group) => group.id === result.data!.id);
+          if (exists) {
+            return prev.map((group) => (group.id === result.data!.id ? result.data! : group)).sort((a, b) =>
+              a.name.localeCompare(b.name)
+            );
+          }
+          return [...prev, result.data!].sort((a, b) => a.name.localeCompare(b.name));
+        });
+        populateTeamForm(result.data);
+        setTeamInfo('Equipo guardado correctamente.');
+      }
+    } catch (err) {
+      setTeamError((err as Error).message ?? 'No se pudo guardar el equipo.');
+    } finally {
+      setSavingTeam(false);
+    }
+  };
+
+  const handleDeleteTeam = async () => {
+    if (editingTeamId === null) {
+      resetTeamForm();
+      return;
+    }
+    if (!window.confirm('¿Eliminar este equipo? Esta acción quitará también sus miembros.')) {
+      return;
+    }
+    try {
+      setDeletingTeam(true);
+      setTeamError(null);
+      setTeamInfo(null);
+      const response = await fetch(`${apiBaseUrl}/api/team-groups/${editingTeamId}`, {
+        method: 'DELETE',
+      });
+      if (!response.ok) {
+        throw new Error(`Error ${response.status}: ${response.statusText}`);
+      }
+      setTeamGroups((prev) => prev.filter((group) => group.id !== editingTeamId));
+      resetTeamForm();
+      setTeamInfo('Equipo eliminado.');
+    } catch (err) {
+      setTeamError((err as Error).message ?? 'No se pudo eliminar el equipo.');
+    } finally {
+      setDeletingTeam(false);
+    }
+  };
 
   const filteredClientes = useMemo(() => {
     const term = searchTerm.trim().toLowerCase();
@@ -5153,116 +5356,75 @@ const DashboardPage: React.FC<{ showPersonalPanel?: boolean }> = ({ showPersonal
     [personalStatsData, statsClienteFilter, statsEstadoFilter, statsAgenteFilter, filterPersonalRecords]
   );
 
-  const fidelizacionUserStats = useMemo(
-    () =>
-      fidelizacion1Users.map((user) => {
-        const records = baseFilteredPersonal.filter((registro) =>
-          matchesFidelizacionUser(registro, user.label)
-        );
-        return { user, stats: computePersonalStats(records) };
-      }),
-    [baseFilteredPersonal, computePersonalStats, fidelizacion1Users, matchesFidelizacionUser]
+  const matchesTeamMember = useCallback(
+    (registro: PersonalRecord, member: TeamGroupMember) => {
+      const target = (member.name ?? '').trim().toLowerCase();
+      if (!target) {
+        return false;
+      }
+      const candidates = [
+        registro.agente,
+        registro.agenteResponsable,
+        ...(registro.agentesResponsables ?? []),
+      ]
+        .filter(Boolean)
+        .map((value) => (value ?? '').trim().toLowerCase());
+
+      return candidates.some((candidate) => candidate.includes(target));
+    },
+    []
   );
 
-  const fidelizacionGroupStats = useMemo(() => {
-    const groupRecords = baseFilteredPersonal.filter((registro) =>
-      fidelizacion1Users.some((user) => matchesFidelizacionUser(registro, user.label))
-    );
-    return computePersonalStats(groupRecords);
-  }, [baseFilteredPersonal, computePersonalStats, fidelizacion1Users, matchesFidelizacionUser]);
+  const computeClientGroups = useCallback(
+    (records: PersonalRecord[]) => {
+      const grouped = records.reduce<Record<string, PersonalRecord[]>>((acc, registro) => {
+        const key = registro.cliente ?? 'Sin cliente';
+        if (!acc[key]) {
+          acc[key] = [];
+        }
+        acc[key].push(registro);
+        return acc;
+      }, {});
 
-  const fidelizacionClientGroups = useMemo(() => {
-    const records = baseFilteredPersonal.filter((registro) =>
-      fidelizacion1Users.some((user) => matchesFidelizacionUser(registro, user.label))
-    );
-    const grouped = records.reduce<Record<string, PersonalRecord[]>>((acc, registro) => {
-      const key = registro.cliente ?? 'Sin cliente';
-      if (!acc[key]) {
-        acc[key] = [];
-      }
-      acc[key].push(registro);
-      return acc;
-    }, {});
-
-    return Object.entries(grouped).map(([clienteNombre, registros]) => ({
-      clienteNombre,
-      stats: computePersonalStats(registros),
-    }));
-  }, [baseFilteredPersonal, fidelizacion1Users, matchesFidelizacionUser, computePersonalStats]);
-
-  const fidelizacion2UserStats = useMemo(
-    () =>
-      fidelizacion2Users.map((user) => {
-        const records = baseFilteredPersonal.filter((registro) =>
-          matchesFidelizacionUser(registro, user.label)
-        );
-        return { user, stats: computePersonalStats(records) };
-      }),
-    [baseFilteredPersonal, computePersonalStats, fidelizacion2Users, matchesFidelizacionUser]
+      return Object.entries(grouped).map(([clienteNombre, registros]) => ({
+        clienteNombre,
+        stats: computePersonalStats(registros),
+      }));
+    },
+    [computePersonalStats]
   );
 
-  const fidelizacion2GroupStats = useMemo(() => {
-    const groupRecords = baseFilteredPersonal.filter((registro) =>
-      fidelizacion2Users.some((user) => matchesFidelizacionUser(registro, user.label))
-    );
-    return computePersonalStats(groupRecords);
-  }, [baseFilteredPersonal, computePersonalStats, fidelizacion2Users, matchesFidelizacionUser]);
+  const teamSections = useMemo(() => {
+    if (!teamGroups || teamGroups.length === 0) {
+      return [];
+    }
 
-  const fidelizacion2ClientGroups = useMemo(() => {
-    const records = baseFilteredPersonal.filter((registro) =>
-      fidelizacion2Users.some((user) => matchesFidelizacionUser(registro, user.label))
-    );
-    const grouped = records.reduce<Record<string, PersonalRecord[]>>((acc, registro) => {
-      const key = registro.cliente ?? 'Sin cliente';
-      if (!acc[key]) {
-        acc[key] = [];
-      }
-      acc[key].push(registro);
-      return acc;
-    }, {});
-
-    return Object.entries(grouped).map(([clienteNombre, registros]) => ({
-      clienteNombre,
-      stats: computePersonalStats(registros),
-    }));
-  }, [baseFilteredPersonal, fidelizacion2Users, matchesFidelizacionUser, computePersonalStats]);
-
-  const expansionUserStats = useMemo(
-    () =>
-      expansionUsers.map((user) => {
-        const records = baseFilteredPersonal.filter((registro) =>
-          matchesFidelizacionUser(registro, user.label)
+    return teamGroups.map((team) => {
+      const members = team.members ?? [];
+      const teamRecords = baseFilteredPersonal.filter((registro) =>
+        members.some((member) => matchesTeamMember(registro, member))
+      );
+      const groupStats = computePersonalStats(teamRecords);
+      const clientGroups = computeClientGroups(teamRecords);
+      const memberStats = members.map((member) => {
+        const memberRecords = baseFilteredPersonal.filter((registro) =>
+          matchesTeamMember(registro, member)
         );
-        return { user, stats: computePersonalStats(records) };
-      }),
-    [baseFilteredPersonal, computePersonalStats, expansionUsers, matchesFidelizacionUser]
-  );
+        return {
+          member,
+          stats: computePersonalStats(memberRecords),
+          clients: computeClientGroups(memberRecords),
+        };
+      });
 
-  const expansionGroupStats = useMemo(() => {
-    const groupRecords = baseFilteredPersonal.filter((registro) =>
-      expansionUsers.some((user) => matchesFidelizacionUser(registro, user.label))
-    );
-    return computePersonalStats(groupRecords);
-  }, [baseFilteredPersonal, computePersonalStats, expansionUsers, matchesFidelizacionUser]);
-
-  const expansionClientGroups = useMemo(() => {
-    const records = baseFilteredPersonal.filter((registro) =>
-      expansionUsers.some((user) => matchesFidelizacionUser(registro, user.label))
-    );
-    const grouped = records.reduce<Record<string, PersonalRecord[]>>((acc, registro) => {
-      const key = registro.cliente ?? 'Sin cliente';
-      if (!acc[key]) {
-        acc[key] = [];
-      }
-      acc[key].push(registro);
-      return acc;
-    }, {});
-
-    return Object.entries(grouped).map(([clienteNombre, registros]) => ({
-      clienteNombre,
-      stats: computePersonalStats(registros),
-    }));
-  }, [baseFilteredPersonal, expansionUsers, matchesFidelizacionUser, computePersonalStats]);
+      return {
+        team,
+        groupStats,
+        clientGroups,
+        memberStats,
+      };
+    });
+  }, [teamGroups, baseFilteredPersonal, matchesTeamMember, computePersonalStats, computeClientGroups]);
 
   return (
     <DashboardLayout
@@ -5398,247 +5560,244 @@ const DashboardPage: React.FC<{ showPersonalPanel?: boolean }> = ({ showPersonal
             </div>
           </div>
 
-          <div className="summary-panel secondary-panels fidelizacion-panel fidelizacion-panel--1">
+          <div className="summary-panel secondary-panels team-config-panel">
             <div className="secondary-panels__header">
-              <h3>Fidelización 1</h3>
-              <span>{fidelizacionGroupStats.total} en total</span>
+              <h3>Equipos</h3>
+              <p style={{ margin: 0 }}>Armá los bloques (nombre, color y miembros) que luego aparecen en el panel.</p>
             </div>
-            <div className="client-cards fidelizacion-cards">
-              {fidelizacionUserStats.map(({ user, stats }) => (
-                <div key={user.id} className="client-card">
-                  <header>
-                    <h4>{user.label}</h4>
-                    <span>
-                      {stats.total} en total
-                      {stats.otros > 0 ? ` · ${stats.otros} sin estado` : ''}
-                    </span>
-                  </header>
-                  <div className="client-card__stats">
-                    <div>
-                      <small>Activos</small>
-                      <strong>{stats.activo}</strong>
-                    </div>
-                    <div>
-                      <small>Baja</small>
-                      <strong>{stats.baja}</strong>
-                    </div>
-                    <div>
-                      <small>Suspendido</small>
-                      <strong>{stats.suspendido}</strong>
-                    </div>
+
+            <div className="team-editor">
+              <div className="team-editor__row">
+                <label className="input-control">
+                  <span>Equipo</span>
+                  <select
+                    value={editingTeamId ?? ''}
+                    onChange={(event) => {
+                      const value = event.target.value;
+                      if (value === '') {
+                        resetTeamForm();
+                        return;
+                      }
+                      const teamId = Number(value);
+                      const found = teamGroups.find((team) => team.id === teamId) ?? null;
+                      populateTeamForm(found);
+                    }}
+                  >
+                    <option value="">Nuevo equipo</option>
+                    {teamGroups.map((team) => (
+                      <option key={team.id} value={team.id}>
+                        {team.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="input-control">
+                  <span>Nombre</span>
+                  <input
+                    type="text"
+                    value={editingTeamName}
+                    onChange={(event) => setEditingTeamName(event.target.value)}
+                    placeholder="Ej: Fidelización 1"
+                  />
+                </label>
+                <label className="input-control">
+                  <span>Color del bloque</span>
+                  <div className="input-with-action">
+                    <input
+                      type="text"
+                      value={editingTeamColor ?? ''}
+                      onChange={(event) => setEditingTeamColor(event.target.value || null)}
+                      placeholder="#DDE9FF"
+                    />
+                    <input
+                      type="color"
+                      value={editingTeamColor ?? '#f4f6fb'}
+                      onChange={(event) => setEditingTeamColor(event.target.value)}
+                      title="Elegir color"
+                      style={{ width: '52px', minWidth: '52px' }}
+                    />
                   </div>
-                  <div className="client-card__clients">
-                    <small>Clientes</small>
-                    <div className="client-card__chips">
-                      {(() => {
-                        const grouped = baseFilteredPersonal
-                          .filter((registro) => matchesFidelizacionUser(registro, user.label))
-                          .reduce<Record<string, number>>((acc, registro) => {
-                            const key = registro.cliente ?? 'Sin cliente';
-                            acc[key] = (acc[key] ?? 0) + 1;
-                            return acc;
-                          }, {});
-                        const entries = Object.entries(grouped);
-                        if (entries.length === 0) {
-                          return <span className="chip chip--muted">Sin clientes</span>;
-                        }
-                        return entries.map(([cliente, total]) => (
-                          <span key={cliente} className="chip">
-                            {cliente} · {total}
-                          </span>
-                        ));
-                      })()}
-                    </div>
+                </label>
+              </div>
+
+                <div className="team-editor__members">
+                  <div className="team-editor__members-header">
+                    <h4>Miembros</h4>
+                    <button type="button" className="secondary-action" onClick={addEmptyMember}>
+                      + Agregar miembro
+                    </button>
                   </div>
+                  {editingMembers.length === 0 ? (
+                    <p className="form-info">Sumá nombres (y opcionalmente emails) para mapearlos con los agentes.</p>
+                  ) : null}
+                  <div className="team-editor__members-grid">
+                    {editingMembers.map((member, index) => (
+                      <div key={`${member.id ?? index}-${index}`} className="team-editor__member-row">
+                      <label className="input-control">
+                        <span>Elegir usuario</span>
+                        <select
+                          value=""
+                          onChange={(event) => handleMemberSelect(index, event.target.value)}
+                          disabled={usersLoading}
+                        >
+                          <option value="">{usersLoading ? 'Cargando...' : 'Seleccionar'}</option>
+                          {usersOptions.map((user) => (
+                            <option key={user.id} value={user.id}>
+                              {user.name ?? user.email ?? `Usuario #${user.id}`}
+                            </option>
+                          ))}
+                        </select>
+                        {usersError ? <small className="form-info form-info--error">{usersError}</small> : null}
+                      </label>
+                        <label className="input-control">
+                          <span>Nombre</span>
+                          <input
+                            type="text"
+                            value={member.name}
+                          onChange={(event) => updateMemberField(index, 'name', event.target.value)}
+                          placeholder="Ej: Monica Fernandez"
+                        />
+                      </label>
+                      <label className="input-control">
+                        <span>Email (opcional)</span>
+                        <input
+                          type="email"
+                          value={member.email}
+                          onChange={(event) => updateMemberField(index, 'email', event.target.value)}
+                          placeholder="usuario@dominio.com"
+                        />
+                      </label>
+                      <button
+                        type="button"
+                        className="secondary-action"
+                        aria-label="Quitar miembro"
+                        onClick={() => removeMember(index)}
+                      >
+                        Eliminar
+                      </button>
+                    </div>
+                  ))}
                 </div>
-              ))}
-            </div>
-            <div className="client-cards fidelizacion-cards fidelizacion-clients-block">
-              {fidelizacionClientGroups.map(({ clienteNombre, stats }) => (
-                <div key={clienteNombre} className="client-card">
-                  <header>
-                    <h4>{clienteNombre}</h4>
-                    <span>
-                      {stats.total} en total{stats.otros > 0 ? ` · ${stats.otros} sin estado` : ''}
-                    </span>
-                  </header>
-                  <div className="client-card__stats">
-                    <div>
-                      <small>Activos</small>
-                      <strong>{stats.activo}</strong>
-                    </div>
-                    <div>
-                      <small>Baja</small>
-                      <strong>{stats.baja}</strong>
-                    </div>
-                    <div>
-                      <small>Suspendido</small>
-                      <strong>{stats.suspendido}</strong>
-                    </div>
-                  </div>
-                </div>
-              ))}
+              </div>
+
+              {teamError ? <p className="form-info form-info--error">{teamError}</p> : null}
+              {teamInfo ? <p className="form-info form-info--success">{teamInfo}</p> : null}
+
+              <div className="form-actions" style={{ marginTop: '0.5rem' }}>
+                <button type="button" className="primary-action" onClick={handleSaveTeam} disabled={savingTeam}>
+                  {savingTeam ? 'Guardando...' : 'Guardar equipo'}
+                </button>
+                <button type="button" className="secondary-action" onClick={resetTeamForm} disabled={savingTeam || deletingTeam}>
+                  Limpiar
+                </button>
+                <button
+                  type="button"
+                  className="secondary-action"
+                  onClick={handleDeleteTeam}
+                  disabled={editingTeamId === null || deletingTeam || savingTeam}
+                >
+                  {deletingTeam ? 'Eliminando...' : 'Eliminar'}
+                </button>
+              </div>
             </div>
           </div>
-          <div className="summary-panel secondary-panels fidelizacion-panel fidelizacion-panel--2">
-            <h3>Fidelización 2</h3>
-            <p style={{ marginTop: 0 }}>{fidelizacion2GroupStats.total} en total</p>
-            <div className="client-cards fidelizacion-cards">
-              {fidelizacion2UserStats.map(({ user, stats }) => (
-                <div key={user.id} className="client-card">
-                  <header>
-                    <h4>{user.label}</h4>
-                    <span>
-                      {stats.total} en total
-                      {stats.otros > 0 ? ` · ${stats.otros} sin estado` : ''}
-                    </span>
-                  </header>
-                  <div className="client-card__stats">
+
+          <div className="team-sections">
+            {teamLoading ? <p className="form-info">Cargando equipos...</p> : null}
+            {teamError && !teamLoading ? <p className="form-info form-info--error">{teamError}</p> : null}
+            {!teamLoading && !teamError && teamSections.length === 0 ? (
+              <p className="form-info">Todavía no hay equipos configurados. Creá uno arriba.</p>
+            ) : null}
+
+            {teamSections.map(({ team, groupStats, memberStats, clientGroups }) => {
+              const background = team.color ? `${team.color}1a` : '#f4f6fb';
+              const borderColor = team.color ?? '#dce3f0';
+
+              return (
+                <div key={team.id} className="summary-panel secondary-panels fidelizacion-panel" style={{ background, borderColor }}>
+                  <div className="secondary-panels__header">
                     <div>
-                      <small>Activos</small>
-                      <strong>{stats.activo}</strong>
+                      <h3>{team.name}</h3>
+                      <span>{groupStats.total} en total</span>
                     </div>
-                    <div>
-                      <small>Baja</small>
-                      <strong>{stats.baja}</strong>
-                    </div>
-                    <div>
-                      <small>Suspendido</small>
-                      <strong>{stats.suspendido}</strong>
-                    </div>
+                    {team.color ? (
+                      <span className="color-pill" style={{ background: team.color }}>
+                        {team.color}
+                      </span>
+                    ) : null}
                   </div>
-                  <div className="client-card__clients">
-                    <small>Clientes</small>
-                    <div className="client-card__chips">
-                      {(() => {
-                        const grouped = baseFilteredPersonal
-                          .filter((registro) => matchesFidelizacionUser(registro, user.label))
-                          .reduce<Record<string, number>>((acc, registro) => {
-                            const key = registro.cliente ?? 'Sin cliente';
-                            acc[key] = (acc[key] ?? 0) + 1;
-                            return acc;
-                          }, {});
-                        const entries = Object.entries(grouped);
-                        if (entries.length === 0) {
-                          return <span className="chip chip--muted">Sin clientes</span>;
-                        }
-                        return entries.map(([cliente, total]) => (
-                          <span key={cliente} className="chip">
-                            {cliente} · {total}
+
+                  <div className="client-cards fidelizacion-cards">
+                    {memberStats.map(({ member, stats, clients }) => (
+                      <div key={`${team.id}-${member.id ?? member.name}`} className="client-card">
+                        <header>
+                          <h4>{member.name}</h4>
+                          <span>
+                            {stats.total} en total
+                            {stats.otros > 0 ? ` · ${stats.otros} sin estado` : ''}
                           </span>
-                        ));
-                      })()}
-                    </div>
+                        </header>
+                        <div className="client-card__stats">
+                          <div>
+                            <small>Activos</small>
+                            <strong>{stats.activo}</strong>
+                          </div>
+                          <div>
+                            <small>Baja</small>
+                            <strong>{stats.baja}</strong>
+                          </div>
+                          <div>
+                            <small>Suspendido</small>
+                            <strong>{stats.suspendido}</strong>
+                          </div>
+                        </div>
+                        <div className="client-card__clients">
+                          <small>Clientes</small>
+                          <div className="client-card__chips">
+                            {clients.length === 0 ? (
+                              <span className="chip chip--muted">Sin clientes</span>
+                            ) : (
+                              clients.map(({ clienteNombre, stats: clientStats }) => (
+                                <span key={clienteNombre} className="chip">
+                                  {clienteNombre} · {clientStats.total}
+                                </span>
+                              ))
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    ))}
                   </div>
-                </div>
-              ))}
-            </div>
-            <div className="client-cards fidelizacion-cards fidelizacion-clients-block">
-              {fidelizacion2ClientGroups.map(({ clienteNombre, stats }) => (
-                <div key={clienteNombre} className="client-card">
-                  <header>
-                    <h4>{clienteNombre}</h4>
-                    <span>
-                      {stats.total} en total{stats.otros > 0 ? ` · ${stats.otros} sin estado` : ''}
-                    </span>
-                  </header>
-                  <div className="client-card__stats">
-                    <div>
-                      <small>Activos</small>
-                      <strong>{stats.activo}</strong>
-                    </div>
-                    <div>
-                      <small>Baja</small>
-                      <strong>{stats.baja}</strong>
-                    </div>
-                    <div>
-                      <small>Suspendido</small>
-                      <strong>{stats.suspendido}</strong>
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-          <div className="summary-panel secondary-panels expansion-panel">
-            <h3>Expansión 1</h3>
-            <p style={{ marginTop: 0 }}>{expansionGroupStats.total} en total</p>
-            <div className="client-cards fidelizacion-cards">
-              {expansionUserStats.map(({ user, stats }) => (
-                <div key={user.id} className="client-card">
-                  <header>
-                    <h4>{user.label}</h4>
-                    <span>
-                      {stats.total} en total
-                      {stats.otros > 0 ? ` · ${stats.otros} sin estado` : ''}
-                    </span>
-                  </header>
-                  <div className="client-card__stats">
-                    <div>
-                      <small>Activos</small>
-                      <strong>{stats.activo}</strong>
-                    </div>
-                    <div>
-                      <small>Baja</small>
-                      <strong>{stats.baja}</strong>
-                    </div>
-                    <div>
-                      <small>Suspendido</small>
-                      <strong>{stats.suspendido}</strong>
-                    </div>
-                  </div>
-                  <div className="client-card__clients">
-                    <small>Clientes</small>
-                    <div className="client-card__chips">
-                      {(() => {
-                        const grouped = baseFilteredPersonal
-                          .filter((registro) => matchesFidelizacionUser(registro, user.label))
-                          .reduce<Record<string, number>>((acc, registro) => {
-                            const key = registro.cliente ?? 'Sin cliente';
-                            acc[key] = (acc[key] ?? 0) + 1;
-                            return acc;
-                          }, {});
-                        const entries = Object.entries(grouped);
-                        if (entries.length === 0) {
-                          return <span className="chip chip--muted">Sin clientes</span>;
-                        }
-                        return entries.map(([cliente, total]) => (
-                          <span key={cliente} className="chip">
-                            {cliente} · {total}
+
+                  <div className="client-cards fidelizacion-cards fidelizacion-clients-block">
+                    {clientGroups.map(({ clienteNombre, stats }) => (
+                      <div key={clienteNombre} className="client-card">
+                        <header>
+                          <h4>{clienteNombre}</h4>
+                          <span>
+                            {stats.total} en total{stats.otros > 0 ? ` · ${stats.otros} sin estado` : ''}
                           </span>
-                        ));
-                      })()}
-                    </div>
+                        </header>
+                        <div className="client-card__stats">
+                          <div>
+                            <small>Activos</small>
+                            <strong>{stats.activo}</strong>
+                          </div>
+                          <div>
+                            <small>Baja</small>
+                            <strong>{stats.baja}</strong>
+                          </div>
+                          <div>
+                            <small>Suspendido</small>
+                            <strong>{stats.suspendido}</strong>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
                   </div>
                 </div>
-              ))}
-            </div>
-            <div className="client-cards fidelizacion-cards fidelizacion-clients-block">
-              {expansionClientGroups.map(({ clienteNombre, stats }) => (
-                <div key={clienteNombre} className="client-card">
-                  <header>
-                    <h4>{clienteNombre}</h4>
-                    <span>
-                      {stats.total} en total{stats.otros > 0 ? ` · ${stats.otros} sin estado` : ''}
-                    </span>
-                  </header>
-                  <div className="client-card__stats">
-                    <div>
-                      <small>Activos</small>
-                      <strong>{stats.activo}</strong>
-                    </div>
-                    <div>
-                      <small>Baja</small>
-                      <strong>{stats.baja}</strong>
-                    </div>
-                    <div>
-                      <small>Suspendido</small>
-                      <strong>{stats.suspendido}</strong>
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
+              );
+            })}
           </div>
         </>
       ) : null}
