@@ -797,8 +797,8 @@ const BRAND_LOGO_KEY = 'branding.brandLogo';
 const PROMO_LOGO_KEY = 'branding.promoLogo';
 
 type BrandingContextValue = {
-  brandLogoSrc: string;
-  promoLogoSrc: string;
+  brandLogoSrc: string | null;
+  promoLogoSrc: string | null;
   setBrandLogo: (src: string | null) => void;
   setPromoLogo: (src: string | null) => void;
   resetBranding: () => void;
@@ -815,17 +815,23 @@ const safeReadStorage = (key: string): string | null => {
 };
 
 const BrandingProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [brandLogoSrc, setBrandLogoSrc] = useState<string>(() => safeReadStorage(BRAND_LOGO_KEY) ?? DEFAULT_LOGO_SRC);
-  const [promoLogoSrc, setPromoLogoSrc] = useState<string>(() => safeReadStorage(PROMO_LOGO_KEY) ?? DEFAULT_LOGO_SRC);
+  const [brandLogoSrc, setBrandLogoSrc] = useState<string | null>(() => {
+    const stored = safeReadStorage(BRAND_LOGO_KEY);
+    return stored !== null ? stored : DEFAULT_LOGO_SRC;
+  });
+  const [promoLogoSrc, setPromoLogoSrc] = useState<string | null>(() => {
+    const stored = safeReadStorage(PROMO_LOGO_KEY);
+    return stored !== null ? stored : DEFAULT_LOGO_SRC;
+  });
 
-  const persistLogo = useCallback((key: string, setter: (value: string) => void) => {
+  const persistLogo = useCallback((key: string, setter: (value: string | null) => void) => {
     return (value: string | null) => {
       const nextValue = value ?? DEFAULT_LOGO_SRC;
       try {
-        if (value) {
-          window.localStorage.setItem(key, value);
-        } else {
+        if (value === null) {
           window.localStorage.removeItem(key);
+        } else {
+          window.localStorage.setItem(key, value);
         }
       } catch {
         // Ignorar errores de almacenamiento (modo incógnito, etc).
@@ -839,7 +845,11 @@ const BrandingProvider: React.FC<{ children: React.ReactNode }> = ({ children })
 
   useEffect(() => {
     // Asegurar que el watermark del chat use el logo configurado
-    document.documentElement.style.setProperty('--chat-watermark', `url(${promoLogoSrc})`);
+    if (promoLogoSrc) {
+      document.documentElement.style.setProperty('--chat-watermark', `url(${promoLogoSrc})`);
+    } else {
+      document.documentElement.style.removeProperty('--chat-watermark');
+    }
   }, [promoLogoSrc]);
 
   const resetBranding = useCallback(() => {
@@ -916,6 +926,8 @@ type AuditLogRecord = {
   action: string;
   entityType: string | null;
   entityId: number | null;
+  agentId?: number | null;
+  agentName?: string | null;
   actorEmail: string | null;
   actorName: string | null;
   metadata: unknown;
@@ -1957,7 +1969,11 @@ const LoginPage: React.FC = () => {
     <main className="login-page">
       <section className="login-panel">
         <div className="login-brand">
-          <img src={brandLogoSrc} alt="Logo de la empresa" className="brand-logo" />
+          {brandLogoSrc ? (
+            <img src={brandLogoSrc} alt="Logo de la empresa" className="brand-logo" />
+          ) : (
+            <div className="brand-placeholder">Tu marca</div>
+          )}
         </div>
 
         <div className="login-content">
@@ -2052,7 +2068,11 @@ const LoginPage: React.FC = () => {
         <div className="promo-decoration promo-decoration--bottom-right" />
 
         <div className="promo-content">
-          <img src={promoLogoSrc} alt="Logo de la empresa" className="promo-logo" />
+          {promoLogoSrc ? (
+            <img src={promoLogoSrc} alt="Logo de la empresa" className="promo-logo" />
+          ) : (
+            <div className="brand-placeholder">Sin logo</div>
+          )}
           <h2>Panel de control fácil de usar para administrar su negocio.</h2>
           <p>
             Optimice la gestión de su negocio con nuestro panel de control
@@ -3121,7 +3141,11 @@ const DashboardLayout: React.FC<{
             ×
           </button>
           <div className="sidebar-logo">
-            <img src={brandLogoSrc} alt="Logo de la empresa" className="brand-logo" />
+            {brandLogoSrc ? (
+              <img src={brandLogoSrc} alt="Logo de la empresa" className="brand-logo" />
+            ) : (
+              <div className="brand-placeholder">Tu marca</div>
+            )}
           </div>
 
         <NavLink
@@ -4528,13 +4552,14 @@ const ChatPage: React.FC = () => {
 
   const { promoLogoSrc } = useBranding();
 
-  const watermarkStyle = useMemo(
-    () =>
-      ({
-        '--chat-watermark': `url(${promoLogoSrc})`,
-      } as React.CSSProperties),
-    [promoLogoSrc]
-  );
+  const watermarkStyle = useMemo(() => {
+    if (!promoLogoSrc) {
+      return {} as React.CSSProperties;
+    }
+    return {
+      '--chat-watermark': `url(${promoLogoSrc})`,
+    } as React.CSSProperties;
+  }, [promoLogoSrc]);
 
   const handleMessagesScroll = useCallback(() => {
     const container = chatMessagesRef.current;
@@ -22078,8 +22103,8 @@ const ConfigurationPage: React.FC = () => {
   const authUser = useStoredAuthUser();
   const userRole = useMemo(() => getUserRole(authUser), [authUser]);
   const { brandLogoSrc, promoLogoSrc, setBrandLogo, setPromoLogo, resetBranding } = useBranding();
-  const [brandPreview, setBrandPreview] = useState(brandLogoSrc);
-  const [promoPreview, setPromoPreview] = useState(promoLogoSrc);
+  const [brandPreview, setBrandPreview] = useState<string | null>(brandLogoSrc);
+  const [promoPreview, setPromoPreview] = useState<string | null>(promoLogoSrc);
   const [savingMessage, setSavingMessage] = useState<string | null>(null);
   const [tfEmail, setTfEmail] = useState(authUser?.email ?? '');
   const [tfPassword, setTfPassword] = useState('');
@@ -22106,7 +22131,7 @@ const ConfigurationPage: React.FC = () => {
     });
 
   const handleUpload =
-    (setter: (value: string | null) => void, previewSetter: (value: string) => void) =>
+    (setter: (value: string | null) => void, previewSetter: (value: string | null) => void) =>
     async (event: React.ChangeEvent<HTMLInputElement>) => {
       const file = event.target.files?.[0];
       if (!file) {
@@ -22131,6 +22156,14 @@ const ConfigurationPage: React.FC = () => {
     setSavingMessage('Se restauraron los logos por defecto.');
   };
 
+  const handleClearBranding = () => {
+    setBrandLogo('');
+    setPromoLogo('');
+    setBrandPreview(null);
+    setPromoPreview(null);
+    setSavingMessage('Logos eliminados: la app se mostrará sin marca.');
+  };
+
   const isAdmin = userRole === 'admin';
 
   return (
@@ -22147,7 +22180,11 @@ const ConfigurationPage: React.FC = () => {
                 className="logo-preview"
                 style={{ border: '1px dashed #d6d9e0', padding: '12px', borderRadius: '10px', background: '#f9fbff' }}
               >
-                <img src={brandPreview} alt="Logo principal" className="brand-logo" />
+                {brandPreview ? (
+                  <img src={brandPreview} alt="Logo principal" className="brand-logo" />
+                ) : (
+                  <div className="brand-placeholder">Sin logo</div>
+                )}
               </div>
               <label className="input-control">
                 <span>Subir nuevo logo</span>
@@ -22162,7 +22199,11 @@ const ConfigurationPage: React.FC = () => {
                 className="logo-preview"
                 style={{ border: '1px dashed #d6d9e0', padding: '12px', borderRadius: '10px', background: '#f9fbff' }}
               >
-                <img src={promoPreview} alt="Logo secundario" className="promo-logo" />
+                {promoPreview ? (
+                  <img src={promoPreview} alt="Logo secundario" className="promo-logo" />
+                ) : (
+                  <div className="brand-placeholder">Sin logo</div>
+                )}
               </div>
               <label className="input-control">
                 <span>Subir logo secundario</span>
@@ -22174,6 +22215,9 @@ const ConfigurationPage: React.FC = () => {
           <div className="form-actions" style={{ marginTop: '1rem' }}>
             <button type="button" className="secondary-action" onClick={handleReset}>
               Restaurar logos por defecto
+            </button>
+            <button type="button" className="secondary-action" onClick={handleClearBranding}>
+              Eliminar logos
             </button>
             {savingMessage ? <p className="form-info">{savingMessage}</p> : null}
           </div>
@@ -22308,20 +22352,11 @@ const AuditPage: React.FC = () => {
   const authUser = useStoredAuthUser();
   const userRole = useMemo(() => getUserRole(authUser), [authUser]);
   const apiBaseUrl = useMemo(() => resolveApiBaseUrl(), []);
-  const [logs, setLogs] = useState<
-    Array<{
-      id: number;
-      action: string;
-      entityType: string | null;
-      entityId: number | null;
-      actorEmail: string | null;
-      actorName: string | null;
-      metadata: unknown;
-      ipAddress: string | null;
-      userAgent: string | null;
-      createdAt: string | null;
-    }>
-  >([]);
+  const [actorQuery, setActorQuery] = useState('');
+  const [emailQuery, setEmailQuery] = useState('');
+  const [actorFilter, setActorFilter] = useState('');
+  const [emailFilter, setEmailFilter] = useState('');
+  const [logs, setLogs] = useState<AuditLogRecord[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [refreshTick, setRefreshTick] = useState(0);
@@ -22335,7 +22370,15 @@ const AuditPage: React.FC = () => {
       try {
         setLoading(true);
         setError(null);
-        const response = await fetch(`${apiBaseUrl}/api/auditoria?limit=200`, { signal: controller.signal });
+        const url = new URL(`${apiBaseUrl}/api/auditoria`);
+        url.searchParams.set('limit', '200');
+        if (actorFilter.trim().length > 0) {
+          url.searchParams.set('agentName', actorFilter.trim());
+        }
+        if (emailFilter.trim().length > 0) {
+          url.searchParams.set('actorEmail', emailFilter.trim());
+        }
+        const response = await fetch(url.toString(), { signal: controller.signal });
         if (!response.ok) {
           throw new Error(`Error ${response.status}: ${response.statusText}`);
         }
@@ -22352,7 +22395,27 @@ const AuditPage: React.FC = () => {
     };
     fetchLogs();
     return () => controller.abort();
-  }, [apiBaseUrl, userRole, refreshTick]);
+  }, [actorFilter, apiBaseUrl, emailFilter, refreshTick, userRole]);
+
+  const applyFilters = () => {
+    setActorFilter(actorQuery.trim());
+    setEmailFilter(emailQuery.trim());
+    setRefreshTick((prev) => prev + 1);
+  };
+
+  const clearFilters = () => {
+    setActorQuery('');
+    setEmailQuery('');
+    setActorFilter('');
+    setEmailFilter('');
+    setRefreshTick((prev) => prev + 1);
+  };
+
+  const hasAnyFilter =
+    actorFilter.trim().length > 0 ||
+    emailFilter.trim().length > 0 ||
+    actorQuery.trim().length > 0 ||
+    emailQuery.trim().length > 0;
 
   if (!canAccessSection(userRole, 'auditoria')) {
     return (
@@ -22364,10 +22427,50 @@ const AuditPage: React.FC = () => {
 
   return (
     <DashboardLayout title="Auditoría" subtitle="Revisá los eventos registrados">
-      <div className="card-header card-header--compact" style={{ marginBottom: '0.5rem' }}>
-        <button type="button" className="secondary-action" onClick={() => setRefreshTick((prev) => prev + 1)} disabled={loading}>
-          {loading ? 'Actualizando...' : 'Actualizar'}
-        </button>
+      <div className="card card--padded" style={{ marginBottom: '0.75rem' }}>
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))',
+            gap: '0.75rem',
+            alignItems: 'end',
+          }}
+        >
+          <label className="input-control">
+            <span>Agente</span>
+            <input
+              type="text"
+              value={actorQuery}
+              onChange={(event) => setActorQuery(event.target.value)}
+              placeholder="Nombre del agente"
+            />
+          </label>
+          <label className="input-control">
+            <span>Email</span>
+            <input
+              type="email"
+              value={emailQuery}
+              onChange={(event) => setEmailQuery(event.target.value)}
+              placeholder="Ej: usuario@dominio.com"
+            />
+          </label>
+          <div className="form-actions" style={{ margin: 0, gap: '0.5rem', justifyContent: 'flex-start' }}>
+            <button type="button" className="primary-action" onClick={applyFilters} disabled={loading}>
+              Filtrar
+            </button>
+            <button type="button" className="secondary-action" onClick={clearFilters} disabled={loading || !hasAnyFilter}>
+              Limpiar
+            </button>
+            <button
+              type="button"
+              className="secondary-action"
+              onClick={() => setRefreshTick((prev) => prev + 1)}
+              disabled={loading}
+            >
+              {loading ? 'Actualizando...' : 'Actualizar'}
+            </button>
+          </div>
+        </div>
       </div>
       {loading ? <p className="form-info">Cargando auditoría...</p> : null}
       {error ? <p className="form-info form-info--error">{error}</p> : null}
@@ -22379,6 +22482,7 @@ const AuditPage: React.FC = () => {
                 <th>ID</th>
                 <th>Acción</th>
                 <th>Entidad</th>
+                <th>Agente</th>
                 <th>Actor</th>
                 <th>IP</th>
                 <th>Fecha</th>
@@ -22388,7 +22492,7 @@ const AuditPage: React.FC = () => {
             <tbody>
               {logs.length === 0 ? (
                 <tr>
-                  <td colSpan={7}>No hay eventos de auditoría.</td>
+                  <td colSpan={8}>No hay eventos de auditoría.</td>
                 </tr>
               ) : (
                 logs.map((log) => (
@@ -22399,6 +22503,7 @@ const AuditPage: React.FC = () => {
                       {log.entityType ?? '—'}
                       {log.entityId ? ` #${log.entityId}` : ''}
                     </td>
+                    <td>{log.agentName ?? '—'}</td>
                     <td>
                       {log.actorName ?? '—'}
                       <br />

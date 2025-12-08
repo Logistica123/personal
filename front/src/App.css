@@ -48,6 +48,20 @@
   object-fit: contain;
 }
 
+.brand-placeholder {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 50px;
+  min-width: 140px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  background: #eef3fb;
+  color: #607296;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
 .login-content {
   max-width: 420px;
   width: 100%;
