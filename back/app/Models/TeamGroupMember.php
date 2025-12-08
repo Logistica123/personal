@@ -11,6 +11,7 @@ class TeamGroupMember extends Model
 
     protected $fillable = [
         'team_group_id',
+        'user_id',
         'name',
         'email',
     ];

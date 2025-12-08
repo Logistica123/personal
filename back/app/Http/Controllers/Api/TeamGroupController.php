@@ -27,6 +27,7 @@ class TeamGroupController extends Controller
             'name' => ['required', 'string', 'max:255'],
             'color' => ['nullable', 'string', 'max:32'],
             'members' => ['nullable', 'array'],
+            'members.*.userId' => ['nullable', 'integer', 'exists:users,id'],
             'members.*.name' => ['required', 'string', 'max:255'],
             'members.*.email' => ['nullable', 'email', 'max:255'],
         ]);
@@ -38,10 +39,14 @@ class TeamGroupController extends Controller
 
         $members = collect($data['members'] ?? [])
             ->filter(fn ($member) => is_array($member) && ! empty(trim((string) ($member['name'] ?? ''))))
-            ->map(fn ($member) => [
-                'name' => trim((string) $member['name']),
-                'email' => isset($member['email']) ? trim((string) $member['email']) : null,
-            ])
+            ->map(function ($member) {
+                $userId = $member['userId'] ?? null;
+                return [
+                    'user_id' => $userId ?: null,
+                    'name' => trim((string) $member['name']),
+                    'email' => isset($member['email']) ? trim((string) $member['email']) : null,
+                ];
+            })
             ->values();
 
         if ($members->isNotEmpty()) {
@@ -58,6 +63,7 @@ class TeamGroupController extends Controller
             'color' => ['nullable', 'string', 'max:32'],
             'members' => ['nullable', 'array'],
             'members.*.id' => ['nullable', 'integer', Rule::exists('team_group_members', 'id')->where('team_group_id', $teamGroup->id)],
+            'members.*.userId' => ['nullable', 'integer', 'exists:users,id'],
             'members.*.name' => ['required', 'string', 'max:255'],
             'members.*.email' => ['nullable', 'email', 'max:255'],
         ]);
@@ -71,10 +77,14 @@ class TeamGroupController extends Controller
 
         $members = collect($data['members'] ?? [])
             ->filter(fn ($member) => is_array($member) && ! empty(trim((string) ($member['name'] ?? ''))))
-            ->map(fn ($member) => [
-                'name' => trim((string) $member['name']),
-                'email' => isset($member['email']) ? trim((string) $member['email']) : null,
-            ])
+            ->map(function ($member) {
+                $userId = $member['userId'] ?? null;
+                return [
+                    'user_id' => $userId ?: null,
+                    'name' => trim((string) $member['name']),
+                    'email' => isset($member['email']) ? trim((string) $member['email']) : null,
+                ];
+            })
             ->values();
 
         if ($members->isNotEmpty()) {

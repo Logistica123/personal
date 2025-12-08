@@ -923,6 +923,7 @@ type NotificationDeletionRecord = {
 
 type TeamGroupMember = {
   id: number;
+  userId?: number | null;
   name: string;
   email: string | null;
 };
@@ -4848,7 +4849,7 @@ const DashboardPage: React.FC<{ showPersonalPanel?: boolean }> = ({ showPersonal
   const [editingTeamId, setEditingTeamId] = useState<number | null>(null);
   const [editingTeamName, setEditingTeamName] = useState('');
   const [editingTeamColor, setEditingTeamColor] = useState<string | null>(null);
-  const [editingMembers, setEditingMembers] = useState<Array<{ id?: number; name: string; email: string }>>([]);
+  const [editingMembers, setEditingMembers] = useState<Array<{ id?: number; userId?: number | null; name: string; email: string }>>([]);
   const [savingTeam, setSavingTeam] = useState(false);
   const [deletingTeam, setDeletingTeam] = useState(false);
   const apiBaseUrl = useMemo(() => resolveApiBaseUrl(), []);
@@ -5073,6 +5074,7 @@ const DashboardPage: React.FC<{ showPersonalPanel?: boolean }> = ({ showPersonal
       setEditingMembers(
         (team.members ?? []).map((member) => ({
           id: member.id,
+          userId: member.userId ?? null,
           name: member.name,
           email: member.email ?? '',
         }))
@@ -5084,7 +5086,7 @@ const DashboardPage: React.FC<{ showPersonalPanel?: boolean }> = ({ showPersonal
   );
 
   const addEmptyMember = () => {
-    setEditingMembers((prev) => [...prev, { name: '', email: '' }]);
+    setEditingMembers((prev) => [...prev, { name: '', email: '', userId: null }]);
   };
 
   const updateMemberField = (index: number, field: 'name' | 'email', value: string) => {
@@ -5103,6 +5105,7 @@ const DashboardPage: React.FC<{ showPersonalPanel?: boolean }> = ({ showPersonal
         idx === index
           ? {
               ...member,
+              userId: selected.id,
               name: selected.name ?? member.name,
               email: selected.email ?? member.email,
             }
@@ -5124,6 +5127,7 @@ const DashboardPage: React.FC<{ showPersonalPanel?: boolean }> = ({ showPersonal
     const membersPayload = editingMembers
       .map((member) => ({
         id: member.id,
+        userId: member.userId ?? null,
         name: member.name.trim(),
         email: member.email.trim(),
       }))
@@ -5358,6 +5362,15 @@ const DashboardPage: React.FC<{ showPersonalPanel?: boolean }> = ({ showPersonal
 
   const matchesTeamMember = useCallback(
     (registro: PersonalRecord, member: TeamGroupMember) => {
+      const ids = [
+        registro.agenteId,
+        registro.agenteResponsableId,
+        ...(registro.agentesResponsablesIds ?? []),
+      ].filter((value): value is number => value != null);
+      if (member.userId && ids.includes(member.userId)) {
+        return true;
+      }
+
       const targetName = (member.name ?? '').trim().toLowerCase();
       const targetEmail = (member.email ?? '').trim().toLowerCase();
       if (!targetName && !targetEmail) {
