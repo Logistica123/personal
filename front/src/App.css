@@ -999,11 +999,11 @@ body {
 .dashboard-shell--monitor .fidelizacion-panel .client-cards {
   flex: 1 1 auto;
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-  gap: 0.5rem;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 0.45rem;
   overflow: hidden;
-  align-items: stretch;
-  grid-auto-rows: minmax(120px, 1fr);
+  align-items: start;
+  grid-auto-rows: auto;
 }
 
 .dashboard-shell--monitor .monitor-summary {
@@ -1042,21 +1042,21 @@ body {
 }
 
 .dashboard-shell--monitor .monitor-summary .summary-cards .summary-card {
-  min-height: 80px;
-  padding: 0.6rem;
+  min-height: 65px;
+  padding: 0.5rem;
 }
 
 .dashboard-shell--monitor .monitor-summary .client-cards {
   flex: 1 1 auto;
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-  gap: 0.55rem;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 0.45rem;
   overflow: hidden;
-  align-items: stretch;
-  grid-auto-rows: minmax(200px, 1fr);
+  align-items: start;
+  grid-auto-rows: auto;
   justify-items: stretch;
-  min-height: 95%;
-  align-content: stretch;
+  min-height: auto;
+  align-content: start;
   padding-bottom: 0.4rem;
 }
 
