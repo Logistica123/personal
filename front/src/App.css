@@ -978,6 +978,21 @@ body {
   margin-bottom: 0.5rem;
 }
 
+.dashboard-shell--monitor .fidelizacion-panel {
+  min-height: 70vh;
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+.dashboard-shell--monitor .fidelizacion-panel .client-cards {
+  flex: 1;
+}
+
+.dashboard-shell--monitor .monitor-summary {
+  min-height: 75vh;
+}
+
 .topbar-actions {
   display: flex;
   align-items: center;

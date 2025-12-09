@@ -4943,10 +4943,14 @@ const DashboardPage: React.FC<{ showPersonalPanel?: boolean }> = ({ showPersonal
     return Number.isFinite(parsed) ? parsed : null;
   }, [location.search, showPersonalPanel]);
   const monitorRefreshIntervalMs = 45000;
+  const monitorHasSummarySlide = monitorMode && monitorTeamId == null;
+  const monitorCycleIntervalMs = 30000;
   const [lastStatsRefreshAt, setLastStatsRefreshAt] = useState<Date | null>(null);
   const [silentRefreshCount, setSilentRefreshCount] = useState(0);
   const isSilentRefreshing = silentRefreshCount > 0;
   const [copyMonitorState, setCopyMonitorState] = useState<'idle' | 'copied' | 'error'>('idle');
+  const [currentCycleIndex, setCurrentCycleIndex] = useState(0);
+  const [cycleCountdown, setCycleCountdown] = useState<number | null>(null);
   const apiBaseUrl = useMemo(() => resolveApiBaseUrl(), []);
   const filterPersonalRecords = useCallback(
     (data: PersonalRecord[], clienteFilter: string, estadoFilter: string, agenteFilter: string) =>
@@ -5679,12 +5683,72 @@ const DashboardPage: React.FC<{ showPersonalPanel?: boolean }> = ({ showPersonal
     });
   }, [teamGroups, baseFilteredPersonal, matchesTeamMember, computePersonalStats, computeClientGroups]);
 
-  const displayedTeamSections = useMemo(() => {
-    if (!monitorTeamId) {
-      return teamSections;
+  const monitorTotalSlots = monitorHasSummarySlide ? teamSections.length + 1 : teamSections.length;
+  const monitorSummaryActive =
+    monitorMode && monitorHasSummarySlide && monitorTotalSlots > 0 && currentCycleIndex % monitorTotalSlots === 0;
+
+  useEffect(() => {
+    if (!monitorMode || monitorTeamId || !showPersonalPanel) {
+      setCycleCountdown(null);
+      return undefined;
     }
-    return teamSections.filter((section) => section.team.id === monitorTeamId);
-  }, [monitorTeamId, teamSections]);
+    if (monitorTotalSlots === 0) {
+      setCycleCountdown(null);
+      return undefined;
+    }
+    const resetCountdown = () => setCycleCountdown(Math.round(monitorCycleIntervalMs / 1000));
+    resetCountdown();
+    const cycleIntervalId = window.setInterval(() => {
+      setCurrentCycleIndex((prev) => {
+        const next = monitorTotalSlots > 0 ? (prev + 1) % monitorTotalSlots : 0;
+        return next;
+      });
+      resetCountdown();
+    }, monitorCycleIntervalMs);
+    const countdownIntervalId = window.setInterval(() => {
+      setCycleCountdown((prev) => {
+        if (prev == null) {
+          return prev;
+        }
+        if (prev <= 1) {
+          return Math.round(monitorCycleIntervalMs / 1000);
+        }
+        return prev - 1;
+      });
+    }, 1000);
+
+    return () => {
+      window.clearInterval(cycleIntervalId);
+      window.clearInterval(countdownIntervalId);
+    };
+  }, [monitorMode, monitorTeamId, monitorTotalSlots, monitorCycleIntervalMs, showPersonalPanel]);
+
+  useEffect(() => {
+    if (monitorTotalSlots === 0) {
+      return;
+    }
+    if (currentCycleIndex >= monitorTotalSlots) {
+      setCurrentCycleIndex(0);
+    }
+  }, [monitorTotalSlots, currentCycleIndex]);
+
+  const displayedTeamSections = useMemo(() => {
+    if (monitorTeamId) {
+      return teamSections.filter((section) => section.team.id === monitorTeamId);
+    }
+    if (monitorMode) {
+      if (monitorSummaryActive) {
+        return [];
+      }
+      if (teamSections.length === 0) {
+        return [];
+      }
+      const baseIndex = monitorHasSummarySlide ? currentCycleIndex - 1 : currentCycleIndex;
+      const index = ((baseIndex % teamSections.length) + teamSections.length) % teamSections.length;
+      return [teamSections[index]];
+    }
+    return teamSections;
+  }, [currentCycleIndex, monitorMode, monitorSummaryActive, monitorHasSummarySlide, monitorTeamId, teamSections]);
 
   return (
     <DashboardLayout
@@ -5696,173 +5760,183 @@ const DashboardPage: React.FC<{ showPersonalPanel?: boolean }> = ({ showPersonal
     >
       {showPersonalPanel ? (
         <>
-          <div className={`monitor-banner${monitorMode ? ' monitor-banner--active' : ''}`}>
-            <div className="monitor-banner__info">
-              <h3>Modo monitores</h3>
-              <p>
-                Usá este link para duplicar el panel en otras pantallas. Se actualiza automáticamente cada{' '}
-                {Math.round(monitorRefreshIntervalMs / 1000)} segundos.
-              </p>
-              <div className="monitor-banner__meta">
-                <span>{monitorStatusLabel}</span>
-                {isSilentRefreshing ? <span className="monitor-pill">Actualizando...</span> : null}
-                {monitorMode ? <span className="monitor-pill monitor-pill--live">Monitor en vivo</span> : null}
-                {activeMonitorTeamName ? (
-                  <span className="monitor-pill">Equipo: {activeMonitorTeamName}</span>
-                ) : null}
+          {!monitorMode ? (
+            <div className={`monitor-banner${monitorMode ? ' monitor-banner--active' : ''}`}>
+              <div className="monitor-banner__info">
+                <h3>Modo monitores</h3>
+                <p>
+                  Usá este link para duplicar el panel en otras pantallas. Se actualiza automáticamente cada{' '}
+                  {Math.round(monitorRefreshIntervalMs / 1000)} segundos.
+                </p>
+                <div className="monitor-banner__meta">
+                  <span>{monitorStatusLabel}</span>
+                  {isSilentRefreshing ? <span className="monitor-pill">Actualizando...</span> : null}
+                  {monitorMode ? <span className="monitor-pill monitor-pill--live">Monitor en vivo</span> : null}
+                  {activeMonitorTeamName ? (
+                    <span className="monitor-pill">Equipo: {activeMonitorTeamName}</span>
+                  ) : null}
+                  {monitorMode && !monitorTeamId && teamSections.length > 1 ? (
+                    <span className="monitor-pill">
+                      Rotando cada {Math.round(monitorCycleIntervalMs / 1000)}s
+                      {cycleCountdown != null ? ` · siguiente en ${cycleCountdown}s` : ''}
+                    </span>
+                  ) : null}
+                </div>
+              </div>
+              <div className="monitor-banner__actions">
+                <button
+                  type="button"
+                  className="secondary-action"
+                  onClick={() => handleOpenMonitorWindow()}
+                  disabled={!monitorUrl}
+                >
+                  Abrir en otra ventana
+                </button>
+                <button
+                  type="button"
+                  className="secondary-action"
+                  onClick={handleCopyMonitorLink}
+                  disabled={!monitorUrl}
+                >
+                  {copyMonitorState === 'copied'
+                    ? 'Link copiado'
+                    : copyMonitorState === 'error'
+                      ? 'No se pudo copiar'
+                      : 'Copiar link'}
+                </button>
+                <small className="monitor-banner__hint">
+                  Compartí el enlace en cada monitor para mostrar este panel sin menús ni edición.
+                </small>
               </div>
             </div>
-            <div className="monitor-banner__actions">
-              <button
-                type="button"
-                className="secondary-action"
-                onClick={() => handleOpenMonitorWindow()}
-                disabled={!monitorUrl}
-              >
-                Abrir en otra ventana
-              </button>
-              <button
-                type="button"
-                className="secondary-action"
-                onClick={handleCopyMonitorLink}
-                disabled={!monitorUrl}
-              >
-                {copyMonitorState === 'copied'
-                  ? 'Link copiado'
-                  : copyMonitorState === 'error'
-                    ? 'No se pudo copiar'
-                    : 'Copiar link'}
-              </button>
-              <small className="monitor-banner__hint">
-                Compartí el enlace en cada monitor para mostrar este panel sin menús ni edición.
-              </small>
-            </div>
-          </div>
+          ) : null}
 
-          <div className="summary-panel">
-            <div className="summary-panel__header">
-              <div>
-                <h3>Radar de personal</h3>
-                <p>Filtrá por cliente, estado o agente para ver los totales y cortes por cliente.</p>
+          {!monitorMode || monitorSummaryActive ? (
+            <div className={`summary-panel${monitorMode ? ' monitor-summary' : ''}`}>
+              <div className="summary-panel__header">
+                <div>
+                  <h3>Radar de personal</h3>
+                  <p>Filtrá por cliente, estado o agente para ver los totales y cortes por cliente.</p>
+                </div>
+                <div className="summary-filters">
+                  <label className="filter-field">
+                    <span>Cliente</span>
+                    <select value={statsClienteFilter} onChange={(event) => setStatsClienteFilter(event.target.value)}>
+                      <option value="">Todos</option>
+                      {clienteStatsOptions.map((option) => (
+                        <option key={option} value={option}>
+                          {option}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="filter-field">
+                    <span>Estado</span>
+                    <select value={statsEstadoFilter} onChange={(event) => setStatsEstadoFilter(event.target.value)}>
+                      <option value="">Todos</option>
+                      {estadoStatsOptions.map((option) => (
+                        <option key={option} value={option}>
+                          {option}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="filter-field">
+                    <span>Agente</span>
+                    <select value={statsAgenteFilter} onChange={(event) => setStatsAgenteFilter(event.target.value)}>
+                      <option value="">Todos</option>
+                      {agenteStatsOptions.map((option) => (
+                        <option key={option} value={option}>
+                          {option}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
               </div>
-              <div className="summary-filters">
-                <label className="filter-field">
-                  <span>Cliente</span>
-                  <select value={statsClienteFilter} onChange={(event) => setStatsClienteFilter(event.target.value)}>
-                    <option value="">Todos</option>
-                    {clienteStatsOptions.map((option) => (
-                      <option key={option} value={option}>
-                        {option}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label className="filter-field">
-                  <span>Estado</span>
-                  <select value={statsEstadoFilter} onChange={(event) => setStatsEstadoFilter(event.target.value)}>
-                    <option value="">Todos</option>
-                    {estadoStatsOptions.map((option) => (
-                      <option key={option} value={option}>
-                        {option}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label className="filter-field">
-                  <span>Agente</span>
-                  <select value={statsAgenteFilter} onChange={(event) => setStatsAgenteFilter(event.target.value)}>
-                    <option value="">Todos</option>
-                    {agenteStatsOptions.map((option) => (
-                      <option key={option} value={option}>
-                        {option}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              </div>
-            </div>
 
-            <div className="summary-cards">
-              <div className="summary-card summary-card--accent">
-                <span className="summary-card__label">Activos</span>
-                <strong className="summary-card__value">
-                  {statsLoading ? '—' : personalStats.activo}
-                </strong>
-              </div>
-              <div className="summary-card summary-card--warning">
-                <span className="summary-card__label">Baja</span>
-                <strong className="summary-card__value">
-                  {statsLoading ? '—' : personalStats.baja}
-                </strong>
-              </div>
-              <div className="summary-card summary-card--danger">
-                <span className="summary-card__label">Suspendido</span>
-                <strong className="summary-card__value">
-                  {statsLoading ? '—' : personalStats.suspendido}
-                </strong>
-              </div>
-              {personalStats.otros > 0 ? (
-                <div className="summary-card summary-card--neutral">
-                  <span className="summary-card__label">Sin estado</span>
+              <div className="summary-cards">
+                <div className="summary-card summary-card--accent">
+                  <span className="summary-card__label">Activos</span>
                   <strong className="summary-card__value">
-                    {statsLoading ? '—' : personalStats.otros}
+                    {statsLoading ? '—' : personalStats.activo}
                   </strong>
                 </div>
-              ) : null}
-              <div className="summary-card summary-card--muted">
-                <span className="summary-card__label">Total personal</span>
-                <strong className="summary-card__value">
-                  {statsLoading ? '—' : personalStats.total}
-                </strong>
+                <div className="summary-card summary-card--warning">
+                  <span className="summary-card__label">Baja</span>
+                  <strong className="summary-card__value">
+                    {statsLoading ? '—' : personalStats.baja}
+                  </strong>
+                </div>
+                <div className="summary-card summary-card--danger">
+                  <span className="summary-card__label">Suspendido</span>
+                  <strong className="summary-card__value">
+                    {statsLoading ? '—' : personalStats.suspendido}
+                  </strong>
+                </div>
+                {personalStats.otros > 0 ? (
+                  <div className="summary-card summary-card--neutral">
+                    <span className="summary-card__label">Sin estado</span>
+                    <strong className="summary-card__value">
+                      {statsLoading ? '—' : personalStats.otros}
+                    </strong>
+                  </div>
+                ) : null}
+                <div className="summary-card summary-card--muted">
+                  <span className="summary-card__label">Total personal</span>
+                  <strong className="summary-card__value">
+                    {statsLoading ? '—' : personalStats.total}
+                  </strong>
+                </div>
+                {statsError ? (
+                  <p className="form-info form-info--error" style={{ gridColumn: '1 / -1' }}>
+                    {statsError}
+                  </p>
+                ) : null}
               </div>
-              {statsError ? (
-                <p className="form-info form-info--error" style={{ gridColumn: '1 / -1' }}>
-                  {statsError}
-                </p>
-              ) : null}
-            </div>
 
-            <div className="client-cards">
-              {(() => {
-                const grouped = baseFilteredPersonal.reduce((acc, registro) => {
-                  const key = registro.cliente ?? 'Sin cliente';
-                  if (!acc[key]) {
-                    acc[key] = [];
-                  }
-                  acc[key].push(registro);
-                  return acc;
-                }, {} as Record<string, PersonalRecord[]>);
+              <div className="client-cards">
+                {(() => {
+                  const grouped = baseFilteredPersonal.reduce((acc, registro) => {
+                    const key = registro.cliente ?? 'Sin cliente';
+                    if (!acc[key]) {
+                      acc[key] = [];
+                    }
+                    acc[key].push(registro);
+                    return acc;
+                  }, {} as Record<string, PersonalRecord[]>);
 
-                return Object.entries(grouped).map(([clienteNombre, registros]) => {
-                  const counts = computePersonalStats(registros);
-                  return (
-                    <div key={clienteNombre} className="client-card">
-                      <header>
-                        <h4>{clienteNombre}</h4>
-                        <span>
-                          {counts.total} en total{counts.otros > 0 ? ` · ${counts.otros} sin estado` : ''}
-                        </span>
-                      </header>
-                      <div className="client-card__stats">
-                        <div>
-                          <small>Activos</small>
-                          <strong>{counts.activo}</strong>
-                        </div>
-                        <div>
-                          <small>Baja</small>
-                          <strong>{counts.baja}</strong>
-                        </div>
-                        <div>
-                          <small>Suspendido</small>
-                          <strong>{counts.suspendido}</strong>
+                  return Object.entries(grouped).map(([clienteNombre, registros]) => {
+                    const counts = computePersonalStats(registros);
+                    return (
+                      <div key={clienteNombre} className="client-card">
+                        <header>
+                          <h4>{clienteNombre}</h4>
+                          <span>
+                            {counts.total} en total{counts.otros > 0 ? ` · ${counts.otros} sin estado` : ''}
+                          </span>
+                        </header>
+                        <div className="client-card__stats">
+                          <div>
+                            <small>Activos</small>
+                            <strong>{counts.activo}</strong>
+                          </div>
+                          <div>
+                            <small>Baja</small>
+                            <strong>{counts.baja}</strong>
+                          </div>
+                          <div>
+                            <small>Suspendido</small>
+                            <strong>{counts.suspendido}</strong>
+                          </div>
                         </div>
                       </div>
-                    </div>
-                  );
-                });
-              })()}
+                    );
+                  });
+                })()}
+              </div>
             </div>
-          </div>
+          ) : null}
 
           {!monitorMode ? (
             <div className="summary-panel secondary-panels team-config-panel">
