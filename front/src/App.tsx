@@ -5757,9 +5757,9 @@ const DashboardPage: React.FC<{ showPersonalPanel?: boolean }> = ({ showPersonal
       headerContent={headerContent}
       layoutVariant={showPersonalPanel ? 'panel' : 'default'}
       monitorView={monitorMode}
-    >
-      {showPersonalPanel ? (
-        <>
+      >
+        {showPersonalPanel ? (
+          <>
           {!monitorMode ? (
             <div className={`monitor-banner${monitorMode ? ' monitor-banner--active' : ''}`}>
               <div className="monitor-banner__info">
