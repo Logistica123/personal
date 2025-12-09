@@ -1003,6 +1003,7 @@ body {
   gap: 0.5rem;
   overflow: hidden;
   align-items: stretch;
+  grid-auto-rows: minmax(120px, 1fr);
 }
 
 .dashboard-shell--monitor .monitor-summary {
@@ -1014,6 +1015,7 @@ body {
   overflow: hidden;
   padding: 0.5rem 0.65rem;
   flex: 1 1 auto;
+  justify-content: space-between;
 }
 
 .dashboard-shell--monitor .team-sections {
@@ -1046,6 +1048,7 @@ body {
   gap: 0.4rem;
   overflow: hidden;
   align-items: stretch;
+  grid-auto-rows: minmax(120px, 1fr);
 }
 
 .dashboard-shell--monitor .client-card {
