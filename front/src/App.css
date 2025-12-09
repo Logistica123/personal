@@ -955,6 +955,29 @@ body {
   color: #8ca3c2;
 }
 
+.dashboard-shell--monitor .dashboard-sidebar,
+.dashboard-shell--monitor .mobile-controls {
+  display: none;
+}
+
+.dashboard-shell--monitor .dashboard-content {
+  padding: 1.75rem 2.5rem;
+}
+
+.dashboard-shell--monitor .topbar-actions,
+.dashboard-shell--monitor .sidebar-backdrop {
+  display: none;
+}
+
+.dashboard-shell--monitor .dashboard-card {
+  box-shadow: none;
+  padding: 1.75rem;
+}
+
+.dashboard-shell--monitor .dashboard-topbar {
+  margin-bottom: 0.5rem;
+}
+
 .topbar-actions {
   display: flex;
   align-items: center;
@@ -4469,6 +4492,77 @@ tbody tr:nth-child(even) {
   margin-bottom: 0.5rem;
 }
 
+.monitor-banner {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1rem 1.25rem;
+  border: 1px dashed #c6d3ee;
+  border-radius: 14px;
+  background: #f5f8ff;
+  flex-wrap: wrap;
+}
+
+.monitor-banner--active {
+  border-color: #3b82f6;
+  box-shadow: 0 15px 40px rgba(59, 130, 246, 0.15);
+}
+
+.monitor-banner__info h3 {
+  margin: 0 0 0.25rem;
+}
+
+.monitor-banner__info p {
+  margin: 0 0 0.5rem;
+  color: #4b5872;
+}
+
+.monitor-banner__meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  color: #4b5872;
+  font-size: 0.9rem;
+}
+
+.monitor-banner__actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.monitor-banner__hint {
+  display: block;
+  color: #607296;
+}
+
+.team-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.monitor-pill {
+  background: #eef3ff;
+  border: 1px solid #d6e1fb;
+  color: #1d3565;
+  border-radius: 999px;
+  padding: 0.25rem 0.75rem;
+  font-weight: 600;
+  font-size: 0.85rem;
+}
+
+.monitor-pill--live {
+  background: #0ea5e9;
+  border-color: #0ea5e9;
+  color: #ffffff;
+}
+
 .summary-panel {
   background: rgba(255, 255, 255, 0.92);
   border: 1px solid #dfe6f4;
@@ -4495,6 +4589,23 @@ tbody tr:nth-child(even) {
 [data-theme='dark'] .summary-panel__header h3,
 [data-theme='dark'] .summary-panel__header p,
 [data-theme='dark'] .summary-card__label {
+  color: var(--text);
+}
+
+[data-theme='dark'] .monitor-banner {
+  background: linear-gradient(145deg, #0f172a 0%, #0c1425 100%);
+  border-color: #1c2740;
+}
+
+[data-theme='dark'] .monitor-banner__info p,
+[data-theme='dark'] .monitor-banner__hint,
+[data-theme='dark'] .monitor-banner__meta {
+  color: var(--muted);
+}
+
+[data-theme='dark'] .monitor-pill {
+  background: #111a2e;
+  border-color: #1c2740;
   color: var(--text);
 }
 

@@ -2164,7 +2164,8 @@ const DashboardLayout: React.FC<{
   headerContent?: React.ReactNode;
   children: React.ReactNode;
   layoutVariant?: 'default' | 'panel';
-}> = ({ title, subtitle, headerContent, children, layoutVariant = 'default' }) => {
+  monitorView?: boolean;
+}> = ({ title, subtitle, headerContent, children, layoutVariant = 'default', monitorView = false }) => {
   const navigate = useNavigate();
   const apiBaseUrl = useMemo(() => resolveApiBaseUrl(), []);
   const [authUser, setAuthUser] = useState<AuthUser | null>(() => readAuthUserFromStorage());
@@ -3203,7 +3204,7 @@ const DashboardLayout: React.FC<{
       <div
         className={`dashboard-shell${isSidebarOpen ? ' is-sidebar-open' : ''}${
           layoutVariant !== 'default' ? ` dashboard-shell--${layoutVariant}` : ''
-        }`}
+        }${monitorView ? ' dashboard-shell--monitor' : ''}`}
       >
         <aside className="dashboard-sidebar">
           <button
@@ -4883,6 +4884,8 @@ const ChatPage: React.FC = () => {
 };
 const DashboardPage: React.FC<{ showPersonalPanel?: boolean }> = ({ showPersonalPanel = false }) => {
   const navigate = useNavigate();
+  const location = useLocation();
+  const authUser = useStoredAuthUser();
   const [clientes, setClientes] = useState<Cliente[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -4920,6 +4923,30 @@ const DashboardPage: React.FC<{ showPersonalPanel?: boolean }> = ({ showPersonal
   const [editingMembers, setEditingMembers] = useState<Array<{ id?: number; userId?: number | null; name: string; email: string }>>([]);
   const [savingTeam, setSavingTeam] = useState(false);
   const [deletingTeam, setDeletingTeam] = useState(false);
+  const monitorMode = useMemo(() => {
+    if (!showPersonalPanel) {
+      return false;
+    }
+    const params = new URLSearchParams(location.search);
+    return params.get('monitor') === '1';
+  }, [location.search, showPersonalPanel]);
+  const monitorTeamId = useMemo(() => {
+    if (!showPersonalPanel) {
+      return null;
+    }
+    const params = new URLSearchParams(location.search);
+    const raw = params.get('team');
+    if (!raw) {
+      return null;
+    }
+    const parsed = Number(raw);
+    return Number.isFinite(parsed) ? parsed : null;
+  }, [location.search, showPersonalPanel]);
+  const monitorRefreshIntervalMs = 45000;
+  const [lastStatsRefreshAt, setLastStatsRefreshAt] = useState<Date | null>(null);
+  const [silentRefreshCount, setSilentRefreshCount] = useState(0);
+  const isSilentRefreshing = silentRefreshCount > 0;
+  const [copyMonitorState, setCopyMonitorState] = useState<'idle' | 'copied' | 'error'>('idle');
   const apiBaseUrl = useMemo(() => resolveApiBaseUrl(), []);
   const filterPersonalRecords = useCallback(
     (data: PersonalRecord[], clienteFilter: string, estadoFilter: string, agenteFilter: string) =>
@@ -4964,6 +4991,99 @@ const DashboardPage: React.FC<{ showPersonalPanel?: boolean }> = ({ showPersonal
     stats.total = stats.activo + stats.baja + stats.suspendido + stats.otros;
     return stats;
   }, []);
+
+  const fetchPersonalStats = useCallback(
+    async ({ signal, silent }: { signal?: AbortSignal; silent?: boolean } = {}) => {
+      if (!showPersonalPanel) {
+        return;
+      }
+
+      const isSilent = Boolean(silent);
+      if (isSilent) {
+        setSilentRefreshCount((value) => value + 1);
+      } else {
+        setStatsLoading(true);
+      }
+      setStatsError(null);
+
+      try {
+        const response = await fetch(`${apiBaseUrl}/api/personal?includePending=1`, {
+          signal,
+        });
+
+        if (!response.ok) {
+          throw new Error(`Error ${response.status}: ${response.statusText}`);
+        }
+
+        const payload = (await response.json()) as { data: PersonalRecord[] };
+        if (!payload || !Array.isArray(payload.data)) {
+          throw new Error('Formato de respuesta inesperado');
+        }
+
+        if (signal?.aborted) {
+          return;
+        }
+
+        setPersonalStatsData(payload.data);
+        setLastStatsRefreshAt(new Date());
+      } catch (err) {
+        if ((err as Error).name === 'AbortError') {
+          return;
+        }
+        setStatsError((err as Error).message ?? 'No se pudieron cargar los datos de personal.');
+      } finally {
+        if (isSilent) {
+          setSilentRefreshCount((value) => Math.max(0, value - 1));
+        } else {
+          setStatsLoading(false);
+        }
+      }
+    },
+    [apiBaseUrl, showPersonalPanel]
+  );
+
+  const fetchTeams = useCallback(
+    async ({ signal, silent }: { signal?: AbortSignal; silent?: boolean } = {}) => {
+      if (!showPersonalPanel) {
+        return;
+      }
+      if (!silent) {
+        setTeamLoading(true);
+      }
+      setTeamError(null);
+      try {
+        const response = await fetch(`${apiBaseUrl}/api/team-groups`, { signal });
+        if (!response.ok) {
+          throw new Error(`Error ${response.status}: ${response.statusText}`);
+        }
+        const payload = (await response.json()) as { data?: TeamGroup[] };
+        if (signal?.aborted) {
+          return;
+        }
+        setTeamGroups(Array.isArray(payload?.data) ? payload.data : []);
+      } catch (err) {
+        if ((err as Error).name === 'AbortError') {
+          return;
+        }
+        setTeamError((err as Error).message ?? 'No se pudieron cargar los equipos.');
+      } finally {
+        if (!silent) {
+          setTeamLoading(false);
+        }
+      }
+    },
+    [apiBaseUrl, showPersonalPanel]
+  );
+
+  useEffect(() => {
+    if (!showPersonalPanel) {
+      return;
+    }
+    const params = new URLSearchParams(location.search);
+    setStatsClienteFilter(params.get('cliente') ?? '');
+    setStatsEstadoFilter(params.get('estado') ?? '');
+    setStatsAgenteFilter(params.get('agente') ?? '');
+  }, [location.search, showPersonalPanel]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -5010,72 +5130,18 @@ const DashboardPage: React.FC<{ showPersonalPanel?: boolean }> = ({ showPersonal
     }
 
     const controller = new AbortController();
-
-    const fetchPersonalStats = async () => {
-      try {
-        setStatsLoading(true);
-        setStatsError(null);
-
-        const response = await fetch(`${apiBaseUrl}/api/personal?includePending=1`, {
-          signal: controller.signal,
-        });
-
-        if (!response.ok) {
-          throw new Error(`Error ${response.status}: ${response.statusText}`);
-        }
-
-        const payload = (await response.json()) as { data: PersonalRecord[] };
-        if (!payload || !Array.isArray(payload.data)) {
-          throw new Error('Formato de respuesta inesperado');
-        }
-
-        setPersonalStatsData(payload.data);
-        const filtered = filterPersonalRecords(payload.data, statsClienteFilter, statsEstadoFilter, statsAgenteFilter);
-        setPersonalStats(computePersonalStats(filtered));
-      } catch (err) {
-        if ((err as Error).name === 'AbortError') {
-          return;
-        }
-        setStatsError((err as Error).message ?? 'No se pudieron cargar los datos de personal.');
-      } finally {
-        setStatsLoading(false);
-      }
-    };
-
-    fetchPersonalStats();
-
+    fetchPersonalStats({ signal: controller.signal });
     return () => controller.abort();
-  }, [apiBaseUrl, showPersonalPanel, computePersonalStats, statsClienteFilter, statsEstadoFilter]);
+  }, [fetchPersonalStats, showPersonalPanel]);
 
   useEffect(() => {
     if (!showPersonalPanel) {
       return;
     }
     const controller = new AbortController();
-
-    const fetchTeams = async () => {
-      try {
-        setTeamLoading(true);
-        setTeamError(null);
-        const response = await fetch(`${apiBaseUrl}/api/team-groups`, { signal: controller.signal });
-        if (!response.ok) {
-          throw new Error(`Error ${response.status}: ${response.statusText}`);
-        }
-        const payload = (await response.json()) as { data?: TeamGroup[] };
-        setTeamGroups(Array.isArray(payload?.data) ? payload.data : []);
-      } catch (err) {
-        if ((err as Error).name === 'AbortError') {
-          return;
-        }
-        setTeamError((err as Error).message ?? 'No se pudieron cargar los equipos.');
-      } finally {
-        setTeamLoading(false);
-      }
-    };
-
-    fetchTeams();
+    fetchTeams({ signal: controller.signal });
     return () => controller.abort();
-  }, [apiBaseUrl, showPersonalPanel]);
+  }, [fetchTeams, showPersonalPanel]);
 
   useEffect(() => {
     if (!showPersonalPanel) {
@@ -5104,6 +5170,32 @@ const DashboardPage: React.FC<{ showPersonalPanel?: boolean }> = ({ showPersonal
     fetchUsers();
     return () => controller.abort();
   }, [apiBaseUrl, showPersonalPanel]);
+
+  useEffect(() => {
+    if (!showPersonalPanel || !monitorMode) {
+      return undefined;
+    }
+
+    let controller: AbortController | null = null;
+
+    const runRefresh = () => {
+      if (controller) {
+        controller.abort();
+      }
+      controller = new AbortController();
+      void fetchPersonalStats({ silent: true, signal: controller.signal });
+      void fetchTeams({ silent: true, signal: controller.signal });
+    };
+
+    runRefresh();
+    const intervalId = window.setInterval(runRefresh, monitorRefreshIntervalMs);
+    return () => {
+      if (controller) {
+        controller.abort();
+      }
+      window.clearInterval(intervalId);
+    };
+  }, [fetchPersonalStats, fetchTeams, monitorMode, monitorRefreshIntervalMs, showPersonalPanel]);
 
   useEffect(() => {
     if (!showPersonalPanel) {
@@ -5414,6 +5506,89 @@ const DashboardPage: React.FC<{ showPersonalPanel?: boolean }> = ({ showPersonal
     [personalStatsData]
   );
 
+  const buildMonitorUrl = useCallback(
+    (teamId?: number | null) => {
+      if (typeof window === 'undefined' || !showPersonalPanel) {
+        return '';
+      }
+      const params = new URLSearchParams();
+      params.set('monitor', '1');
+      if (statsClienteFilter) {
+        params.set('cliente', statsClienteFilter);
+      }
+      if (statsEstadoFilter) {
+        params.set('estado', statsEstadoFilter);
+      }
+      if (statsAgenteFilter) {
+        params.set('agente', statsAgenteFilter);
+      }
+      if (teamId != null) {
+        params.set('team', String(teamId));
+      }
+      return `${window.location.origin}${location.pathname}?${params.toString()}`;
+    },
+    [location.pathname, showPersonalPanel, statsAgenteFilter, statsClienteFilter, statsEstadoFilter]
+  );
+
+  const monitorUrl = useMemo(() => buildMonitorUrl(monitorTeamId), [buildMonitorUrl, monitorTeamId]);
+
+  const handleCopyMonitorLink = useCallback(async () => {
+    if (!monitorUrl) {
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(monitorUrl);
+      setCopyMonitorState('copied');
+      window.setTimeout(() => setCopyMonitorState('idle'), 2000);
+    } catch {
+      setCopyMonitorState('error');
+      window.setTimeout(() => setCopyMonitorState('idle'), 2500);
+    }
+  }, [monitorUrl]);
+
+  const handleOpenMonitorWindow = useCallback(
+    (targetUrl?: string) => {
+      const url = targetUrl ?? monitorUrl;
+      if (!url) {
+        return;
+      }
+      if (authUser) {
+        try {
+          const serialized = JSON.stringify(authUser);
+          window.localStorage.setItem('authUser', serialized);
+          window.sessionStorage.setItem('authUser', serialized);
+        } catch {
+          // ignore storage errors
+        }
+      }
+      const opened = window.open(url, '_blank', 'noopener,noreferrer');
+      if (!opened) {
+        window.location.href = url;
+      }
+    },
+    [authUser, monitorUrl]
+  );
+
+  const monitorStatusLabel = useMemo(() => {
+    if (!lastStatsRefreshAt) {
+      return 'Sin actualizar aún';
+    }
+    return `Última actualización ${lastStatsRefreshAt.toLocaleTimeString('es-AR', {
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false,
+    })}`;
+  }, [lastStatsRefreshAt]);
+
+  const activeMonitorTeamName = useMemo(() => {
+    if (!monitorTeamId) {
+      return null;
+    }
+    const found = teamGroups.find((team) => team.id === monitorTeamId);
+    return found?.name ?? null;
+  }, [monitorTeamId, teamGroups]);
+
   const resolvedTitle = showPersonalPanel ? 'Panel general' : 'Gestionar clientes';
   const resolvedSubtitle = showPersonalPanel ? 'Resumen de personal y clientes' : 'Gestionar clientes';
 
@@ -5504,15 +5679,66 @@ const DashboardPage: React.FC<{ showPersonalPanel?: boolean }> = ({ showPersonal
     });
   }, [teamGroups, baseFilteredPersonal, matchesTeamMember, computePersonalStats, computeClientGroups]);
 
+  const displayedTeamSections = useMemo(() => {
+    if (!monitorTeamId) {
+      return teamSections;
+    }
+    return teamSections.filter((section) => section.team.id === monitorTeamId);
+  }, [monitorTeamId, teamSections]);
+
   return (
     <DashboardLayout
       title={resolvedTitle}
       subtitle={resolvedSubtitle}
       headerContent={headerContent}
       layoutVariant={showPersonalPanel ? 'panel' : 'default'}
+      monitorView={monitorMode}
     >
       {showPersonalPanel ? (
         <>
+          <div className={`monitor-banner${monitorMode ? ' monitor-banner--active' : ''}`}>
+            <div className="monitor-banner__info">
+              <h3>Modo monitores</h3>
+              <p>
+                Usá este link para duplicar el panel en otras pantallas. Se actualiza automáticamente cada{' '}
+                {Math.round(monitorRefreshIntervalMs / 1000)} segundos.
+              </p>
+              <div className="monitor-banner__meta">
+                <span>{monitorStatusLabel}</span>
+                {isSilentRefreshing ? <span className="monitor-pill">Actualizando...</span> : null}
+                {monitorMode ? <span className="monitor-pill monitor-pill--live">Monitor en vivo</span> : null}
+                {activeMonitorTeamName ? (
+                  <span className="monitor-pill">Equipo: {activeMonitorTeamName}</span>
+                ) : null}
+              </div>
+            </div>
+            <div className="monitor-banner__actions">
+              <button
+                type="button"
+                className="secondary-action"
+                onClick={() => handleOpenMonitorWindow()}
+                disabled={!monitorUrl}
+              >
+                Abrir en otra ventana
+              </button>
+              <button
+                type="button"
+                className="secondary-action"
+                onClick={handleCopyMonitorLink}
+                disabled={!monitorUrl}
+              >
+                {copyMonitorState === 'copied'
+                  ? 'Link copiado'
+                  : copyMonitorState === 'error'
+                    ? 'No se pudo copiar'
+                    : 'Copiar link'}
+              </button>
+              <small className="monitor-banner__hint">
+                Compartí el enlace en cada monitor para mostrar este panel sin menús ni edición.
+              </small>
+            </div>
+          </div>
+
           <div className="summary-panel">
             <div className="summary-panel__header">
               <div>
@@ -5638,65 +5864,66 @@ const DashboardPage: React.FC<{ showPersonalPanel?: boolean }> = ({ showPersonal
             </div>
           </div>
 
-          <div className="summary-panel secondary-panels team-config-panel">
-            <div className="secondary-panels__header">
-              <h3>Equipos</h3>
-              <p style={{ margin: 0 }}>Armá los bloques (nombre, color y miembros) que luego aparecen en el panel.</p>
-            </div>
+          {!monitorMode ? (
+            <div className="summary-panel secondary-panels team-config-panel">
+              <div className="secondary-panels__header">
+                <h3>Equipos</h3>
+                <p style={{ margin: 0 }}>Armá los bloques (nombre, color y miembros) que luego aparecen en el panel.</p>
+              </div>
 
-            <div className="team-editor">
-              <div className="team-editor__row">
-                <label className="input-control">
-                  <span>Equipo</span>
-                  <select
-                    value={editingTeamId ?? ''}
-                    onChange={(event) => {
-                      const value = event.target.value;
-                      if (value === '') {
-                        resetTeamForm();
-                        return;
-                      }
-                      const teamId = Number(value);
-                      const found = teamGroups.find((team) => team.id === teamId) ?? null;
-                      populateTeamForm(found);
-                    }}
-                  >
-                    <option value="">Nuevo equipo</option>
-                    {teamGroups.map((team) => (
-                      <option key={team.id} value={team.id}>
-                        {team.name}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label className="input-control">
-                  <span>Nombre</span>
-                  <input
-                    type="text"
-                    value={editingTeamName}
-                    onChange={(event) => setEditingTeamName(event.target.value)}
-                    placeholder="Ej: Fidelización 1"
-                  />
-                </label>
-                <label className="input-control">
-                  <span>Color del bloque</span>
-                  <div className="input-with-action">
+              <div className="team-editor">
+                <div className="team-editor__row">
+                  <label className="input-control">
+                    <span>Equipo</span>
+                    <select
+                      value={editingTeamId ?? ''}
+                      onChange={(event) => {
+                        const value = event.target.value;
+                        if (value === '') {
+                          resetTeamForm();
+                          return;
+                        }
+                        const teamId = Number(value);
+                        const found = teamGroups.find((team) => team.id === teamId) ?? null;
+                        populateTeamForm(found);
+                      }}
+                    >
+                      <option value="">Nuevo equipo</option>
+                      {teamGroups.map((team) => (
+                        <option key={team.id} value={team.id}>
+                          {team.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="input-control">
+                    <span>Nombre</span>
                     <input
                       type="text"
-                      value={editingTeamColor ?? ''}
-                      onChange={(event) => setEditingTeamColor(event.target.value || null)}
-                      placeholder="#DDE9FF"
+                      value={editingTeamName}
+                      onChange={(event) => setEditingTeamName(event.target.value)}
+                      placeholder="Ej: Fidelización 1"
                     />
-                    <input
-                      type="color"
-                      value={editingTeamColor ?? '#f4f6fb'}
-                      onChange={(event) => setEditingTeamColor(event.target.value)}
-                      title="Elegir color"
-                      style={{ width: '52px', minWidth: '52px' }}
-                    />
-                  </div>
-                </label>
-              </div>
+                  </label>
+                  <label className="input-control">
+                    <span>Color del bloque</span>
+                    <div className="input-with-action">
+                      <input
+                        type="text"
+                        value={editingTeamColor ?? ''}
+                        onChange={(event) => setEditingTeamColor(event.target.value || null)}
+                        placeholder="#DDE9FF"
+                      />
+                      <input
+                        type="color"
+                        value={editingTeamColor ?? '#f4f6fb'}
+                        onChange={(event) => setEditingTeamColor(event.target.value)}
+                        title="Elegir color"
+                        style={{ width: '52px', minWidth: '52px' }}
+                      />
+                    </div>
+                  </label>
+                </div>
 
                 <div className="team-editor__members">
                   <div className="team-editor__members-header">
@@ -5711,74 +5938,75 @@ const DashboardPage: React.FC<{ showPersonalPanel?: boolean }> = ({ showPersonal
                   <div className="team-editor__members-grid">
                     {editingMembers.map((member, index) => (
                       <div key={`${member.id ?? index}-${index}`} className="team-editor__member-row">
-                      <label className="input-control">
-                        <span>Elegir usuario</span>
-                        <select
-                          value=""
-                          onChange={(event) => handleMemberSelect(index, event.target.value)}
-                          disabled={usersLoading}
-                        >
-                          <option value="">{usersLoading ? 'Cargando...' : 'Seleccionar'}</option>
-                          {usersOptions.map((user) => (
-                            <option key={user.id} value={user.id}>
-                              {user.name ?? user.email ?? `Usuario #${user.id}`}
-                            </option>
-                          ))}
-                        </select>
-                        {usersError ? <small className="form-info form-info--error">{usersError}</small> : null}
-                      </label>
+                        <label className="input-control">
+                          <span>Elegir usuario</span>
+                          <select
+                            value=""
+                            onChange={(event) => handleMemberSelect(index, event.target.value)}
+                            disabled={usersLoading}
+                          >
+                            <option value="">{usersLoading ? 'Cargando...' : 'Seleccionar'}</option>
+                            {usersOptions.map((user) => (
+                              <option key={user.id} value={user.id}>
+                                {user.name ?? user.email ?? `Usuario #${user.id}`}
+                              </option>
+                            ))}
+                          </select>
+                          {usersError ? <small className="form-info form-info--error">{usersError}</small> : null}
+                        </label>
                         <label className="input-control">
                           <span>Nombre</span>
                           <input
                             type="text"
                             value={member.name}
-                          onChange={(event) => updateMemberField(index, 'name', event.target.value)}
-                          placeholder="Ej: Monica Fernandez"
-                        />
-                      </label>
-                      <label className="input-control">
-                        <span>Email (opcional)</span>
-                        <input
-                          type="email"
-                          value={member.email}
-                          onChange={(event) => updateMemberField(index, 'email', event.target.value)}
-                          placeholder="usuario@dominio.com"
-                        />
-                      </label>
-                      <button
-                        type="button"
-                        className="secondary-action"
-                        aria-label="Quitar miembro"
-                        onClick={() => removeMember(index)}
-                      >
-                        Eliminar
-                      </button>
-                    </div>
-                  ))}
+                            onChange={(event) => updateMemberField(index, 'name', event.target.value)}
+                            placeholder="Ej: Monica Fernandez"
+                          />
+                        </label>
+                        <label className="input-control">
+                          <span>Email (opcional)</span>
+                          <input
+                            type="email"
+                            value={member.email}
+                            onChange={(event) => updateMemberField(index, 'email', event.target.value)}
+                            placeholder="usuario@dominio.com"
+                          />
+                        </label>
+                        <button
+                          type="button"
+                          className="secondary-action"
+                          aria-label="Quitar miembro"
+                          onClick={() => removeMember(index)}
+                        >
+                          Eliminar
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {teamError ? <p className="form-info form-info--error">{teamError}</p> : null}
+                {teamInfo ? <p className="form-info form-info--success">{teamInfo}</p> : null}
+
+                <div className="form-actions" style={{ marginTop: '0.5rem' }}>
+                  <button type="button" className="primary-action" onClick={handleSaveTeam} disabled={savingTeam}>
+                    {savingTeam ? 'Guardando...' : 'Guardar equipo'}
+                  </button>
+                  <button type="button" className="secondary-action" onClick={resetTeamForm} disabled={savingTeam || deletingTeam}>
+                    Limpiar
+                  </button>
+                  <button
+                    type="button"
+                    className="secondary-action"
+                    onClick={handleDeleteTeam}
+                    disabled={editingTeamId === null || deletingTeam || savingTeam}
+                  >
+                    {deletingTeam ? 'Eliminando...' : 'Eliminar'}
+                  </button>
                 </div>
               </div>
-
-              {teamError ? <p className="form-info form-info--error">{teamError}</p> : null}
-              {teamInfo ? <p className="form-info form-info--success">{teamInfo}</p> : null}
-
-              <div className="form-actions" style={{ marginTop: '0.5rem' }}>
-                <button type="button" className="primary-action" onClick={handleSaveTeam} disabled={savingTeam}>
-                  {savingTeam ? 'Guardando...' : 'Guardar equipo'}
-                </button>
-                <button type="button" className="secondary-action" onClick={resetTeamForm} disabled={savingTeam || deletingTeam}>
-                  Limpiar
-                </button>
-                <button
-                  type="button"
-                  className="secondary-action"
-                  onClick={handleDeleteTeam}
-                  disabled={editingTeamId === null || deletingTeam || savingTeam}
-                >
-                  {deletingTeam ? 'Eliminando...' : 'Eliminar'}
-                </button>
-              </div>
             </div>
-          </div>
+          ) : null}
 
           <div className="team-sections">
             {teamLoading ? <p className="form-info">Cargando equipos...</p> : null}
@@ -5787,9 +6015,10 @@ const DashboardPage: React.FC<{ showPersonalPanel?: boolean }> = ({ showPersonal
               <p className="form-info">Todavía no hay equipos configurados. Creá uno arriba.</p>
             ) : null}
 
-            {teamSections.map(({ team, groupStats, memberStats, clientGroups }) => {
+            {displayedTeamSections.map(({ team, groupStats, memberStats, clientGroups }) => {
               const background = team.color ? `${team.color}1a` : '#f4f6fb';
               const borderColor = team.color ?? '#dce3f0';
+              const teamMonitorUrl = buildMonitorUrl(team.id);
 
               return (
                 <div key={team.id} className="summary-panel secondary-panels fidelizacion-panel" style={{ background, borderColor }}>
@@ -5798,11 +6027,22 @@ const DashboardPage: React.FC<{ showPersonalPanel?: boolean }> = ({ showPersonal
                       <h3>{team.name}</h3>
                       <span>{groupStats.total} en total</span>
                     </div>
-                    {team.color ? (
-                      <span className="color-pill" style={{ background: team.color }}>
-                        {team.color}
-                      </span>
-                    ) : null}
+                    <div className="team-actions">
+                      {team.color ? (
+                        <span className="color-pill" style={{ background: team.color }}>
+                          {team.color}
+                        </span>
+                      ) : null}
+                      {!monitorMode ? (
+                        <button
+                          type="button"
+                          className="secondary-action"
+                          onClick={() => handleOpenMonitorWindow(teamMonitorUrl)}
+                        >
+                          Mostrar en monitor
+                        </button>
+                      ) : null}
+                    </div>
                   </div>
 
                   <div className="client-cards fidelizacion-cards">
