@@ -120,7 +120,113 @@ type AccessSection =
   | 'reclamos'
   | 'control-horario'
   | 'liquidaciones'
-  | 'auditoria';
+  | 'auditoria'
+  | 'ticketera';
+
+type TicketStatus =
+  | 'pendiente_responsable'
+  | 'pendiente_rrhh'
+  | 'pendiente_compra'
+  | 'aprobado'
+  | 'rechazado';
+
+const TICKET_CATEGORIES = ['Tecnología', 'Muebles', 'Librería', 'Limpieza', 'Insumos varios'] as const;
+type TicketCategory = (typeof TICKET_CATEGORIES)[number];
+const HR_EMAIL = 'dgimenez@logisticaargentinasrl.com.ar';
+const HR_USER_ID =
+  (Number.isFinite(Number(process.env.REACT_APP_HR_USER_ID)) && Number(process.env.REACT_APP_HR_USER_ID)) || 22;
+
+type FacturaAttachment = {
+  id: string;
+  name: string;
+  size: number;
+  type: string | null;
+  dataUrl: string;
+};
+
+type TicketRequest = {
+  id: number;
+  titulo: string;
+  categoria: TicketCategory;
+  insumos: string;
+  cantidad: string;
+  notas: string;
+  monto: string;
+  facturaMonto: string;
+  facturaArchivos: FacturaAttachment[];
+  destinatarioId: number | null;
+  destinatarioNombre: string | null;
+  responsableId: number | null;
+  responsableNombre: string | null;
+  finalApproverId: number | null;
+  finalApproverNombre: string | null;
+  destinoLabel: string;
+  estado: TicketStatus;
+  solicitanteId: number | null;
+  solicitanteNombre: string | null;
+  createdAt: string;
+  updatedAt: string;
+  historial: Array<{ id: string; mensaje: string; fecha: string; actor: string | null }>;
+};
+
+const TICKETS_STORAGE_KEY = 'ticketera:requests';
+
+const readTicketsFromStorage = (): TicketRequest[] => {
+  if (typeof window === 'undefined') {
+    return [];
+  }
+
+  try {
+    const raw = window.localStorage.getItem(TICKETS_STORAGE_KEY);
+    if (!raw) {
+      return [];
+    }
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+    return parsed
+      .filter((item) => typeof item === 'object' && item !== null)
+      .map((item) => {
+        const rawEstado = String((item as TicketRequest).estado ?? '');
+        const normalizedEstado = (() => {
+          if (rawEstado === 'pendiente_final' || rawEstado === 'pendiente_admin2') {
+            return 'pendiente_compra' as TicketStatus;
+          }
+          return rawEstado as TicketStatus;
+        })();
+        const withDefaults: TicketRequest = {
+          categoria: (item as TicketRequest).categoria ?? 'Insumos varios',
+          monto: (item as TicketRequest).monto ?? '',
+          facturaMonto: (item as TicketRequest).facturaMonto ?? '',
+          facturaArchivos: Array.isArray((item as TicketRequest).facturaArchivos)
+            ? ((item as TicketRequest).facturaArchivos as FacturaAttachment[])
+            : [],
+          destinatarioId: (item as TicketRequest).destinatarioId ?? null,
+          destinatarioNombre: (item as TicketRequest).destinatarioNombre ?? null,
+          estado: normalizedEstado,
+          ...item,
+          historial: Array.isArray((item as TicketRequest).historial)
+            ? (item as TicketRequest).historial
+            : [],
+        } as TicketRequest;
+        return withDefaults;
+      });
+  } catch {
+    return [];
+  }
+};
+
+const writeTicketsToStorage = (tickets: TicketRequest[]) => {
+  if (typeof window === 'undefined') {
+    return;
+  }
+  try {
+    window.localStorage.setItem(TICKETS_STORAGE_KEY, JSON.stringify(tickets));
+  } catch {
+    // ignore storage errors
+  }
+};
 
 type PersonalHistoryChange = {
   field: string | null;
@@ -144,6 +250,7 @@ type PersonalRecord = {
   nombre: string | null;
   nombres?: string | null;
   apellidos?: string | null;
+  legajo?: string | null;
   cuil: string | null;
   telefono: string | null;
   email: string | null;
@@ -207,6 +314,7 @@ type PersonalDetail = {
   id: number;
   nombres: string | null;
   apellidos: string | null;
+  legajo: string | null;
   cuil: string | null;
   telefono: string | null;
   email: string | null;
@@ -3261,6 +3369,9 @@ const DashboardLayout: React.FC<{
               Reclamos
             </NavLink>
           ) : null}
+          <NavLink to="/ticketera" className={({ isActive }) => `sidebar-link${isActive ? ' is-active' : ''}`}>
+            Ticketera
+          </NavLink>
           <NavLink to="/notificaciones" className={({ isActive }) => `sidebar-link${isActive ? ' is-active' : ''}`}>
             Notificaciones
           </NavLink>
@@ -9576,6 +9687,7 @@ const PersonalPage: React.FC = () => {
       { header: 'Nombre completo', resolve: (registro) => registro.nombre ?? '' },
       { header: 'Nombres', resolve: (registro) => registro.nombres ?? '' },
       { header: 'Apellidos', resolve: (registro) => registro.apellidos ?? '' },
+      { header: 'Legajo', resolve: (registro) => registro.legajo ?? '' },
       { header: 'CUIL', resolve: (registro) => registro.cuil ?? '' },
       { header: 'Teléfono', resolve: (registro) => registro.telefono ?? '' },
       { header: 'Email', resolve: (registro) => registro.email ?? '' },
@@ -9910,6 +10022,7 @@ const PersonalPage: React.FC = () => {
             <tr>
               <th>ID</th>
               <th>Nombre</th>
+              <th>Legajo</th>
               <th>CUIL</th>
               <th>Teléfono</th>
               <th>Email</th>
@@ -9930,13 +10043,13 @@ const PersonalPage: React.FC = () => {
           <tbody>
             {loading && (
               <tr>
-                <td colSpan={17}>Cargando personal...</td>
+                <td colSpan={18}>Cargando personal...</td>
               </tr>
             )}
 
             {error && !loading && (
               <tr>
-                <td colSpan={17} className="error-cell">
+                <td colSpan={18} className="error-cell">
                   {error}
                 </td>
               </tr>
@@ -9944,7 +10057,7 @@ const PersonalPage: React.FC = () => {
 
             {!loading && !error && filteredPersonal.length === 0 && (
               <tr>
-                <td colSpan={17}>No hay registros para mostrar.</td>
+                <td colSpan={18}>No hay registros para mostrar.</td>
               </tr>
             )}
 
@@ -9954,6 +10067,7 @@ const PersonalPage: React.FC = () => {
                 <tr key={registro.id}>
                   <td>{registro.id}</td>
                   <td>{registro.nombre ?? '—'}</td>
+                  <td>{registro.legajo ?? '—'}</td>
                   <td>{registro.cuil ?? '—'}</td>
                   <td>{renderProtectedValue(registro.id, 'phone', registro.telefono)}</td>
                   <td>{renderProtectedValue(registro.id, 'email', registro.email)}</td>
@@ -18849,6 +18963,1019 @@ const handleAdelantoFieldChange =
   );
 };
 
+const TicketeraPage: React.FC = () => {
+  const apiBaseUrl = useMemo(() => resolveApiBaseUrl(), []);
+  const authUser = useStoredAuthUser();
+  const userRole = useMemo(() => getUserRole(authUser), [authUser]);
+  const actorHeaders = useMemo(() => buildActorHeaders(authUser), [authUser]);
+  const [meta, setMeta] = useState<PersonalMeta | null>(null);
+  const [metaLoading, setMetaLoading] = useState(true);
+  const [metaError, setMetaError] = useState<string | null>(null);
+  const [tickets, setTickets] = useState<TicketRequest[]>(() => readTicketsFromStorage());
+  const [flash, setFlash] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [expandedTickets, setExpandedTickets] = useState<Set<number>>(() => new Set());
+  const [filters, setFilters] = useState({ estado: '', onlyMine: true, search: '' });
+  const [handoffTargets, setHandoffTargets] = useState<Record<number, string>>({});
+  const [facturaFiles, setFacturaFiles] = useState<FacturaAttachment[]>([]);
+  const [formValues, setFormValues] = useState({
+    titulo: '',
+    categoria: 'Insumos varios' as TicketCategory,
+    insumos: '',
+    cantidad: '1',
+    notas: '',
+    legajo: '',
+    monto: '',
+    facturaMonto: '',
+    destinatarioId: '',
+    destinatarioNombreManual: '',
+    responsableId: '',
+    responsableNombreManual: '',
+    finalApproverId: '',
+    finalApproverNombreManual: '',
+    destinoLabel: 'Administración 2',
+  });
+
+  useEffect(() => {
+    writeTicketsToStorage(tickets);
+  }, [tickets]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+
+    const fetchMeta = async () => {
+      try {
+        setMetaLoading(true);
+        setMetaError(null);
+        const response = await fetch(`${apiBaseUrl}/api/personal-meta`, {
+          signal: controller.signal,
+        });
+
+        if (!response.ok) {
+          throw new Error(`Error ${response.status}: ${response.statusText}`);
+        }
+
+        const payload = (await response.json()) as PersonalMeta;
+        setMeta(payload);
+      } catch (err) {
+        if ((err as Error).name === 'AbortError') {
+          return;
+        }
+        setMetaError((err as Error).message ?? 'No se pudieron cargar los agentes.');
+      } finally {
+        setMetaLoading(false);
+      }
+    };
+
+    fetchMeta();
+
+    return () => controller.abort();
+  }, [apiBaseUrl]);
+
+  const resolveAgenteNombre = useCallback(
+    (id: number | null) => {
+      if (!id || !meta?.agentes) {
+        return null;
+      }
+      const match = meta.agentes.find((agente) => Number(agente.id) === Number(id));
+      return match?.name ?? null;
+    },
+    [meta?.agentes]
+  );
+
+  const isHrUser = useMemo(() => {
+    const normalized = normalizeEmail(authUser?.email);
+    return normalized === normalizeEmail(HR_EMAIL) || isElevatedRole(userRole);
+  }, [authUser?.email, userRole]);
+
+  const readFileAsDataUrl = (file: File): Promise<string> =>
+    new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result));
+      reader.onerror = () => reject(reader.error);
+      reader.readAsDataURL(file);
+    });
+
+  const handleFacturaFilesChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(event.target.files ?? []);
+    if (files.length === 0) {
+      return;
+    }
+
+    try {
+      const attachments = await Promise.all(
+        files.map(async (file) => ({
+          id: uniqueKey(),
+          name: file.name,
+          size: file.size,
+          type: file.type || null,
+          dataUrl: await readFileAsDataUrl(file),
+        }))
+      );
+      setFacturaFiles((prev) => [...attachments, ...prev]);
+    } catch (err) {
+      setFlash({ type: 'error', message: 'No se pudo leer el archivo de factura.' });
+    } finally {
+      event.target.value = '';
+    }
+  };
+
+  const handleRemoveFacturaFile = (id: string) => {
+    setFacturaFiles((prev) => prev.filter((file) => file.id !== id));
+  };
+
+  const getEstadoLabel = (estado: TicketStatus) => {
+    switch (estado) {
+      case 'pendiente_responsable':
+        return 'Pendiente responsable';
+      case 'pendiente_rrhh':
+        return 'Pendiente RRHH';
+      case 'pendiente_compra':
+        return 'Pendiente compra';
+      case 'aprobado':
+        return 'Aprobado';
+      case 'rechazado':
+        return 'Rechazado';
+      default:
+        return estado;
+    }
+  };
+
+  const getEstadoClass = (estado: TicketStatus) => {
+    switch (estado) {
+      case 'aprobado':
+        return 'estado-badge--activo';
+      case 'rechazado':
+        return 'estado-badge--baja';
+      case 'pendiente_compra':
+        return 'estado-badge--suspendido';
+      case 'pendiente_responsable':
+      case 'pendiente_rrhh':
+      default:
+        return 'estado-badge--default';
+    }
+  };
+
+  const sendNotification = useCallback(
+    async (
+      userId: number | null,
+      message: string,
+      metadata?: Record<string, unknown>,
+      targetEmail?: string | null
+    ) => {
+      if (!userId && !targetEmail) {
+        return;
+      }
+      try {
+        await fetch(`${apiBaseUrl}/api/notificaciones`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...actorHeaders,
+          },
+          body: JSON.stringify({
+            userId: userId ?? undefined,
+            userEmail: targetEmail ?? undefined,
+            message,
+            metadata: {
+              ...metadata,
+              ticketera: true,
+            },
+          }),
+        });
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.error('Error enviando notificación de ticketera', err);
+      }
+    },
+    [actorHeaders, apiBaseUrl]
+  );
+
+  const notifyHr = useCallback(
+    async (ticket: TicketRequest, message: string) => {
+      // Enviamos por ID (si lo tenemos) y también por email para evitar filtros de rol.
+      await sendNotification(
+        HR_USER_ID,
+        message,
+        {
+          ticketId: ticket.id,
+          destino: 'RRHH',
+        },
+        HR_EMAIL
+      );
+      await sendNotification(
+        null,
+        message,
+        {
+          ticketId: ticket.id,
+          destino: 'RRHH',
+        },
+        HR_EMAIL
+      );
+    },
+    [sendNotification]
+  );
+
+  const toggleExpanded = (ticketId: number) => {
+    setExpandedTickets((prev) => {
+      const next = new Set(prev);
+      if (next.has(ticketId)) {
+        next.delete(ticketId);
+      } else {
+        next.add(ticketId);
+      }
+      return next;
+    });
+  };
+
+  const mutateTicket = useCallback((ticketId: number, updater: (ticket: TicketRequest) => TicketRequest) => {
+    setTickets((prev) => prev.map((ticket) => (ticket.id === ticketId ? updater(ticket) : ticket)));
+  }, []);
+
+  const createTicket = async (autoApprove: boolean) => {
+    const responsableId = formValues.responsableId ? Number(formValues.responsableId) : null;
+    const destinatarioId = formValues.destinatarioId ? Number(formValues.destinatarioId) : null;
+    const destinatarioNombre =
+      formValues.destinatarioNombreManual.trim() || resolveAgenteNombre(destinatarioId) || null;
+    const responsableNombre =
+      formValues.responsableNombreManual.trim() || resolveAgenteNombre(responsableId) || null;
+
+    if (!responsableNombre) {
+      setFlash({ type: 'error', message: 'Asigná un agente responsable.' });
+      return;
+    }
+
+    const nowIso = new Date().toISOString();
+    const estadoInicial: TicketStatus = autoApprove ? 'aprobado' : 'pendiente_responsable';
+    const historial = [
+      {
+        id: uniqueKey(),
+        mensaje: autoApprove ? 'Pedido creado y aprobado.' : 'Pedido creado y enviado al responsable.',
+        fecha: nowIso,
+        actor: authUser?.name ?? authUser?.email ?? null,
+      },
+    ];
+
+    const newTicket: TicketRequest = {
+      id: Date.now(),
+      titulo: formValues.titulo.trim() || 'Pedido de insumos',
+      categoria: formValues.categoria,
+      insumos: formValues.insumos.trim(),
+      cantidad: formValues.cantidad.trim() || '1',
+      notas: formValues.notas.trim(),
+      monto: formValues.monto.trim(),
+      facturaMonto: formValues.facturaMonto.trim(),
+      facturaArchivos: facturaFiles,
+      destinatarioId,
+      destinatarioNombre,
+      responsableId,
+      responsableNombre,
+      finalApproverId: null,
+      finalApproverNombre: null,
+      destinoLabel: 'RRHH',
+      estado: estadoInicial,
+      solicitanteId: authUser?.id ?? null,
+      solicitanteNombre: authUser?.name ?? authUser?.email ?? null,
+      createdAt: nowIso,
+      updatedAt: nowIso,
+      historial,
+    };
+
+    try {
+      setSaving(true);
+      setTickets((prev) => [newTicket, ...prev]);
+      setFormValues((prev) => ({
+        ...prev,
+        titulo: '',
+        insumos: '',
+        cantidad: '1',
+        notas: '',
+        monto: '',
+        facturaMonto: '',
+        responsableId: '',
+        responsableNombreManual: '',
+        destinatarioId: '',
+        destinatarioNombreManual: '',
+        finalApproverId: '',
+        finalApproverNombreManual: '',
+      }));
+      setFacturaFiles([]);
+      setFlash({
+        type: 'success',
+        message: autoApprove ? 'Pedido creado y aprobado.' : 'Pedido registrado y notificado al responsable.',
+      });
+      await sendNotification(responsableId, `Nuevo pedido: ${newTicket.titulo}`, {
+        ticketId: newTicket.id,
+        destino: newTicket.destinoLabel,
+      });
+      if (destinatarioId) {
+        await sendNotification(destinatarioId, `Pedido para vos: ${newTicket.titulo}`, {
+          ticketId: newTicket.id,
+          destino: 'Destinatario',
+        });
+      }
+      if (autoApprove) {
+        await sendNotification(responsableId, `Pedido aprobado: ${newTicket.titulo}`, {
+          ticketId: newTicket.id,
+        });
+      }
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    await createTicket(false);
+  };
+
+  const resolveHandoffId = (ticket: TicketRequest): number | null => {
+    const selected = handoffTargets[ticket.id];
+    if (selected && !Number.isNaN(Number(selected))) {
+      return Number(selected);
+    }
+    if (ticket.estado === 'pendiente_rrhh' || ticket.estado === 'pendiente_compra') {
+      return ticket.responsableId ?? null;
+    }
+    return null;
+  };
+
+  const handleApproveResponsable = async (ticket: TicketRequest) => {
+    const nowIso = new Date().toISOString();
+    const hrNombre = resolveAgenteNombre(HR_USER_ID);
+    const nextResponsibleIdRaw = handoffTargets[ticket.id];
+    const nextResponsibleId =
+      nextResponsibleIdRaw && !Number.isNaN(Number(nextResponsibleIdRaw))
+        ? Number(nextResponsibleIdRaw)
+        : null;
+    const nextResponsibleNombre = resolveAgenteNombre(nextResponsibleId);
+    mutateTicket(ticket.id, (current) => ({
+      ...current,
+      estado: 'pendiente_rrhh',
+      responsableId: HR_USER_ID ?? current.responsableId,
+      responsableNombre: hrNombre ?? current.responsableNombre ?? 'RRHH',
+      updatedAt: nowIso,
+      historial: [
+        {
+          id: uniqueKey(),
+          mensaje: 'Responsable aprobó y envió a RRHH.',
+          fecha: nowIso,
+          actor: authUser?.name ?? authUser?.email ?? null,
+        },
+        ...current.historial,
+      ],
+    }));
+    setFlash({ type: 'success', message: 'Enviado a RRHH.' });
+    await sendNotification(ticket.responsableId, `Tu pedido pasó a RRHH: ${ticket.titulo}`, {
+      ticketId: ticket.id,
+      destino: 'RRHH',
+    });
+    await notifyHr(ticket, `Pedido pendiente en RRHH: ${ticket.titulo}`);
+    if (nextResponsibleId) {
+      await sendNotification(
+        nextResponsibleId,
+        `Próximo responsable para compra (cuando RRHH apruebe): ${ticket.titulo}`,
+        { ticketId: ticket.id, destino: 'Compra' }
+      );
+    }
+  };
+
+  const handleApproveRrhh = async (ticket: TicketRequest) => {
+    const nowIso = new Date().toISOString();
+    const targetId = resolveHandoffId(ticket);
+    const targetNombre = resolveAgenteNombre(targetId);
+    mutateTicket(ticket.id, (current) => ({
+      ...current,
+      estado: 'pendiente_compra',
+      responsableId: targetId ?? current.responsableId ?? HR_USER_ID ?? current.responsableId,
+      responsableNombre: targetNombre ?? current.responsableNombre,
+      updatedAt: nowIso,
+      historial: [
+        {
+          id: uniqueKey(),
+          mensaje: 'RRHH aprobó y envió a responsable para compra.',
+          fecha: nowIso,
+          actor: authUser?.name ?? authUser?.email ?? null,
+        },
+        ...current.historial,
+      ],
+    }));
+    setFlash({ type: 'success', message: 'Enviado a responsable para compra.' });
+    await sendNotification(
+      targetId ?? ticket.responsableId ?? HR_USER_ID,
+      `Pedido listo para comprar: ${ticket.titulo}`,
+      {
+        ticketId: ticket.id,
+        destino: 'Compra',
+      }
+    );
+  };
+
+  const handleApproveFinal = async (ticket: TicketRequest) => {
+    const nowIso = new Date().toISOString();
+    mutateTicket(ticket.id, (current) => ({
+      ...current,
+      estado: 'aprobado',
+      updatedAt: nowIso,
+      historial: [
+        {
+          id: uniqueKey(),
+          mensaje: 'Compra aprobada.',
+          fecha: nowIso,
+          actor: authUser?.name ?? authUser?.email ?? null,
+        },
+        ...current.historial,
+      ],
+    }));
+    setFlash({ type: 'success', message: 'Pedido aprobado.' });
+    await sendNotification(ticket.responsableId, `Pedido aprobado: ${ticket.titulo}`, {
+      ticketId: ticket.id,
+    });
+    if (ticket.solicitanteId && ticket.solicitanteId !== ticket.responsableId) {
+      await sendNotification(ticket.solicitanteId, `Tu pedido fue aprobado: ${ticket.titulo}`, {
+        ticketId: ticket.id,
+      });
+    }
+  };
+
+  const handleReject = async (ticket: TicketRequest) => {
+    const reason = window.prompt('Motivo del rechazo (opcional):', '') ?? '';
+    const nowIso = new Date().toISOString();
+    mutateTicket(ticket.id, (current) => ({
+      ...current,
+      estado: 'rechazado',
+      updatedAt: nowIso,
+      historial: [
+        {
+          id: uniqueKey(),
+          mensaje: `Rechazado${reason.trim() ? `: ${reason.trim()}` : ''}`,
+          fecha: nowIso,
+          actor: authUser?.name ?? authUser?.email ?? null,
+        },
+        ...current.historial,
+      ],
+    }));
+    setFlash({ type: 'error', message: 'Pedido rechazado.' });
+    const suffix = reason.trim() ? ` Motivo: ${reason.trim()}` : '';
+    await sendNotification(ticket.responsableId, `Pedido rechazado: ${ticket.titulo}.${suffix}`, {
+      ticketId: ticket.id,
+    });
+    if (ticket.solicitanteId && ticket.solicitanteId !== ticket.responsableId) {
+      await sendNotification(ticket.solicitanteId, `Rechazaron tu pedido: ${ticket.titulo}.${suffix}`, {
+        ticketId: ticket.id,
+      });
+    }
+  };
+
+  const filteredTickets = useMemo(() => {
+    const normalizedSearch = filters.search.trim().toLowerCase();
+    return [...tickets]
+      .filter((ticket) => {
+        if (!filters.estado) {
+          return true;
+        }
+        return ticket.estado === filters.estado;
+      })
+      .filter((ticket) => {
+        if (!filters.onlyMine || !authUser?.id) {
+          return true;
+        }
+        return (
+          ticket.responsableId === authUser.id ||
+          ticket.finalApproverId === authUser.id ||
+          ticket.solicitanteId === authUser.id
+        );
+      })
+      .filter((ticket) => {
+        if (!normalizedSearch) {
+          return true;
+        }
+        return [ticket.titulo, ticket.insumos, ticket.notas, ticket.responsableNombre, ticket.finalApproverNombre]
+          .filter(Boolean)
+          .some((value) => (value ?? '').toLowerCase().includes(normalizedSearch));
+      })
+      .sort((a, b) => {
+        const aTime = Date.parse(a.updatedAt || a.createdAt);
+        const bTime = Date.parse(b.updatedAt || b.createdAt);
+        return bTime - aTime;
+      });
+  }, [tickets, filters.estado, filters.onlyMine, filters.search, authUser?.id]);
+
+  const agenteOptions = useMemo(() => meta?.agentes ?? [], [meta?.agentes]);
+  const canOperateAsResponsable = (ticket: TicketRequest) => {
+    if (ticket.estado !== 'pendiente_responsable') {
+      return false;
+    }
+    if (!authUser?.id) {
+      return false;
+    }
+    return ticket.responsableId === authUser.id || isElevatedRole(userRole);
+  };
+
+  const canOperateAsRrhh = (ticket: TicketRequest) => {
+    if (ticket.estado !== 'pendiente_rrhh') {
+      return false;
+    }
+    return isHrUser;
+  };
+
+  const canOperateAsFinal = (ticket: TicketRequest) => {
+    if (ticket.estado !== 'pendiente_compra') {
+      return false;
+    }
+    if (!authUser?.id) {
+      return isElevatedRole(userRole);
+    }
+    if (isElevatedRole(userRole)) {
+      return true;
+    }
+    return ticket.finalApproverId === authUser.id;
+  };
+
+  return (
+    <DashboardLayout title="Ticketera" subtitle="Pedidos de insumos con dos aprobaciones">
+      {flash ? (
+        <div
+          className={`flash-message${flash.type === 'error' ? ' flash-message--error' : ''}`}
+          role="alert"
+        >
+          <span>{flash.message}</span>
+          <button type="button" onClick={() => setFlash(null)} aria-label="Cerrar aviso">
+            ×
+          </button>
+        </div>
+      ) : null}
+
+      <section className="panel-grid">
+        <div className="card">
+          <div className="card-header">
+            <h3>Crear pedido</h3>
+            <p className="card-subtitle">
+              Carga el insumo, asigna un responsable y define si lo aprueba administración 2 o contable.
+            </p>
+          </div>
+          <form className="card-body form-grid" onSubmit={handleSubmit}>
+            <label className="input-control">
+              <span>Categoría</span>
+              <select
+                value={formValues.categoria}
+                onChange={(event) =>
+                  setFormValues((prev) => ({
+                    ...prev,
+                    categoria: event.target.value as TicketCategory,
+                  }))
+                }
+              >
+                {TICKET_CATEGORIES.map((categoria) => (
+                  <option key={categoria} value={categoria}>
+                    {categoria}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="input-control">
+              <span>Título</span>
+              <input
+                type="text"
+                placeholder="Ej: Cajas, etiquetas, EPP..."
+                value={formValues.titulo}
+                onChange={(event) => setFormValues((prev) => ({ ...prev, titulo: event.target.value }))}
+              />
+            </label>
+            <label className="input-control">
+              <span>Insumos / Detalle</span>
+              <textarea
+                rows={3}
+                placeholder="Detalle del pedido"
+                value={formValues.insumos}
+                onChange={(event) => setFormValues((prev) => ({ ...prev, insumos: event.target.value }))}
+              />
+            </label>
+            <label className="input-control">
+              <span>Cantidad</span>
+              <input
+                type="text"
+                value={formValues.cantidad}
+                onChange={(event) => setFormValues((prev) => ({ ...prev, cantidad: event.target.value }))}
+              />
+            </label>
+            <div className="form-grid two-columns">
+              <label className="input-control">
+                <span>Monto estimado</span>
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  placeholder="0.00"
+                  value={formValues.monto}
+                  onChange={(event) => setFormValues((prev) => ({ ...prev, monto: event.target.value }))}
+                />
+              </label>
+              <label className="input-control">
+                <span>Monto factura</span>
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  placeholder="0.00"
+                  value={formValues.facturaMonto}
+                  onChange={(event) => setFormValues((prev) => ({ ...prev, facturaMonto: event.target.value }))}
+                />
+              </label>
+            </div>
+            <div className="form-grid two-columns">
+              <label className="input-control">
+                <span>Agente responsable</span>
+                <select
+                  value={formValues.responsableId}
+                  onChange={(event) => setFormValues((prev) => ({ ...prev, responsableId: event.target.value }))}
+                  disabled={metaLoading}
+                >
+                  <option value="">Seleccionar</option>
+                  {agenteOptions.map((agente) => (
+                    <option key={agente.id} value={agente.id ?? ''}>
+                      {agente.name ?? `Agente #${agente.id}`}
+                    </option>
+                  ))}
+                </select>
+                <small>Si no aparece en la lista, completalo abajo.</small>
+                <input
+                  type="text"
+                  placeholder="Responsable (manual)"
+                  value={formValues.responsableNombreManual}
+                  onChange={(event) =>
+                    setFormValues((prev) => ({ ...prev, responsableNombreManual: event.target.value }))
+                  }
+                />
+              </label>
+              <div />
+            </div>
+            <div className="form-grid two-columns">
+              <label className="input-control">
+                <span>¿Para quién es el pedido?</span>
+                <select
+                  value={formValues.destinatarioId}
+                  onChange={(event) => setFormValues((prev) => ({ ...prev, destinatarioId: event.target.value }))}
+                  disabled={metaLoading}
+                >
+                  <option value="">Seleccionar</option>
+                  {agenteOptions.map((agente) => (
+                    <option key={agente.id} value={agente.id ?? ''}>
+                      {agente.name ?? `Agente #${agente.id}`}
+                    </option>
+                  ))}
+                </select>
+                <input
+                  type="text"
+                  placeholder="Destinatario (manual)"
+                  value={formValues.destinatarioNombreManual}
+                  onChange={(event) =>
+                    setFormValues((prev) => ({ ...prev, destinatarioNombreManual: event.target.value }))
+                  }
+                />
+              </label>
+              <div />
+            </div>
+
+            <label className="input-control">
+              <span>Factura (imágenes)</span>
+              <input
+                type="file"
+                accept="image/*"
+                multiple
+                onChange={handleFacturaFilesChange}
+              />
+              {facturaFiles.length > 0 ? (
+                <div className="chip-list">
+                  {facturaFiles.map((file) => (
+                    <span key={file.id} className="chip">
+                      <span>{file.name}</span>
+                      <button type="button" onClick={() => handleRemoveFacturaFile(file.id)} aria-label={`Quitar ${file.name}`}>
+                        ×
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              ) : (
+                <small>Podés adjuntar fotos de la factura.</small>
+              )}
+            </label>
+
+            <label className="input-control">
+              <span>Notas</span>
+              <textarea
+                rows={2}
+                placeholder="Instrucciones, links de compra o presupuestos"
+                value={formValues.notas}
+                onChange={(event) => setFormValues((prev) => ({ ...prev, notas: event.target.value }))}
+              />
+            </label>
+            {metaError ? <p className="form-info form-info--error">{metaError}</p> : null}
+            {metaLoading ? <p className="form-info">Cargando agentes...</p> : null}
+            <div className="form-actions">
+              <button type="submit" className="primary-action" disabled={saving}>
+                {saving ? 'Guardando...' : 'Registrar pedido'}
+              </button>
+              <button
+                type="button"
+                className="secondary-action"
+                disabled={saving}
+                onClick={() => {
+                  void createTicket(true);
+                }}
+              >
+                {saving ? 'Guardando...' : 'Aprobar pedido'}
+              </button>
+            </div>
+          </form>
+        </div>
+
+        <div className="card">
+          <div className="card-header">
+            <h3>Pedidos y aprobaciones</h3>
+            <p className="card-subtitle">
+              Filtra por estado o quedate con los tickets donde sos parte.
+            </p>
+            <div className="form-grid two-columns">
+              <label className="input-control">
+                <span>Buscar</span>
+                <input
+                  type="search"
+                  placeholder="Título, insumo, responsable..."
+                  value={filters.search}
+                  onChange={(event) => setFilters((prev) => ({ ...prev, search: event.target.value }))}
+                />
+              </label>
+              <label className="input-control">
+                <span>Estado</span>
+                <select
+                  value={filters.estado}
+                  onChange={(event) => setFilters((prev) => ({ ...prev, estado: event.target.value }))}
+                >
+                  <option value="">Todos</option>
+                  <option value="pendiente_responsable">Pendiente responsable</option>
+                  <option value="pendiente_rrhh">Pendiente RRHH</option>
+                  <option value="pendiente_compra">Pendiente compra</option>
+                  <option value="aprobado">Aprobado</option>
+                  <option value="rechazado">Rechazado</option>
+                </select>
+              </label>
+              <label className="input-control">
+                <span>Mostrar solo mis tickets</span>
+                <div className="checkbox-field">
+                  <input
+                    type="checkbox"
+                    checked={filters.onlyMine}
+                    onChange={(event) => setFilters((prev) => ({ ...prev, onlyMine: event.target.checked }))}
+                  />
+                  <span>Como solicitante, responsable o aprobador final</span>
+                </div>
+              </label>
+            </div>
+          </div>
+          <div className="card-body">
+            <div className="table-wrapper">
+              <table className="data-table">
+                <thead>
+                  <tr>
+                    <th>Título</th>
+                    <th>Categoría</th>
+                    <th>Monto</th>
+                    <th>Responsable</th>
+                    <th>Admin/Contable</th>
+                    <th>Enviar a</th>
+                    <th>Estado</th>
+                    <th>Actualizado</th>
+                    <th>Acciones</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredTickets.length === 0 ? (
+                    <tr>
+                      <td colSpan={9} style={{ textAlign: 'center' }}>
+                        No hay pedidos cargados.
+                      </td>
+                    </tr>
+                  ) : (
+                    filteredTickets.map((ticket) => {
+                      const updatedLabel = ticket.updatedAt
+                        ? new Date(ticket.updatedAt).toLocaleString('es-AR')
+                        : '—';
+                      const canApprove = canOperateAsResponsable(ticket);
+                      const canFinalApprove = canOperateAsFinal(ticket);
+                      const canRrhhApprove = canOperateAsRrhh(ticket);
+                      const handoffValue =
+                        handoffTargets[ticket.id] ??
+                        (resolveHandoffId(ticket) != null ? String(resolveHandoffId(ticket)) : '');
+
+                      return (
+                        <React.Fragment key={ticket.id}>
+                          <tr>
+                            <td>
+                              <div className="table-title">
+                                <strong>{ticket.titulo}</strong>
+                              </div>
+                              <div className="small-text">{ticket.insumos || 'Sin detalle'}</div>
+                            </td>
+                            <td>{ticket.categoria}</td>
+                            <td>{ticket.monto && Number(ticket.monto) ? Number(ticket.monto).toLocaleString('es-AR', { style: 'currency', currency: 'ARS' }) : ticket.monto || '—'}</td>
+                            <td>
+                              <div>{ticket.responsableNombre ?? '—'}</div>
+                              {ticket.solicitanteNombre ? (
+                                <div className="small-text">Solicitado por {ticket.solicitanteNombre}</div>
+                              ) : null}
+                            </td>
+                            <td>
+                              <div>{ticket.finalApproverNombre ?? ticket.destinoLabel ?? '—'}</div>
+                              <div className="small-text">{ticket.destinoLabel}</div>
+                            </td>
+                            <td>
+                              {(canApprove || canRrhhApprove || canFinalApprove) ? (
+                                <select
+                                  value={handoffValue}
+                                  onChange={(event) =>
+                                    setHandoffTargets((prev) => ({
+                                      ...prev,
+                                      [ticket.id]: event.target.value,
+                                    }))
+                                  }
+                                >
+                                  <option value="">Seleccionar</option>
+                                  {agenteOptions.map((agente) => (
+                                    <option key={agente.id} value={agente.id ?? ''}>
+                                      {agente.name ?? `Agente #${agente.id}`}
+                                    </option>
+                                  ))}
+                                </select>
+                              ) : (
+                                <span className="small-text">—</span>
+                              )}
+                            </td>
+                            <td>
+                              <span className={`estado-badge ${getEstadoClass(ticket.estado)}`}>
+                                {getEstadoLabel(ticket.estado)}
+                              </span>
+                            </td>
+                            <td>{updatedLabel}</td>
+                            <td>
+                              <div className="action-buttons">
+                                <button
+                                  type="button"
+                                  onClick={() => toggleExpanded(ticket.id)}
+                                  aria-label="Ver detalle"
+                                >
+                                  {expandedTickets.has(ticket.id) ? 'Ocultar' : 'Detalle'}
+                                </button>
+                                {ticket.estado === 'pendiente_responsable' && canApprove ? (
+                                  <button
+                                    type="button"
+                                    className="primary-action"
+                                    onClick={() => handleApproveResponsable(ticket)}
+                                  >
+                                    Enviar a RRHH
+                                  </button>
+                                ) : null}
+                                {ticket.estado === 'pendiente_rrhh' && canRrhhApprove ? (
+                                  <button
+                                    type="button"
+                                    className="primary-action"
+                                    onClick={() => handleApproveRrhh(ticket)}
+                                  >
+                                    RRHH: Enviar a responsable
+                                  </button>
+                                ) : null}
+                                {ticket.estado === 'pendiente_compra' && canFinalApprove ? (
+                                  <button
+                                    type="button"
+                                    className="primary-action"
+                                    onClick={() => handleApproveFinal(ticket)}
+                                  >
+                                    Aprobar compra
+                                  </button>
+                                ) : null}
+                                {ticket.estado === 'pendiente_compra' && canFinalApprove ? (
+                                  <button
+                                    type="button"
+                                    className="secondary-action"
+                                    onClick={() => {
+                                      const targetId = resolveHandoffId(ticket);
+                                      if (!targetId) {
+                                        setFlash({ type: 'error', message: 'Elegí un responsable en "Enviar a".' });
+                                        return;
+                                      }
+                                      const targetNombre = resolveAgenteNombre(targetId);
+                                      const nowIso = new Date().toISOString();
+                                      mutateTicket(ticket.id, (current) => ({
+                                        ...current,
+                                        responsableId: targetId,
+                                        responsableNombre: targetNombre ?? current.responsableNombre,
+                                        updatedAt: nowIso,
+                                        historial: [
+                                          {
+                                            id: uniqueKey(),
+                                            mensaje: 'Reenvío a responsable para compra.',
+                                            fecha: nowIso,
+                                            actor: authUser?.name ?? authUser?.email ?? null,
+                                          },
+                                          ...current.historial,
+                                        ],
+                                      }));
+                                      void sendNotification(targetId, `Pedido reenviado para compra: ${ticket.titulo}`, {
+                                        ticketId: ticket.id,
+                                      });
+                                    }}
+                                  >
+                                    Volver a enviar
+                                  </button>
+                                ) : null}
+                                {(ticket.estado === 'pendiente_responsable' && canApprove) ||
+                                (ticket.estado === 'pendiente_rrhh' && canRrhhApprove) ||
+                                (ticket.estado === 'pendiente_compra' && canFinalApprove) ? (
+                                  <button
+                                    type="button"
+                                    className="secondary-action"
+                                    onClick={() => handleReject(ticket)}
+                                  >
+                                    Rechazar
+                                  </button>
+                                ) : null}
+                              </div>
+                            </td>
+                          </tr>
+                          {expandedTickets.has(ticket.id) ? (
+                            <tr>
+                              <td colSpan={9}>
+                                <div className="detail-grid">
+                                  <div>
+                                    <strong>Detalle</strong>
+                                    <p>{ticket.insumos || 'Sin detalle'}</p>
+                                  </div>
+                                  <div>
+                                    <strong>Categoría</strong>
+                                    <p>{ticket.categoria}</p>
+                                    <strong>Para</strong>
+                                    <p>{ticket.destinatarioNombre ?? 'No indicado'}</p>
+                                  </div>
+                                  <div>
+                                    <strong>Montos</strong>
+                                    <p>Monto estimado: {ticket.monto && Number(ticket.monto) ? Number(ticket.monto).toLocaleString('es-AR', { style: 'currency', currency: 'ARS' }) : ticket.monto || '—'}</p>
+                                    <p>Monto factura: {ticket.facturaMonto && Number(ticket.facturaMonto) ? Number(ticket.facturaMonto).toLocaleString('es-AR', { style: 'currency', currency: 'ARS' }) : ticket.facturaMonto || '—'}</p>
+                                    <strong>Factura adjunta</strong>
+                                    {ticket.facturaArchivos?.length ? (
+                                      <ul className="history-list">
+                                        {ticket.facturaArchivos.map((file) => (
+                                          <li key={file.id}>
+                                            <a href={file.dataUrl} download={file.name} target="_blank" rel="noreferrer">
+                                              {file.name}
+                                            </a>
+                                            <span className="small-text"> ({Math.round(file.size / 1024)} KB)</span>
+                                          </li>
+                                        ))}
+                                      </ul>
+                                    ) : (
+                                      <p className="small-text">Sin adjuntos.</p>
+                                    )}
+                                  </div>
+                                  <div>
+                                    <strong>Notas</strong>
+                                    <p>{ticket.notas || '—'}</p>
+                                  </div>
+                                  <div>
+                                    <strong>Historial</strong>
+                                    {ticket.historial.length === 0 ? (
+                                      <p className="small-text">Sin movimientos.</p>
+                                    ) : (
+                                      <ul className="history-list">
+                                        {ticket.historial.map((item) => (
+                                          <li key={item.id}>
+                                            <strong>{item.actor ?? 'Sistema'}: </strong>
+                                            {item.mensaje}{' '}
+                                            <span className="small-text">
+                                              {item.fecha ? new Date(item.fecha).toLocaleString('es-AR') : '—'}
+                                            </span>
+                                          </li>
+                                        ))}
+                                      </ul>
+                                    )}
+                                  </div>
+                                </div>
+                              </td>
+                            </tr>
+                          ) : null}
+                        </React.Fragment>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </section>
+    </DashboardLayout>
+  );
+};
+
 const CreateUserPage: React.FC = () => {
   const navigate = useNavigate();
   const apiBaseUrl = useMemo(() => resolveApiBaseUrl(), []);
@@ -19310,6 +20437,7 @@ const PersonalEditPage: React.FC = () => {
   const [formValues, setFormValues] = useState({
     nombres: '',
     apellidos: '',
+    legajo: '',
     cuil: '',
     telefono: '',
     email: '',
@@ -19501,6 +20629,7 @@ const PersonalEditPage: React.FC = () => {
       setFormValues({
         nombres: payload.data.nombres ?? solicitudAltaForm?.nombres ?? '',
         apellidos: payload.data.apellidos ?? solicitudAltaForm?.apellidos ?? '',
+        legajo: payload.data.legajo ?? '',
         cuil: payload.data.cuil ?? solicitudAltaForm?.cuil ?? '',
         telefono: payload.data.telefono ?? solicitudAltaForm?.telefono ?? '',
         email: payload.data.email ?? solicitudAltaForm?.email ?? '',
@@ -19696,6 +20825,7 @@ const PersonalEditPage: React.FC = () => {
   const handleDownloadFicha = useCallback((record: PersonalDetail) => {
     const lines = [
       ['Nombre', [record.nombres, record.apellidos].filter(Boolean).join(' ').trim()],
+      ['Legajo', record.legajo ?? ''],
       ['CUIL', record.cuil ?? ''],
       ['Teléfono', record.telefono ?? ''],
       ['Email', record.email ?? ''],
@@ -19786,6 +20916,7 @@ const PersonalEditPage: React.FC = () => {
         body: JSON.stringify({
           nombres: formValues.nombres.trim() || null,
           apellidos: formValues.apellidos.trim() || null,
+          legajo: formValues.legajo.trim() || null,
           cuil: formValues.cuil.trim() || null,
           telefono: formValues.telefono.trim() || null,
           email: formValues.email.trim() || null,
@@ -19942,6 +21073,7 @@ const PersonalEditPage: React.FC = () => {
         setFormValues({
           nombres: payload.data.nombres ?? '',
           apellidos: payload.data.apellidos ?? '',
+          legajo: payload.data.legajo ?? '',
           cuil: payload.data.cuil ?? '',
           telefono: payload.data.telefono ?? '',
           email: payload.data.email ?? '',
@@ -20113,6 +21245,15 @@ const PersonalEditPage: React.FC = () => {
               type="text"
               value={formValues.apellidos}
               onChange={(event) => setFormValues((prev) => ({ ...prev, apellidos: event.target.value }))}
+              placeholder="Ingresar"
+            />
+          </label>
+          <label className="input-control">
+            <span>Legajo</span>
+            <input
+              type="text"
+              value={formValues.legajo}
+              onChange={(event) => setFormValues((prev) => ({ ...prev, legajo: event.target.value }))}
               placeholder="Ingresar"
             />
           </label>
@@ -20718,6 +21859,7 @@ const PersonalCreatePage: React.FC = () => {
     perfilValue: 1,
     nombres: '',
     apellidos: '',
+    legajo: '',
     telefono: '',
     email: '',
     cuil: '',
@@ -20850,6 +21992,7 @@ const PersonalCreatePage: React.FC = () => {
           perfilValue: formValues.perfilValue,
           nombres: formValues.nombres.trim(),
           apellidos: formValues.apellidos.trim(),
+          legajo: formValues.legajo.trim() || null,
           telefono: formValues.telefono.trim() || null,
           email: formValues.email.trim() || null,
           cuil: formValues.cuil.trim() || null,
@@ -20937,6 +22080,7 @@ const PersonalCreatePage: React.FC = () => {
             <div className="form-grid">
               {renderInput('Nombres', 'nombres', true)}
               {renderInput('Apellidos', 'apellidos', true)}
+              {renderInput('Legajo', 'legajo')}
               {renderInput('Teléfono', 'telefono')}
               {renderInput('Correo electrónico', 'email', false, 'email')}
               {renderCheckbox('Tarifa especial', 'tarifaEspecial', 'Tiene tarifa especial')}
@@ -20987,6 +22131,7 @@ const PersonalCreatePage: React.FC = () => {
             <h3>Cobrador</h3>
             <div className="form-grid">
               {renderInput('Nombre completo', 'nombres', true)}
+              {renderInput('Legajo', 'legajo')}
               {renderInput('Correo electrónico', 'email', false, 'email')}
               {renderInput('Teléfono', 'telefono')}
               {renderCheckbox('Tarifa especial', 'tarifaEspecial', 'Tiene tarifa especial')}
@@ -21040,6 +22185,7 @@ const PersonalCreatePage: React.FC = () => {
             <div className="form-grid">
               {renderInput('Nombres', 'nombres', true)}
               {renderInput('Apellidos', 'apellidos', true)}
+              {renderInput('Legajo', 'legajo')}
               {renderInput('CUIL', 'cuil')}
               {renderInput('Correo electrónico', 'email', false, 'email')}
               {renderInput('Teléfono', 'telefono')}
@@ -23146,6 +24292,14 @@ const AppRoutes: React.FC = () => (
         }
       />
       <Route path="/notificaciones" element={<NotificationsPage />} />
+      <Route
+        path="/ticketera"
+        element={
+          <RequireAccess section="ticketera">
+            <TicketeraPage />
+          </RequireAccess>
+        }
+      />
       <Route
         path="/reclamos/:reclamoId"
         element={
