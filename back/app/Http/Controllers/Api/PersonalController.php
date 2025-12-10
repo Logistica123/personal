@@ -247,6 +247,7 @@ class PersonalController extends Controller
         $validated = $request->validate([
             'nombres' => ['nullable', 'string', 'max:255'],
             'apellidos' => ['nullable', 'string', 'max:255'],
+            'legajo' => ['nullable', 'string', 'max:255'],
             'cuil' => ['nullable', 'string', 'max:255'],
             'telefono' => ['nullable', 'string', 'max:255'],
             'email' => ['nullable', 'email', 'max:255'],
@@ -308,6 +309,7 @@ class PersonalController extends Controller
         $stringAssignments = [
             'nombres' => 'nombres',
             'apellidos' => 'apellidos',
+            'legajo' => 'legajo',
             'cuil' => 'cuil',
             'telefono' => 'telefono',
             'email' => 'email',
@@ -550,6 +552,7 @@ class PersonalController extends Controller
         $validated = $request->validate([
             'nombres' => ['required', 'string', 'max:255'],
             'apellidos' => $apellidosRules,
+            'legajo' => ['nullable', 'string', 'max:255'],
             'cuil' => ['nullable', 'string', 'max:255'],
             'telefono' => ['nullable', 'string', 'max:255'],
             'email' => ['nullable', 'email', 'max:255'],
@@ -619,6 +622,7 @@ class PersonalController extends Controller
             'cuil' => $validated['cuil'] ?? null,
             'telefono' => $validated['telefono'] ?? null,
             'email' => $validated['email'] ?? null,
+            'legajo' => $validated['legajo'] ?? null,
             'tipo' => $validated['perfilValue'] ?? null,
             'agente_id' => $validated['agenteId'] ?? null,
             'agente_responsable_id' => $primaryResponsableId,
@@ -1076,6 +1080,7 @@ class PersonalController extends Controller
             'id' => $persona->id,
             'nombres' => $persona->nombres,
             'apellidos' => $persona->apellidos,
+            'legajo' => $persona->legajo,
             'cuil' => $persona->cuil,
             'telefono' => $persona->telefono,
             'email' => $persona->email,
@@ -1237,6 +1242,7 @@ class PersonalController extends Controller
             'nombre' => trim(($persona->nombres ?? '') . ' ' . ($persona->apellidos ?? '')) ?: null,
             'nombres' => $persona->nombres,
             'apellidos' => $persona->apellidos,
+            'legajo' => $persona->legajo,
             'cuil' => $persona->cuil,
             'telefono' => $persona->telefono,
             'email' => $persona->email,
