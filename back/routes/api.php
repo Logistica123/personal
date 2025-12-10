@@ -15,6 +15,7 @@ use App\Http\Controllers\Api\WorkflowTaskController;
 use App\Http\Controllers\Api\GeneralInfoController;
 use App\Http\Controllers\Api\AuditController;
 use App\Http\Controllers\Api\TeamGroupController;
+use App\Http\Controllers\Api\TicketRequestController;
 use Illuminate\Support\Facades\Route;
 
 Route::get('/personal/documentos/tipos', [PersonalDocumentController::class, 'types']);
@@ -85,6 +86,11 @@ Route::put('/workflow-tasks/{workflowTask}', [WorkflowTaskController::class, 'up
 Route::post('/workflow-tasks/{workflowTask}/status', [WorkflowTaskController::class, 'updateStatus']);
 Route::delete('/workflow-tasks/{workflowTask}', [WorkflowTaskController::class, 'destroy']);
 Route::get('/workflow-tasks/users', [WorkflowTaskController::class, 'users']);
+
+Route::get('/tickets', [TicketRequestController::class, 'index']);
+Route::post('/tickets', [TicketRequestController::class, 'store']);
+Route::get('/tickets/{ticketRequest}', [TicketRequestController::class, 'show']);
+Route::put('/tickets/{ticketRequest}', [TicketRequestController::class, 'update']);
 
 Route::get('/general-info/posts', [GeneralInfoController::class, 'index']);
 Route::post('/general-info/posts', [GeneralInfoController::class, 'store']);
