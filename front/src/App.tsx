@@ -20124,7 +20124,7 @@ const adaptTicketFromApi = useCallback(
             </label>
             <div className="form-grid two-columns">
               <label className="input-control">
-                <span>Monto estimado</span>
+                <span>Monto factura</span>
                 <input
                   type="text"
                   inputMode="decimal"
@@ -20134,7 +20134,7 @@ const adaptTicketFromApi = useCallback(
                 />
               </label>
               <label className="input-control">
-                <span>Monto factura</span>
+                <span>Monto estimado</span>
                 <input
                   type="text"
                   inputMode="decimal"
@@ -20683,7 +20683,7 @@ const adaptTicketFromApi = useCallback(
             </div>
             <div className="form-grid two-columns">
               <label className="input-control">
-                <span>Monto estimado</span>
+                <span>Monto factura</span>
                 <input
                   type="text"
                   inputMode="decimal"
@@ -20692,7 +20692,7 @@ const adaptTicketFromApi = useCallback(
                 />
               </label>
               <label className="input-control">
-                <span>Monto factura</span>
+                <span>Monto estimado</span>
                 <input
                   type="text"
                   inputMode="decimal"
