@@ -162,6 +162,13 @@ class TicketRequestController extends Controller
             'facturaArchivos' => ['nullable', 'array'],
             'facturaArchivos.*.name' => ['required_with:facturaArchivos', 'string', 'max:255'],
             'facturaArchivos.*.dataUrl' => ['required_with:facturaArchivos', 'string'],
+            'titulo' => ['nullable', 'string', 'max:255'],
+            'categoria' => ['nullable', 'string', 'max:255'],
+            'insumos' => ['nullable', 'string'],
+            'cantidad' => ['nullable', 'string', 'max:50'],
+            'notas' => ['nullable', 'string'],
+            'monto' => ['nullable', 'numeric'],
+            'facturaMonto' => ['nullable', 'numeric'],
         ]);
 
         if (array_key_exists('estado', $validated)) {
@@ -170,6 +177,34 @@ class TicketRequestController extends Controller
 
         if (array_key_exists('responsableId', $validated)) {
             $ticketRequest->responsable_id = $validated['responsableId'];
+        }
+
+        if (array_key_exists('titulo', $validated)) {
+            $ticketRequest->titulo = $validated['titulo'];
+        }
+
+        if (array_key_exists('categoria', $validated)) {
+            $ticketRequest->categoria = $validated['categoria'];
+        }
+
+        if (array_key_exists('insumos', $validated)) {
+            $ticketRequest->insumos = $validated['insumos'];
+        }
+
+        if (array_key_exists('cantidad', $validated)) {
+            $ticketRequest->cantidad = $validated['cantidad'];
+        }
+
+        if (array_key_exists('notas', $validated)) {
+            $ticketRequest->notas = $validated['notas'];
+        }
+
+        if (array_key_exists('monto', $validated)) {
+            $ticketRequest->monto = $validated['monto'];
+        }
+
+        if (array_key_exists('facturaMonto', $validated)) {
+            $ticketRequest->factura_monto = $validated['facturaMonto'];
         }
 
         if (! empty($validated['facturaArchivos'])) {

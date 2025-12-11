@@ -7350,6 +7350,7 @@ const ReclamosPage: React.FC = () => {
                 const transportistaDisplay = formatTransportistaDisplay(reclamo);
                 const canSeeFacturado =
                   isElevatedRole(userRole) && (reclamo.status ?? '').trim().toLowerCase() === 'finalizado';
+                const canEditTicket = isElevatedRole(userRole);
                 return (
                   <tr key={reclamo.id}>
                   <td>{reclamo.fechaReclamo ?? '—'}</td>
@@ -19198,6 +19199,18 @@ const TicketeraPage: React.FC = () => {
     finalApproverNombreManual: '',
     destinoLabel: 'Administración 2',
   });
+  const [editingTicket, setEditingTicket] = useState<TicketRequest | null>(null);
+  const [editForm, setEditForm] = useState({
+    titulo: '',
+    categoria: 'Insumos varios' as TicketCategory,
+    insumos: '',
+    cantidad: '1',
+    monto: '',
+    facturaMonto: '',
+    notas: '',
+  });
+  const [editSaving, setEditSaving] = useState(false);
+  const [editError, setEditError] = useState<string | null>(null);
 
   useEffect(() => {
     writeTicketsToStorage(tickets);
@@ -19533,6 +19546,63 @@ const adaptTicketFromApi = useCallback(
       }
       return next;
     });
+  };
+
+  const openEditTicket = (ticket: TicketRequest) => {
+    setEditingTicket(ticket);
+    setEditError(null);
+    setEditForm({
+      titulo: ticket.titulo,
+      categoria: ticket.categoria,
+      insumos: ticket.insumos,
+      cantidad: ticket.cantidad,
+      monto: ticket.monto,
+      facturaMonto: ticket.facturaMonto,
+      notas: ticket.notas,
+    });
+  };
+
+  const handleEditTicket = async () => {
+    if (!editingTicket) return;
+    try {
+      setEditSaving(true);
+      setEditError(null);
+      const response = await fetch(resolveEndpoint(`/api/tickets/${editingTicket.id}`), {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          ...actorHeaders,
+        },
+        body: JSON.stringify({
+          titulo: editForm.titulo.trim() || 'Pedido de insumos',
+          categoria: editForm.categoria,
+          insumos: editForm.insumos.trim(),
+          cantidad: editForm.cantidad.trim() || '1',
+          notas: editForm.notas.trim(),
+          monto: editForm.monto.trim() ? Number(editForm.monto) : null,
+          facturaMonto: editForm.facturaMonto.trim() ? Number(editForm.facturaMonto) : null,
+        }),
+      });
+      if (!response.ok) {
+        let message = `Error ${response.status}: ${response.statusText}`;
+        try {
+          const payload = await response.json();
+          if (payload?.message) message = payload.message;
+        } catch {
+          // ignore
+        }
+        throw new Error(message);
+      }
+      const payload = (await response.json()) as { data: TicketRequestApi };
+      const updated = adaptTicketFromApi(payload.data);
+      setTickets((prev) => prev.map((item) => (item.id === updated.id ? updated : item)));
+      setEditingTicket(null);
+      setFlash({ type: 'success', message: 'Pedido actualizado.' });
+    } catch (err) {
+      setEditError((err as Error).message ?? 'No se pudo actualizar el ticket.');
+    } finally {
+      setEditSaving(false);
+    }
   };
 
   const mutateTicket = useCallback((ticketId: number, updater: (ticket: TicketRequest) => TicketRequest) => {
@@ -20311,6 +20381,15 @@ const adaptTicketFromApi = useCallback(
                                 >
                                   {expandedTickets.has(ticket.id) ? 'Ocultar' : 'Detalle'}
                                 </button>
+                                {(ticket.solicitanteId === authUser?.id || ticket.responsableId === authUser?.id || isElevatedRole(userRole)) ? (
+                                  <button
+                                    type="button"
+                                    className="secondary-action"
+                                    onClick={() => openEditTicket(ticket)}
+                                  >
+                                    Editar
+                                  </button>
+                                ) : null}
                                 {ticket.estado === 'pendiente_responsable' && canApprove ? (
                                   <button
                                     type="button"
@@ -20395,77 +20474,111 @@ const adaptTicketFromApi = useCallback(
                           {expandedTickets.has(ticket.id) ? (
                             <tr>
                               <td colSpan={9}>
-                                <div className="detail-grid">
-                                  <div>
-                                    <strong>Detalle</strong>
-                                    <p>{ticket.insumos || 'Sin detalle'}</p>
-                                  </div>
-                                  <div>
-                                    <strong>Categoría</strong>
-                                    <p>{ticket.categoria}</p>
-                                    <strong>Para</strong>
-                                    <p>{ticket.destinatarioNombre ?? 'No indicado'}</p>
-                                  </div>
-                                  <div>
-                                    <strong>Montos</strong>
-                                    <p>Monto estimado: {ticket.monto && Number(ticket.monto) ? Number(ticket.monto).toLocaleString('es-AR', { style: 'currency', currency: 'ARS' }) : ticket.monto || '—'}</p>
-                                    <p>Monto factura: {ticket.facturaMonto && Number(ticket.facturaMonto) ? Number(ticket.facturaMonto).toLocaleString('es-AR', { style: 'currency', currency: 'ARS' }) : ticket.facturaMonto || '—'}</p>
-                                    <strong>Factura adjunta</strong>
-                                    {ticket.facturaArchivos?.length ? (
-                                      <div>
-                                        <div className="chip-list" style={{ marginBottom: '0.5rem' }}>
-                                          {ticket.facturaArchivos.map((file) => (
-                                            <span key={file.id} className="chip">
-                                              <a href={file.dataUrl} download={file.name} target="_blank" rel="noreferrer">
-                                                {file.name}
-                                              </a>
-                                              <span className="small-text"> ({Math.round(file.size / 1024)} KB)</span>
-                                            </span>
-                                          ))}
-                                        </div>
-                                        <p className="small-text">Archivos disponibles para descargar.</p>
-                                      </div>
-                                    ) : (
-                                      <p className="small-text">Sin adjuntos.</p>
-                                    )}
-                                  </div>
-                                  <div>
-                                    <strong>Notas</strong>
-                                    <p>{ticket.notas || '—'}</p>
-                                  </div>
-                                  <div>
-                                    <strong>Historial</strong>
-                                    {ticket.historial.length === 0 ? (
-                                      <p className="small-text">Sin movimientos.</p>
-                                    ) : (
-                                      <ul className="history-list">
-                                        {ticket.historial.map((item) => (
-                                          <li key={item.id}>
-                                            <strong>{item.actor ?? 'Sistema'}: </strong>
-                                            {item.mensaje}{' '}
-                                            <span className="small-text">
-                                              {item.fecha ? new Date(item.fecha).toLocaleString('es-AR') : '—'}
-                                            </span>
-                                          </li>
-                                        ))}
-                                      </ul>
-                                    )}
-                                  </div>
-                                  {(ticket.estado === 'pendiente_rrhh' && canRrhhApprove) ||
-                                  (ticket.estado === 'aprobado' && isHrUser) ? (
+                                <div
+                                  style={{
+                                    background: '#f7f9fc',
+                                    borderRadius: '12px',
+                                    padding: '16px',
+                                    display: 'grid',
+                                    gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))',
+                                    gap: '16px',
+                                  }}
+                                >
+                                  <div style={{ display: 'grid', gap: '8px' }}>
                                     <div>
-                                      <strong>Factura (RRHH)</strong>
-                                      <input
-                                        type="file"
-                                        accept="image/*"
-                                        multiple
-                                        onChange={(event) => uploadFactura(ticket, event.target.files)}
-                                      />
-                                      <p className="small-text">
-                                        Solo RRHH puede adjuntar o reemplazar la factura{ticket.estado === 'aprobado' ? ' (incluso luego de aprobada)' : ''}.
+                                      <strong>Detalle</strong>
+                                      <p>{ticket.insumos || 'Sin detalle'}</p>
+                                    </div>
+                                    <div>
+                                      <strong>Categoría</strong>
+                                      <p>{ticket.categoria}</p>
+                                    </div>
+                                    <div>
+                                      <strong>Para</strong>
+                                      <p>{ticket.destinatarioNombre ?? 'No indicado'}</p>
+                                    </div>
+                                    <div>
+                                      <strong>Notas</strong>
+                                      <p>{ticket.notas || '—'}</p>
+                                    </div>
+                                  </div>
+
+                                  <div style={{ display: 'grid', gap: '8px' }}>
+                                    <div>
+                                      <strong>Montos</strong>
+                                      <p>
+                                        Monto estimado:{' '}
+                                        {ticket.monto && Number(ticket.monto)
+                                          ? Number(ticket.monto).toLocaleString('es-AR', { style: 'currency', currency: 'ARS' })
+                                          : ticket.monto || '—'}
+                                      </p>
+                                      <p>
+                                        Monto factura:{' '}
+                                        {ticket.facturaMonto && Number(ticket.facturaMonto)
+                                          ? Number(ticket.facturaMonto).toLocaleString('es-AR', { style: 'currency', currency: 'ARS' })
+                                          : ticket.facturaMonto || '—'}
                                       </p>
                                     </div>
-                                  ) : null}
+                                    <div>
+                                      <strong>Historial</strong>
+                                      {ticket.historial.length === 0 ? (
+                                        <p className="small-text">Sin movimientos.</p>
+                                      ) : (
+                                        <ul className="history-list">
+                                          {ticket.historial.map((item) => (
+                                            <li key={item.id}>
+                                              <strong>{item.actor ?? 'Sistema'}: </strong>
+                                              {item.mensaje}{' '}
+                                              <span className="small-text">
+                                                {item.fecha ? new Date(item.fecha).toLocaleString('es-AR') : '—'}
+                                              </span>
+                                            </li>
+                                          ))}
+                                        </ul>
+                                      )}
+                                    </div>
+                                  </div>
+
+                                  <div style={{ display: 'grid', gap: '8px' }}>
+                                    <div>
+                                      <strong>Factura adjunta</strong>
+                                      {ticket.facturaArchivos?.length ? (
+                                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+                                          {ticket.facturaArchivos.map((file) => (
+                                            <a
+                                              key={file.id}
+                                              href={file.dataUrl}
+                                              download={file.name}
+                                              target="_blank"
+                                              rel="noreferrer"
+                                              className="chip"
+                                            >
+                                              {file.name} <span className="small-text">({Math.round(file.size / 1024)} KB)</span>
+                                            </a>
+                                          ))}
+                                        </div>
+                                      ) : (
+                                        <p className="small-text">Sin adjuntos.</p>
+                                      )}
+                                      <p className="small-text">Archivos disponibles para descargar.</p>
+                                    </div>
+
+                                    {(ticket.estado === 'pendiente_rrhh' && canRrhhApprove) ||
+                                    (ticket.estado === 'aprobado' && isHrUser) ? (
+                                      <div>
+                                        <strong>Factura (RRHH)</strong>
+                                        <input
+                                          type="file"
+                                          accept="image/*"
+                                          multiple
+                                          onChange={(event) => uploadFactura(ticket, event.target.files)}
+                                        />
+                                        <p className="small-text">
+                                          Solo RRHH puede adjuntar o reemplazar la factura{ticket.estado === 'aprobado' ? ' (incluso luego de aprobada)' : ''}.
+                                        </p>
+                                      </div>
+                                    ) : null}
+                                  </div>
                                 </div>
                               </td>
                             </tr>
@@ -20479,6 +20592,99 @@ const adaptTicketFromApi = useCallback(
           </div>
         </div>
       </section>
+
+      {editingTicket ? (
+        <div className="modal-backdrop" role="dialog" aria-modal="true">
+          <div className="modal" style={{ maxWidth: '640px' }}>
+            <div className="modal-header">
+              <h3>Editar pedido</h3>
+              <button type="button" className="secondary-action" onClick={() => setEditingTicket(null)}>
+                ×
+              </button>
+            </div>
+            {editError ? <p className="form-info form-info--error">{editError}</p> : null}
+            <div className="form-grid">
+              <label className="input-control">
+                <span>Título</span>
+                <input
+                  type="text"
+                  value={editForm.titulo}
+                  onChange={(e) => setEditForm((prev) => ({ ...prev, titulo: e.target.value }))}
+                />
+              </label>
+              <label className="input-control">
+                <span>Categoría</span>
+                <select
+                  value={editForm.categoria}
+                  onChange={(e) => setEditForm((prev) => ({ ...prev, categoria: e.target.value as TicketCategory }))}
+                >
+                  {TICKET_CATEGORIES.map((categoria) => (
+                    <option key={categoria} value={categoria}>
+                      {categoria}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+            <label className="input-control">
+              <span>Insumos / Detalle</span>
+              <textarea
+                rows={3}
+                value={editForm.insumos}
+                onChange={(e) => setEditForm((prev) => ({ ...prev, insumos: e.target.value }))}
+              />
+            </label>
+            <div className="form-grid two-columns">
+              <label className="input-control">
+                <span>Cantidad</span>
+                <input
+                  type="text"
+                  value={editForm.cantidad}
+                  onChange={(e) => setEditForm((prev) => ({ ...prev, cantidad: e.target.value }))}
+                />
+              </label>
+              <label className="input-control">
+                <span>Notas</span>
+                <input
+                  type="text"
+                  value={editForm.notas}
+                  onChange={(e) => setEditForm((prev) => ({ ...prev, notas: e.target.value }))}
+                />
+              </label>
+            </div>
+            <div className="form-grid two-columns">
+              <label className="input-control">
+                <span>Monto estimado</span>
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={editForm.monto}
+                  onChange={(e) => setEditForm((prev) => ({ ...prev, monto: e.target.value }))}
+                />
+              </label>
+              <label className="input-control">
+                <span>Monto factura</span>
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={editForm.facturaMonto}
+                  onChange={(e) => setEditForm((prev) => ({ ...prev, facturaMonto: e.target.value }))}
+                />
+              </label>
+            </div>
+            <div className="form-actions">
+              <button type="button" className="secondary-action" onClick={() => setEditingTicket(null)} disabled={editSaving}>
+                Cancelar
+              </button>
+              <button type="button" className="primary-action" onClick={handleEditTicket} disabled={editSaving}>
+                {editSaving ? 'Guardando...' : 'Guardar cambios'}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </DashboardLayout>
   );
 };
