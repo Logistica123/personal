@@ -1227,7 +1227,9 @@ type EditableSucursal = {
 };
 
 const resolveApiBaseUrl = (): string => {
-  return process.env.REACT_APP_API_BASE || 'https://apibasepersonal.distriapp.com.ar';
+  const raw = process.env.REACT_APP_API_BASE || 'https://apibasepersonal.distriapp.com.ar';
+  // Evitar /api duplicado si la variable ya viene con el prefijo.
+  return raw.replace(/\/+$/, '').replace(/\/api$/i, '');
 };
 
 const getEstadoBadgeClass = (estado?: string | null) => {
@@ -19084,6 +19086,8 @@ const TicketeraPage: React.FC = () => {
     return () => controller.abort();
   }, [apiBaseUrl]);
 
+  const resolveEndpoint = (path: string) => `${apiBaseUrl.replace(/\/+$/, '')}${path}`;
+
   const resolveAgenteNombre = useCallback(
     (id: number | null) => {
       if (!id || !meta?.agentes) {
@@ -19149,11 +19153,13 @@ const TicketeraPage: React.FC = () => {
       try {
         setTicketsLoading(true);
         setTicketsError(null);
-        const response = await fetch(`${apiBaseUrl}/api/tickets`, {
+        const url = resolveEndpoint('/api/tickets');
+        const response = await fetch(url, {
           signal: options?.signal,
         });
         if (!response.ok) {
-          throw new Error(`Error ${response.status}: ${response.statusText}`);
+          const text = await response.text();
+          throw new Error(`Error ${response.status} en ${url}: ${response.statusText || text}`);
         }
         const payload = (await response.json()) as { data?: TicketRequestApi[] };
         const mapped = Array.isArray(payload?.data) ? payload.data.map(adaptTicketFromApi) : [];
@@ -19400,7 +19406,8 @@ const TicketeraPage: React.FC = () => {
     try {
       setSaving(true);
       setFlash(null);
-      const response = await fetch(`${apiBaseUrl}/api/tickets`, {
+      const url = resolveEndpoint('/api/tickets');
+      const response = await fetch(url, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -19425,16 +19432,21 @@ const TicketeraPage: React.FC = () => {
       });
 
       if (!response.ok) {
-        let message = `Error ${response.status}: ${response.statusText}`;
+        let message = `Error ${response.status}: ${response.statusText || 'No se pudo crear el ticket.'}`;
         try {
           const payload = await response.json();
           if (payload && typeof payload === 'object' && typeof payload.message === 'string') {
             message = payload.message;
+          } else if (typeof payload === 'string' && payload.trim()) {
+            message = payload;
           }
         } catch {
-          // ignore parse errors
+          const text = await response.text().catch(() => '');
+          if (text) {
+            message = text;
+          }
         }
-        throw new Error(message);
+        throw new Error(`${message} (${url})`);
       }
 
       const payload = (await response.json()) as { data: TicketRequestApi };
@@ -19503,7 +19515,39 @@ const TicketeraPage: React.FC = () => {
         });
       }
     } catch (err) {
-      setFlash({ type: 'error', message: (err as Error).message ?? 'No se pudo crear el ticket.' });
+      const localTicket: TicketRequest = {
+        id: Date.now(),
+        titulo: formValues.titulo.trim() || 'Pedido de insumos',
+        categoria: formValues.categoria,
+        insumos: formValues.insumos.trim(),
+        cantidad: formValues.cantidad.trim() || '1',
+        notas: formValues.notas.trim(),
+        monto: formValues.monto.trim(),
+        facturaMonto: formValues.facturaMonto.trim(),
+        facturaArchivos: facturaFiles,
+        destinatarioId,
+        destinatarioNombre,
+        responsableId,
+        responsableNombre,
+        finalApproverId: null,
+        finalApproverNombre: null,
+        destinoLabel: 'RRHH',
+        estado: autoApprove ? 'aprobado' : 'pendiente_responsable',
+        solicitanteId: authUser?.id ?? null,
+        solicitanteNombre: authUser?.name ?? authUser?.email ?? null,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        historial: [
+          makeHistoryEntry(
+            autoApprove ? 'Pedido creado offline (aprobado).' : 'Pedido creado offline. Intentará sincronizar.'
+          ),
+        ],
+      };
+      setTickets((prev) => [localTicket, ...prev]);
+      setFlash({
+        type: 'error',
+        message: `${(err as Error).message ?? 'No se pudo crear el ticket.'} (guardado localmente)`,
+      });
     } finally {
       setSaving(false);
     }
