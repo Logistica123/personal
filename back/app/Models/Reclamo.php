@@ -21,6 +21,7 @@ class Reclamo extends Model
         'status',
         'pagado',
         'importe_pagado',
+        'importe_facturado',
     ];
 
     protected $casts = [
@@ -29,6 +30,7 @@ class Reclamo extends Model
         'updated_at' => 'datetime',
         'pagado' => 'boolean',
         'importe_pagado' => 'decimal:2',
+        'importe_facturado' => 'decimal:2',
     ];
 
 

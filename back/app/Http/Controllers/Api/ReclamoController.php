@@ -192,6 +192,7 @@ class ReclamoController extends Controller
                 'min:0',
                 Rule::requiredIf(fn () => (bool) $request->input('pagado')),
             ],
+            'importeFacturado' => ['nullable', 'numeric', 'min:0'],
             'fechaReclamo' => ['nullable', 'date'],
         ]);
 
@@ -213,6 +214,9 @@ class ReclamoController extends Controller
                 'pagado' => (bool) $validated['pagado'],
                 'importe_pagado' => (bool) $validated['pagado']
                     ? $this->normalizeImportePagado($validated['importePagado'] ?? null)
+                    : null,
+                'importe_facturado' => isset($validated['importeFacturado'])
+                    ? $this->normalizeImportePagado($validated['importeFacturado'])
                     : null,
             ]);
 
@@ -330,6 +334,7 @@ class ReclamoController extends Controller
                 'min:0',
                 Rule::requiredIf(fn () => (bool) $request->input('pagado')),
             ],
+            'importeFacturado' => ['nullable', 'numeric', 'min:0'],
             'fechaReclamo' => ['nullable', 'date'],
         ]);
 
@@ -340,10 +345,12 @@ class ReclamoController extends Controller
         $newAgenteId = null;
 
         $originalImportePagado = $this->normalizeImportePagado($reclamo->importe_pagado);
+        $originalImporteFacturado = $this->normalizeImportePagado($reclamo->importe_facturado);
 
         DB::transaction(function () use ($reclamo, $validated, $originalAgente, $originalAgenteName, &$agentChanged, &$newAgenteId, $originalImportePagado) {
             $originalStatus = $reclamo->status;
             $originalPagado = (bool) $reclamo->pagado;
+            $originalImporteFacturado = $this->normalizeImportePagado($reclamo->importe_facturado);
 
             $reclamo->creator_id = $validated['creatorId'] ?? null;
             $reclamo->agente_id = $validated['agenteId'] ?? null;
@@ -358,6 +365,9 @@ class ReclamoController extends Controller
             $reclamo->importe_pagado = $reclamo->pagado
                 ? $this->normalizeImportePagado($validated['importePagado'] ?? null)
                 : null;
+            $reclamo->importe_facturado = array_key_exists('importeFacturado', $validated)
+                ? $this->normalizeImportePagado($validated['importeFacturado'])
+                : $reclamo->importe_facturado;
 
             $reclamo->save();
 
@@ -392,6 +402,22 @@ class ReclamoController extends Controller
                         'old' => $originalImportePagado,
                         'new' => $currentImportePagado,
                         'field' => 'importe_pagado',
+                    ],
+                    $actorId
+                );
+            }
+
+            $currentImporteFacturado = $this->normalizeImportePagado($reclamo->importe_facturado);
+            if ($originalImporteFacturado !== $currentImporteFacturado) {
+                $this->recordComment(
+                    $reclamo,
+                    $currentImporteFacturado
+                        ? sprintf('Importe facturado actualizado a %s', $this->formatImportePagadoLabel($currentImporteFacturado))
+                        : 'Importe facturado eliminado.',
+                    [
+                        'old' => $originalImporteFacturado,
+                        'new' => $currentImporteFacturado,
+                        'field' => 'importe_facturado',
                     ],
                     $actorId
                 );
@@ -825,6 +851,8 @@ class ReclamoController extends Controller
             'pagadoLabel' => $reclamo->pagado ? 'Sí' : 'No',
             'importePagado' => $this->normalizeImportePagado($reclamo->importe_pagado),
             'importePagadoLabel' => $this->formatImportePagadoLabel($reclamo->importe_pagado),
+            'importeFacturado' => $this->normalizeImportePagado($reclamo->importe_facturado),
+            'importeFacturadoLabel' => $this->formatImportePagadoLabel($reclamo->importe_facturado),
             'creator' => $reclamo->creator?->name,
             'creatorId' => $reclamo->creator_id,
             'agente' => $reclamo->agente?->name,

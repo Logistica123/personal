@@ -762,6 +762,8 @@ type ReclamoRecord = {
   pagadoLabel: string | null;
   importePagado: string | null;
   importePagadoLabel: string | null;
+  importeFacturado: string | null;
+  importeFacturadoLabel: string | null;
   creator: string | null;
   creatorId: number | null;
   agente: string | null;
@@ -6675,6 +6677,8 @@ const UnitsPage: React.FC = () => {
 const ReclamosPage: React.FC = () => {
   const navigate = useNavigate();
   const apiBaseUrl = useMemo(() => resolveApiBaseUrl(), []);
+  const authUser = useStoredAuthUser();
+  const userRole = useMemo(() => getUserRole(authUser), [authUser]);
   const [reclamos, setReclamos] = useState<ReclamoRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -7015,6 +7019,7 @@ const ReclamosPage: React.FC = () => {
       'Estado',
       'Pagado',
       'Importe pagado',
+      'Importe facturado',
       'Demora',
     ];
 
@@ -7025,6 +7030,8 @@ const ReclamosPage: React.FC = () => {
     } else {
       sortedReclamos.forEach((reclamo) => {
         const transportistaDisplay = formatTransportistaDisplay(reclamo);
+        const canSeeFacturado =
+          isElevatedRole(userRole) && (reclamo.status ?? '').trim().toLowerCase() === 'finalizado';
         rows.push([
           reclamo.fechaReclamo ?? '',
           reclamo.codigo ?? `#${reclamo.id}`,
@@ -7040,6 +7047,10 @@ const ReclamosPage: React.FC = () => {
           reclamo.pagado ? 'Sí' : 'No',
           reclamo.pagado
             ? reclamo.importePagadoLabel ?? formatCurrency(reclamo.importePagado)
+            : '',
+          canSeeFacturado
+            ? reclamo.importeFacturadoLabel ??
+              (reclamo.importeFacturado ? formatCurrency(reclamo.importeFacturado) : '')
             : '',
           formatElapsedTime(reclamo.createdAt),
         ]);
@@ -7299,6 +7310,7 @@ const ReclamosPage: React.FC = () => {
               <th>Estado</th>
               <th>Pagado</th>
               <th>Importe pagado</th>
+              <th>Importe facturado</th>
               <th>Demora</th>
               <th>Acciones</th>
             </tr>
@@ -7306,13 +7318,13 @@ const ReclamosPage: React.FC = () => {
           <tbody>
             {loading && (
               <tr>
-                <td colSpan={12}>Cargando reclamos...</td>
+                <td colSpan={13}>Cargando reclamos...</td>
               </tr>
             )}
 
             {error && !loading && (
               <tr>
-                <td colSpan={12} className="error-cell">
+                <td colSpan={13} className="error-cell">
                   {error}
                 </td>
               </tr>
@@ -7320,7 +7332,7 @@ const ReclamosPage: React.FC = () => {
 
             {!loading && !error && sortedReclamos.length === 0 && (
               <tr>
-                <td colSpan={12}>No hay reclamos para mostrar.</td>
+                <td colSpan={13}>No hay reclamos para mostrar.</td>
               </tr>
             )}
 
@@ -7328,6 +7340,8 @@ const ReclamosPage: React.FC = () => {
               !error &&
               sortedReclamos.map((reclamo) => {
                 const transportistaDisplay = formatTransportistaDisplay(reclamo);
+                const canSeeFacturado =
+                  isElevatedRole(userRole) && (reclamo.status ?? '').trim().toLowerCase() === 'finalizado';
                 return (
                   <tr key={reclamo.id}>
                   <td>{reclamo.fechaReclamo ?? '—'}</td>
@@ -7365,6 +7379,12 @@ const ReclamosPage: React.FC = () => {
                   <td>
                     {reclamo.pagado
                       ? reclamo.importePagadoLabel ?? formatCurrency(reclamo.importePagado)
+                      : '—'}
+                  </td>
+                  <td>
+                    {canSeeFacturado
+                      ? reclamo.importeFacturadoLabel ??
+                        (reclamo.importeFacturado ? formatCurrency(reclamo.importeFacturado) : '—')
                       : '—'}
                   </td>
                   <td>{formatElapsedTime(reclamo.createdAt)}</td>
@@ -8396,6 +8416,8 @@ const ReclamoDetailPage: React.FC = () => {
     | { transportistas?: ReclamoTransportistaSummary[] }
     | undefined;
   const apiBaseUrl = useMemo(() => resolveApiBaseUrl(), []);
+  const authUser = useStoredAuthUser();
+  const userRole = useMemo(() => getUserRole(authUser), [authUser]);
   const [detail, setDetail] = useState<ReclamoDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -8409,6 +8431,7 @@ const ReclamoDetailPage: React.FC = () => {
     fechaReclamo: '',
     detalle: '',
     importePagado: '',
+    importeFacturado: '',
   });
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -8574,6 +8597,7 @@ const ReclamoDetailPage: React.FC = () => {
       fechaReclamo: detail.fechaReclamo ?? '',
       detalle: detail.detalle ?? '',
       importePagado: detail.pagado ? detail.importePagado ?? '' : '',
+      importeFacturado: detail.importeFacturado ?? '',
     });
     shouldRefreshFormRef.current = false;
   }, [detail, meta]);
@@ -8590,6 +8614,7 @@ const ReclamoDetailPage: React.FC = () => {
       fechaReclamo: detail.fechaReclamo ?? '',
       detalle: detail.detalle ?? '',
       importePagado: detail.pagado ? detail.importePagado ?? '' : '',
+      importeFacturado: detail.importeFacturado ?? '',
     });
     setSaveError(null);
     setSaveSuccess(null);
@@ -8631,6 +8656,22 @@ const ReclamoDetailPage: React.FC = () => {
       normalizedImporte = Number(parsed.toFixed(2));
     }
 
+    const isFinalizado = (formValues.status || detail.status || '').trim().toLowerCase() === 'finalizado';
+    const canEditFacturado = isFinalizado && isElevatedRole(userRole);
+
+    let normalizedImporteFacturado: number | null | undefined = undefined;
+    if (canEditFacturado) {
+      normalizedImporteFacturado = null;
+      if (formValues.importeFacturado.trim()) {
+        const parsedFact = Number(formValues.importeFacturado.replace(',', '.'));
+        if (Number.isNaN(parsedFact) || parsedFact < 0) {
+          setSaveError('Ingresa un importe facturado válido (mayor o igual a 0).');
+          return;
+        }
+        normalizedImporteFacturado = Number(parsedFact.toFixed(2));
+      }
+    }
+
     try {
       setSaving(true);
       setSaveError(null);
@@ -8650,6 +8691,7 @@ const ReclamoDetailPage: React.FC = () => {
           status: targetStatus,
           pagado: formValues.pagado === 'true',
           importePagado: normalizedImporte,
+          ...(normalizedImporteFacturado !== undefined ? { importeFacturado: normalizedImporteFacturado } : {}),
           fechaReclamo: formValues.fechaReclamo || null,
         }),
       });
@@ -8934,6 +8976,10 @@ const ReclamoDetailPage: React.FC = () => {
         'Importe pagado',
         detail.pagado ? detail.importePagadoLabel ?? formatCurrency(detail.importePagado) : '',
       ],
+      [
+        'Importe facturado',
+        detail.importeFacturadoLabel ?? (detail.importeFacturado ? formatCurrency(detail.importeFacturado) : ''),
+      ],
       ['Fecha del alta', info?.fechaAlta ?? ''],
       ['Fecha del reclamo', detail.fechaReclamo ?? ''],
       ['Teléfono', info?.telefono ?? ''],
@@ -9061,6 +9107,13 @@ const ReclamoDetailPage: React.FC = () => {
                 ? renderReadOnlyField(
                     'Importe pagado',
                     detail.importePagadoLabel ?? detail.importePagado ?? ''
+                  )
+                : null}
+              {(detail.status ?? '').trim().toLowerCase() === 'finalizado' && isElevatedRole(userRole)
+                ? renderReadOnlyField(
+                    'Importe facturado',
+                    detail.importeFacturadoLabel ??
+                      (detail.importeFacturado ? formatCurrency(detail.importeFacturado) : '')
                   )
                 : null}
               {renderReadOnlyField('Teléfono', transportistaInfo?.telefono ?? '')}
@@ -9261,6 +9314,24 @@ const ReclamoDetailPage: React.FC = () => {
                   value={formValues.importePagado}
                   onChange={(event) =>
                     setFormValues((prev) => ({ ...prev, importePagado: event.target.value }))
+                  }
+                />
+              </label>
+            ) : null}
+
+            {(formValues.status || detail.status || '').trim().toLowerCase() === 'finalizado' &&
+            isElevatedRole(userRole) ? (
+              <label className="input-control">
+                <span>Importe facturado</span>
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  inputMode="decimal"
+                  placeholder="0.00"
+                  value={formValues.importeFacturado}
+                  onChange={(event) =>
+                    setFormValues((prev) => ({ ...prev, importeFacturado: event.target.value }))
                   }
                 />
               </label>
