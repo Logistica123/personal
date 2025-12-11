@@ -7017,9 +7017,9 @@ const ReclamosPage: React.FC = () => {
       'Cliente',
       'Tipo de reclamo',
       'Estado',
-      'Pagado',
-      'Importe pagado',
-      'Importe facturado',
+      ...(isElevatedRole(userRole)
+        ? ['Pagado', 'Importe pagado', 'Importe facturado']
+        : ['Pagado']),
       'Demora',
     ];
 
@@ -7045,13 +7045,17 @@ const ReclamosPage: React.FC = () => {
           formatReclamoTipoLabel(reclamo.tipo),
           reclamo.statusLabel ?? reclamo.status ?? '',
           reclamo.pagado ? 'Sí' : 'No',
-          reclamo.pagado
-            ? reclamo.importePagadoLabel ?? formatCurrency(reclamo.importePagado)
-            : '',
-          canSeeFacturado
-            ? reclamo.importeFacturadoLabel ??
-              (reclamo.importeFacturado ? formatCurrency(reclamo.importeFacturado) : '')
-            : '',
+          ...(isElevatedRole(userRole)
+            ? [
+                reclamo.pagado
+                  ? reclamo.importePagadoLabel ?? formatCurrency(reclamo.importePagado)
+                  : '',
+                canSeeFacturado
+                  ? reclamo.importeFacturadoLabel ??
+                    (reclamo.importeFacturado ? formatCurrency(reclamo.importeFacturado) : '')
+                  : '',
+              ]
+            : []),
           formatElapsedTime(reclamo.createdAt),
         ]);
       });
@@ -7309,8 +7313,12 @@ const ReclamosPage: React.FC = () => {
               <th>Tipo de reclamo</th>
               <th>Estado</th>
               <th>Pagado</th>
-              <th>Importe pagado</th>
-              <th>Importe facturado</th>
+              {isElevatedRole(userRole) ? (
+                <>
+                  <th>Importe pagado</th>
+                  <th>Importe facturado</th>
+                </>
+              ) : null}
               <th>Demora</th>
               <th>Acciones</th>
             </tr>
@@ -7376,17 +7384,21 @@ const ReclamosPage: React.FC = () => {
                       {reclamo.pagadoLabel ?? (reclamo.pagado ? 'Sí' : 'No')}
                     </span>
                   </td>
-                  <td>
-                    {reclamo.pagado
-                      ? reclamo.importePagadoLabel ?? formatCurrency(reclamo.importePagado)
-                      : '—'}
-                  </td>
-                  <td>
-                    {canSeeFacturado
-                      ? reclamo.importeFacturadoLabel ??
-                        (reclamo.importeFacturado ? formatCurrency(reclamo.importeFacturado) : '—')
-                      : '—'}
-                  </td>
+                  {isElevatedRole(userRole) ? (
+                    <>
+                      <td>
+                        {reclamo.pagado
+                          ? reclamo.importePagadoLabel ?? formatCurrency(reclamo.importePagado)
+                          : '—'}
+                      </td>
+                      <td>
+                        {canSeeFacturado
+                          ? reclamo.importeFacturadoLabel ??
+                            (reclamo.importeFacturado ? formatCurrency(reclamo.importeFacturado) : '—')
+                          : '—'}
+                      </td>
+                    </>
+                  ) : null}
                   <td>{formatElapsedTime(reclamo.createdAt)}</td>
                   <td>
                     <div className="action-buttons">
