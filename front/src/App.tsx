@@ -6689,6 +6689,8 @@ const ReclamosPage: React.FC = () => {
   const [tipoFilter, setTipoFilter] = useState('');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
+  const [sortField, setSortField] = useState<'fecha' | 'codigo'>('fecha');
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
   const getTransportistaEntries = useCallback((record: ReclamoRecord): ReclamoTransportistaSummary[] => {
     if (Array.isArray(record.transportistas) && record.transportistas.length > 0) {
       return record.transportistas;
@@ -6956,6 +6958,50 @@ const ReclamosPage: React.FC = () => {
     getTransportistaNames,
   ]);
 
+  const resolveFechaMs = useCallback((reclamo: ReclamoRecord) => {
+    const raw = reclamo.fechaReclamoIso ?? reclamo.fechaReclamo ?? reclamo.createdAt ?? '';
+    const parsed = Date.parse(raw);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }, []);
+
+  const sortedReclamos = useMemo(() => {
+    const data = [...filteredReclamos];
+    data.sort((a, b) => {
+      if (sortField === 'fecha') {
+        const diff = resolveFechaMs(a) - resolveFechaMs(b);
+        if (diff !== 0) {
+          return sortDir === 'asc' ? diff : -diff;
+        }
+        // tie-breaker by code
+        const cmp = (a.codigo ?? '').localeCompare(b.codigo ?? '');
+        if (cmp !== 0) {
+          return sortDir === 'asc' ? cmp : -cmp;
+        }
+        return sortDir === 'asc' ? a.id - b.id : b.id - a.id;
+      }
+      // codigo
+      const cmp = (a.codigo ?? '').localeCompare(b.codigo ?? '');
+      if (cmp !== 0) {
+        return sortDir === 'asc' ? cmp : -cmp;
+      }
+      const diff = resolveFechaMs(a) - resolveFechaMs(b);
+      if (diff !== 0) {
+        return sortDir === 'asc' ? diff : -diff;
+      }
+      return sortDir === 'asc' ? a.id - b.id : b.id - a.id;
+    });
+    return data;
+  }, [filteredReclamos, sortField, sortDir, resolveFechaMs]);
+
+  const toggleSort = (field: 'fecha' | 'codigo') => {
+    if (sortField === field) {
+      setSortDir((prev) => (prev === 'asc' ? 'desc' : 'asc'));
+    } else {
+      setSortField(field);
+      setSortDir('desc');
+    }
+  };
+
   const handleExportReclamos = useCallback(() => {
     const headers = [
       'Fecha reclamo',
@@ -6974,10 +7020,10 @@ const ReclamosPage: React.FC = () => {
 
     const rows: Array<Array<string>> = [headers];
 
-    if (filteredReclamos.length === 0) {
+    if (sortedReclamos.length === 0) {
       rows.push(['Sin datos filtrados']);
     } else {
-      filteredReclamos.forEach((reclamo) => {
+      sortedReclamos.forEach((reclamo) => {
         const transportistaDisplay = formatTransportistaDisplay(reclamo);
         rows.push([
           reclamo.fechaReclamo ?? '',
@@ -7002,7 +7048,7 @@ const ReclamosPage: React.FC = () => {
 
     const today = new Date().toISOString().slice(0, 10);
     downloadCsv(`reclamos-${today}.csv`, rows);
-  }, [filteredReclamos, formatTransportistaDisplay]);
+  }, [sortedReclamos, formatTransportistaDisplay]);
 
   const footerLabel = useMemo(() => {
     if (loading) {
@@ -7223,8 +7269,28 @@ const ReclamosPage: React.FC = () => {
         <table>
           <thead>
             <tr>
-              <th>Fecha reclamo</th>
-              <th>Código</th>
+              <th>
+                <button
+                  type="button"
+                  className="table-sort-button"
+                  onClick={() => toggleSort('fecha')}
+                  aria-label="Ordenar por fecha de reclamo"
+                  style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'inherit', fontWeight: 600 }}
+                >
+                  Fecha reclamo {sortField === 'fecha' ? (sortDir === 'asc' ? '▲' : '▼') : '⇅'}
+                </button>
+              </th>
+              <th>
+                <button
+                  type="button"
+                  className="table-sort-button"
+                  onClick={() => toggleSort('codigo')}
+                  aria-label="Ordenar por código"
+                  style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'inherit', fontWeight: 600 }}
+                >
+                  Código {sortField === 'codigo' ? (sortDir === 'asc' ? '▲' : '▼') : '⇅'}
+                </button>
+              </th>
               <th>Descripción</th>
               <th>Agente creador</th>
               <th>Transportista</th>
@@ -7252,7 +7318,7 @@ const ReclamosPage: React.FC = () => {
               </tr>
             )}
 
-            {!loading && !error && filteredReclamos.length === 0 && (
+            {!loading && !error && sortedReclamos.length === 0 && (
               <tr>
                 <td colSpan={12}>No hay reclamos para mostrar.</td>
               </tr>
@@ -7260,7 +7326,7 @@ const ReclamosPage: React.FC = () => {
 
             {!loading &&
               !error &&
-              filteredReclamos.map((reclamo) => {
+              sortedReclamos.map((reclamo) => {
                 const transportistaDisplay = formatTransportistaDisplay(reclamo);
                 return (
                   <tr key={reclamo.id}>
