@@ -113,7 +113,7 @@ class TicketRequestController extends Controller
                     continue;
                 }
                 $filename = 'ticketera/'.Str::uuid().'.'.$extension;
-                Storage::disk('local')->put($filename, $binary);
+                Storage::disk('public')->put($filename, $binary);
                 $facturas[] = [
                     'name' => $archivo['name'],
                     'path' => $filename,
@@ -159,6 +159,9 @@ class TicketRequestController extends Controller
         $validated = $request->validate([
             'estado' => ['nullable', 'string', 'in:pendiente_responsable,pendiente_rrhh,pendiente_compra,aprobado,rechazado'],
             'responsableId' => ['nullable', 'integer', 'exists:users,id'],
+            'facturaArchivos' => ['nullable', 'array'],
+            'facturaArchivos.*.name' => ['required_with:facturaArchivos', 'string', 'max:255'],
+            'facturaArchivos.*.dataUrl' => ['required_with:facturaArchivos', 'string'],
         ]);
 
         if (array_key_exists('estado', $validated)) {
@@ -167,6 +170,36 @@ class TicketRequestController extends Controller
 
         if (array_key_exists('responsableId', $validated)) {
             $ticketRequest->responsable_id = $validated['responsableId'];
+        }
+
+        if (! empty($validated['facturaArchivos'])) {
+            $facturas = is_array($ticketRequest->factura_archivos) ? $ticketRequest->factura_archivos : [];
+            foreach ($validated['facturaArchivos'] as $archivo) {
+                $dataUrl = $archivo['dataUrl'];
+                if (! str_contains($dataUrl, 'base64,')) {
+                    continue;
+                }
+                [$meta, $encoded] = explode('base64,', $dataUrl, 2);
+                $extension = 'png';
+                if (str_contains($meta, 'image/jpeg')) {
+                    $extension = 'jpg';
+                } elseif (str_contains($meta, 'image/webp')) {
+                    $extension = 'webp';
+                }
+                $binary = base64_decode($encoded);
+                if ($binary === false) {
+                    continue;
+                }
+                $filename = 'ticketera/'.Str::uuid().'.'.$extension;
+                Storage::disk('public')->put($filename, $binary);
+                $facturas[] = [
+                    'name' => $archivo['name'],
+                    'path' => $filename,
+                    'size' => strlen($binary),
+                    'type' => $extension,
+                ];
+            }
+            $ticketRequest->factura_archivos = $facturas;
         }
 
         $ticketRequest->save();

@@ -19099,25 +19099,25 @@ const TicketeraPage: React.FC = () => {
     [meta?.agentes]
   );
 
-  const adaptTicketFromApi = useCallback(
-    (ticket: TicketRequestApi): TicketRequest => {
-      const normalizedCategory = TICKET_CATEGORIES.includes(ticket.categoria as TicketCategory)
-        ? (ticket.categoria as TicketCategory)
-        : 'Insumos varios';
-      const baseUrl = apiBaseUrl.replace(/\/+$/, '');
-      const facturaArchivos = Array.isArray(ticket.factura_archivos)
-        ? ticket.factura_archivos.map((file, index) => {
-            const filePath = (file?.path ?? '').replace(/^\/+/, '');
-            const fileUrl = file?.dataUrl ?? (filePath ? `${baseUrl}/storage/${filePath}` : '');
-            return {
-              id: filePath || file?.name || `${ticket.id}-factura-${index}`,
-              name: file?.name ?? `Adjunto ${index + 1}`,
-              size: Number(file?.size ?? 0),
-              type: file?.type ?? null,
-              dataUrl: fileUrl,
-            };
-          })
-        : [];
+const adaptTicketFromApi = useCallback(
+  (ticket: TicketRequestApi): TicketRequest => {
+    const normalizedCategory = TICKET_CATEGORIES.includes(ticket.categoria as TicketCategory)
+      ? (ticket.categoria as TicketCategory)
+      : 'Insumos varios';
+    const baseUrl = apiBaseUrl.replace(/\/+$/, '');
+    const facturaArchivos = Array.isArray(ticket.factura_archivos)
+      ? ticket.factura_archivos.map((file, index) => {
+          const filePath = (file?.path ?? '').replace(/^\/+/, '');
+          const fileUrl = file?.dataUrl ?? (filePath ? `${baseUrl}/storage/${filePath}` : '');
+          return {
+            id: filePath || file?.name || `${ticket.id}-factura-${index}`,
+            name: file?.name ?? `Adjunto ${index + 1}`,
+            size: Number(file?.size ?? 0),
+            type: file?.type ?? null,
+            dataUrl: fileUrl,
+          };
+        })
+      : [];
       const createdAt = ticket.created_at ?? new Date().toISOString();
       const updatedAt = ticket.updated_at ?? createdAt;
       return {
@@ -19641,6 +19641,50 @@ const TicketeraPage: React.FC = () => {
     );
   };
 
+  const uploadFactura = async (ticket: TicketRequest, files: FileList | null) => {
+    if (!files || files.length === 0) {
+      setFlash({ type: 'error', message: 'Seleccioná al menos un archivo de factura.' });
+      return;
+    }
+    try {
+      const attachments = await Promise.all(
+        Array.from(files).map(async (file) => ({
+          name: file.name,
+          dataUrl: await readFileAsDataUrl(file),
+        }))
+      );
+      const response = await fetch(resolveEndpoint(`/api/tickets/${ticket.id}`), {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          ...actorHeaders,
+        },
+        body: JSON.stringify({
+          estado: ticket.estado,
+          facturaArchivos: attachments,
+        }),
+      });
+      if (!response.ok) {
+        let message = `Error ${response.status}: ${response.statusText}`;
+        try {
+          const payload = await response.json();
+          if (payload?.message) {
+            message = payload.message;
+          }
+        } catch {
+          // ignore
+        }
+        throw new Error(message);
+      }
+      const payload = (await response.json()) as { data: TicketRequestApi };
+      const updated = adaptTicketFromApi(payload.data);
+      setTickets((prev) => prev.map((item) => (item.id === ticket.id ? updated : item)));
+      setFlash({ type: 'success', message: 'Factura adjuntada correctamente.' });
+    } catch (err) {
+      setFlash({ type: 'error', message: (err as Error).message ?? 'No se pudo adjuntar la factura.' });
+    }
+  };
+
   const handleApproveFinal = async (ticket: TicketRequest) => {
     const nowIso = new Date().toISOString();
     try {
@@ -20102,6 +20146,11 @@ const TicketeraPage: React.FC = () => {
                               <span className={`estado-badge ${getEstadoClass(ticket.estado)}`}>
                                 {getEstadoLabel(ticket.estado)}
                               </span>
+                              {ticket.facturaArchivos?.length ? (
+                                <div className="small-text" style={{ marginTop: '0.25rem' }}>
+                                  📎 Factura adjunta
+                                </div>
+                              ) : null}
                             </td>
                             <td>{updatedLabel}</td>
                             <td>
@@ -20214,16 +20263,19 @@ const TicketeraPage: React.FC = () => {
                                     <p>Monto factura: {ticket.facturaMonto && Number(ticket.facturaMonto) ? Number(ticket.facturaMonto).toLocaleString('es-AR', { style: 'currency', currency: 'ARS' }) : ticket.facturaMonto || '—'}</p>
                                     <strong>Factura adjunta</strong>
                                     {ticket.facturaArchivos?.length ? (
-                                      <ul className="history-list">
-                                        {ticket.facturaArchivos.map((file) => (
-                                          <li key={file.id}>
-                                            <a href={file.dataUrl} download={file.name} target="_blank" rel="noreferrer">
-                                              {file.name}
-                                            </a>
-                                            <span className="small-text"> ({Math.round(file.size / 1024)} KB)</span>
-                                          </li>
-                                        ))}
-                                      </ul>
+                                      <div>
+                                        <div className="chip-list" style={{ marginBottom: '0.5rem' }}>
+                                          {ticket.facturaArchivos.map((file) => (
+                                            <span key={file.id} className="chip">
+                                              <a href={file.dataUrl} download={file.name} target="_blank" rel="noreferrer">
+                                                {file.name}
+                                              </a>
+                                              <span className="small-text"> ({Math.round(file.size / 1024)} KB)</span>
+                                            </span>
+                                          ))}
+                                        </div>
+                                        <p className="small-text">Archivos disponibles para descargar.</p>
+                                      </div>
                                     ) : (
                                       <p className="small-text">Sin adjuntos.</p>
                                     )}
@@ -20250,6 +20302,21 @@ const TicketeraPage: React.FC = () => {
                                       </ul>
                                     )}
                                   </div>
+                                  {(ticket.estado === 'pendiente_rrhh' && canRrhhApprove) ||
+                                  (ticket.estado === 'aprobado' && isHrUser) ? (
+                                    <div>
+                                      <strong>Factura (RRHH)</strong>
+                                      <input
+                                        type="file"
+                                        accept="image/*"
+                                        multiple
+                                        onChange={(event) => uploadFactura(ticket, event.target.files)}
+                                      />
+                                      <p className="small-text">
+                                        Solo RRHH puede adjuntar o reemplazar la factura{ticket.estado === 'aprobado' ? ' (incluso luego de aprobada)' : ''}.
+                                      </p>
+                                    </div>
+                                  ) : null}
                                 </div>
                               </td>
                             </tr>
