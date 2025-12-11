@@ -169,6 +169,32 @@ type TicketRequest = {
   historial: Array<{ id: string; mensaje: string; fecha: string; actor: string | null }>;
 };
 
+type FacturaApiAttachment = {
+  name?: string | null;
+  path?: string | null;
+  size?: number | null;
+  type?: string | null;
+  dataUrl?: string | null;
+};
+
+type TicketRequestApi = {
+  id: number;
+  titulo: string | null;
+  categoria: string | null;
+  insumos: string | null;
+  cantidad: string | null;
+  notas: string | null;
+  monto: number | string | null;
+  factura_monto: number | string | null;
+  factura_archivos?: FacturaApiAttachment[] | null;
+  destinatario_id?: number | null;
+  responsable_id?: number | null;
+  solicitante_id?: number | null;
+  estado: TicketStatus;
+  created_at?: string | null;
+  updated_at?: string | null;
+};
+
 const TICKETS_STORAGE_KEY = 'ticketera:requests';
 
 const readTicketsFromStorage = (): TicketRequest[] => {
@@ -1339,6 +1365,7 @@ type StoredPersonalFilters = {
   fechaAltaFrom?: string;
   fechaAltaTo?: string;
   patente?: string;
+  legajo?: string;
 };
 
 const readStoredPersonalFilters = (storageKey: string | null): StoredPersonalFilters => {
@@ -1363,6 +1390,7 @@ const readStoredPersonalFilters = (storageKey: string | null): StoredPersonalFil
       fechaAltaFrom: typeof parsed.fechaAltaFrom === 'string' ? parsed.fechaAltaFrom : '',
       fechaAltaTo: typeof parsed.fechaAltaTo === 'string' ? parsed.fechaAltaTo : '',
       patente: typeof parsed.patente === 'string' ? parsed.patente : '',
+      legajo: typeof parsed.legajo === 'string' ? parsed.legajo : '',
     };
   } catch {
     return {};
@@ -9223,6 +9251,7 @@ const PersonalPage: React.FC = () => {
   const [combustibleFilter, setCombustibleFilter] = useState('');
   const [tarifaFilter, setTarifaFilter] = useState('');
   const [patenteFilter, setPatenteFilter] = useState('');
+  const [legajoFilter, setLegajoFilter] = useState(() => resolveStoredFilters().legajo ?? '');
   const [deletingPersonalId, setDeletingPersonalId] = useState<number | null>(null);
   const [revealedContacts, setRevealedContacts] = useState<Record<number, { phone: boolean; email: boolean }>>({});
   const bypassContactGuard = useMemo(
@@ -9277,6 +9306,7 @@ const PersonalPage: React.FC = () => {
     setAltaDateFrom(stored.fechaAltaFrom ?? '');
     setAltaDateTo(stored.fechaAltaTo ?? '');
     setPatenteFilter(stored.patente ?? '');
+    setLegajoFilter(stored.legajo ?? '');
   }, [resolveStoredFilters]);
 
   useEffect(() => {
@@ -9294,12 +9324,13 @@ const PersonalPage: React.FC = () => {
           fechaAltaFrom: altaDateFrom,
           fechaAltaTo: altaDateTo,
           patente: patenteFilter,
+          legajo: legajoFilter,
         })
       );
     } catch {
       // ignore write errors (storage full, etc.)
     }
-  }, [personalFiltersStorageKey, clienteFilter, sucursalFilter, altaDatePreset, altaDateFrom, altaDateTo, patenteFilter]);
+  }, [personalFiltersStorageKey, clienteFilter, sucursalFilter, altaDatePreset, altaDateFrom, altaDateTo, patenteFilter, legajoFilter]);
 
   useEffect(() => {
     const handler = (event: Event) => {
@@ -9448,6 +9479,13 @@ const PersonalPage: React.FC = () => {
         }
       }
 
+      if (legajoFilter.trim()) {
+        const normalizedLegajo = (registro.legajo ?? '').trim().toLowerCase();
+        if (!normalizedLegajo.includes(legajoFilter.trim().toLowerCase())) {
+          return false;
+        }
+      }
+
       if (estadoFilter && registro.estado !== estadoFilter) {
         return false;
       }
@@ -9521,6 +9559,7 @@ const PersonalPage: React.FC = () => {
     altaDateFrom,
     altaDateTo,
     perfilNames,
+    legajoFilter,
   ]);
 
   useEffect(() => {
@@ -9533,6 +9572,7 @@ const PersonalPage: React.FC = () => {
     agenteFilter,
     unidadFilter,
     patenteFilter,
+    legajoFilter,
     estadoFilter,
     combustibleFilter,
     tarifaFilter,
@@ -9600,6 +9640,7 @@ const PersonalPage: React.FC = () => {
     setAgenteFilter('');
     setUnidadFilter('');
     setPatenteFilter('');
+    setLegajoFilter('');
     setEstadoFilter('');
     setCombustibleFilter('');
     setTarifaFilter('');
@@ -9922,6 +9963,15 @@ const PersonalPage: React.FC = () => {
               <option key={option} value={option} />
             ))}
           </datalist>
+        </label>
+        <label className="filter-field">
+          <span>Legajo</span>
+          <input
+            type="text"
+            placeholder="Legajo"
+            value={legajoFilter}
+            onChange={(event) => setLegajoFilter(event.target.value)}
+          />
         </label>
         <label className="filter-field">
           <span>Estado</span>
@@ -18972,6 +19022,8 @@ const TicketeraPage: React.FC = () => {
   const [metaLoading, setMetaLoading] = useState(true);
   const [metaError, setMetaError] = useState<string | null>(null);
   const [tickets, setTickets] = useState<TicketRequest[]>(() => readTicketsFromStorage());
+  const [ticketsLoading, setTicketsLoading] = useState(true);
+  const [ticketsError, setTicketsError] = useState<string | null>(null);
   const [flash, setFlash] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
   const [saving, setSaving] = useState(false);
   const [expandedTickets, setExpandedTickets] = useState<Set<number>>(() => new Set());
@@ -19043,10 +19095,117 @@ const TicketeraPage: React.FC = () => {
     [meta?.agentes]
   );
 
+  const adaptTicketFromApi = useCallback(
+    (ticket: TicketRequestApi): TicketRequest => {
+      const normalizedCategory = TICKET_CATEGORIES.includes(ticket.categoria as TicketCategory)
+        ? (ticket.categoria as TicketCategory)
+        : 'Insumos varios';
+      const baseUrl = apiBaseUrl.replace(/\/+$/, '');
+      const facturaArchivos = Array.isArray(ticket.factura_archivos)
+        ? ticket.factura_archivos.map((file, index) => {
+            const filePath = (file?.path ?? '').replace(/^\/+/, '');
+            const fileUrl = file?.dataUrl ?? (filePath ? `${baseUrl}/storage/${filePath}` : '');
+            return {
+              id: filePath || file?.name || `${ticket.id}-factura-${index}`,
+              name: file?.name ?? `Adjunto ${index + 1}`,
+              size: Number(file?.size ?? 0),
+              type: file?.type ?? null,
+              dataUrl: fileUrl,
+            };
+          })
+        : [];
+      const createdAt = ticket.created_at ?? new Date().toISOString();
+      const updatedAt = ticket.updated_at ?? createdAt;
+      return {
+        id: ticket.id,
+        titulo: ticket.titulo ?? 'Pedido de insumos',
+        categoria: normalizedCategory,
+        insumos: ticket.insumos ?? '',
+        cantidad: ticket.cantidad ?? '1',
+        notas: ticket.notas ?? '',
+        monto: ticket.monto != null ? String(ticket.monto) : '',
+        facturaMonto: ticket.factura_monto != null ? String(ticket.factura_monto) : '',
+        facturaArchivos,
+        destinatarioId: ticket.destinatario_id ?? null,
+        destinatarioNombre: resolveAgenteNombre(ticket.destinatario_id ?? null),
+        responsableId: ticket.responsable_id ?? null,
+        responsableNombre: resolveAgenteNombre(ticket.responsable_id ?? null),
+        finalApproverId: null,
+        finalApproverNombre: null,
+        destinoLabel: 'RRHH',
+        estado: ticket.estado ?? 'pendiente_responsable',
+        solicitanteId: ticket.solicitante_id ?? null,
+        solicitanteNombre: ticket.solicitante_id ? `Usuario #${ticket.solicitante_id}` : null,
+        createdAt,
+        updatedAt,
+        historial: [],
+      };
+    },
+    [apiBaseUrl, resolveAgenteNombre]
+  );
+
+  const fetchTickets = useCallback(
+    async (options?: { signal?: AbortSignal }) => {
+      try {
+        setTicketsLoading(true);
+        setTicketsError(null);
+        const response = await fetch(`${apiBaseUrl}/api/tickets`, {
+          signal: options?.signal,
+        });
+        if (!response.ok) {
+          throw new Error(`Error ${response.status}: ${response.statusText}`);
+        }
+        const payload = (await response.json()) as { data?: TicketRequestApi[] };
+        const mapped = Array.isArray(payload?.data) ? payload.data.map(adaptTicketFromApi) : [];
+        setTickets(mapped);
+      } catch (err) {
+        if ((err as Error).name === 'AbortError') {
+          return;
+        }
+        setTicketsError((err as Error).message ?? 'No se pudieron cargar los tickets.');
+      } finally {
+        setTicketsLoading(false);
+      }
+    },
+    [adaptTicketFromApi, apiBaseUrl]
+  );
+
+  useEffect(() => {
+    const controller = new AbortController();
+    fetchTickets({ signal: controller.signal });
+    return () => controller.abort();
+  }, [fetchTickets]);
+
+  useEffect(() => {
+    setTickets((prev) =>
+      prev.map((ticket) => ({
+        ...ticket,
+        responsableNombre:
+          ticket.responsableId != null
+            ? resolveAgenteNombre(ticket.responsableId) ?? ticket.responsableNombre
+            : ticket.responsableNombre,
+        destinatarioNombre:
+          ticket.destinatarioId != null
+            ? resolveAgenteNombre(ticket.destinatarioId) ?? ticket.destinatarioNombre
+            : ticket.destinatarioNombre,
+      }))
+    );
+  }, [resolveAgenteNombre]);
+
   const isHrUser = useMemo(() => {
     const normalized = normalizeEmail(authUser?.email);
     return normalized === normalizeEmail(HR_EMAIL) || isElevatedRole(userRole);
   }, [authUser?.email, userRole]);
+
+  const makeHistoryEntry = useCallback(
+    (mensaje: string) => ({
+      id: uniqueKey(),
+      mensaje,
+      fecha: new Date().toISOString(),
+      actor: authUser?.name ?? authUser?.email ?? null,
+    }),
+    [authUser?.email, authUser?.name]
+  );
 
   const readFileAsDataUrl = (file: File): Promise<string> =>
     new Promise((resolve, reject) => {
@@ -19176,6 +19335,39 @@ const TicketeraPage: React.FC = () => {
     [sendNotification]
   );
 
+  const persistTicketUpdate = useCallback(
+    async (ticketId: number, payload: { estado?: TicketStatus; responsableId?: number | null }) => {
+      const response = await fetch(`${apiBaseUrl}/api/tickets/${ticketId}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          ...actorHeaders,
+        },
+        body: JSON.stringify({
+          estado: payload.estado,
+          responsableId: payload.responsableId ?? undefined,
+        }),
+      });
+
+      if (!response.ok) {
+        let message = `Error ${response.status}: ${response.statusText}`;
+        try {
+          const errorPayload = await response.json();
+          if (typeof errorPayload?.message === 'string') {
+            message = errorPayload.message;
+          }
+        } catch {
+          // ignore parse errors
+        }
+        throw new Error(message);
+      }
+
+      const payloadJson = (await response.json()) as { data: TicketRequestApi };
+      return adaptTicketFromApi(payloadJson.data);
+    },
+    [actorHeaders, adaptTicketFromApi, apiBaseUrl]
+  );
+
   const toggleExpanded = (ticketId: number) => {
     setExpandedTickets((prev) => {
       const next = new Set(prev);
@@ -19205,45 +19397,76 @@ const TicketeraPage: React.FC = () => {
       return;
     }
 
-    const nowIso = new Date().toISOString();
-    const estadoInicial: TicketStatus = autoApprove ? 'aprobado' : 'pendiente_responsable';
-    const historial = [
-      {
-        id: uniqueKey(),
-        mensaje: autoApprove ? 'Pedido creado y aprobado.' : 'Pedido creado y enviado al responsable.',
-        fecha: nowIso,
-        actor: authUser?.name ?? authUser?.email ?? null,
-      },
-    ];
-
-    const newTicket: TicketRequest = {
-      id: Date.now(),
-      titulo: formValues.titulo.trim() || 'Pedido de insumos',
-      categoria: formValues.categoria,
-      insumos: formValues.insumos.trim(),
-      cantidad: formValues.cantidad.trim() || '1',
-      notas: formValues.notas.trim(),
-      monto: formValues.monto.trim(),
-      facturaMonto: formValues.facturaMonto.trim(),
-      facturaArchivos: facturaFiles,
-      destinatarioId,
-      destinatarioNombre,
-      responsableId,
-      responsableNombre,
-      finalApproverId: null,
-      finalApproverNombre: null,
-      destinoLabel: 'RRHH',
-      estado: estadoInicial,
-      solicitanteId: authUser?.id ?? null,
-      solicitanteNombre: authUser?.name ?? authUser?.email ?? null,
-      createdAt: nowIso,
-      updatedAt: nowIso,
-      historial,
-    };
-
     try {
       setSaving(true);
-      setTickets((prev) => [newTicket, ...prev]);
+      setFlash(null);
+      const response = await fetch(`${apiBaseUrl}/api/tickets`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...actorHeaders,
+        },
+        body: JSON.stringify({
+          titulo: formValues.titulo.trim() || 'Pedido de insumos',
+          categoria: formValues.categoria,
+          insumos: formValues.insumos.trim(),
+          cantidad: formValues.cantidad.trim() || null,
+          notas: formValues.notas.trim(),
+          monto: formValues.monto.trim() ? Number(formValues.monto) : null,
+          facturaMonto: formValues.facturaMonto.trim() ? Number(formValues.facturaMonto) : null,
+          destinatarioId,
+          responsableId,
+          solicitanteId: authUser?.id ?? null,
+          facturaArchivos: facturaFiles.map((file) => ({
+            name: file.name,
+            dataUrl: file.dataUrl,
+          })),
+        }),
+      });
+
+      if (!response.ok) {
+        let message = `Error ${response.status}: ${response.statusText}`;
+        try {
+          const payload = await response.json();
+          if (payload && typeof payload === 'object' && typeof payload.message === 'string') {
+            message = payload.message;
+          }
+        } catch {
+          // ignore parse errors
+        }
+        throw new Error(message);
+      }
+
+      const payload = (await response.json()) as { data: TicketRequestApi };
+      let created = adaptTicketFromApi(payload.data);
+
+      if (autoApprove) {
+        try {
+          created = await persistTicketUpdate(created.id, {
+            estado: 'aprobado',
+            responsableId: created.responsableId ?? HR_USER_ID ?? null,
+          });
+        } catch (err) {
+          setFlash({
+            type: 'error',
+            message: (err as Error).message ?? 'No se pudo aprobar el pedido.',
+          });
+        }
+      }
+
+      const creationHistory = makeHistoryEntry(
+        autoApprove ? 'Pedido creado y aprobado.' : 'Pedido creado y enviado al responsable.'
+      );
+      created = {
+        ...created,
+        solicitanteNombre: created.solicitanteNombre ?? authUser?.name ?? authUser?.email ?? null,
+        solicitanteId: created.solicitanteId ?? authUser?.id ?? null,
+        historial: [creationHistory, ...created.historial],
+        responsableNombre: responsableNombre ?? created.responsableNombre,
+        destinatarioNombre: destinatarioNombre ?? created.destinatarioNombre,
+      };
+
+      setTickets((prev) => [created, ...prev.filter((item) => item.id !== created.id)]);
       setFormValues((prev) => ({
         ...prev,
         titulo: '',
@@ -19264,21 +19487,23 @@ const TicketeraPage: React.FC = () => {
         type: 'success',
         message: autoApprove ? 'Pedido creado y aprobado.' : 'Pedido registrado y notificado al responsable.',
       });
-      await sendNotification(responsableId, `Nuevo pedido: ${newTicket.titulo}`, {
-        ticketId: newTicket.id,
-        destino: newTicket.destinoLabel,
+      await sendNotification(responsableId, `Nuevo pedido: ${created.titulo}`, {
+        ticketId: created.id,
+        destino: created.destinoLabel,
       });
       if (destinatarioId) {
-        await sendNotification(destinatarioId, `Pedido para vos: ${newTicket.titulo}`, {
-          ticketId: newTicket.id,
+        await sendNotification(destinatarioId, `Pedido para vos: ${created.titulo}`, {
+          ticketId: created.id,
           destino: 'Destinatario',
         });
       }
       if (autoApprove) {
-        await sendNotification(responsableId, `Pedido aprobado: ${newTicket.titulo}`, {
-          ticketId: newTicket.id,
+        await sendNotification(responsableId, `Pedido aprobado: ${created.titulo}`, {
+          ticketId: created.id,
         });
       }
+    } catch (err) {
+      setFlash({ type: 'error', message: (err as Error).message ?? 'No se pudo crear el ticket.' });
     } finally {
       setSaving(false);
     }
@@ -19309,23 +19534,23 @@ const TicketeraPage: React.FC = () => {
         ? Number(nextResponsibleIdRaw)
         : null;
     const nextResponsibleNombre = resolveAgenteNombre(nextResponsibleId);
-    mutateTicket(ticket.id, (current) => ({
-      ...current,
-      estado: 'pendiente_rrhh',
-      responsableId: HR_USER_ID ?? current.responsableId,
-      responsableNombre: hrNombre ?? current.responsableNombre ?? 'RRHH',
-      updatedAt: nowIso,
-      historial: [
-        {
-          id: uniqueKey(),
-          mensaje: 'Responsable aprobó y envió a RRHH.',
-          fecha: nowIso,
-          actor: authUser?.name ?? authUser?.email ?? null,
-        },
-        ...current.historial,
-      ],
-    }));
-    setFlash({ type: 'success', message: 'Enviado a RRHH.' });
+    try {
+      const updated = await persistTicketUpdate(ticket.id, {
+        estado: 'pendiente_rrhh',
+        responsableId: HR_USER_ID ?? ticket.responsableId ?? null,
+      });
+      const enriched: TicketRequest = {
+        ...updated,
+        responsableNombre: hrNombre ?? updated.responsableNombre ?? 'RRHH',
+        historial: [makeHistoryEntry('Responsable aprobó y envió a RRHH.'), ...ticket.historial],
+        updatedAt: nowIso,
+      };
+      setTickets((prev) => prev.map((item) => (item.id === ticket.id ? enriched : item)));
+      setFlash({ type: 'success', message: 'Enviado a RRHH.' });
+    } catch (err) {
+      setFlash({ type: 'error', message: (err as Error).message ?? 'No se pudo actualizar el ticket.' });
+      return;
+    }
     await sendNotification(ticket.responsableId, `Tu pedido pasó a RRHH: ${ticket.titulo}`, {
       ticketId: ticket.id,
       destino: 'RRHH',
@@ -19344,23 +19569,24 @@ const TicketeraPage: React.FC = () => {
     const nowIso = new Date().toISOString();
     const targetId = resolveHandoffId(ticket);
     const targetNombre = resolveAgenteNombre(targetId);
-    mutateTicket(ticket.id, (current) => ({
-      ...current,
-      estado: 'pendiente_compra',
-      responsableId: targetId ?? current.responsableId ?? HR_USER_ID ?? current.responsableId,
-      responsableNombre: targetNombre ?? current.responsableNombre,
-      updatedAt: nowIso,
-      historial: [
-        {
-          id: uniqueKey(),
-          mensaje: 'RRHH aprobó y envió a responsable para compra.',
-          fecha: nowIso,
-          actor: authUser?.name ?? authUser?.email ?? null,
-        },
-        ...current.historial,
-      ],
-    }));
-    setFlash({ type: 'success', message: 'Enviado a responsable para compra.' });
+    try {
+      const updated = await persistTicketUpdate(ticket.id, {
+        estado: 'pendiente_compra',
+        responsableId: targetId ?? ticket.responsableId ?? HR_USER_ID ?? null,
+      });
+      const enriched: TicketRequest = {
+        ...updated,
+        responsableId: updated.responsableId ?? targetId ?? ticket.responsableId ?? null,
+        responsableNombre: targetNombre ?? updated.responsableNombre,
+        historial: [makeHistoryEntry('RRHH aprobó y envió a responsable para compra.'), ...ticket.historial],
+        updatedAt: nowIso,
+      };
+      setTickets((prev) => prev.map((item) => (item.id === ticket.id ? enriched : item)));
+      setFlash({ type: 'success', message: 'Enviado a responsable para compra.' });
+    } catch (err) {
+      setFlash({ type: 'error', message: (err as Error).message ?? 'No se pudo actualizar el ticket.' });
+      return;
+    }
     await sendNotification(
       targetId ?? ticket.responsableId ?? HR_USER_ID,
       `Pedido listo para comprar: ${ticket.titulo}`,
@@ -19373,21 +19599,19 @@ const TicketeraPage: React.FC = () => {
 
   const handleApproveFinal = async (ticket: TicketRequest) => {
     const nowIso = new Date().toISOString();
-    mutateTicket(ticket.id, (current) => ({
-      ...current,
-      estado: 'aprobado',
-      updatedAt: nowIso,
-      historial: [
-        {
-          id: uniqueKey(),
-          mensaje: 'Compra aprobada.',
-          fecha: nowIso,
-          actor: authUser?.name ?? authUser?.email ?? null,
-        },
-        ...current.historial,
-      ],
-    }));
-    setFlash({ type: 'success', message: 'Pedido aprobado.' });
+    try {
+      const updated = await persistTicketUpdate(ticket.id, { estado: 'aprobado' });
+      const enriched: TicketRequest = {
+        ...updated,
+        historial: [makeHistoryEntry('Compra aprobada.'), ...ticket.historial],
+        updatedAt: nowIso,
+      };
+      setTickets((prev) => prev.map((item) => (item.id === ticket.id ? enriched : item)));
+      setFlash({ type: 'success', message: 'Pedido aprobado.' });
+    } catch (err) {
+      setFlash({ type: 'error', message: (err as Error).message ?? 'No se pudo actualizar el ticket.' });
+      return;
+    }
     await sendNotification(ticket.responsableId, `Pedido aprobado: ${ticket.titulo}`, {
       ticketId: ticket.id,
     });
@@ -19401,21 +19625,22 @@ const TicketeraPage: React.FC = () => {
   const handleReject = async (ticket: TicketRequest) => {
     const reason = window.prompt('Motivo del rechazo (opcional):', '') ?? '';
     const nowIso = new Date().toISOString();
-    mutateTicket(ticket.id, (current) => ({
-      ...current,
-      estado: 'rechazado',
-      updatedAt: nowIso,
-      historial: [
-        {
-          id: uniqueKey(),
-          mensaje: `Rechazado${reason.trim() ? `: ${reason.trim()}` : ''}`,
-          fecha: nowIso,
-          actor: authUser?.name ?? authUser?.email ?? null,
-        },
-        ...current.historial,
-      ],
-    }));
-    setFlash({ type: 'error', message: 'Pedido rechazado.' });
+    try {
+      const updated = await persistTicketUpdate(ticket.id, { estado: 'rechazado' });
+      const enriched: TicketRequest = {
+        ...updated,
+        historial: [
+          makeHistoryEntry(`Rechazado${reason.trim() ? `: ${reason.trim()}` : ''}`),
+          ...ticket.historial,
+        ],
+        updatedAt: nowIso,
+      };
+      setTickets((prev) => prev.map((item) => (item.id === ticket.id ? enriched : item)));
+      setFlash({ type: 'error', message: 'Pedido rechazado.' });
+    } catch (err) {
+      setFlash({ type: 'error', message: (err as Error).message ?? 'No se pudo rechazar el ticket.' });
+      return;
+    }
     const suffix = reason.trim() ? ` Motivo: ${reason.trim()}` : '';
     await sendNotification(ticket.responsableId, `Pedido rechazado: ${ticket.titulo}.${suffix}`, {
       ticketId: ticket.id,
@@ -19750,16 +19975,34 @@ const TicketeraPage: React.FC = () => {
                   </tr>
                 </thead>
                 <tbody>
-                  {filteredTickets.length === 0 ? (
+                  {ticketsLoading ? (
+                    <tr>
+                      <td colSpan={9} style={{ textAlign: 'center' }}>
+                        Cargando tickets...
+                      </td>
+                    </tr>
+                  ) : null}
+                  {ticketsError && !ticketsLoading ? (
+                    <tr>
+                      <td colSpan={9} className="error-cell">
+                        {ticketsError}
+                      </td>
+                    </tr>
+                  ) : null}
+                  {!ticketsLoading && !ticketsError && filteredTickets.length === 0 ? (
                     <tr>
                       <td colSpan={9} style={{ textAlign: 'center' }}>
                         No hay pedidos cargados.
                       </td>
                     </tr>
-                  ) : (
+                  ) : null}
+                  {!ticketsLoading &&
+                    !ticketsError &&
                     filteredTickets.map((ticket) => {
                       const updatedLabel = ticket.updatedAt
                         ? new Date(ticket.updatedAt).toLocaleString('es-AR')
+                        : ticket.createdAt
+                        ? new Date(ticket.createdAt).toLocaleString('es-AR')
                         : '—';
                       const canApprove = canOperateAsResponsable(ticket);
                       const canFinalApprove = canOperateAsFinal(ticket);
@@ -19857,30 +20100,35 @@ const TicketeraPage: React.FC = () => {
                                   <button
                                     type="button"
                                     className="secondary-action"
-                                    onClick={() => {
+                                    onClick={async () => {
                                       const targetId = resolveHandoffId(ticket);
                                       if (!targetId) {
-                                        setFlash({ type: 'error', message: 'Elegí un responsable en "Enviar a".' });
+                                        setFlash({ type: 'error', message: 'Elegí un responsable en \"Enviar a\".' });
                                         return;
                                       }
-                                      const targetNombre = resolveAgenteNombre(targetId);
-                                      const nowIso = new Date().toISOString();
-                                      mutateTicket(ticket.id, (current) => ({
-                                        ...current,
-                                        responsableId: targetId,
-                                        responsableNombre: targetNombre ?? current.responsableNombre,
-                                        updatedAt: nowIso,
-                                        historial: [
-                                          {
-                                            id: uniqueKey(),
-                                            mensaje: 'Reenvío a responsable para compra.',
-                                            fecha: nowIso,
-                                            actor: authUser?.name ?? authUser?.email ?? null,
-                                          },
-                                          ...current.historial,
-                                        ],
-                                      }));
-                                      void sendNotification(targetId, `Pedido reenviado para compra: ${ticket.titulo}`, {
+                                      try {
+                                        const updated = await persistTicketUpdate(ticket.id, {
+                                          estado: ticket.estado,
+                                          responsableId: targetId,
+                                        });
+                                        const enriched: TicketRequest = {
+                                          ...updated,
+                                          responsableId: targetId,
+                                          responsableNombre: resolveAgenteNombre(targetId) ?? updated.responsableNombre,
+                                          historial: [makeHistoryEntry('Reenvío a responsable para compra.'), ...ticket.historial],
+                                        };
+                                        setTickets((prev) =>
+                                          prev.map((item) => (item.id === ticket.id ? enriched : item))
+                                        );
+                                        setFlash({ type: 'success', message: 'Reenviado al responsable para compra.' });
+                                      } catch (err) {
+                                        setFlash({
+                                          type: 'error',
+                                          message: (err as Error).message ?? 'No se pudo reenviar el pedido.',
+                                        });
+                                        return;
+                                      }
+                                      await sendNotification(targetId, `Pedido reenviado para compra: ${ticket.titulo}`, {
                                         ticketId: ticket.id,
                                       });
                                     }}
@@ -19964,8 +20212,7 @@ const TicketeraPage: React.FC = () => {
                           ) : null}
                         </React.Fragment>
                       );
-                    })
-                  )}
+                    })}
                 </tbody>
               </table>
             </div>
