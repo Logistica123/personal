@@ -19211,6 +19211,17 @@ const TicketeraPage: React.FC = () => {
   });
   const [editSaving, setEditSaving] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
+  const parseAmount = (raw: string): number | null | undefined => {
+    const cleaned = raw.replace(/\s+/g, '').replace(/\./g, '').replace(/,/g, '.');
+    if (cleaned.length === 0) {
+      return null;
+    }
+    const parsed = Number(cleaned);
+    if (Number.isNaN(parsed)) {
+      return undefined;
+    }
+    return Number(parsed.toFixed(2));
+  };
 
   useEffect(() => {
     writeTicketsToStorage(tickets);
@@ -19567,6 +19578,15 @@ const adaptTicketFromApi = useCallback(
     try {
       setEditSaving(true);
       setEditError(null);
+      const parsedMonto = parseAmount(editForm.monto);
+      if (parsedMonto === undefined) {
+        throw new Error('Monto estimado inválido. Usá números, puntos o comas.');
+      }
+      const parsedFacturaMonto = parseAmount(editForm.facturaMonto);
+      if (parsedFacturaMonto === undefined) {
+        throw new Error('Monto factura inválido. Usá números, puntos o comas.');
+      }
+
       const response = await fetch(resolveEndpoint(`/api/tickets/${editingTicket.id}`), {
         method: 'PUT',
         headers: {
@@ -19579,8 +19599,8 @@ const adaptTicketFromApi = useCallback(
           insumos: editForm.insumos.trim(),
           cantidad: editForm.cantidad.trim() || '1',
           notas: editForm.notas.trim(),
-          monto: editForm.monto.trim() ? Number(editForm.monto) : null,
-          facturaMonto: editForm.facturaMonto.trim() ? Number(editForm.facturaMonto) : null,
+          monto: parsedMonto,
+          facturaMonto: parsedFacturaMonto,
         }),
       });
       if (!response.ok) {
@@ -19622,6 +19642,17 @@ const adaptTicketFromApi = useCallback(
       return;
     }
 
+    const parsedMonto = parseAmount(formValues.monto);
+    if (parsedMonto === undefined) {
+      setFlash({ type: 'error', message: 'Monto estimado inválido. Usá números, puntos o comas.' });
+      return;
+    }
+    const parsedFacturaMonto = parseAmount(formValues.facturaMonto);
+    if (parsedFacturaMonto === undefined) {
+      setFlash({ type: 'error', message: 'Monto factura inválido. Usá números, puntos o comas.' });
+      return;
+    }
+
     try {
       setSaving(true);
       setFlash(null);
@@ -19638,8 +19669,8 @@ const adaptTicketFromApi = useCallback(
           insumos: formValues.insumos.trim(),
           cantidad: formValues.cantidad.trim() || null,
           notas: formValues.notas.trim(),
-          monto: formValues.monto.trim() ? Number(formValues.monto) : null,
-          facturaMonto: formValues.facturaMonto.trim() ? Number(formValues.facturaMonto) : null,
+          monto: parsedMonto,
+          facturaMonto: parsedFacturaMonto,
           destinatarioId,
           responsableId,
           solicitanteId: authUser?.id ?? null,
@@ -20095,10 +20126,9 @@ const adaptTicketFromApi = useCallback(
               <label className="input-control">
                 <span>Monto estimado</span>
                 <input
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  placeholder="0.00"
+                  type="text"
+                  inputMode="decimal"
+                  placeholder="0,00"
                   value={formValues.monto}
                   onChange={(event) => setFormValues((prev) => ({ ...prev, monto: event.target.value }))}
                 />
@@ -20106,10 +20136,9 @@ const adaptTicketFromApi = useCallback(
               <label className="input-control">
                 <span>Monto factura</span>
                 <input
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  placeholder="0.00"
+                  type="text"
+                  inputMode="decimal"
+                  placeholder="0,00"
                   value={formValues.facturaMonto}
                   onChange={(event) => setFormValues((prev) => ({ ...prev, facturaMonto: event.target.value }))}
                 />
@@ -20656,9 +20685,8 @@ const adaptTicketFromApi = useCallback(
               <label className="input-control">
                 <span>Monto estimado</span>
                 <input
-                  type="number"
-                  min="0"
-                  step="0.01"
+                  type="text"
+                  inputMode="decimal"
                   value={editForm.monto}
                   onChange={(e) => setEditForm((prev) => ({ ...prev, monto: e.target.value }))}
                 />
@@ -20666,9 +20694,8 @@ const adaptTicketFromApi = useCallback(
               <label className="input-control">
                 <span>Monto factura</span>
                 <input
-                  type="number"
-                  min="0"
-                  step="0.01"
+                  type="text"
+                  inputMode="decimal"
                   value={editForm.facturaMonto}
                   onChange={(e) => setEditForm((prev) => ({ ...prev, facturaMonto: e.target.value }))}
                 />
