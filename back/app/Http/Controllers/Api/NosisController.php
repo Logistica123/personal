@@ -20,6 +20,7 @@ class NosisController extends Controller
             'documento' => ['required', 'string', 'max:20'],
             'cbu' => ['required', 'digits:22'],
             'grupoVid' => ['nullable', 'integer'],
+            'fechaNacimiento' => ['nullable', 'date'],
         ]);
 
         try {
@@ -27,6 +28,7 @@ class NosisController extends Controller
                 $validated['documento'],
                 $validated['cbu'],
                 $validated['grupoVid'] ?? null,
+                $validated['fechaNacimiento'] ?? null,
             );
         } catch (RuntimeException $e) {
             return response()->json([

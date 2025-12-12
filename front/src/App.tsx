@@ -14659,7 +14659,7 @@ const ApprovalsRequestsPage: React.FC = () => {
   const [aumentoFilesVersion, setAumentoFilesVersion] = useState(0);
   const [adelantoAttachments, setAdelantoAttachments] = useState<File[]>([]);
   const [adelantoFilesVersion, setAdelantoFilesVersion] = useState(0);
-  const altaNosisLastLookupRef = useRef<{ cuil: string; cbu: string } | null>(null);
+  const altaNosisLastLookupRef = useRef<{ cuil: string; cbu: string; fechaNacimiento: string } | null>(null);
   const [altaNosisLoading, setAltaNosisLoading] = useState(false);
   const [altaNosisError, setAltaNosisError] = useState<string | null>(null);
   const [altaForm, setAltaForm] = useState<AltaRequestForm>(() => ({
@@ -14757,12 +14757,13 @@ const ApprovalsRequestsPage: React.FC = () => {
 
     const cuil = altaForm.cuil.trim();
     const cbu = altaForm.cbuAlias.trim();
+    const fechaNacimiento = altaForm.duenoFechaNacimiento.trim();
     if (!cuil || cbu.length < 10) {
       return;
     }
 
     const last = altaNosisLastLookupRef.current;
-    if (last && last.cuil === cuil && last.cbu === cbu) {
+    if (last && last.cuil === cuil && last.cbu === cbu && last.fechaNacimiento === fechaNacimiento) {
       return;
     }
 
@@ -14770,6 +14771,9 @@ const ApprovalsRequestsPage: React.FC = () => {
     const url = new URL(`${apiBaseUrl}/api/nosis/validar-cbu`);
     url.searchParams.set('documento', cuil);
     url.searchParams.set('cbu', cbu);
+    if (fechaNacimiento) {
+      url.searchParams.set('fechaNacimiento', fechaNacimiento);
+    }
 
     const run = async () => {
       try {
@@ -14790,7 +14794,7 @@ const ApprovalsRequestsPage: React.FC = () => {
         }
 
         const payload = await response.json();
-        altaNosisLastLookupRef.current = { cuil, cbu };
+        altaNosisLastLookupRef.current = { cuil, cbu, fechaNacimiento };
 
         const raw = payload?.data?.raw;
         const parsed = typeof raw === 'string' ? parseNosisXml(raw) : null;
@@ -14833,7 +14837,7 @@ const ApprovalsRequestsPage: React.FC = () => {
     return () => {
       controller.abort();
     };
-  }, [activeTab, altaForm.cuil, altaForm.cbuAlias, apiBaseUrl, actorHeaders, parseNosisXml, splitRazonSocial]);
+  }, [activeTab, altaForm.cuil, altaForm.cbuAlias, altaForm.duenoFechaNacimiento, apiBaseUrl, actorHeaders, parseNosisXml, splitRazonSocial]);
 
   useEffect(() => {
     if (!personaIdFromQuery) {
@@ -17593,6 +17597,7 @@ const handleAdelantoFieldChange =
               {renderAltaInput('Observación tarifa', 'observacionTarifa')}
               {renderAltaInput('CUIL', 'cuil')}
               {renderAltaInput('CBU/Alias', 'cbuAlias')}
+              {renderAltaInput('Fecha de nacimiento', 'duenoFechaNacimiento', false, 'date')}
               {renderAltaCheckbox('Combustible', 'combustible', 'Cuenta corrientes combustible')}
               {renderAltaInput('Fecha de alta', 'fechaAlta', false, 'date')}
               {renderAltaInput('Patente', 'patente', true)}
@@ -17628,6 +17633,7 @@ const handleAdelantoFieldChange =
               {renderAltaInput('Observación tarifa', 'observacionTarifa')}
               {renderAltaInput('CUIL', 'cuil')}
               {renderAltaInput('CBU/Alias', 'cbuAlias')}
+              {renderAltaInput('Fecha de nacimiento', 'duenoFechaNacimiento', false, 'date')}
               {renderAltaCheckbox('Combustible', 'combustible', 'Cuenta corrientes combustible')}
               {renderAltaInput('Fecha de alta', 'fechaAlta', false, 'date')}
               {renderAltaInput('Patente', 'patente', true)}
@@ -17758,6 +17764,7 @@ const handleAdelantoFieldChange =
               {renderAltaInput('Observación tarifa', 'observacionTarifa')}
               {renderAltaInput('Fecha de alta', 'fechaAlta', false, 'date')}
               {renderAltaInput('Patente', 'patente', true)}
+              {renderAltaInput('Fecha de nacimiento', 'duenoFechaNacimiento', false, 'date')}
             </div>
 
             <div className="placeholder-grid">
@@ -17787,6 +17794,7 @@ const handleAdelantoFieldChange =
               {renderAltaInput('CBU/Alias', 'cbuAlias')}
               {renderAltaCheckbox('Combustible', 'combustible', 'Cuenta corrientes combustible')}
               {renderAltaInput('Fecha de alta', 'fechaAlta', false, 'date')}
+              {renderAltaInput('Fecha de nacimiento', 'duenoFechaNacimiento', false, 'date')}
               {renderAltaInput('Patente', 'patente', true)}
             </div>
           </div>

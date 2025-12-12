@@ -9,7 +9,7 @@ use RuntimeException;
 
 class NosisClient
 {
-    public function validateCbu(string $documento, string $cbu, ?int $grupoVid = null): array
+    public function validateCbu(string $documento, string $cbu, ?int $grupoVid = null, ?string $fechaNacimiento = null): array
     {
         $baseUrl = config('nosis.base_url');
         $username = config('nosis.username');
@@ -29,6 +29,7 @@ class NosisClient
                 'documento' => $documento,
                 'CBU' => $cbu,
                 'NroGrupoVID' => $groupId,
+                'FechaNacimiento' => $fechaNacimiento ?: null,
             ]);
 
         if (!$response->ok()) {
