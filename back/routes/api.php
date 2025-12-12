@@ -16,6 +16,7 @@ use App\Http\Controllers\Api\GeneralInfoController;
 use App\Http\Controllers\Api\AuditController;
 use App\Http\Controllers\Api\TeamGroupController;
 use App\Http\Controllers\Api\TicketRequestController;
+use App\Http\Controllers\Api\NosisController;
 use Illuminate\Support\Facades\Route;
 
 Route::get('/personal/documentos/tipos', [PersonalDocumentController::class, 'types']);
@@ -98,6 +99,7 @@ Route::delete('/general-info/posts/{post}', [GeneralInfoController::class, 'dest
 
 Route::get('/chat/messages', [ChatMessageController::class, 'index']);
 Route::post('/chat/messages', [ChatMessageController::class, 'store']);
+Route::get('/nosis/validar-cbu', [NosisController::class, 'validarCbu']);
 
 Route::post('/login', [AuthController::class, 'login']);
 Route::post('/twofactor/setup', [AuthController::class, 'setupTotp']);

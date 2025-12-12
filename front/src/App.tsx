@@ -14122,6 +14122,63 @@ const ApprovalsRequestsPage: React.FC = () => {
   const canManagePersonal = useMemo(() => isPersonalEditor(authUser), [authUser]);
   const actorHeaders = useMemo(() => buildActorHeaders(authUser), [authUser]);
   const [activeTab, setActiveTab] = useState<'list' | 'altas' | 'combustible' | 'aumento_combustible' | 'adelanto' | 'poliza'>('list');
+  const splitRazonSocial = useCallback((razonSocial: string | null | undefined) => {
+    if (!razonSocial) {
+      return null;
+    }
+    const raw = razonSocial.trim();
+    if (!raw) {
+      return null;
+    }
+    const parts = raw.split(',');
+    if (parts.length >= 2) {
+      return { apellidos: parts[0].trim(), nombres: parts.slice(1).join(' ').trim() };
+    }
+    const tokens = raw.split(/\s+/);
+    if (tokens.length >= 2) {
+      return { apellidos: tokens[0], nombres: tokens.slice(1).join(' ').trim() };
+    }
+    return { apellidos: '', nombres: raw };
+  }, []);
+  const parseNosisXml = useCallback((payload: string) => {
+    try {
+      const parser = new DOMParser();
+      const doc = parser.parseFromString(payload, 'application/xml');
+
+      const getText = (selector: string) => doc.getElementsByTagName(selector)?.[0]?.textContent?.trim() ?? '';
+      const contenido = doc.getElementsByTagName('Contenido')?.[0] ?? null;
+      const resultado = contenido?.getElementsByTagName('Resultado')?.[0] ?? null;
+      const datos = contenido?.getElementsByTagName('Datos')?.[0] ?? null;
+      const persona = datos?.getElementsByTagName('Persona')?.[0] ?? null;
+      const cbuNode = datos?.getElementsByTagName('Cbu')?.[0] ?? null;
+
+      const razonSocial = persona ? (persona.getElementsByTagName('RazonSocial')[0]?.textContent?.trim() ?? '') : '';
+      const documento = persona ? (persona.getElementsByTagName('Documento')[0]?.textContent?.trim() ?? '') : '';
+      const fechaNacimiento = persona ? (persona.getElementsByTagName('FechaNacimiento')[0]?.textContent?.trim() ?? '') : '';
+      const cbuEstado = cbuNode ? (cbuNode.getElementsByTagName('Estado')[0]?.textContent?.trim() ?? '') : '';
+      const cbuNovedad = cbuNode ? (cbuNode.getElementsByTagName('Novedad')[0]?.textContent?.trim() ?? '') : '';
+      const resultadoEstado = resultado ? (resultado.getElementsByTagName('Estado')[0]?.textContent?.trim() ?? '') : '';
+      const resultadoNovedad = resultado ? (resultado.getElementsByTagName('Novedad')[0]?.textContent?.trim() ?? '') : '';
+
+      const pieces = [resultadoNovedad, cbuNovedad, cbuEstado].filter(Boolean);
+      const message = pieces.length > 0 ? pieces.join(' · ') : getText('Novedad') || payload;
+
+      const valid = resultadoEstado === '200' && ['aprobado', 'validado'].some((needle) =>
+        (cbuEstado || resultadoNovedad || '').toLowerCase().includes(needle)
+      );
+
+      return {
+        message,
+        valid,
+        razonSocial,
+        documento,
+        fechaNacimiento,
+        cbuEstado,
+      };
+    } catch {
+      return null;
+    }
+  }, []);
   const [meta, setMeta] = useState<PersonalMeta | null>(null);
   const [rejectedIds, setRejectedIds] = useState<Set<number>>(() => readRejectedIds());
   const [solicitudCreatedCache, setSolicitudCreatedCache] = useState<Map<number, string>>(
@@ -14602,6 +14659,9 @@ const ApprovalsRequestsPage: React.FC = () => {
   const [aumentoFilesVersion, setAumentoFilesVersion] = useState(0);
   const [adelantoAttachments, setAdelantoAttachments] = useState<File[]>([]);
   const [adelantoFilesVersion, setAdelantoFilesVersion] = useState(0);
+  const altaNosisLastLookupRef = useRef<{ cuil: string; cbu: string } | null>(null);
+  const [altaNosisLoading, setAltaNosisLoading] = useState(false);
+  const [altaNosisError, setAltaNosisError] = useState<string | null>(null);
   const [altaForm, setAltaForm] = useState<AltaRequestForm>(() => ({
     perfilValue: 0,
     nombres: '',
@@ -14689,6 +14749,91 @@ const ApprovalsRequestsPage: React.FC = () => {
   const [personalLookupLoading, setPersonalLookupLoading] = useState(false);
   const [personalLookupError, setPersonalLookupError] = useState<string | null>(null);
   const [altaLookupTerm, setAltaLookupTerm] = useState('');
+
+  useEffect(() => {
+    if (activeTab !== 'altas') {
+      return;
+    }
+
+    const cuil = altaForm.cuil.trim();
+    const cbu = altaForm.cbuAlias.trim();
+    if (!cuil || cbu.length < 10) {
+      return;
+    }
+
+    const last = altaNosisLastLookupRef.current;
+    if (last && last.cuil === cuil && last.cbu === cbu) {
+      return;
+    }
+
+    const controller = new AbortController();
+    const url = new URL(`${apiBaseUrl}/api/nosis/validar-cbu`);
+    url.searchParams.set('documento', cuil);
+    url.searchParams.set('cbu', cbu);
+
+    const run = async () => {
+      try {
+        setAltaNosisLoading(true);
+        setAltaNosisError(null);
+        setFlash(null);
+
+        const response = await fetch(url.toString(), {
+          signal: controller.signal,
+          headers: {
+            Accept: 'application/json',
+            ...actorHeaders,
+          },
+        });
+
+        if (!response.ok) {
+          throw new Error(`Error ${response.status}: ${response.statusText}`);
+        }
+
+        const payload = await response.json();
+        altaNosisLastLookupRef.current = { cuil, cbu };
+
+        const raw = payload?.data?.raw;
+        const parsed = typeof raw === 'string' ? parseNosisXml(raw) : null;
+        const razonSocial = parsed?.razonSocial;
+        const razonSplit = razonSocial ? splitRazonSocial(razonSocial) : null;
+        const nombresFromNosis = razonSplit?.nombres ?? '';
+        const apellidosFromNosis = razonSplit?.apellidos ?? '';
+        const documentoFromNosis = parsed?.documento ?? '';
+        const fechaNacimiento = parsed?.fechaNacimiento ?? '';
+
+        if (razonSplit || parsed?.message || payload?.message) {
+          setFlash({
+            type: payload?.valid ? 'success' : 'error',
+            message: parsed?.message || payload?.message || 'Respuesta de Nosis',
+          });
+        }
+
+        if (payload?.valid) {
+          setAltaFormDirty(true);
+          setAltaForm((prev) => ({
+            ...prev,
+            ...(nombresFromNosis && !prev.nombres ? { nombres: nombresFromNosis } : {}),
+            ...(apellidosFromNosis && !prev.apellidos ? { apellidos: apellidosFromNosis } : {}),
+            ...(documentoFromNosis && !prev.cuil ? { cuil: documentoFromNosis } : {}),
+            ...(fechaNacimiento && !prev.duenoFechaNacimiento ? { duenoFechaNacimiento: fechaNacimiento } : {}),
+          }));
+        }
+      } catch (err) {
+        if (controller.signal.aborted) {
+          return;
+        }
+        setAltaNosisError((err as Error).message ?? 'No se pudo validar CBU/CUIL.');
+      } finally {
+        setAltaNosisLoading(false);
+      }
+    };
+
+    run();
+
+    return () => {
+      controller.abort();
+    };
+  }, [activeTab, altaForm.cuil, altaForm.cbuAlias, apiBaseUrl, actorHeaders, parseNosisXml, splitRazonSocial]);
 
   useEffect(() => {
     if (!personaIdFromQuery) {
@@ -19193,6 +19338,63 @@ const TicketeraPage: React.FC = () => {
   const authUser = useStoredAuthUser();
   const userRole = useMemo(() => getUserRole(authUser), [authUser]);
   const actorHeaders = useMemo(() => buildActorHeaders(authUser), [authUser]);
+  const splitRazonSocial = useCallback((razonSocial: string | null | undefined) => {
+    if (!razonSocial) {
+      return null;
+    }
+    const raw = razonSocial.trim();
+    if (!raw) {
+      return null;
+    }
+    const parts = raw.split(',');
+    if (parts.length >= 2) {
+      return { apellidos: parts[0].trim(), nombres: parts.slice(1).join(' ').trim() };
+    }
+    const tokens = raw.split(/\s+/);
+    if (tokens.length >= 2) {
+      return { apellidos: tokens[0], nombres: tokens.slice(1).join(' ').trim() };
+    }
+    return { apellidos: '', nombres: raw };
+  }, []);
+  const parseNosisXml = useCallback((payload: string) => {
+    try {
+      const parser = new DOMParser();
+      const doc = parser.parseFromString(payload, 'application/xml');
+
+      const getText = (selector: string) => doc.getElementsByTagName(selector)?.[0]?.textContent?.trim() ?? '';
+      const contenido = doc.getElementsByTagName('Contenido')?.[0] ?? null;
+      const resultado = contenido?.getElementsByTagName('Resultado')?.[0] ?? null;
+      const datos = contenido?.getElementsByTagName('Datos')?.[0] ?? null;
+      const persona = datos?.getElementsByTagName('Persona')?.[0] ?? null;
+      const cbuNode = datos?.getElementsByTagName('Cbu')?.[0] ?? null;
+
+      const razonSocial = persona ? (persona.getElementsByTagName('RazonSocial')[0]?.textContent?.trim() ?? '') : '';
+      const documento = persona ? (persona.getElementsByTagName('Documento')[0]?.textContent?.trim() ?? '') : '';
+      const fechaNacimiento = persona ? (persona.getElementsByTagName('FechaNacimiento')[0]?.textContent?.trim() ?? '') : '';
+      const cbuEstado = cbuNode ? (cbuNode.getElementsByTagName('Estado')[0]?.textContent?.trim() ?? '') : '';
+      const cbuNovedad = cbuNode ? (cbuNode.getElementsByTagName('Novedad')[0]?.textContent?.trim() ?? '') : '';
+      const resultadoEstado = resultado ? (resultado.getElementsByTagName('Estado')[0]?.textContent?.trim() ?? '') : '';
+      const resultadoNovedad = resultado ? (resultado.getElementsByTagName('Novedad')[0]?.textContent?.trim() ?? '') : '';
+
+      const pieces = [resultadoNovedad, cbuNovedad, cbuEstado].filter(Boolean);
+      const message = pieces.length > 0 ? pieces.join(' · ') : getText('Novedad') || payload;
+
+      const valid = resultadoEstado === '200' && ['aprobado', 'validado'].some((needle) =>
+        (cbuEstado || resultadoNovedad || '').toLowerCase().includes(needle)
+      );
+
+      return {
+        message,
+        valid,
+        razonSocial,
+        documento,
+        fechaNacimiento,
+        cbuEstado,
+      };
+    } catch {
+      return null;
+    }
+  }, []);
   const [meta, setMeta] = useState<PersonalMeta | null>(null);
   const [metaLoading, setMetaLoading] = useState(true);
   const [metaError, setMetaError] = useState<string | null>(null);
