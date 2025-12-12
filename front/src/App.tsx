@@ -15369,8 +15369,27 @@ const sucursalOptions = useMemo(() => {
     };
   };
 
+  const validateAltaRequiredFields = (form: AltaRequestForm) => {
+    const trimmedEmail = form.email.trim();
+    const trimmedPatente = form.patente.trim();
+
+    if (!trimmedEmail || !trimmedPatente) {
+      setFlash({
+        type: 'error',
+        message: 'Completá Correo electrónico y Patente antes de enviar la solicitud.',
+      });
+      return false;
+    }
+
+    return true;
+  };
+
   const handleAltaSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+
+    if (!validateAltaRequiredFields(altaForm)) {
+      return;
+    }
 
     try {
       setAltaSubmitting(true);
@@ -15589,6 +15608,10 @@ const sucursalOptions = useMemo(() => {
     event.preventDefault();
 
     if (!reviewPersonaDetail) {
+      return;
+    }
+
+    if (!validateAltaRequiredFields(altaForm)) {
       return;
     }
 
@@ -17420,14 +17443,14 @@ const handleAdelantoFieldChange =
               {renderAltaInput('Nombres', 'nombres', true)}
               {renderAltaInput('Apellidos', 'apellidos', true)}
               {renderAltaInput('Teléfono', 'telefono', false, 'tel')}
-              {renderAltaInput('Correo electrónico', 'email', false, 'email')}
+              {renderAltaInput('Correo electrónico', 'email', true, 'email')}
               {renderAltaCheckbox('Tarifa especial', 'tarifaEspecial', 'Tiene tarifa especial')}
               {renderAltaInput('Observación tarifa', 'observacionTarifa')}
               {renderAltaInput('CUIL', 'cuil')}
               {renderAltaInput('CBU/Alias', 'cbuAlias')}
               {renderAltaCheckbox('Combustible', 'combustible', 'Cuenta corrientes combustible')}
               {renderAltaInput('Fecha de alta', 'fechaAlta', false, 'date')}
-              {renderAltaInput('Patente', 'patente')}
+              {renderAltaInput('Patente', 'patente', true)}
             </div>
 
             <div className="personal-subsection" style={{ marginTop: '1rem' }}>
@@ -17454,7 +17477,7 @@ const handleAdelantoFieldChange =
             <h3>Cobrador</h3>
             <div className="form-grid form-grid--chofer">
               {renderAltaInput('Nombre completo', 'nombres', true)}
-              {renderAltaInput('Correo electrónico', 'email', false, 'email')}
+              {renderAltaInput('Correo electrónico', 'email', true, 'email')}
               {renderAltaInput('Teléfono', 'telefono', false, 'tel')}
               {renderAltaCheckbox('Tarifa especial', 'tarifaEspecial', 'Tiene tarifa especial')}
               {renderAltaInput('Observación tarifa', 'observacionTarifa')}
@@ -17462,7 +17485,7 @@ const handleAdelantoFieldChange =
               {renderAltaInput('CBU/Alias', 'cbuAlias')}
               {renderAltaCheckbox('Combustible', 'combustible', 'Cuenta corrientes combustible')}
               {renderAltaInput('Fecha de alta', 'fechaAlta', false, 'date')}
-              {renderAltaInput('Patente', 'patente')}
+              {renderAltaInput('Patente', 'patente', true)}
               {renderAltaSelect(
                 'Cliente',
                 'clienteId',
@@ -17583,13 +17606,13 @@ const handleAdelantoFieldChange =
               {renderAltaInput('Nombres', 'nombres', true)}
               {renderAltaInput('Apellidos', 'apellidos', true)}
               {renderAltaInput('CUIL', 'cuil')}
-              {renderAltaInput('Correo electrónico', 'email', false, 'email')}
+              {renderAltaInput('Correo electrónico', 'email', true, 'email')}
               {renderAltaInput('Teléfono', 'telefono', false, 'tel')}
               {renderAltaCheckbox('Combustible', 'combustible', 'Cuenta corrientes combustible')}
               {renderAltaCheckbox('Tarifa especial', 'tarifaEspecial', 'Tiene tarifa especial')}
               {renderAltaInput('Observación tarifa', 'observacionTarifa')}
               {renderAltaInput('Fecha de alta', 'fechaAlta', false, 'date')}
-              {renderAltaInput('Patente', 'patente')}
+              {renderAltaInput('Patente', 'patente', true)}
             </div>
 
             <div className="placeholder-grid">
@@ -17612,14 +17635,14 @@ const handleAdelantoFieldChange =
               {renderAltaInput('Nombres', 'nombres')}
               {renderAltaInput('Apellidos', 'apellidos')}
               {renderAltaInput('Teléfono', 'telefono', false, 'tel')}
-              {renderAltaInput('Correo electrónico', 'email', false, 'email')}
+              {renderAltaInput('Correo electrónico', 'email', true, 'email')}
               {renderAltaCheckbox('Tarifa especial', 'tarifaEspecial', 'Tiene tarifa especial')}
               {renderAltaInput('Observación tarifa', 'observacionTarifa')}
               {renderAltaInput('CUIL', 'cuil')}
               {renderAltaInput('CBU/Alias', 'cbuAlias')}
               {renderAltaCheckbox('Combustible', 'combustible', 'Cuenta corrientes combustible')}
               {renderAltaInput('Fecha de alta', 'fechaAlta', false, 'date')}
-              {renderAltaInput('Patente', 'patente')}
+              {renderAltaInput('Patente', 'patente', true)}
             </div>
           </div>
         );
