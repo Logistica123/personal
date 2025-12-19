@@ -3809,7 +3809,7 @@ const GeneralInfoPage: React.FC = () => {
 
   const fetchGeneralInfoEntriesFromServer = useCallback(async () => {
     try {
-      const response = await fetch(`${apiBaseUrl}/api/general-info/posts`);
+      const response = await fetch(`${apiBaseUrl}/api/general-info/posts`, { credentials: 'include' });
       if (!response.ok) {
         throw new Error(`No se pudieron cargar las publicaciones (${response.status})`);
       }
@@ -3981,6 +3981,7 @@ const GeneralInfoPage: React.FC = () => {
         headers: {
           'Content-Type': 'application/json',
         },
+        credentials: 'include',
         body: JSON.stringify({
           title: trimmedTitle,
           body: normalizedBody,
@@ -5592,8 +5593,8 @@ const DashboardPage: React.FC<{ showPersonalPanel?: boolean }> = ({ showPersonal
         setShowTeamShoutPopup(false);
         lastTeamShoutRef.current = '';
       }
-    } catch {
-      // ignore sync errors silently
+    } catch (err) {
+      console.warn('No se pudo sincronizar el mensaje de panel', err);
     }
   }, [apiBaseUrl, showPersonalPanel]);
 
