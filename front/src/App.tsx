@@ -1324,6 +1324,8 @@ const CHAT_LAST_READ_STORAGE_KEY = 'dashboard-chat:last-read';
 const CHAT_LAST_READ_UPDATED_EVENT = 'dashboard-chat:last-read-updated';
 const WORKFLOW_DELETE_HISTORY_KEY = 'workflow:delete-history';
 const SOLICITUD_CREATED_CACHE_KEY = 'personal:solicitudes:createdAt';
+const TEAM_SHOUT_STORAGE_KEY = 'personal:teamShout';
+const TEAM_SHOUT_UPDATED_EVENT = 'personal:teamShoutUpdated';
 
 const buildPersonalFiltersStorageKey = (userId: number | null | undefined): string | null => {
   if (userId == null) {
@@ -1505,6 +1507,151 @@ const persistGeneralInfoEntriesToStorage = (entries: GeneralInfoEntry[]): void =
 
   window.localStorage.setItem(GENERAL_INFO_STORAGE_KEY, JSON.stringify(entries));
   window.dispatchEvent(new Event(GENERAL_INFO_UPDATED_EVENT));
+};
+
+const readTeamShoutMessage = (): string => {
+  if (typeof window === 'undefined') {
+    return '';
+  }
+  try {
+    return window.localStorage.getItem(TEAM_SHOUT_STORAGE_KEY) ?? '';
+  } catch {
+    return '';
+  }
+};
+
+const escapeHtml = (value: string): string =>
+  value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+
+const formatTeamShout = (message: string): string => {
+  // Soporte básico: saltos de línea, **negrita**, {color:#00aaff|texto}, {size:32px|texto}
+  let html = escapeHtml(message);
+
+  html = html.replace(/\{size:(\d{1,3})(px|em|rem)?\|([^}]*)\}/g, (match, size, unit, text) => {
+    const numericSize = Number(size);
+    const safeUnit = unit || 'px';
+    if (!Number.isFinite(numericSize) || numericSize <= 0 || numericSize > 120) {
+      return match;
+    }
+    return `<span style="font-size: ${numericSize}${safeUnit}">${text}</span>`;
+  });
+
+  html = html.replace(/\{color:([#a-zA-Z0-9]+)\|([^}]*)\}/g, (match, color, text) => {
+    const colorValid = /^#[0-9a-fA-F]{3,8}$/.test(color) || /^[a-zA-Z]+$/.test(color);
+    if (!colorValid) {
+      return match;
+    }
+    return `<span style="color: ${color}">${text}</span>`;
+  });
+
+  html = html.replace(/\*\*(.+?)\*\*/g, (_match, text) => `<strong>${text}</strong>`);
+
+  html = html.replace(/\n/g, '<br />');
+  return html;
+};
+
+const convertHtmlToShoutSyntax = (html: string): string => {
+  try {
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(html, 'text/html');
+
+    const mapFontSize = (value: string | null) => {
+      if (!value) {
+        return null;
+      }
+      const num = Number(value);
+      if (Number.isFinite(num) && num >= 1 && num <= 7) {
+        const map: Record<number, number> = {
+          1: 8,
+          2: 10,
+          3: 12,
+          4: 14,
+          5: 18,
+          6: 24,
+          7: 32,
+        };
+        return `${map[num] ?? 12}px`;
+      }
+      if (/^\d+px$/i.test(value) || /^\d+(\.\d+)?(em|rem)$/i.test(value)) {
+        return value.toLowerCase();
+      }
+      return null;
+    };
+
+    const traverse = (node: Node): string => {
+      if (node.nodeType === Node.TEXT_NODE) {
+        return (node.textContent ?? '');
+      }
+      if (node.nodeType !== Node.ELEMENT_NODE) {
+        return '';
+      }
+
+      const el = node as HTMLElement;
+      const tag = el.tagName.toLowerCase();
+      const childrenText = Array.from(el.childNodes).map(traverse).join('');
+
+      if (tag === 'br') {
+        return '\n';
+      }
+
+      if (tag === 'p') {
+        return `${childrenText}\n`;
+      }
+
+      const style = el.getAttribute('style') ?? '';
+      const colorMatchRaw =
+        style.match(/color:\s*([^;]+);?/i) ||
+        (el.hasAttribute('color') ? [null, el.getAttribute('color')] : null);
+      const sizeMatchRaw =
+      style.match(/font-size:\s*([\d.]+)(px|em|rem)?/i) ||
+      (el.hasAttribute('size') ? [null, mapFontSize(el.getAttribute('size')), ''] : null);
+    const colorValue = colorMatchRaw?.[1]?.trim() ?? '';
+    const sizeValue = sizeMatchRaw?.[1]?.trim() ?? '';
+    const sizeUnit = sizeMatchRaw?.[2]?.trim() ?? '';
+
+      if (tag === 'strong' || tag === 'b') {
+        return `**${childrenText}**`;
+      }
+
+      if (colorValue || sizeValue) {
+        let text = childrenText;
+        if (colorValue) {
+          text = `{color:${colorValue}|${text}}`;
+        }
+        if (sizeValue) {
+          const token = sizeUnit ? `${sizeValue}${sizeUnit}` : sizeValue;
+          text = `{size:${token}|${text}}`;
+        }
+        return text;
+      }
+
+      return childrenText;
+    };
+
+    const body = doc.body;
+    const result = Array.from(body.childNodes).map(traverse).join('');
+    return result.trim();
+  } catch {
+    return '';
+  }
+};
+
+const writeTeamShoutMessage = (message: string): void => {
+  if (typeof window === 'undefined') {
+    return;
+  }
+  const trimmed = message.trim();
+  if (!trimmed) {
+    window.localStorage.removeItem(TEAM_SHOUT_STORAGE_KEY);
+  } else {
+    window.localStorage.setItem(TEAM_SHOUT_STORAGE_KEY, trimmed);
+  }
+  window.dispatchEvent(new Event(TEAM_SHOUT_UPDATED_EVENT));
 };
 
 const deriveAttendanceUserKey = (authUser: AuthUser | null): string | null => {
@@ -1874,14 +2021,6 @@ const computeInitials = (value: string | null | undefined): string => {
   return initials.length > 0 ? initials.toUpperCase() : 'US';
 };
 
-const escapeHtml = (value: string): string =>
-  value
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
-
 const ensureHtmlContent = (content: string): string => {
   if (!content) {
     return '';
@@ -1895,6 +2034,18 @@ const ensureHtmlContent = (content: string): string => {
     .filter((paragraph) => paragraph.length > 0)
     .map((paragraph) => `<p>${escapeHtml(paragraph)}</p>`);
   return safeParagraphs.length > 0 ? safeParagraphs.join('') : `<p>${escapeHtml(content)}</p>`;
+};
+
+const htmlToPlainText = (html: string): string => {
+  if (!html) {
+    return '';
+  }
+  return html
+    .replace(/<\/p>/gi, '\n')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<[^>]+>/g, '')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
 };
 
 const truncateText = (text: string | null, maxLength: number): string => {
@@ -3891,6 +4042,28 @@ const GeneralInfoPage: React.FC = () => {
     }
   };
 
+  const handleSendToPanel = () => {
+    if (!isAdmin) {
+      setFormError('Solo los administradores pueden mostrar mensajes en el panel.');
+      setFormSuccess(null);
+      return;
+    }
+
+    const editorHtml = ensureHtmlContent(editorRef.current?.innerHTML ?? body);
+    const converted = convertHtmlToShoutSyntax(editorHtml);
+    const trimmedTitle = title.trim();
+    const payload = [trimmedTitle ? `**${trimmedTitle}**` : '', converted].filter(Boolean).join('\n').trim();
+    if (!payload) {
+      setFormError('Escribí algo para mostrar en el panel.');
+      setFormSuccess(null);
+      return;
+    }
+
+    writeTeamShoutMessage(payload);
+    setFormError(null);
+    setFormSuccess('Mensaje mostrado en el panel y monitores.');
+  };
+
   const handleDeleteEntry = async (entry: GeneralInfoEntry) => {
     if (!isAdmin) {
       return;
@@ -4038,9 +4211,14 @@ const GeneralInfoPage: React.FC = () => {
             {formSuccess ? (
               <p className="form-info form-info--success">{formSuccess}</p>
             ) : null}
-            <button type="submit" className="primary-action" disabled={!isAdmin}>
-              Publicar
-            </button>
+            <div className="general-info-actions">
+              <button type="submit" className="primary-action" disabled={!isAdmin}>
+                Publicar
+              </button>
+              <button type="button" className="secondary-action" onClick={handleSendToPanel} disabled={!isAdmin}>
+                Mostrar en panel
+              </button>
+            </div>
           </form>
         </section>
 
@@ -5029,6 +5207,7 @@ const DashboardPage: React.FC<{ showPersonalPanel?: boolean }> = ({ showPersonal
   const navigate = useNavigate();
   const location = useLocation();
   const authUser = useStoredAuthUser();
+  const userRole = useMemo(() => getUserRole(authUser), [authUser]);
   const [clientes, setClientes] = useState<Cliente[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -5066,6 +5245,12 @@ const DashboardPage: React.FC<{ showPersonalPanel?: boolean }> = ({ showPersonal
   const [editingMembers, setEditingMembers] = useState<Array<{ id?: number; userId?: number | null; name: string; email: string }>>([]);
   const [savingTeam, setSavingTeam] = useState(false);
   const [deletingTeam, setDeletingTeam] = useState(false);
+  const [teamShout, setTeamShout] = useState<string>('');
+  const [teamShoutDraft, setTeamShoutDraft] = useState<string>('');
+  const [teamShoutSaving, setTeamShoutSaving] = useState(false);
+  const [teamShoutError, setTeamShoutError] = useState<string | null>(null);
+  const [showTeamShoutPopup, setShowTeamShoutPopup] = useState(false);
+  const lastTeamShoutRef = useRef<string>('');
   const monitorMode = useMemo(() => {
     if (!showPersonalPanel) {
       return false;
@@ -5319,6 +5504,54 @@ const DashboardPage: React.FC<{ showPersonalPanel?: boolean }> = ({ showPersonal
   }, [apiBaseUrl, showPersonalPanel]);
 
   useEffect(() => {
+    if (!showPersonalPanel) {
+      return;
+    }
+
+    const syncShout = () => {
+      const message = readTeamShoutMessage();
+      setTeamShout(message);
+      setTeamShoutDraft(message);
+      if (message && message !== lastTeamShoutRef.current) {
+        setShowTeamShoutPopup(true);
+        lastTeamShoutRef.current = message;
+      }
+      if (!message) {
+        setShowTeamShoutPopup(false);
+        lastTeamShoutRef.current = '';
+      }
+    };
+
+    syncShout();
+
+    const handleStorage = (event: StorageEvent) => {
+      if (event.key === TEAM_SHOUT_STORAGE_KEY) {
+        syncShout();
+      }
+    };
+    const handleCustomUpdate = () => syncShout();
+
+    window.addEventListener('storage', handleStorage);
+    window.addEventListener(TEAM_SHOUT_UPDATED_EVENT, handleCustomUpdate as EventListener);
+
+    const intervalId = window.setInterval(syncShout, 10000);
+
+    return () => {
+      window.removeEventListener('storage', handleStorage);
+      window.removeEventListener(TEAM_SHOUT_UPDATED_EVENT, handleCustomUpdate as EventListener);
+      window.clearInterval(intervalId);
+    };
+  }, [showPersonalPanel]);
+
+  useEffect(() => {
+    if (!showTeamShoutPopup) {
+      return;
+    }
+    const timeoutId = window.setTimeout(() => setShowTeamShoutPopup(false), 60000);
+    return () => window.clearTimeout(timeoutId);
+  }, [showTeamShoutPopup]);
+
+  useEffect(() => {
     if (!showPersonalPanel || !monitorMode) {
       return undefined;
     }
@@ -5424,6 +5657,41 @@ const DashboardPage: React.FC<{ showPersonalPanel?: boolean }> = ({ showPersonal
   const removeMember = (index: number) => {
     setEditingMembers((prev) => prev.filter((_, idx) => idx !== index));
   };
+
+  const handleSaveTeamShout = useCallback(
+    (event: React.FormEvent<HTMLFormElement>) => {
+      event.preventDefault();
+      const trimmed = teamShoutDraft.trim();
+      if (!trimmed) {
+        setTeamShoutError('Ingresá un mensaje.');
+        return;
+      }
+      setTeamShoutSaving(true);
+      try {
+        writeTeamShoutMessage(trimmed);
+        setTeamShout(trimmed);
+        setTeamShoutError(null);
+      } catch {
+        setTeamShoutError('No se pudo guardar el mensaje.');
+      } finally {
+        setTeamShoutSaving(false);
+      }
+    },
+    [teamShoutDraft]
+  );
+
+  const handleClearTeamShout = useCallback(() => {
+    setTeamShoutDraft('');
+    setTeamShout('');
+    writeTeamShoutMessage('');
+    setShowTeamShoutPopup(false);
+    lastTeamShoutRef.current = '';
+  }, []);
+
+  const handleInsertShoutSnippet = useCallback((snippet: string) => {
+    setTeamShoutDraft((prev) => `${prev || ''}${snippet}`);
+    setTeamShoutError(null);
+  }, []);
 
   const handleSaveTeam = async () => {
     const trimmedName = editingTeamName.trim();
@@ -5903,6 +6171,28 @@ const DashboardPage: React.FC<{ showPersonalPanel?: boolean }> = ({ showPersonal
       >
         {showPersonalPanel ? (
           <>
+          {teamShout && showTeamShoutPopup ? (
+            <div className="shout-popup-overlay" role="alert">
+              <div className="shout-fireworks">
+                {Array.from({ length: 30 }).map((_, idx) => (
+                  <span key={`fw-${idx}`} />
+                ))}
+              </div>
+              <div className="shout-popup">
+                <div className="shout-popup__confetti">
+                  {Array.from({ length: 14 }).map((_, idx) => (
+                    <span key={idx} />
+                  ))}
+                </div>
+                <div className="shout-popup__content">
+                  <p dangerouslySetInnerHTML={{ __html: formatTeamShout(teamShout) }} />
+                </div>
+                <button type="button" className="shout-popup__close" aria-label="Cerrar" onClick={() => setShowTeamShoutPopup(false)}>
+                  ×
+                </button>
+              </div>
+            </div>
+          ) : null}
           {!monitorMode ? (
             <div className={`monitor-banner${monitorMode ? ' monitor-banner--active' : ''}`}>
               <div className="monitor-banner__info">
