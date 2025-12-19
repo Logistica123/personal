@@ -1327,6 +1327,7 @@ const SOLICITUD_CREATED_CACHE_KEY = 'personal:solicitudes:createdAt';
 const TEAM_SHOUT_STORAGE_KEY = 'personal:teamShout';
 const TEAM_SHOUT_UPDATED_EVENT = 'personal:teamShoutUpdated';
 const PANEL_MESSAGE_MARKER = '<!--panel-message-->';
+const PANEL_MESSAGE_PREFIX = '[PANEL] ';
 
 const buildPersonalFiltersStorageKey = (userId: number | null | undefined): string | null => {
   if (userId == null) {
@@ -4044,7 +4045,7 @@ const GeneralInfoPage: React.FC = () => {
     }
   };
 
-const handleSendToPanel = async () => {
+  const handleSendToPanel = async () => {
   if (!isAdmin) {
     setFormError('Solo los administradores pueden mostrar mensajes en el panel.');
     setFormSuccess(null);
@@ -4063,7 +4064,10 @@ const handleSendToPanel = async () => {
       return;
   }
 
-  const normalizedBody = `${PANEL_MESSAGE_MARKER}${ensureHtmlContent(editorHtml)}`;
+    const prefixedTitle = trimmedTitle.startsWith(PANEL_MESSAGE_PREFIX)
+      ? trimmedTitle
+      : `${PANEL_MESSAGE_PREFIX}${trimmedTitle}`;
+    const normalizedBody = `${PANEL_MESSAGE_MARKER}${ensureHtmlContent(editorHtml)}`;
     const authorName =
       authUser?.name && authUser.name.trim().length > 0
         ? authUser.name.trim()
@@ -4072,7 +4076,7 @@ const handleSendToPanel = async () => {
 
     const newEntry: GeneralInfoEntry = {
       id: uniqueKey(),
-      title: trimmedTitle,
+      title: prefixedTitle,
       body: normalizedBody,
       createdAt: new Date().toISOString(),
       authorId: authUser?.id ?? null,
@@ -4095,7 +4099,7 @@ const handleSendToPanel = async () => {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          title: trimmedTitle,
+          title: prefixedTitle,
           body: normalizedBody,
           authorId: authUser?.id ?? null,
           authorName,
@@ -5566,7 +5570,11 @@ const DashboardPage: React.FC<{ showPersonalPanel?: boolean }> = ({ showPersonal
       }
       const payload = (await response.json()) as { data?: GeneralInfoEntryApi[] };
       const entries = Array.isArray(payload?.data) ? payload.data.map(mapGeneralInfoApiEntry) : [];
-      const panelEntries = entries.filter((entry) => entry.body?.includes(PANEL_MESSAGE_MARKER));
+      const panelEntries = entries.filter(
+        (entry) =>
+          (entry.title && entry.title.startsWith(PANEL_MESSAGE_PREFIX)) ||
+          entry.body?.includes(PANEL_MESSAGE_MARKER)
+      );
       if (panelEntries.length === 0) {
         setTeamShout('');
         setTeamShoutDraft('');
@@ -5575,8 +5583,13 @@ const DashboardPage: React.FC<{ showPersonalPanel?: boolean }> = ({ showPersonal
         return;
       }
       const latest = [...panelEntries].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())[0];
+      const cleanTitle =
+        latest.title && latest.title.startsWith(PANEL_MESSAGE_PREFIX)
+          ? latest.title.replace(PANEL_MESSAGE_PREFIX, '').trim()
+          : latest.title?.trim() ?? '';
+
       const message = [
-        latest.title?.trim() ? `**${latest.title.trim()}**` : '',
+        cleanTitle ? `**${cleanTitle}**` : '',
         convertHtmlToShoutSyntax((latest.body ?? '').replace(PANEL_MESSAGE_MARKER, '')),
       ]
         .filter(Boolean)
