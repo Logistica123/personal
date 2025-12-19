@@ -4042,26 +4042,76 @@ const GeneralInfoPage: React.FC = () => {
     }
   };
 
-  const handleSendToPanel = () => {
+  const handleSendToPanel = async () => {
     if (!isAdmin) {
       setFormError('Solo los administradores pueden mostrar mensajes en el panel.');
       setFormSuccess(null);
       return;
     }
 
-    const editorHtml = ensureHtmlContent(editorRef.current?.innerHTML ?? body);
-    const converted = convertHtmlToShoutSyntax(editorHtml);
     const trimmedTitle = title.trim();
-    const payload = [trimmedTitle ? `**${trimmedTitle}**` : '', converted].filter(Boolean).join('\n').trim();
-    if (!payload) {
-      setFormError('Escribí algo para mostrar en el panel.');
+    const editorHtml = ensureHtmlContent(editorRef.current?.innerHTML ?? body);
+    const editorText =
+      editorRef.current?.innerText?.replace(/\u200B/g, '').trim() ??
+      editorHtml.replace(/<[^>]*>/g, '').trim();
+
+    if (!trimmedTitle || !editorText) {
+      setFormError('Completá el título y la descripción para mostrar en el panel.');
       setFormSuccess(null);
       return;
     }
 
-    writeTeamShoutMessage(payload);
+    const normalizedBody = ensureHtmlContent(editorHtml);
+    const authorName =
+      authUser?.name && authUser.name.trim().length > 0
+        ? authUser.name.trim()
+        : authUser?.email ?? 'Administrador';
+    const authorRole = authUser?.role ?? 'Administrador';
+
+    const newEntry: GeneralInfoEntry = {
+      id: uniqueKey(),
+      title: trimmedTitle,
+      body: normalizedBody,
+      createdAt: new Date().toISOString(),
+      authorId: authUser?.id ?? null,
+      authorName,
+      authorRole,
+      imageData,
+      imageAlt: imageName ?? trimmedTitle,
+    };
+
+    const nextEntries = [newEntry, ...entries];
+    setEntries(nextEntries);
+    persistGeneralInfoEntriesToStorage(nextEntries);
     setFormError(null);
     setFormSuccess('Mensaje mostrado en el panel y monitores.');
+
+    try {
+      const response = await fetch(`${apiBaseUrl}/api/general-info/posts`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          title: trimmedTitle,
+          body: normalizedBody,
+          authorId: authUser?.id ?? null,
+          authorName,
+          authorRole,
+          imageData,
+          imageAlt: imageName ?? trimmedTitle,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`No se pudo subir la publicación (${response.status}).`);
+      }
+
+      await fetchGeneralInfoEntriesFromServer();
+    } catch {
+      setFormError('No pudimos sincronizar el mensaje con el servidor. Se guardó localmente.');
+      setFormSuccess(null);
+    }
   };
 
   const handleDeleteEntry = async (entry: GeneralInfoEntry) => {
@@ -5503,13 +5553,33 @@ const DashboardPage: React.FC<{ showPersonalPanel?: boolean }> = ({ showPersonal
     return () => controller.abort();
   }, [apiBaseUrl, showPersonalPanel]);
 
-  useEffect(() => {
+  const syncShout = useCallback(async () => {
     if (!showPersonalPanel) {
       return;
     }
+    try {
+      const response = await fetch(`${apiBaseUrl}/api/general-info/posts`);
+      if (!response.ok) {
+        throw new Error(`Error ${response.status}`);
+      }
+      const payload = (await response.json()) as { data?: GeneralInfoEntryApi[] };
+      const entries = Array.isArray(payload?.data) ? payload.data.map(mapGeneralInfoApiEntry) : [];
+      if (entries.length === 0) {
+        setTeamShout('');
+        setTeamShoutDraft('');
+        setShowTeamShoutPopup(false);
+        lastTeamShoutRef.current = '';
+        return;
+      }
+      const latest = [...entries].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())[0];
+      const message = [
+        latest.title?.trim() ? `**${latest.title.trim()}**` : '',
+        convertHtmlToShoutSyntax(latest.body ?? ''),
+      ]
+        .filter(Boolean)
+        .join('\n')
+        .trim();
 
-    const syncShout = () => {
-      const message = readTeamShoutMessage();
       setTeamShout(message);
       setTeamShoutDraft(message);
       if (message && message !== lastTeamShoutRef.current) {
@@ -5520,35 +5590,35 @@ const DashboardPage: React.FC<{ showPersonalPanel?: boolean }> = ({ showPersonal
         setShowTeamShoutPopup(false);
         lastTeamShoutRef.current = '';
       }
+    } catch {
+      // ignore sync errors silently
+    }
+  }, [apiBaseUrl, showPersonalPanel]);
+
+  useEffect(() => {
+    if (!showPersonalPanel) {
+      return;
+    }
+
+    const run = () => {
+      void syncShout();
     };
 
-    syncShout();
+    run();
 
-    const handleStorage = (event: StorageEvent) => {
-      if (event.key === TEAM_SHOUT_STORAGE_KEY) {
-        syncShout();
-      }
-    };
-    const handleCustomUpdate = () => syncShout();
-
-    window.addEventListener('storage', handleStorage);
-    window.addEventListener(TEAM_SHOUT_UPDATED_EVENT, handleCustomUpdate as EventListener);
-
-    const intervalId = window.setInterval(syncShout, 3000);
+    const intervalId = window.setInterval(run, 3000);
     const handleVisibility = () => {
       if (!document.hidden) {
-        syncShout();
+        run();
       }
     };
     document.addEventListener('visibilitychange', handleVisibility);
 
     return () => {
-      window.removeEventListener('storage', handleStorage);
-      window.removeEventListener(TEAM_SHOUT_UPDATED_EVENT, handleCustomUpdate as EventListener);
       document.removeEventListener('visibilitychange', handleVisibility);
       window.clearInterval(intervalId);
     };
-  }, [showPersonalPanel]);
+  }, [showPersonalPanel, syncShout]);
 
   useEffect(() => {
     if (!showTeamShoutPopup) {
