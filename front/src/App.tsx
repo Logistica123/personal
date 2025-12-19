@@ -6283,20 +6283,6 @@ const DashboardPage: React.FC<{ showPersonalPanel?: boolean }> = ({ showPersonal
                             <strong>{stats.suspendido}</strong>
                           </div>
                         </div>
-                        <div className="client-card__clients">
-                          <small>Clientes</small>
-                          <div className="client-card__chips">
-                            {clients.length === 0 ? (
-                              <span className="chip chip--muted">Sin clientes</span>
-                            ) : (
-                              clients.map(({ clienteNombre, stats: clientStats }) => (
-                                <span key={clienteNombre} className="chip">
-                                  {clienteNombre} · {clientStats.total}
-                                </span>
-                              ))
-                            )}
-                          </div>
-                        </div>
                       </div>
                     ))}
                   </div>
