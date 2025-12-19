@@ -1326,6 +1326,7 @@ const WORKFLOW_DELETE_HISTORY_KEY = 'workflow:delete-history';
 const SOLICITUD_CREATED_CACHE_KEY = 'personal:solicitudes:createdAt';
 const TEAM_SHOUT_STORAGE_KEY = 'personal:teamShout';
 const TEAM_SHOUT_UPDATED_EVENT = 'personal:teamShoutUpdated';
+const PANEL_MESSAGE_MARKER = '<!--panel-message-->';
 
 const buildPersonalFiltersStorageKey = (userId: number | null | undefined): string | null => {
   if (userId == null) {
@@ -1558,7 +1559,7 @@ const formatTeamShout = (message: string): string => {
 const convertHtmlToShoutSyntax = (html: string): string => {
   try {
     const parser = new DOMParser();
-    const doc = parser.parseFromString(html, 'text/html');
+    const doc = parser.parseFromString(html.replace(PANEL_MESSAGE_MARKER, ''), 'text/html');
 
     const mapFontSize = (value: string | null) => {
       if (!value) {
@@ -4042,11 +4043,11 @@ const GeneralInfoPage: React.FC = () => {
     }
   };
 
-  const handleSendToPanel = async () => {
-    if (!isAdmin) {
-      setFormError('Solo los administradores pueden mostrar mensajes en el panel.');
-      setFormSuccess(null);
-      return;
+const handleSendToPanel = async () => {
+  if (!isAdmin) {
+    setFormError('Solo los administradores pueden mostrar mensajes en el panel.');
+    setFormSuccess(null);
+    return;
     }
 
     const trimmedTitle = title.trim();
@@ -4059,9 +4060,9 @@ const GeneralInfoPage: React.FC = () => {
       setFormError('Completá el título y la descripción para mostrar en el panel.');
       setFormSuccess(null);
       return;
-    }
+  }
 
-    const normalizedBody = ensureHtmlContent(editorHtml);
+  const normalizedBody = `${PANEL_MESSAGE_MARKER}${ensureHtmlContent(editorHtml)}`;
     const authorName =
       authUser?.name && authUser.name.trim().length > 0
         ? authUser.name.trim()
@@ -5564,17 +5565,18 @@ const DashboardPage: React.FC<{ showPersonalPanel?: boolean }> = ({ showPersonal
       }
       const payload = (await response.json()) as { data?: GeneralInfoEntryApi[] };
       const entries = Array.isArray(payload?.data) ? payload.data.map(mapGeneralInfoApiEntry) : [];
-      if (entries.length === 0) {
+      const panelEntries = entries.filter((entry) => entry.body?.includes(PANEL_MESSAGE_MARKER));
+      if (panelEntries.length === 0) {
         setTeamShout('');
         setTeamShoutDraft('');
         setShowTeamShoutPopup(false);
         lastTeamShoutRef.current = '';
         return;
       }
-      const latest = [...entries].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())[0];
+      const latest = [...panelEntries].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())[0];
       const message = [
         latest.title?.trim() ? `**${latest.title.trim()}**` : '',
-        convertHtmlToShoutSyntax(latest.body ?? ''),
+        convertHtmlToShoutSyntax((latest.body ?? '').replace(PANEL_MESSAGE_MARKER, '')),
       ]
         .filter(Boolean)
         .join('\n')
