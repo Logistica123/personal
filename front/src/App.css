@@ -5076,6 +5076,22 @@ tbody tr:nth-child(even) {
   gap: 1rem;
 }
 
+.team-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.team-title__total {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: #516277;
+}
+
+[data-theme='dark'] .team-title__total {
+  color: var(--muted);
+}
+
 .color-pill {
   display: inline-flex;
   align-items: center;

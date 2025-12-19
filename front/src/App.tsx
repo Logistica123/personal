@@ -6241,15 +6241,12 @@ const DashboardPage: React.FC<{ showPersonalPanel?: boolean }> = ({ showPersonal
                 <div key={team.id} className="summary-panel secondary-panels fidelizacion-panel" style={{ background, borderColor }}>
                   <div className="secondary-panels__header">
                     <div>
-                      <h3>{team.name}</h3>
-                      <span>{groupStats.total} en total</span>
+                      <h3 className="team-title">
+                        {team.name}
+                        <span className="team-title__total">· {groupStats.total} en total</span>
+                      </h3>
                     </div>
                     <div className="team-actions">
-                      {team.color ? (
-                        <span className="color-pill" style={{ background: team.color }}>
-                          {team.color}
-                        </span>
-                      ) : null}
                       {!monitorMode ? (
                         <button
                           type="button"
@@ -14803,7 +14800,7 @@ const ApprovalsRequestsPage: React.FC = () => {
         const nombresFromNosis = razonSplit?.nombres ?? '';
         const apellidosFromNosis = razonSplit?.apellidos ?? '';
         const documentoFromNosis = parsed?.documento ?? '';
-        const fechaNacimiento = parsed?.fechaNacimiento ?? '';
+        const fechaNacimientoFromNosis = parsed?.fechaNacimiento ?? '';
 
         if (razonSplit || parsed?.message || payload?.message) {
           setFlash({
@@ -14819,7 +14816,7 @@ const ApprovalsRequestsPage: React.FC = () => {
             ...(nombresFromNosis && !prev.nombres ? { nombres: nombresFromNosis } : {}),
             ...(apellidosFromNosis && !prev.apellidos ? { apellidos: apellidosFromNosis } : {}),
             ...(documentoFromNosis && !prev.cuil ? { cuil: documentoFromNosis } : {}),
-            ...(fechaNacimiento && !prev.duenoFechaNacimiento ? { duenoFechaNacimiento: fechaNacimiento } : {}),
+            ...(fechaNacimientoFromNosis && !prev.duenoFechaNacimiento ? { duenoFechaNacimiento: fechaNacimientoFromNosis } : {}),
           }));
         }
       } catch (err) {
