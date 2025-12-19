@@ -590,6 +590,78 @@ type AltaSelectOption = {
   disabled?: boolean;
 };
 
+const PAGO_SELECT_OPTIONS: AltaSelectOption[] = [
+  { value: '1', label: 'Con factura' },
+  { value: '0', label: 'Sin factura' },
+];
+
+const parsePagoFlag = (value: string | number | boolean | null | undefined): boolean | null => {
+  if (value === null || value === undefined) {
+    return null;
+  }
+
+  if (typeof value === 'boolean') {
+    return value;
+  }
+
+  const normalized = String(value).trim().toLowerCase();
+
+  if (!normalized) {
+    return null;
+  }
+
+  if (['1', 'true', 'si', 'sí', 'con', 'factura', 'con factura'].includes(normalized)) {
+    return true;
+  }
+
+  if (['0', 'false', 'no', 'sin', 'sin factura', 'sn', 's/n'].includes(normalized)) {
+    return false;
+  }
+
+  const numeric = Number(normalized);
+  if (!Number.isNaN(numeric)) {
+    return numeric !== 0;
+  }
+
+  return null;
+};
+
+const formatPagoLabel = (value: string | number | boolean | null | undefined): string => {
+  const flag = parsePagoFlag(value);
+  if (flag === true) {
+    return 'Con factura';
+  }
+  if (flag === false) {
+    return 'Sin factura';
+  }
+  return '';
+};
+
+const serializePagoValue = (value: string | number | boolean | null | undefined): number | null => {
+  if (value === null || value === undefined) {
+    return null;
+  }
+
+  const normalized = String(value).trim();
+  if (!normalized) {
+    return null;
+  }
+
+  if (normalized.toLowerCase() === 'true') {
+    return 1;
+  }
+  if (normalized.toLowerCase() === 'false') {
+    return 0;
+  }
+
+  const numeric = Number(normalized);
+  if (Number.isNaN(numeric)) {
+    return null;
+  }
+
+  return numeric;
+};
+
 type CombustibleRequestForm = {
   empresaId: string;
   sucursalId: string;
@@ -1374,6 +1446,7 @@ type StoredPersonalFilters = {
   fechaAltaTo?: string;
   patente?: string;
   legajo?: string;
+  pago?: string;
 };
 
 const readStoredPersonalFilters = (storageKey: string | null): StoredPersonalFilters => {
@@ -1399,6 +1472,7 @@ const readStoredPersonalFilters = (storageKey: string | null): StoredPersonalFil
       fechaAltaTo: typeof parsed.fechaAltaTo === 'string' ? parsed.fechaAltaTo : '',
       patente: typeof parsed.patente === 'string' ? parsed.patente : '',
       legajo: typeof parsed.legajo === 'string' ? parsed.legajo : '',
+      pago: typeof parsed.pago === 'string' ? parsed.pago : '',
     };
   } catch {
     return {};
@@ -9767,6 +9841,7 @@ const PersonalPage: React.FC = () => {
   const [estadoFilter, setEstadoFilter] = useState('');
   const [combustibleFilter, setCombustibleFilter] = useState('');
   const [tarifaFilter, setTarifaFilter] = useState('');
+  const [pagoFilter, setPagoFilter] = useState(() => resolveStoredFilters().pago ?? '');
   const [patenteFilter, setPatenteFilter] = useState('');
   const [legajoFilter, setLegajoFilter] = useState(() => resolveStoredFilters().legajo ?? '');
   const [deletingPersonalId, setDeletingPersonalId] = useState<number | null>(null);
@@ -9824,6 +9899,7 @@ const PersonalPage: React.FC = () => {
     setAltaDateTo(stored.fechaAltaTo ?? '');
     setPatenteFilter(stored.patente ?? '');
     setLegajoFilter(stored.legajo ?? '');
+    setPagoFilter(stored.pago ?? '');
   }, [resolveStoredFilters]);
 
   useEffect(() => {
@@ -9842,12 +9918,13 @@ const PersonalPage: React.FC = () => {
           fechaAltaTo: altaDateTo,
           patente: patenteFilter,
           legajo: legajoFilter,
+          pago: pagoFilter,
         })
       );
     } catch {
       // ignore write errors (storage full, etc.)
     }
-  }, [personalFiltersStorageKey, clienteFilter, sucursalFilter, altaDatePreset, altaDateFrom, altaDateTo, patenteFilter, legajoFilter]);
+  }, [personalFiltersStorageKey, clienteFilter, sucursalFilter, altaDatePreset, altaDateFrom, altaDateTo, patenteFilter, legajoFilter, pagoFilter]);
 
   useEffect(() => {
     const handler = (event: Event) => {
@@ -10021,6 +10098,14 @@ const PersonalPage: React.FC = () => {
         }
       }
 
+      if (pagoFilter) {
+        const target = pagoFilter === 'true';
+        const pagoValue = parsePagoFlag(registro.pago);
+        if (pagoValue === null || pagoValue !== target) {
+          return false;
+        }
+      }
+
       if (!matchesAltaDate(registro.fechaAlta)) {
         return false;
       }
@@ -10046,6 +10131,7 @@ const PersonalPage: React.FC = () => {
         registro.combustible,
         registro.tarifaEspecial,
         registro.pago,
+        formatPagoLabel(registro.pago),
         registro.cbuAlias,
         registro.patente,
         registro.observaciones,
@@ -10077,6 +10163,7 @@ const PersonalPage: React.FC = () => {
     altaDateTo,
     perfilNames,
     legajoFilter,
+    pagoFilter,
   ]);
 
   useEffect(() => {
@@ -10096,6 +10183,7 @@ const PersonalPage: React.FC = () => {
     altaDatePreset,
     altaDateFrom,
     altaDateTo,
+    pagoFilter,
   ]);
 
   useEffect(() => {
@@ -10161,6 +10249,7 @@ const PersonalPage: React.FC = () => {
     setEstadoFilter('');
     setCombustibleFilter('');
     setTarifaFilter('');
+    setPagoFilter('');
     setAltaDatePreset('');
     setAltaDateFrom('');
     setAltaDateTo('');
@@ -10268,7 +10357,7 @@ const PersonalPage: React.FC = () => {
       { header: 'Combustible', resolve: (registro) => booleanLabel(registro.combustibleValue) },
       { header: 'Estado combustible', resolve: (registro) => registro.combustibleEstado ?? '' },
       { header: 'Tarifa especial', resolve: (registro) => booleanLabel(registro.tarifaEspecialValue) },
-      { header: 'Pago', resolve: (registro) => registro.pago ?? '' },
+      { header: 'Pago', resolve: (registro) => formatPagoLabel(registro.pago) },
       { header: 'CBU alias', resolve: (registro) => registro.cbuAlias ?? '' },
       { header: 'Patente', resolve: (registro) => registro.patente ?? '' },
       { header: 'Observación tarifa', resolve: (registro) => registro.observacionTarifa ?? '' },
@@ -10518,6 +10607,14 @@ const PersonalPage: React.FC = () => {
           </select>
         </label>
         <label className="filter-field">
+          <span>Pago</span>
+          <select value={pagoFilter} onChange={(event) => setPagoFilter(event.target.value)}>
+            <option value="">S/N factura</option>
+            <option value="true">Con factura</option>
+            <option value="false">Sin factura</option>
+          </select>
+        </label>
+        <label className="filter-field">
           <span>Fecha alta</span>
           <select value={altaDatePreset} onChange={(event) => setAltaDatePreset(event.target.value)}>
             <option value="">Todas</option>
@@ -10599,6 +10696,7 @@ const PersonalPage: React.FC = () => {
               <th>Combustible</th>
               <th>Estado combustible</th>
               <th>Tarifa especial</th>
+              <th>Pago</th>
               <th>Cliente</th>
               <th>Unidad</th>
               <th>Sucursal</th>
@@ -10610,13 +10708,13 @@ const PersonalPage: React.FC = () => {
           <tbody>
             {loading && (
               <tr>
-                <td colSpan={18}>Cargando personal...</td>
+                <td colSpan={19}>Cargando personal...</td>
               </tr>
             )}
 
             {error && !loading && (
               <tr>
-                <td colSpan={18} className="error-cell">
+                <td colSpan={19} className="error-cell">
                   {error}
                 </td>
               </tr>
@@ -10624,7 +10722,7 @@ const PersonalPage: React.FC = () => {
 
             {!loading && !error && filteredPersonal.length === 0 && (
               <tr>
-                <td colSpan={18}>No hay registros para mostrar.</td>
+                <td colSpan={19}>No hay registros para mostrar.</td>
               </tr>
             )}
 
@@ -10670,6 +10768,7 @@ const PersonalPage: React.FC = () => {
                     )}
                   </td>
                   <td>{registro.tarifaEspecial ?? '—'}</td>
+                  <td>{formatPagoLabel(registro.pago) || '—'}</td>
                   <td>{registro.cliente ?? '—'}</td>
                   <td>{registro.unidad ?? '—'}</td>
                   <td>{registro.sucursal ?? '—'}</td>
@@ -11203,6 +11302,7 @@ const LiquidacionesPage: React.FC = () => {
         registro.combustible,
         registro.tarifaEspecial,
         registro.pago,
+        formatPagoLabel(registro.pago),
         registro.cbuAlias,
         registro.patente,
         registro.observaciones,
@@ -15836,7 +15936,7 @@ const sucursalOptions = useMemo(() => {
       cobradorEmail: esCobrador ? cobradorEmail : null,
       cobradorCuil: esCobrador ? cobradorCuil : null,
       cobradorCbuAlias: esCobrador ? cobradorCbuAlias : null,
-      pago: form.pago ? Number(form.pago) : null,
+      pago: serializePagoValue(form.pago),
       combustible: form.combustible,
       fechaAlta: form.fechaAlta || null,
       fechaAltaVinculacion: form.fechaAltaVinculacion || null,
@@ -17962,6 +18062,7 @@ const handleAdelantoFieldChange =
               {renderAltaInput('Observación tarifa', 'observacionTarifa')}
               {renderAltaInput('CUIL', 'cuil')}
               {renderAltaInput('CBU/Alias', 'cbuAlias')}
+              {renderAltaSelect('Pago', 'pago', PAGO_SELECT_OPTIONS, { placeholder: 'S/N factura' })}
               {renderAltaInput('Fecha de nacimiento', 'duenoFechaNacimiento', false, 'date')}
               {renderAltaCheckbox('Combustible', 'combustible', 'Cuenta corrientes combustible')}
               {renderAltaInput('Fecha de alta', 'fechaAlta', false, 'date')}
@@ -17998,6 +18099,7 @@ const handleAdelantoFieldChange =
               {renderAltaInput('Observación tarifa', 'observacionTarifa')}
               {renderAltaInput('CUIL', 'cuil')}
               {renderAltaInput('CBU/Alias', 'cbuAlias')}
+              {renderAltaSelect('Pago', 'pago', PAGO_SELECT_OPTIONS, { placeholder: 'S/N factura' })}
               {renderAltaInput('Fecha de nacimiento', 'duenoFechaNacimiento', false, 'date')}
               {renderAltaCheckbox('Combustible', 'combustible', 'Cuenta corrientes combustible')}
               {renderAltaInput('Fecha de alta', 'fechaAlta', false, 'date')}
@@ -18157,6 +18259,7 @@ const handleAdelantoFieldChange =
               {renderAltaInput('Observación tarifa', 'observacionTarifa')}
               {renderAltaInput('CUIL', 'cuil')}
               {renderAltaInput('CBU/Alias', 'cbuAlias')}
+              {renderAltaSelect('Pago', 'pago', PAGO_SELECT_OPTIONS, { placeholder: 'S/N factura' })}
               {renderAltaCheckbox('Combustible', 'combustible', 'Cuenta corrientes combustible')}
               {renderAltaInput('Fecha de alta', 'fechaAlta', false, 'date')}
               {renderAltaInput('Fecha de nacimiento', 'duenoFechaNacimiento', false, 'date')}
@@ -18228,7 +18331,7 @@ const handleAdelantoFieldChange =
         { label: 'CUIL', value: reviewPersonaDetail.cuil },
         { label: 'Teléfono', value: reviewPersonaDetail.telefono },
         { label: 'Correo electrónico', value: reviewPersonaDetail.email },
-        { label: 'Pago', value: reviewPersonaDetail.pago },
+        { label: 'Pago', value: formatPagoLabel(reviewPersonaDetail.pago) || reviewPersonaDetail.pago },
         { label: 'CBU/Alias', value: reviewPersonaDetail.cbuAlias },
         { label: 'Patente', value: reviewPersonaDetail.patente },
         {
@@ -22175,7 +22278,7 @@ const PersonalEditPage: React.FC = () => {
       ['Unidad', record.unidadDetalle ?? record.unidad ?? ''],
       ['Patente', record.patente ?? ''],
       ['Fecha alta', record.fechaAlta ?? ''],
-      ['Pago pactado', record.pago ?? ''],
+      ['Pago pactado', formatPagoLabel(record.pago)],
       ['CBU / Alias', record.cbuAlias ?? ''],
       ['Combustible', record.combustibleValue ? 'Sí' : 'No'],
       ['Tarifa especial', record.tarifaEspecialValue ? 'Sí' : 'No'],
@@ -22267,7 +22370,7 @@ const PersonalEditPage: React.FC = () => {
           estadoId: formValues.estadoId ? Number(formValues.estadoId) : null,
           fechaAlta: formValues.fechaAlta || null,
           fechaBaja,
-          pago: formValues.pago ? Number(formValues.pago) : null,
+          pago: serializePagoValue(formValues.pago),
           cbuAlias: formValues.cbuAlias.trim() || null,
           patente: formValues.patente.trim() || null,
           observacionTarifa: formValues.observacionTarifa.trim() || null,
@@ -22636,15 +22739,6 @@ const PersonalEditPage: React.FC = () => {
             />
           </label>
           <label className="input-control">
-            <span>Pago pactado</span>
-            <input
-              type="number"
-              value={formValues.pago}
-              onChange={(event) => setFormValues((prev) => ({ ...prev, pago: event.target.value }))}
-              placeholder="Ingresar"
-            />
-          </label>
-          <label className="input-control">
             <span>CBU / Alias</span>
             <input
               type="text"
@@ -22652,6 +22746,21 @@ const PersonalEditPage: React.FC = () => {
               onChange={(event) => setFormValues((prev) => ({ ...prev, cbuAlias: event.target.value }))}
               placeholder="Ingresar"
             />
+          </label>
+          <label className="input-control">
+            <span>Pago</span>
+            <select
+              value={formValues.pago}
+              onChange={(event) => setFormValues((prev) => ({ ...prev, pago: event.target.value }))}
+              disabled={isReadOnly}
+            >
+              <option value="">S/N factura</option>
+              {PAGO_SELECT_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
           </label>
           <label className="input-control">
             <span>Patente</span>
@@ -23334,7 +23443,7 @@ const PersonalCreatePage: React.FC = () => {
           telefono: formValues.telefono.trim() || null,
           email: formValues.email.trim() || null,
           cuil: formValues.cuil.trim() || null,
-          pago: formValues.pago ? Number(formValues.pago) : null,
+          pago: serializePagoValue(formValues.pago),
           cbuAlias: formValues.cbuAlias.trim() || null,
           patente: formValues.patente.trim() || null,
           clienteId: formValues.clienteId ? Number(formValues.clienteId) : null,
@@ -23425,6 +23534,7 @@ const PersonalCreatePage: React.FC = () => {
               {renderInput('Observación tarifa', 'observacionTarifa')}
               {renderInput('CUIL', 'cuil')}
               {renderInput('CBU/Alias', 'cbuAlias')}
+              {renderPagoSelect()}
               {renderCheckbox('Combustible', 'combustible', 'Cuenta corrientes combustible')}
               {formValues.combustible ? (
                 <label className="input-control">
@@ -23476,6 +23586,7 @@ const PersonalCreatePage: React.FC = () => {
               {renderInput('Observación tarifa', 'observacionTarifa')}
               {renderInput('CUIL', 'cuil')}
               {renderInput('CBU/Alias', 'cbuAlias')}
+              {renderPagoSelect()}
               {renderCheckbox('Combustible', 'combustible', 'Cuenta corrientes combustible')}
               {formValues.combustible ? (
                 <label className="input-control">
@@ -23581,6 +23692,23 @@ const PersonalCreatePage: React.FC = () => {
         placeholder="Ingresar"
         required={required}
       />
+    </label>
+  );
+
+  const renderPagoSelect = () => (
+    <label className="input-control">
+      <span>Pago</span>
+      <select
+        value={formValues.pago}
+        onChange={(event) => setFormValues((prev) => ({ ...prev, pago: event.target.value }))}
+      >
+        <option value="">S/N factura</option>
+        {PAGO_SELECT_OPTIONS.map((option) => (
+          <option key={option.value} value={option.value}>
+            {option.label}
+          </option>
+        ))}
+      </select>
     </label>
   );
 
