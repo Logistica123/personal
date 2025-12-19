@@ -5534,11 +5534,18 @@ const DashboardPage: React.FC<{ showPersonalPanel?: boolean }> = ({ showPersonal
     window.addEventListener('storage', handleStorage);
     window.addEventListener(TEAM_SHOUT_UPDATED_EVENT, handleCustomUpdate as EventListener);
 
-    const intervalId = window.setInterval(syncShout, 10000);
+    const intervalId = window.setInterval(syncShout, 3000);
+    const handleVisibility = () => {
+      if (!document.hidden) {
+        syncShout();
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibility);
 
     return () => {
       window.removeEventListener('storage', handleStorage);
       window.removeEventListener(TEAM_SHOUT_UPDATED_EVENT, handleCustomUpdate as EventListener);
+      document.removeEventListener('visibilitychange', handleVisibility);
       window.clearInterval(intervalId);
     };
   }, [showPersonalPanel]);
