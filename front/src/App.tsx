@@ -5598,11 +5598,10 @@ const DashboardPage: React.FC<{ showPersonalPanel?: boolean }> = ({ showPersonal
 
       setTeamShout(message);
       setTeamShoutDraft(message);
-      if (message && message !== lastTeamShoutRef.current) {
+      if (message) {
         setShowTeamShoutPopup(true);
         lastTeamShoutRef.current = message;
-      }
-      if (!message) {
+      } else {
         setShowTeamShoutPopup(false);
         lastTeamShoutRef.current = '';
       }
