@@ -5410,6 +5410,10 @@ const DashboardPage: React.FC<{ showPersonalPanel?: boolean }> = ({ showPersonal
   const [currentCycleIndex, setCurrentCycleIndex] = useState(0);
   const [cycleCountdown, setCycleCountdown] = useState<number | null>(null);
   const apiBaseUrl = useMemo(() => resolveApiBaseUrl(), []);
+  const [showRecentAltaPanel, setShowRecentAltaPanel] = useState(false);
+  const [reclamoStats, setReclamoStats] = useState({ total: 0, resueltos: 0, rechazados: 0 });
+  const [reclamoStatsLoading, setReclamoStatsLoading] = useState(false);
+  const [reclamoStatsError, setReclamoStatsError] = useState<string | null>(null);
   const filterPersonalRecords = useCallback(
     (data: PersonalRecord[], clienteFilter: string, estadoFilter: string, agenteFilter: string) =>
       data.filter((registro) => {
@@ -5758,6 +5762,50 @@ const DashboardPage: React.FC<{ showPersonalPanel?: boolean }> = ({ showPersonal
     filterPersonalRecords,
     computePersonalStats,
   ]);
+
+  useEffect(() => {
+    if (!showPersonalPanel) {
+      return;
+    }
+    const controller = new AbortController();
+    const fetchReclamoStats = async () => {
+      try {
+        setReclamoStatsLoading(true);
+        setReclamoStatsError(null);
+        const response = await fetch(`${apiBaseUrl}/api/reclamos`, { signal: controller.signal });
+        if (!response.ok) {
+          throw new Error(`Error ${response.status}: ${response.statusText}`);
+        }
+        const payload = (await response.json()) as { data: ReclamoRecord[] };
+        if (!payload || !Array.isArray(payload.data)) {
+          throw new Error('Formato de respuesta inesperado');
+        }
+        const counts = payload.data.reduce(
+          (acc, reclamo) => {
+            acc.total += 1;
+            const status = (reclamo.status ?? '').toLowerCase();
+            if (status.includes('resuelto') || status.includes('finalizado') || status.includes('cerrado')) {
+              acc.resueltos += 1;
+            } else if (status.includes('rechaz')) {
+              acc.rechazados += 1;
+            }
+            return acc;
+          },
+          { total: 0, resueltos: 0, rechazados: 0 }
+        );
+        setReclamoStats(counts);
+      } catch (err) {
+        if ((err as Error).name === 'AbortError') {
+          return;
+        }
+        setReclamoStatsError((err as Error).message ?? 'No se pudieron cargar los reclamos.');
+      } finally {
+        setReclamoStatsLoading(false);
+      }
+    };
+    fetchReclamoStats();
+    return () => controller.abort();
+  }, [apiBaseUrl, showPersonalPanel]);
 
   const resetTeamForm = useCallback(() => {
     setEditingTeamId(null);
@@ -6184,6 +6232,39 @@ const DashboardPage: React.FC<{ showPersonalPanel?: boolean }> = ({ showPersonal
     [personalStatsData, statsClienteFilter, statsEstadoFilter, statsAgenteFilter, filterPersonalRecords]
   );
 
+  const recentAltaCounts = useMemo(() => {
+    const msInDay = 24 * 60 * 60 * 1000;
+    const now = Date.now();
+    const parseDateMs = (value: string | null | undefined): number | null => {
+      if (!value) return null;
+      const parsed = new Date(value);
+      const time = parsed.getTime();
+      return Number.isNaN(time) ? null : time;
+    };
+    return baseFilteredPersonal.reduce(
+      (acc, registro) => {
+        const dateMs = parseDateMs(registro.fechaAlta ?? null);
+        if (dateMs === null) {
+          return acc;
+        }
+        if (dateMs >= now - msInDay) {
+          acc.day += 1;
+        }
+        if (dateMs >= now - msInDay * 7) {
+          acc.week += 1;
+        }
+        if (dateMs >= now - msInDay * 30) {
+          acc.month += 1;
+        }
+        if (dateMs >= now - msInDay * 365) {
+          acc.year += 1;
+        }
+        return acc;
+      },
+      { day: 0, week: 0, month: 0, year: 0 }
+    );
+  }, [baseFilteredPersonal]);
+
   const matchesTeamMember = useCallback(
     (registro: PersonalRecord, member: TeamGroupMember) => {
       const agentId = registro.agenteId != null ? Number(registro.agenteId) : null;
@@ -6359,6 +6440,7 @@ const DashboardPage: React.FC<{ showPersonalPanel?: boolean }> = ({ showPersonal
               </div>
             </div>
           ) : null}
+
           {!monitorMode ? (
             <div className={`monitor-banner${monitorMode ? ' monitor-banner--active' : ''}`}>
               <div className="monitor-banner__info">
@@ -6542,6 +6624,15 @@ const DashboardPage: React.FC<{ showPersonalPanel?: boolean }> = ({ showPersonal
               <div className="secondary-panels__header">
                 <h3>Equipos</h3>
                 <p style={{ margin: 0 }}>Armá los bloques (nombre, color y miembros) que luego aparecen en el panel.</p>
+                <div className="secondary-panels__actions">
+                  <button
+                    type="button"
+                    className="secondary-action"
+                    onClick={() => setShowRecentAltaPanel((prev) => !prev)}
+                  >
+                    {showRecentAltaPanel ? 'Ocultar altas recientes' : 'Ver altas recientes'}
+                  </button>
+                </div>
               </div>
 
               <div className="team-editor">
@@ -6609,8 +6700,8 @@ const DashboardPage: React.FC<{ showPersonalPanel?: boolean }> = ({ showPersonal
                     <p className="form-info">Sumá nombres (y opcionalmente emails) para mapearlos con los agentes.</p>
                   ) : null}
                   <div className="team-editor__members-grid">
-                    {editingMembers.map((member, index) => (
-                      <div key={`${member.id ?? index}-${index}`} className="team-editor__member-row">
+                  {editingMembers.map((member, index) => (
+                    <div key={`${member.id ?? index}-${index}`} className="team-editor__member-row">
                         <label className="input-control">
                           <span>Elegir usuario</span>
                           <select
@@ -6773,6 +6864,96 @@ const DashboardPage: React.FC<{ showPersonalPanel?: boolean }> = ({ showPersonal
               );
             })}
           </div>
+
+          {showRecentAltaPanel ? (
+            <div className="recent-altas-strip">
+              <div style={{ marginBottom: '0.6rem' }}>
+                <h3 style={{ margin: 0 }}>Altas recientes</h3>
+                <p style={{ margin: 0, color: '#5a6a82' }}>Conteo de altas según filtros aplicados.</p>
+              </div>
+              <div className="recent-altas-strip__grid">
+                <div className="recent-altas-strip__item">
+                  <span className="recent-altas-strip__label">Último día</span>
+                  <div className="recent-altas-strip__meta">
+                    <span className="recent-altas-strip__pill">↗</span>
+                    <div className="recent-altas-strip__value">{statsLoading ? '—' : recentAltaCounts.day}</div>
+                  </div>
+                </div>
+                <div className="recent-altas-strip__item">
+                  <span className="recent-altas-strip__label">Última semana</span>
+                  <div className="recent-altas-strip__meta">
+                    <span className="recent-altas-strip__pill recent-altas-strip__pill--flat">→</span>
+                    <div className="recent-altas-strip__value">{statsLoading ? '—' : recentAltaCounts.week}</div>
+                  </div>
+                </div>
+                <div className="recent-altas-strip__item">
+                  <span className="recent-altas-strip__label">Último mes</span>
+                  <div className="recent-altas-strip__meta">
+                    <span className="recent-altas-strip__pill">↗</span>
+                    <div className="recent-altas-strip__value">{statsLoading ? '—' : recentAltaCounts.month}</div>
+                  </div>
+                </div>
+                <div className="recent-altas-strip__item">
+                  <span className="recent-altas-strip__label">Último año</span>
+                  <div className="recent-altas-strip__meta">
+                    <span className="recent-altas-strip__pill">↗</span>
+                    <div className="recent-altas-strip__value">{statsLoading ? '—' : recentAltaCounts.year}</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          ) : null}
+
+          {showRecentAltaPanel ? (
+            <div className="recent-altas-strip status-strip">
+              <div style={{ marginBottom: '0.6rem' }}>
+                <h3 style={{ margin: 0 }}>Bajas, suspendidos y reclamos</h3>
+                <p style={{ margin: 0, color: '#5a6a82' }}>Totales actuales y estado de reclamos.</p>
+              </div>
+              <div className="recent-altas-strip__grid">
+                <div className="recent-altas-strip__item">
+                  <span className="recent-altas-strip__label">Bajas</span>
+                  <div className="recent-altas-strip__meta">
+                    <span className="recent-altas-strip__pill recent-altas-strip__pill--down">↓</span>
+                    <div className="recent-altas-strip__value">{statsLoading ? '—' : personalStats.baja}</div>
+                  </div>
+                </div>
+                <div className="recent-altas-strip__item">
+                  <span className="recent-altas-strip__label">Suspendidos</span>
+                  <div className="recent-altas-strip__meta">
+                    <span className="recent-altas-strip__pill recent-altas-strip__pill--flat">→</span>
+                    <div className="recent-altas-strip__value">
+                      {statsLoading ? '—' : personalStats.suspendido}
+                    </div>
+                  </div>
+                </div>
+                <div className="recent-altas-strip__item">
+                  <span className="recent-altas-strip__label">Reclamos</span>
+                  <div className="recent-altas-strip__meta">
+                    <span className="recent-altas-strip__pill">ℹ</span>
+                    <div className="recent-altas-strip__value">
+                      {reclamoStatsLoading ? '—' : reclamoStats.total}
+                    </div>
+                  </div>
+                  <div className="status-strip__subgrid">
+                    <div className="status-strip__subitem">
+                      <small>Resueltos</small>
+                      <strong>{reclamoStatsLoading ? '—' : reclamoStats.resueltos}</strong>
+                    </div>
+                    <div className="status-strip__subitem">
+                      <small>Rechazados</small>
+                      <strong>{reclamoStatsLoading ? '—' : reclamoStats.rechazados}</strong>
+                    </div>
+                  </div>
+                  {reclamoStatsError ? (
+                    <small className="form-info form-info--error" style={{ marginTop: '0.35rem' }}>
+                      {reclamoStatsError}
+                    </small>
+                  ) : null}
+                </div>
+              </div>
+            </div>
+          ) : null}
         </>
       ) : null}
 
@@ -9817,6 +9998,7 @@ const PersonalPage: React.FC = () => {
   const navigate = useNavigate();
   const apiBaseUrl = useMemo(() => resolveApiBaseUrl(), []);
   const authUser = useStoredAuthUser();
+  const userRole = useMemo(() => getUserRole(authUser), [authUser]);
   const canManagePersonal = useMemo(() => isPersonalEditor(authUser), [authUser]);
   const actorHeaders = useMemo(() => buildActorHeaders(authUser), [authUser]);
   const personalFiltersStorageKey = useMemo(
@@ -9850,6 +10032,7 @@ const PersonalPage: React.FC = () => {
     () => (authUser?.email ?? '').trim().toLowerCase() === 'xmaldonado@logisticaargentinasrl.com.ar',
     [authUser?.email]
   );
+  const canCopyProtectedContacts = isElevatedRole(userRole);
 
   const fetchPersonal = useCallback(
     async (options?: { signal?: AbortSignal }) => {
@@ -10454,14 +10637,14 @@ const PersonalPage: React.FC = () => {
   const toggleContactVisibility = (registroId: number, field: 'phone' | 'email') => {
     const isCurrentlyRevealed =
       revealedContacts[registroId]?.[field === 'phone' ? 'phone' : 'email'] ?? false;
-    setRevealedContacts((prev) => {
-      const current = prev[registroId] ?? { phone: false, email: false };
-      const nextValue = field === 'phone' ? !current.phone : !current.email;
+    setRevealedContacts(() => {
+      if (isCurrentlyRevealed) {
+        return {};
+      }
       return {
-        ...prev,
         [registroId]: {
-          phone: field === 'phone' ? nextValue : current.phone,
-          email: field === 'email' ? nextValue : current.email,
+          phone: field === 'phone',
+          email: field === 'email',
         },
       };
     });
@@ -10470,17 +10653,39 @@ const PersonalPage: React.FC = () => {
     }
   };
 
+  const handleProtectedCopy = useCallback(
+    (event: React.ClipboardEvent) => {
+      if (!canCopyProtectedContacts) {
+        event.preventDefault();
+        event.stopPropagation();
+      }
+    },
+    [canCopyProtectedContacts]
+  );
+
   const renderProtectedValue = (registroId: number, field: 'phone' | 'email', value?: string | null) => {
     const hasValue = Boolean(value);
-    if (bypassContactGuard) {
-      return <span>{hasValue ? value : '—'}</span>;
-    }
-
     const isRevealed = revealedContacts[registroId]?.[field === 'phone' ? 'phone' : 'email'] ?? false;
     const displayValue = hasValue ? (isRevealed ? value : '••••••••') : '—';
 
+    if (bypassContactGuard) {
+      return (
+        <div
+          className="protected-cell"
+          onCopy={handleProtectedCopy}
+          style={{ userSelect: canCopyProtectedContacts ? 'text' : 'none' }}
+        >
+          <span>{hasValue ? value : '—'}</span>
+        </div>
+      );
+    }
+
     return (
-      <div className="protected-cell">
+      <div
+        className="protected-cell"
+        onCopy={handleProtectedCopy}
+        style={{ userSelect: canCopyProtectedContacts ? 'text' : 'none' }}
+      >
         <span>{displayValue}</span>
         {hasValue ? (
           <button
