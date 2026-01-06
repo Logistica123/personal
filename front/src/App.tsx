@@ -11122,6 +11122,7 @@ const LiquidacionesPage: React.FC = () => {
   const [fuelUploading, setFuelUploading] = useState(false);
   const [showFuelPasteModal, setShowFuelPasteModal] = useState(false);
   const [fuelPasteError, setFuelPasteError] = useState<string | null>(null);
+  const [fuelParentDocumentId, setFuelParentDocumentId] = useState<string>('');
   const pendingPreviewUrlsRef = useRef<string[]>([]);
   useEffect(() => {
     pendingPreviewUrlsRef.current = pendingUploads
@@ -11961,6 +11962,13 @@ const LiquidacionesPage: React.FC = () => {
     return MONTH_FILTER_OPTIONS.filter((option) => option.value !== 'unknown' || hasUnknown);
   }, [liquidacionFortnightSections]);
 
+  useEffect(() => {
+    const firstMain = liquidacionGroups[0]?.main?.id;
+    if (firstMain && (!fuelParentDocumentId || fuelParentDocumentId === '')) {
+      setFuelParentDocumentId(String(firstMain));
+    }
+  }, [liquidacionGroups, fuelParentDocumentId]);
+
   const liquidacionYearOptions = useMemo(() => {
     const years = new Set<string>();
     let hasUnknown = false;
@@ -12445,11 +12453,11 @@ const LiquidacionesPage: React.FC = () => {
         return false;
       }
 
-      try {
-        setFuelUploading(true);
-        if (!options?.silent) {
-          setUploadStatus(null);
-        }
+    try {
+      setFuelUploading(true);
+      if (!options?.silent) {
+        setUploadStatus(null);
+      }
 
         const formData = new FormData();
         formData.append('archivo', fuelInvoiceUpload.file);
@@ -12460,6 +12468,9 @@ const LiquidacionesPage: React.FC = () => {
         }
         formData.append('esFacturaCombustible', '1');
         formData.append('importeCombustible', trimmedFuelAmount);
+        if (fuelParentDocumentId) {
+          formData.append('parentDocumentId', fuelParentDocumentId);
+        }
 
         const response = await fetch(`${apiBaseUrl}/api/personal/${selectedPersonaId}/documentos`, {
           method: 'POST',
@@ -13357,11 +13368,25 @@ const LiquidacionesPage: React.FC = () => {
                   placeholder="0.00"
                 />
               </label>
+              <label className="input-control">
+                <span>Liquidación destino</span>
+                <select
+                  value={fuelParentDocumentId}
+                  onChange={(event) => setFuelParentDocumentId(event.target.value)}
+                >
+                  <option value="">Seleccioná la liquidación</option>
+                  {liquidacionGroups.map((group) => (
+                    <option key={group.main.id ?? `main-${group.main.nombre}`} value={group.main.id ?? ''}>
+                      {`${group.main.nombre ?? `Liquidación #${group.main.id ?? ''}`}${group.main.fechaCarga ? ` - ${group.main.fechaCarga}` : ''}`}
+                    </option>
+                  ))}
+                </select>
+              </label>
             </div>
             <div className="upload-dropzone upload-dropzone--compact" role="presentation">
               <div className="upload-dropzone__icon">🧾</div>
               <p>Arrastra y suelta la factura de combustible aquí</p>
-          <label className="secondary-action" style={{ cursor: 'pointer' }}>
+              <label className="secondary-action" style={{ cursor: 'pointer' }}>
             Seleccionar factura
             <input
               type="file"
