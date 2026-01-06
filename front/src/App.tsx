@@ -12338,11 +12338,11 @@ const LiquidacionesPage: React.FC = () => {
     setPasteError(null);
   };
 
-  const handleOpenFuelPasteModal = () => {
-    if (!selectedPersonaId) {
-      setUploadStatus({ type: 'error', message: 'Seleccioná un registro antes de pegar la factura de combustible.' });
-      return;
-    }
+    const handleOpenFuelPasteModal = () => {
+      if (!selectedPersonaId) {
+        setUploadStatus({ type: 'error', message: 'Seleccioná un registro antes de pegar la factura de combustible.' });
+        return;
+      }
     setFuelPasteError(null);
     setShowFuelPasteModal(true);
   };
@@ -12453,6 +12453,14 @@ const LiquidacionesPage: React.FC = () => {
         return false;
       }
 
+      if (!fuelParentDocumentId || fuelParentDocumentId.trim() === '') {
+        setUploadStatus({
+          type: 'error',
+          message: 'Seleccioná la liquidación destino para la factura de combustible.',
+        });
+        return false;
+      }
+
     try {
       setFuelUploading(true);
       if (!options?.silent) {
@@ -12524,12 +12532,16 @@ const LiquidacionesPage: React.FC = () => {
 
     const needsFuelInvoice = requiresFuelInvoice;
     const trimmedFuelAmount = fuelAmount.trim();
+    const hasFuelData =
+      hasUnlinkedFuelInvoice ||
+      (fuelInvoiceUpload && trimmedFuelAmount !== '' && fuelParentDocumentId.trim() !== '');
 
     if (needsFuelInvoice) {
-      if (!fuelInvoiceUpload && !hasUnlinkedFuelInvoice) {
+      if (!hasFuelData) {
         setUploadStatus({
           type: 'error',
-          message: 'Necesitás tener cargada la factura de combustible antes de subir las liquidaciones.',
+          message:
+            'Necesitás tener cargada la factura de combustible, importe y liquidación destino antes de subir las liquidaciones.',
         });
         return;
       }
@@ -12538,6 +12550,14 @@ const LiquidacionesPage: React.FC = () => {
         setUploadStatus({
           type: 'error',
           message: 'Ingresá el importe de la factura de combustible.',
+        });
+        return;
+      }
+
+      if (fuelInvoiceUpload && fuelParentDocumentId.trim() === '') {
+        setUploadStatus({
+          type: 'error',
+          message: 'Seleccioná la liquidación destino para la factura de combustible.',
         });
         return;
       }
@@ -13513,7 +13533,8 @@ const LiquidacionesPage: React.FC = () => {
               documentTypesLoading ||
               !selectedPersonaId ||
               !selectedDocumentTypeId ||
-              (requiresFuelInvoice && !hasUnlinkedFuelInvoice && (!fuelInvoiceUpload || fuelAmount.trim() === ''))
+              (requiresFuelInvoice &&
+                !(hasUnlinkedFuelInvoice || (fuelInvoiceUpload && fuelAmount.trim() !== '' && fuelParentDocumentId.trim() !== '')))
             }
           >
             {uploading ? 'Subiendo...' : 'Subir liquidaciones'}
