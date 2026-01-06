@@ -184,15 +184,29 @@ class PersonalDocumentController extends Controller
             ]);
         }
 
+        if ($request->boolean('esFacturaCombustible')) {
+            $combustibleType = FileType::query()->firstOrCreate(
+                ['nombre' => 'Factura combustible'],
+                ['vence' => false]
+            );
+
+            $request->merge([
+                'tipoArchivoId' => $combustibleType->id,
+            ]);
+        }
+
         $validator = Validator::make($request->all(), [
             'archivo' => ['required', 'file', 'max:51200'],
             'nombre' => ['nullable', 'string'],
             'tipoArchivoId' => ['required', 'integer', 'exists:fyle_types,id'],
             'fechaVencimiento' => ['nullable', 'date'],
+            'importeCombustible' => ['nullable', 'numeric', 'min:0'],
+            'attachFuelInvoices' => ['nullable', 'boolean'],
         ], [
             'tipoArchivoId.required' => 'Selecciona el tipo de documento.',
             'tipoArchivoId.exists' => 'El tipo de documento seleccionado no es válido.',
             'archivo.max' => 'El archivo es demasiado grande. Permitimos hasta 50 MB por liquidación.',
+            'importeCombustible.numeric' => 'El importe de combustible debe ser numérico.',
         ]);
 
         $validator->after(function ($validator) use ($request) {
@@ -208,6 +222,12 @@ class PersonalDocumentController extends Controller
 
             if ($tipo->vence && ! $request->filled('fechaVencimiento')) {
                 $validator->errors()->add('fechaVencimiento', 'Este tipo de documento requiere fecha de vencimiento.');
+            }
+
+            if ($request->boolean('esFacturaCombustible')) {
+                if (! $request->filled('importeCombustible')) {
+                    $validator->errors()->add('importeCombustible', 'Ingresá el importe de la factura de combustible.');
+                }
             }
         });
 
@@ -233,13 +253,23 @@ class PersonalDocumentController extends Controller
 
         $parsedFecha = $fechaVencimiento ? Carbon::parse($fechaVencimiento) : null;
 
+        $nombreOriginal = $validated['nombre'] ?? $file->getClientOriginalName();
+
+        if ($request->boolean('esFacturaCombustible') && $request->filled('importeCombustible')) {
+            $nombreOriginal = sprintf(
+                'Factura combustible - $%s - %s',
+                $request->input('importeCombustible'),
+                $nombreOriginal
+            );
+        }
+
         $documento = $persona->documentos()->create([
             'carpeta' => $directory,
             'ruta' => $storedPath,
             'parent_document_id' => $parentDocumentId,
             'download_url' => null,
             'disk' => $disk,
-            'nombre_original' => $validated['nombre'] ?? $file->getClientOriginalName(),
+            'nombre_original' => $nombreOriginal,
             'mime' => $file->getClientMimeType(),
             'size' => $file->getSize(),
             'tipo_archivo_id' => $validated['tipoArchivoId'],
@@ -276,6 +306,10 @@ class PersonalDocumentController extends Controller
             'origin' => $request->header('User-Agent'),
         ]);
 
+        if ($request->boolean('esLiquidacion') && $request->boolean('attachFuelInvoices')) {
+            $this->attachPendingFuelInvoices($persona, $documento);
+        }
+
         AuditLogger::log($request, 'document_create', 'documento', $documento->id, [
             'persona_id' => $persona->id,
             'nombre' => $documento->nombre_original,
@@ -297,6 +331,7 @@ class PersonalDocumentController extends Controller
                 'tipoId' => $documento->tipo_archivo_id,
                 'tipoNombre' => $documento->tipo?->nombre,
                 'requiereVencimiento' => (bool) $documento->tipo?->vence,
+                'importeCombustible' => $request->input('importeCombustible'),
             ],
         ], 201);
     }
@@ -627,6 +662,47 @@ class PersonalDocumentController extends Controller
         }
 
         return $parentId;
+    }
+
+    protected function attachPendingFuelInvoices(Persona $persona, Archivo $liquidacion): void
+    {
+        $fuelTypeIds = $this->resolveFuelTypeIds();
+
+        $pendingInvoices = $persona->documentos()
+            ->when($fuelTypeIds->isNotEmpty(), function ($query) use ($fuelTypeIds) {
+                $query->whereIn('tipo_archivo_id', $fuelTypeIds);
+            }, function ($query) {
+                $query->where(function ($inner) {
+                    $inner->whereRaw('LOWER(nombre_original) LIKE ?', ['%combust%'])
+                        ->orWhereRaw('LOWER(ruta) LIKE ?', ['%combust%']);
+                });
+            })
+            ->whereNull('parent_document_id')
+            ->where('id', '<>', $liquidacion->id)
+            ->get();
+
+        if ($pendingInvoices->isEmpty()) {
+            throw ValidationException::withMessages([
+                'facturaCombustible' => ['Debes cargar la factura de combustible antes de enviar la liquidación.'],
+            ]);
+        }
+
+        foreach ($pendingInvoices as $invoice) {
+            $invoice->parent_document_id = $liquidacion->id;
+            $invoice->save();
+        }
+    }
+
+    protected function resolveFuelTypeIds()
+    {
+        return FileType::query()
+            ->select('id', 'nombre')
+            ->get()
+            ->filter(function (FileType $tipo) {
+                $nombre = Str::lower($tipo->nombre ?? '');
+                return $nombre !== '' && Str::contains($nombre, 'combust');
+            })
+            ->pluck('id');
     }
 
     protected function streamExternalFile(?string $url, string $fileName, ?string $mime = null)

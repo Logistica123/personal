@@ -7,8 +7,11 @@ import {
   useParams,
   useLocation,
   Navigate,
+  Outlet,
 } from 'react-router-dom';
 import './App.css';
+
+const AUTH_STORAGE_KEY = 'authUser';
 
 const resolveApiUrl = (baseUrl: string, target?: string | null): string | null => {
   if (!target) {
@@ -974,6 +977,7 @@ type AuthUser = {
   name: string | null;
   email: string | null;
   role?: string | null;
+  token?: string | null;
 };
 
 const PERSONAL_EDITOR_EMAILS = [
@@ -1346,7 +1350,9 @@ const readAuthUserFromStorage = (): AuthUser | null => {
     return null;
   }
 
-  const raw = window.localStorage.getItem('authUser') ?? window.sessionStorage.getItem('authUser');
+  const raw =
+    window.localStorage.getItem(AUTH_STORAGE_KEY) ??
+    window.sessionStorage.getItem(AUTH_STORAGE_KEY);
   if (!raw) {
     return null;
   }
@@ -1357,6 +1363,51 @@ const readAuthUserFromStorage = (): AuthUser | null => {
     return null;
   }
 };
+
+const readAuthTokenFromStorage = (): string | null => {
+  const authUser = readAuthUserFromStorage();
+  const token = authUser?.token ?? null;
+
+  if (!token || typeof token !== 'string' || token.trim().length === 0) {
+    return null;
+  }
+
+  return token;
+};
+
+const installAuthFetchInterceptor = () => {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  const globalScope = window as Window & { __authFetchPatched?: boolean };
+  if (globalScope.__authFetchPatched) {
+    return;
+  }
+
+  const originalFetch = window.fetch.bind(window);
+  globalScope.__authFetchPatched = true;
+
+  window.fetch = (input: RequestInfo | URL, init?: RequestInit) => {
+    const token = readAuthTokenFromStorage();
+    const normalizedInit: RequestInit = { ...(init ?? {}) };
+    const headers = new Headers(init?.headers ?? {});
+
+    if (token && !headers.has('Authorization')) {
+      headers.set('Authorization', `Bearer ${token}`);
+    }
+
+    normalizedInit.headers = headers;
+
+    if (!normalizedInit.credentials) {
+      normalizedInit.credentials = 'include';
+    }
+
+    return originalFetch(input, normalizedInit);
+  };
+};
+
+installAuthFetchInterceptor();
 
 const useStoredAuthUser = (): AuthUser | null => {
   const [authUser, setAuthUser] = useState<AuthUser | null>(() => readAuthUserFromStorage());
@@ -2381,20 +2432,22 @@ const LoginPage: React.FC = () => {
           name: string | null;
           email: string | null;
           role?: string | null;
+          token?: string | null;
           totpEnabled?: boolean;
         };
       };
 
       const storage = rememberMe ? window.localStorage : window.sessionStorage;
       const otherStorage = rememberMe ? window.sessionStorage : window.localStorage;
-  const authPayload: AuthUser = {
-    id: payload.data.id,
-    name: payload.data.name ?? null,
-    email: payload.data.email ?? null,
-    role: payload.data.role ?? null,
-  };
-      storage.setItem('authUser', JSON.stringify(authPayload));
-      otherStorage.removeItem('authUser');
+      const authPayload: AuthUser = {
+        id: payload.data.id,
+        name: payload.data.name ?? null,
+        email: payload.data.email ?? null,
+        role: payload.data.role ?? null,
+        token: payload.data.token ?? null,
+      };
+      storage.setItem(AUTH_STORAGE_KEY, JSON.stringify(authPayload));
+      otherStorage.removeItem(AUTH_STORAGE_KEY);
       window.dispatchEvent(new CustomEvent('auth:updated'));
 
       navigate('/clientes', { replace: true });
@@ -3317,17 +3370,18 @@ const DashboardLayout: React.FC<{
             name: payload.data.name ?? authUser.name ?? null,
             email: payload.data.email ?? authUser.email ?? null,
             role: payload.data.role,
+            token: authUser.token ?? null,
           };
           setAuthUser(updated);
           try {
             const serialized = JSON.stringify(updated);
-            const hasLocal = Boolean(window.localStorage.getItem('authUser'));
-            const hasSession = Boolean(window.sessionStorage.getItem('authUser'));
+            const hasLocal = Boolean(window.localStorage.getItem(AUTH_STORAGE_KEY));
+            const hasSession = Boolean(window.sessionStorage.getItem(AUTH_STORAGE_KEY));
             if (hasLocal) {
-              window.localStorage.setItem('authUser', serialized);
+              window.localStorage.setItem(AUTH_STORAGE_KEY, serialized);
             }
             if (hasSession || (!hasLocal && !hasSession)) {
-              window.sessionStorage.setItem('authUser', serialized);
+              window.sessionStorage.setItem(AUTH_STORAGE_KEY, serialized);
             }
             window.dispatchEvent(new CustomEvent('auth:updated'));
           } catch {
@@ -3451,8 +3505,8 @@ const DashboardLayout: React.FC<{
 
   const handleLogout = () => {
     if (typeof window !== 'undefined') {
-      window.localStorage.removeItem('authUser');
-      window.sessionStorage.removeItem('authUser');
+      window.localStorage.removeItem(AUTH_STORAGE_KEY);
+      window.sessionStorage.removeItem(AUTH_STORAGE_KEY);
     }
     removeAttendanceRecordFromStorage(currentUserKey);
     setAttendanceRecord(null);
@@ -6184,8 +6238,8 @@ const DashboardPage: React.FC<{ showPersonalPanel?: boolean }> = ({ showPersonal
       if (authUser) {
         try {
           const serialized = JSON.stringify(authUser);
-          window.localStorage.setItem('authUser', serialized);
-          window.sessionStorage.setItem('authUser', serialized);
+          window.localStorage.setItem(AUTH_STORAGE_KEY, serialized);
+          window.sessionStorage.setItem(AUTH_STORAGE_KEY, serialized);
         } catch {
           // ignore storage errors
         }
@@ -11063,6 +11117,11 @@ const LiquidacionesPage: React.FC = () => {
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState<string | null>(null);
   const [pendingUploads, setPendingUploads] = useState<PendingPersonalUpload[]>([]);
+  const [fuelInvoiceUpload, setFuelInvoiceUpload] = useState<PendingPersonalUpload | null>(null);
+  const [fuelAmount, setFuelAmount] = useState('');
+  const [fuelUploading, setFuelUploading] = useState(false);
+  const [showFuelPasteModal, setShowFuelPasteModal] = useState(false);
+  const [fuelPasteError, setFuelPasteError] = useState<string | null>(null);
   const pendingPreviewUrlsRef = useRef<string[]>([]);
   useEffect(() => {
     pendingPreviewUrlsRef.current = pendingUploads
@@ -11167,6 +11226,28 @@ const LiquidacionesPage: React.FC = () => {
   const liquidacionType = useMemo(() => {
     return liquidacionTypeOptions[0] ?? null;
   }, [liquidacionTypeOptions]);
+  const fuelInvoiceType = useMemo(() => {
+    return documentTypes.find((tipo) => (tipo.nombre ?? '').toLowerCase().includes('combustible')) ?? null;
+  }, [documentTypes]);
+  const requiresFuelInvoice = useMemo(() => {
+    if (detail && typeof detail.combustibleValue === 'boolean') {
+      return detail.combustibleValue;
+    }
+    const label = detail?.combustible ?? '';
+    return label.toLowerCase() === 'si';
+  }, [detail]);
+  const hasUnlinkedFuelInvoice = useMemo(() => {
+    if (!detail?.documents) {
+      return false;
+    }
+
+    return detail.documents.some((doc) => {
+      const typeName = (doc.tipoNombre ?? doc.nombre ?? '').toLowerCase();
+      const looksFuel = typeName.includes('combust');
+      const isAttachment = doc.isAttachment ?? (doc.parentDocumentId !== null && doc.parentDocumentId !== undefined);
+      return looksFuel && !isAttachment;
+    });
+  }, [detail]);
 
   useEffect(() => {
     if (personaIdFromRoute !== selectedPersonaId) {
@@ -12067,6 +12148,13 @@ const LiquidacionesPage: React.FC = () => {
       prev.forEach((item) => revokeImagePreviewUrl(item.previewUrl));
       return [];
     });
+    setFuelInvoiceUpload((prev) => {
+      if (prev?.previewUrl) {
+        revokeImagePreviewUrl(prev.previewUrl);
+      }
+      return null;
+    });
+    setFuelAmount('');
     pendingPreviewUrlsRef.current = [];
     closePreviewModal();
   }, [closePreviewModal]);
@@ -12120,6 +12208,52 @@ const LiquidacionesPage: React.FC = () => {
     ]
   );
 
+  const prepareFuelInvoiceFromFiles = useCallback(
+    (files: File[]): { ok: true; upload: PendingPersonalUpload } | { ok: false; message: string } => {
+      if (!files || files.length === 0) {
+        return { ok: false, message: 'Seleccioná la factura de combustible.' };
+      }
+
+      if (!selectedPersonaId) {
+        return { ok: false, message: 'Seleccioná un registro antes de agregar la factura de combustible.' };
+      }
+
+      const file = files[0];
+      const typeId =
+        fuelInvoiceType?.id ??
+        liquidacionType?.id ??
+        (Number.isFinite(Number(selectedDocumentTypeId)) ? Number(selectedDocumentTypeId) : null);
+
+      if (!typeId) {
+        return { ok: false, message: 'No se pudo determinar el tipo de documento para la factura de combustible.' };
+      }
+
+      const targetDate = resolveFilteredTargetDate();
+      const fechaVencimiento = targetDate ?? (selectedDocumentType?.vence ? documentExpiry || null : null);
+
+      return {
+        ok: true,
+        upload: {
+          id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+          file,
+          typeId,
+          typeName: fuelInvoiceType?.nombre ?? 'Factura combustible',
+          fechaVencimiento,
+          previewUrl: createImagePreviewUrl(file),
+        },
+      };
+    },
+    [
+      selectedPersonaId,
+      fuelInvoiceType,
+      liquidacionType,
+      selectedDocumentTypeId,
+      resolveFilteredTargetDate,
+      selectedDocumentType?.vence,
+      documentExpiry,
+    ]
+  );
+
   const handlePendingFilesSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
     const files = event.target.files;
     if (!files || files.length === 0) {
@@ -12141,6 +12275,30 @@ const LiquidacionesPage: React.FC = () => {
       setDocumentExpiry('');
     }
 
+    event.target.value = '';
+  };
+
+  const handleFuelFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const files = event.target.files;
+    if (!files || files.length === 0) {
+      return;
+    }
+
+    const result = prepareFuelInvoiceFromFiles(Array.from(files));
+
+    if (!result.ok) {
+      setUploadStatus({ type: 'error', message: result.message });
+      event.target.value = '';
+      return;
+    }
+
+    setFuelInvoiceUpload((prev) => {
+      if (prev?.previewUrl) {
+        revokeImagePreviewUrl(prev.previewUrl);
+      }
+      return result.upload;
+    });
+    setUploadStatus(null);
     event.target.value = '';
   };
 
@@ -12170,6 +12328,62 @@ const LiquidacionesPage: React.FC = () => {
   const handleClosePasteModal = () => {
     setShowPasteModal(false);
     setPasteError(null);
+  };
+
+  const handleOpenFuelPasteModal = () => {
+    if (!selectedPersonaId) {
+      setUploadStatus({ type: 'error', message: 'Seleccioná un registro antes de pegar la factura de combustible.' });
+      return;
+    }
+    setFuelPasteError(null);
+    setShowFuelPasteModal(true);
+  };
+
+  const handleCloseFuelPasteModal = () => {
+    setShowFuelPasteModal(false);
+    setFuelPasteError(null);
+  };
+
+  const handleFuelPasteAreaPaste = (event: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    event.preventDefault();
+
+    const clipboardItems = Array.from(event.clipboardData.items ?? []);
+    const files: File[] = [];
+
+    clipboardItems.forEach((item) => {
+      if (item.kind === 'file' && item.type.startsWith('image/')) {
+        const blob = item.getAsFile();
+        if (blob) {
+          const extension = blob.type.split('/')[1] ?? 'png';
+          const fileName = `factura-combustible-${Date.now()}-${Math.random().toString(36).slice(2)}.${extension}`;
+          const file = new File([blob], fileName, { type: blob.type });
+          files.push(file);
+        }
+      }
+    });
+
+    if (files.length === 0) {
+      setFuelPasteError('El portapapeles no contiene una imagen. Copiá la factura de combustible e inténtalo nuevamente.');
+      return;
+    }
+
+    const result = prepareFuelInvoiceFromFiles(files);
+
+    if (!result.ok) {
+      setFuelPasteError(result.message);
+      return;
+    }
+
+    setFuelInvoiceUpload((prev) => {
+      if (prev?.previewUrl) {
+        revokeImagePreviewUrl(prev.previewUrl);
+      }
+      return result.upload;
+    });
+    setUploadStatus({ type: 'success', message: 'Factura de combustible agregada desde el portapapeles.' });
+
+    setShowFuelPasteModal(false);
+    setFuelPasteError(null);
   };
 
   const handlePasteAreaPaste = (event: React.ClipboardEvent<HTMLTextAreaElement>) => {
@@ -12213,8 +12427,225 @@ const LiquidacionesPage: React.FC = () => {
     setPasteError(null);
   };
 
+  const uploadFuelInvoiceOnly = useCallback(
+    async (options?: { silent?: boolean }) => {
+      if (!selectedPersonaId) {
+        setUploadStatus({ type: 'error', message: 'Seleccioná un registro antes de subir la factura de combustible.' });
+        return false;
+      }
+
+      if (!fuelInvoiceUpload) {
+        setUploadStatus({ type: 'error', message: 'Seleccioná la factura de combustible.' });
+        return false;
+      }
+
+      const trimmedFuelAmount = fuelAmount.trim();
+      if (trimmedFuelAmount === '') {
+        setUploadStatus({ type: 'error', message: 'Ingresá el importe de la factura de combustible.' });
+        return false;
+      }
+
+      try {
+        setFuelUploading(true);
+        if (!options?.silent) {
+          setUploadStatus(null);
+        }
+
+        const formData = new FormData();
+        formData.append('archivo', fuelInvoiceUpload.file);
+        formData.append('nombre', fuelInvoiceUpload.file.name.trim());
+        formData.append('tipoArchivoId', String(fuelInvoiceUpload.typeId));
+        if (fuelInvoiceUpload.fechaVencimiento) {
+          formData.append('fechaVencimiento', fuelInvoiceUpload.fechaVencimiento);
+        }
+        formData.append('esFacturaCombustible', '1');
+        formData.append('importeCombustible', trimmedFuelAmount);
+
+        const response = await fetch(`${apiBaseUrl}/api/personal/${selectedPersonaId}/documentos`, {
+          method: 'POST',
+          body: formData,
+        });
+
+        if (!response.ok) {
+          let message = `Error ${response.status}: ${response.statusText}`;
+          try {
+            const payload = await response.json();
+            if (typeof payload?.message === 'string') {
+              message = payload.message;
+            } else if (payload?.errors) {
+              const firstError = Object.values(payload.errors)[0];
+              if (Array.isArray(firstError) && typeof firstError[0] === 'string') {
+                message = firstError[0];
+              }
+            }
+          } catch {
+            // ignore
+          }
+
+          throw new Error(message);
+        }
+
+        if (!options?.silent) {
+          setUploadStatus({ type: 'success', message: 'Factura de combustible cargada correctamente.' });
+        }
+
+        if (fuelInvoiceUpload.previewUrl) {
+          revokeImagePreviewUrl(fuelInvoiceUpload.previewUrl);
+        }
+        setFuelInvoiceUpload(null);
+        setFuelAmount('');
+        refreshPersonaDetail();
+        return true;
+      } catch (err) {
+        setUploadStatus({ type: 'error', message: (err as Error).message ?? 'No se pudo subir la factura de combustible.' });
+        return false;
+      } finally {
+        setFuelUploading(false);
+      }
+    },
+    [apiBaseUrl, fuelInvoiceUpload, fuelAmount, refreshPersonaDetail, selectedPersonaId]
+  );
+
   const handleUploadDocumentos = async () => {
     if (!selectedPersonaId || pendingUploads.length === 0) {
+      return;
+    }
+
+    const needsFuelInvoice = requiresFuelInvoice;
+    const trimmedFuelAmount = fuelAmount.trim();
+
+    if (needsFuelInvoice) {
+      if (!fuelInvoiceUpload && !hasUnlinkedFuelInvoice) {
+        setUploadStatus({
+          type: 'error',
+          message: 'Necesitás tener cargada la factura de combustible antes de subir las liquidaciones.',
+        });
+        return;
+      }
+
+      if (fuelInvoiceUpload && trimmedFuelAmount === '') {
+        setUploadStatus({
+          type: 'error',
+          message: 'Ingresá el importe de la factura de combustible.',
+        });
+        return;
+      }
+    }
+
+    // Si tenemos factura de combustible seleccionada, la subimos primero.
+    if (needsFuelInvoice && fuelInvoiceUpload) {
+      const uploaded = await uploadFuelInvoiceOnly({ silent: true });
+      if (!uploaded) {
+        return;
+      }
+    }
+
+    try {
+      setUploading(true);
+      setUploadStatus(null);
+      let parentDocumentId: number | null = null;
+
+      for (const item of pendingUploads) {
+        const formData = new FormData();
+        formData.append('archivo', item.file);
+        const rawName = item.file.name.trim();
+        const hasLiquidKeyword = /liquid/i.test(rawName);
+        const friendlyName = hasLiquidKeyword ? rawName : `Liquidación - ${rawName}`;
+        formData.append('nombre', friendlyName);
+        formData.append('tipoArchivoId', String(item.typeId));
+        if (item.fechaVencimiento) {
+          formData.append('fechaVencimiento', item.fechaVencimiento);
+        }
+        formData.append('esLiquidacion', '1');
+        if (needsFuelInvoice) {
+          formData.append('attachFuelInvoices', '1');
+        }
+
+        const response = await fetch(`${apiBaseUrl}/api/personal/${selectedPersonaId}/documentos`, {
+          method: 'POST',
+          body: formData,
+        });
+
+        if (!response.ok) {
+          let message = `Error ${response.status}: ${response.statusText}`;
+          try {
+            const payload = await response.json();
+            if (typeof payload?.message === 'string') {
+              message = payload.message;
+            } else if (payload?.errors) {
+              const firstError = Object.values(payload.errors)[0];
+              if (Array.isArray(firstError) && typeof firstError[0] === 'string') {
+                message = firstError[0];
+              }
+            }
+          } catch {
+            // ignore
+          }
+
+          throw new Error(message);
+        }
+
+        const payload = (await response.json()) as { data?: { id?: number } };
+        if (parentDocumentId === null && payload?.data?.id) {
+          parentDocumentId = payload.data.id;
+        }
+      }
+
+      if (needsFuelInvoice && fuelInvoiceUpload) {
+        if (parentDocumentId === null) {
+          throw new Error('No se pudo vincular la factura de combustible a la liquidación principal.');
+        }
+
+        const formData = new FormData();
+        formData.append('archivo', fuelInvoiceUpload.file);
+        formData.append('nombre', fuelInvoiceUpload.file.name.trim());
+        formData.append('tipoArchivoId', String(fuelInvoiceUpload.typeId));
+        if (fuelInvoiceUpload.fechaVencimiento) {
+          formData.append('fechaVencimiento', fuelInvoiceUpload.fechaVencimiento);
+        }
+        formData.append('parentDocumentId', String(parentDocumentId));
+        formData.append('esFacturaCombustible', '1');
+        formData.append('importeCombustible', trimmedFuelAmount);
+
+        const response = await fetch(`${apiBaseUrl}/api/personal/${selectedPersonaId}/documentos`, {
+          method: 'POST',
+          body: formData,
+        });
+
+        if (!response.ok) {
+          let message = `Error ${response.status}: ${response.statusText}`;
+          try {
+            const payload = await response.json();
+            if (typeof payload?.message === 'string') {
+              message = payload.message;
+            } else if (payload?.errors) {
+              const firstError = Object.values(payload.errors)[0];
+              if (Array.isArray(firstError) && typeof firstError[0] === 'string') {
+                message = firstError[0];
+              }
+            }
+          } catch {
+            // ignore
+          }
+
+          throw new Error(message);
+        }
+      }
+
+      setUploadStatus({ type: 'success', message: 'Liquidaciones cargadas correctamente.' });
+      clearPendingUploads();
+      setDocumentExpiry('');
+      refreshPersonaDetail();
+    } catch (err) {
+      setUploadStatus({ type: 'error', message: (err as Error).message ?? 'No se pudieron subir los archivos.' });
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const handleSaveLiquidacionesSolo = async () => {
+    if (!selectedPersonaId || pendingUploads.length === 0) {
+      setUploadStatus({ type: 'error', message: 'Agregá al menos una liquidación antes de guardar.' });
       return;
     }
 
@@ -12260,12 +12691,12 @@ const LiquidacionesPage: React.FC = () => {
         }
       }
 
-      setUploadStatus({ type: 'success', message: 'Liquidaciones cargadas correctamente.' });
+      setUploadStatus({ type: 'success', message: 'Liquidaciones guardadas.' });
       clearPendingUploads();
       setDocumentExpiry('');
       refreshPersonaDetail();
     } catch (err) {
-      setUploadStatus({ type: 'error', message: (err as Error).message ?? 'No se pudieron subir los archivos.' });
+      setUploadStatus({ type: 'error', message: (err as Error).message ?? 'No se pudieron guardar las liquidaciones.' });
     } finally {
       setUploading(false);
     }
@@ -12903,6 +13334,75 @@ const LiquidacionesPage: React.FC = () => {
           ) : null}
         </div>
 
+        {requiresFuelInvoice ? (
+          <div className="card" style={{ marginTop: '1rem' }}>
+            <h4 style={{ marginTop: 0 }}>Factura de combustible</h4>
+            <p className="form-info form-info--warning">
+              Este personal tiene combustible. Subí la factura de combustible y el importe. Luego podrás enviar la liquidación.
+            </p>
+            {hasUnlinkedFuelInvoice ? (
+              <p className="form-info form-info--success">
+                Ya hay una factura de combustible cargada. Puedes subir la liquidación directamente.
+              </p>
+            ) : null}
+            <div className="form-grid">
+              <label className="input-control">
+                <span>Importe a facturar</span>
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={fuelAmount}
+                  onChange={(event) => setFuelAmount(event.target.value)}
+                  placeholder="0.00"
+                />
+              </label>
+            </div>
+            <div className="upload-dropzone upload-dropzone--compact" role="presentation">
+              <div className="upload-dropzone__icon">🧾</div>
+              <p>Arrastra y suelta la factura de combustible aquí</p>
+          <label className="secondary-action" style={{ cursor: 'pointer' }}>
+            Seleccionar factura
+            <input
+              type="file"
+              onChange={handleFuelFileSelect}
+              style={{ display: 'none' }}
+            />
+          </label>
+          <button
+            type="button"
+            className="secondary-action secondary-action--ghost"
+            onClick={handleOpenFuelPasteModal}
+          >
+            Pegar captura (Ctrl+V)
+          </button>
+          {fuelInvoiceUpload ? (
+            <div className="pending-upload-list" style={{ marginTop: '0.75rem' }}>
+              <div className="pending-upload-item">
+                <div>
+                  <strong>{fuelInvoiceUpload.file.name}</strong>
+                      <span>{fuelInvoiceUpload.typeName ?? 'Factura combustible'}</span>
+                    </div>
+                    <button
+                      type="button"
+                      className="pending-upload-remove"
+                      onClick={() => {
+                        if (fuelInvoiceUpload?.previewUrl) {
+                          revokeImagePreviewUrl(fuelInvoiceUpload.previewUrl);
+                        }
+                        setFuelInvoiceUpload(null);
+                      }}
+                      aria-label="Quitar factura de combustible"
+                    >
+                      ×
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+            </div>
+          </div>
+        ) : null}
+
         {uploadStatus ? (
           <p
             className={
@@ -12940,6 +13440,26 @@ const LiquidacionesPage: React.FC = () => {
           </div>
         ) : null}
 
+        {showFuelPasteModal ? (
+          <div className="paste-overlay" role="dialog" aria-modal="true">
+            <div className="paste-modal">
+              <h3>Pegar factura de combustible desde el portapapeles</h3>
+              <p className="paste-modal__hint">Hacé clic en el cuadro y presioná Ctrl + V para pegar la imagen.</p>
+              <textarea
+                onPaste={handleFuelPasteAreaPaste}
+                placeholder="Ctrl + V para pegar la captura…"
+                spellCheck={false}
+              />
+              {fuelPasteError ? <p className="form-info form-info--error">{fuelPasteError}</p> : null}
+              <div className="paste-modal__actions">
+                <button type="button" className="secondary-action" onClick={handleCloseFuelPasteModal}>
+                  Cancelar
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
+
         <div className="form-actions">
           <button
             type="button"
@@ -12951,6 +13471,15 @@ const LiquidacionesPage: React.FC = () => {
           </button>
           <button
             type="button"
+            className="secondary-action secondary-action--ghost"
+            onClick={handleSaveLiquidacionesSolo}
+            disabled={uploading || pendingUploads.length === 0 || !selectedPersonaId || !selectedDocumentTypeId}
+            title="Guarda las liquidaciones sin requerir factura de combustible todavía."
+          >
+            {uploading ? 'Guardando...' : 'Guardar liquidaciones'}
+          </button>
+          <button
+            type="button"
             className="primary-action"
             onClick={handleUploadDocumentos}
             disabled={
@@ -12958,7 +13487,8 @@ const LiquidacionesPage: React.FC = () => {
               pendingUploads.length === 0 ||
               documentTypesLoading ||
               !selectedPersonaId ||
-              !selectedDocumentTypeId
+              !selectedDocumentTypeId ||
+              (requiresFuelInvoice && !hasUnlinkedFuelInvoice && (!fuelInvoiceUpload || fuelAmount.trim() === ''))
             }
           >
             {uploading ? 'Subiendo...' : 'Subir liquidaciones'}
@@ -18633,21 +19163,21 @@ const handleAdelantoFieldChange =
                 (reviewPersonaDetail.observacionTarifa && reviewPersonaDetail.observacionTarifa.trim().length > 0) ? (
                   <div className="review-text-group">
                     {reviewPersonaDetail.observaciones && reviewPersonaDetail.observaciones.trim().length > 0 ? (
-                    <div className="review-text">
-                      <strong>Observaciones internas</strong>
-                      <p>{reviewPersonaDetail.observaciones}</p>
-                    </div>
-                  ) : null}
-                  {reviewPersonaDetail.observacionTarifa && reviewPersonaDetail.observacionTarifa.trim().length > 0 ? (
-                    <div className="review-text">
-                      <strong>Observación sobre tarifa</strong>
-                      <p>{reviewPersonaDetail.observacionTarifa}</p>
-                    </div>
-                  ) : null}
-                </div>
-              ) : null}
+                      <div className="review-text">
+                        <strong>Observaciones internas</strong>
+                        <p>{reviewPersonaDetail.observaciones}</p>
+                      </div>
+                    ) : null}
+                    {reviewPersonaDetail.observacionTarifa && reviewPersonaDetail.observacionTarifa.trim().length > 0 ? (
+                      <div className="review-text">
+                        <strong>Observación sobre tarifa</strong>
+                        <p>{reviewPersonaDetail.observacionTarifa}</p>
+                      </div>
+                    ) : null}
+                  </div>
+                ) : null}
 
-              <div className="review-documents">
+                <div className="review-documents">
                 <h3>Documentación cargada</h3>
                 {reviewPersonaDetail.documents.length > 0
                   ? (() => {
@@ -25900,13 +26430,12 @@ const RequireAccess: React.FC<{ section: AccessSection; children: React.ReactEle
   const authUser = useStoredAuthUser();
   const userRole = useMemo(() => getUserRole(authUser), [authUser]);
 
-  // Para reclamos permitimos acceso a todos los roles (evitar redirección a personal)
-  if (section === 'reclamos') {
-    return children;
-  }
-
   if (!authUser?.role) {
     return <Navigate to="/" replace />;
+  }
+
+  if (section === 'reclamos') {
+    return children;
   }
 
   if (!canAccessSection(userRole, section)) {
@@ -25916,9 +26445,20 @@ const RequireAccess: React.FC<{ section: AccessSection; children: React.ReactEle
   return children;
 };
 
+const RequireAuth: React.FC = () => {
+  const authUser = useStoredAuthUser();
+
+  if (!authUser?.role) {
+    return <Navigate to="/" replace />;
+  }
+
+  return <Outlet />;
+};
+
 const AppRoutes: React.FC = () => (
   <Routes>
     <Route path="/" element={<LoginPage />} />
+    <Route element={<RequireAuth />}>
       <Route
         path="/dashboard"
         element={
@@ -26067,23 +26607,24 @@ const AppRoutes: React.FC = () => (
           </RequireAccess>
         }
       />
-    <Route
-      path="/clientes/:clienteId/editar"
-      element={
-        <RequireAccess section="clientes">
-          <EditClientPage />
-        </RequireAccess>
-      }
-    />
-    <Route
-      path="/auditoria"
-      element={
-        <RequireAccess section="auditoria">
-          <AuditPage />
-        </RequireAccess>
-      }
-    />
-    <Route path="/configuracion" element={<ConfigurationPage />} />
+      <Route
+        path="/clientes/:clienteId/editar"
+        element={
+          <RequireAccess section="clientes">
+            <EditClientPage />
+          </RequireAccess>
+        }
+      />
+      <Route
+        path="/auditoria"
+        element={
+          <RequireAccess section="auditoria">
+            <AuditPage />
+          </RequireAccess>
+        }
+      />
+      <Route path="/configuracion" element={<ConfigurationPage />} />
+    </Route>
     <Route path="*" element={<Navigate to="/" replace />} />
   </Routes>
 );
