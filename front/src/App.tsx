@@ -27,6 +27,15 @@ const resolveApiUrl = (baseUrl: string, target?: string | null): string | null =
   }
 };
 
+const parseJsonSafe = async (response: Response) => {
+  const contentType = response.headers.get('content-type') || '';
+  if (!contentType.toLowerCase().includes('application/json')) {
+    const text = await response.text();
+    throw new Error(text.slice(0, 200) || 'Respuesta no es JSON');
+  }
+  return response.json();
+};
+
 const solicitudCacheKey = (id: number | null | undefined) =>
   (id != null ? `personal:solicitudData:${id}` : '');
 
@@ -12488,7 +12497,7 @@ const LiquidacionesPage: React.FC = () => {
         if (!response.ok) {
           let message = `Error ${response.status}: ${response.statusText}`;
           try {
-            const payload = await response.json();
+            const payload = await parseJsonSafe(response);
             if (typeof payload?.message === 'string') {
               message = payload.message;
             } else if (payload?.errors) {
@@ -12497,8 +12506,11 @@ const LiquidacionesPage: React.FC = () => {
                 message = firstError[0];
               }
             }
-          } catch {
-            // ignore
+          } catch (parseErr) {
+            const fallback = (parseErr as Error).message;
+            if (fallback) {
+              message = fallback;
+            }
           }
 
           throw new Error(message);
@@ -12600,7 +12612,7 @@ const LiquidacionesPage: React.FC = () => {
         if (!response.ok) {
           let message = `Error ${response.status}: ${response.statusText}`;
           try {
-            const payload = await response.json();
+            const payload = await parseJsonSafe(response);
             if (typeof payload?.message === 'string') {
               message = payload.message;
             } else if (payload?.errors) {
@@ -12609,8 +12621,11 @@ const LiquidacionesPage: React.FC = () => {
                 message = firstError[0];
               }
             }
-          } catch {
-            // ignore
+          } catch (parseErr) {
+            const fallback = (parseErr as Error).message;
+            if (fallback) {
+              message = fallback;
+            }
           }
 
           throw new Error(message);
