@@ -129,6 +129,7 @@ type AccessSection =
   | 'clientes'
   | 'unidades'
   | 'usuarios'
+  | 'personal'
   | 'reclamos'
   | 'control-horario'
   | 'liquidaciones'
@@ -830,6 +831,8 @@ const canAccessSection = (role: UserRole, section: AccessSection): boolean => {
       return role !== 'operator' && role !== 'asesor';
     case 'reclamos':
       return true; // Todos los roles pueden crear/ver reclamos (incluido asesor)
+    case 'personal':
+      return role === 'encargado' || role === 'admin' || role === 'admin2';
     default:
       return true;
   }
@@ -3684,9 +3687,11 @@ const DashboardLayout: React.FC<{
               Gestión de usuarios
             </NavLink>
           ) : null}
-          <NavLink to="/personal" className={({ isActive }) => `sidebar-link${isActive ? ' is-active' : ''}`}>
-            Personal
-          </NavLink>
+          {canAccessSection(userRole, 'personal') ? (
+            <NavLink to="/personal" className={({ isActive }) => `sidebar-link${isActive ? ' is-active' : ''}`}>
+              Personal
+            </NavLink>
+          ) : null}
           {canAccessSection(userRole, 'reclamos') ? (
             <NavLink to="/reclamos" className={({ isActive }) => `sidebar-link${isActive ? ' is-active' : ''}`}>
               Reclamos
@@ -26517,7 +26522,7 @@ const RequireAccess: React.FC<{ section: AccessSection; children: React.ReactEle
   }
 
   if (!canAccessSection(userRole, section)) {
-    return <Navigate to="/personal" replace />;
+    return <Navigate to="/informacion-general" replace />;
   }
 
   return children;
@@ -26613,9 +26618,30 @@ const AppRoutes: React.FC = () => (
           </RequireAccess>
         }
       />
-      <Route path="/personal" element={<PersonalPage />} />
-      <Route path="/personal/nuevo" element={<PersonalCreatePage />} />
-      <Route path="/personal/:personaId/editar" element={<PersonalEditPage />} />
+      <Route
+        path="/personal"
+        element={
+          <RequireAccess section="personal">
+            <PersonalPage />
+          </RequireAccess>
+        }
+      />
+      <Route
+        path="/personal/nuevo"
+        element={
+          <RequireAccess section="personal">
+            <PersonalCreatePage />
+          </RequireAccess>
+        }
+      />
+      <Route
+        path="/personal/:personaId/editar"
+        element={
+          <RequireAccess section="personal">
+            <PersonalEditPage />
+          </RequireAccess>
+        }
+      />
       <Route
         path="/liquidaciones"
         element={
