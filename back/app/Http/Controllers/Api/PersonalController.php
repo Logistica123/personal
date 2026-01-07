@@ -27,12 +27,12 @@ use Illuminate\Support\Str;
 
 class PersonalController extends Controller
 {
-    protected array $personalEditorEmails = [
-        'dgimenez@logisticaargentinasrl.com.ar',
-        'msanchez@logisticaargentinasrl.com.ar',
-        'morellfrancisco@gmail.com',
-        'xmaldonado@logisticaargentinasrl.com.ar',
-        'monica@logisticaargentinasrl.com.ar',
+    protected array $personalEditorRoles = [
+        'admin',
+        'admin2',
+        'administrador',
+        'administrador2',
+        'encargado',
     ];
 
     protected function resolveActorEmail(Request $request): ?string
@@ -77,11 +77,19 @@ class PersonalController extends Controller
 
     protected function ensureCanManagePersonal(Request $request, ?Persona $persona = null): void
     {
-        $actorEmail = $this->resolveActorEmail($request);
-        $isAllowed = $actorEmail && in_array($actorEmail, $this->personalEditorEmails, true);
-        $isPendingSolicitud = $persona && (! $persona->aprobado) && ($persona->es_solicitud ?? false);
+        $actor = $request->user();
+        $actorRole = $actor?->role;
 
-        if ($isAllowed || $isPendingSolicitud) {
+        if (! $actorRole) {
+            $actorEmail = $this->resolveActorEmail($request);
+            if ($actorEmail) {
+                $actorRole = User::query()
+                    ->whereRaw('LOWER(email) = ?', [$actorEmail])
+                    ->value('role');
+            }
+        }
+
+        if ($actorRole && in_array($actorRole, $this->personalEditorRoles, true)) {
             return;
         }
 
@@ -92,6 +100,8 @@ class PersonalController extends Controller
 
     public function index(Request $request): JsonResponse
     {
+        $this->ensureCanManagePersonal($request);
+
         $liquidacionTypeIds = $this->resolveLiquidacionTypeIds();
 
         $query = Persona::query()
@@ -165,8 +175,10 @@ class PersonalController extends Controller
     }
 
     public function show($id): JsonResponse
-{
-    $persona = Persona::withTrashed()
+    {
+        $this->ensureCanManagePersonal(request());
+
+        $persona = Persona::withTrashed()
         ->with([
             'cliente:id,nombre',
             'unidad:id,matricula,marca,modelo',
@@ -507,6 +519,8 @@ class PersonalController extends Controller
 
     public function meta(): JsonResponse
     {
+        $this->ensureCanManagePersonal(request());
+
         return response()->json([
             'perfiles' => [
                 ['value' => 1, 'label' => 'Dueño y chofer'],
@@ -1148,11 +1162,14 @@ class PersonalController extends Controller
                     'documento' => $documento->id,
                 ], true);
 
+                $nombre = $documento->nombre_original ?? basename($documento->ruta ?? '');
+                $importeCombustible = $this->parseFuelAmount($nombre);
+
                 return [
                     'id' => $documento->id,
                     'parentDocumentId' => $documento->parent_document_id,
                     'isAttachment' => $documento->parent_document_id !== null,
-                    'nombre' => $documento->nombre_original ?? basename($documento->ruta ?? ''),
+                    'nombre' => $nombre,
                     'downloadUrl' => $relativeDownloadUrl,
                     'absoluteDownloadUrl' => $absoluteDownloadUrl,
                     'mime' => $documento->mime,
@@ -1164,6 +1181,7 @@ class PersonalController extends Controller
                     'tipoId' => $documento->tipo_archivo_id,
                     'tipoNombre' => $documento->tipo?->nombre,
                     'requiereVencimiento' => (bool) $documento->tipo?->vence,
+                    'importeCombustible' => $importeCombustible,
                 ];
             })->values(),
             'comments' => $persona->comments->map(function ($comment) {
@@ -1342,6 +1360,32 @@ class PersonalController extends Controller
         }
 
         return $periods;
+    }
+
+    protected function parseFuelAmount(?string $name): ?float
+    {
+        if (! $name) {
+            return null;
+        }
+
+        if (! preg_match('/\\$\\s*([\\d.,]+)/', $name, $matches)) {
+            return null;
+        }
+
+        $raw = trim($matches[1]);
+        if ($raw === '') {
+            return null;
+        }
+
+        $normalized = $raw;
+        if (str_contains($normalized, ',') && str_contains($normalized, '.')) {
+            $normalized = str_replace('.', '', $normalized);
+            $normalized = str_replace(',', '.', $normalized);
+        } elseif (str_contains($normalized, ',')) {
+            $normalized = str_replace(',', '.', $normalized);
+        }
+
+        return is_numeric($normalized) ? (float) $normalized : null;
     }
 
     protected function resolveDocumentDate(Archivo $document): ?Carbon

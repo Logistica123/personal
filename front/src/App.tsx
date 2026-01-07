@@ -423,6 +423,7 @@ type PersonalDetail = {
     requiereVencimiento: boolean;
     parentDocumentId: number | null;
     isAttachment: boolean;
+    importeCombustible?: number | null;
   }>;
   comments: Array<{
     id: number;
@@ -997,14 +998,26 @@ const PERSONAL_EDITOR_EMAILS = [
   'monica@logisticaargentinasrl.com.ar',
 ];
 
+const PERSONAL_EDITOR_ROLES = new Set([
+  'admin',
+  'admin2',
+  'administrador',
+  'administrador2',
+  'encargado',
+]);
+
 const normalizeEmail = (email: string | null | undefined): string | null => {
   const normalized = email?.trim().toLowerCase() ?? '';
   return normalized.length > 0 ? normalized : null;
 };
 
 const isPersonalEditor = (authUser: AuthUser | null | undefined): boolean => {
-  // Permitir que cualquier usuario edite/gestione personal
-  return true;
+  const role = authUser?.role?.trim().toLowerCase();
+  if (role && PERSONAL_EDITOR_ROLES.has(role)) {
+    return true;
+  }
+  const email = normalizeEmail(authUser?.email);
+  return email ? PERSONAL_EDITOR_EMAILS.includes(email) : false;
 };
 
 const buildActorHeaders = (authUser: AuthUser | null | undefined): Record<string, string> => {
@@ -1409,7 +1422,7 @@ const installAuthFetchInterceptor = () => {
     normalizedInit.headers = headers;
 
     if (!normalizedInit.credentials) {
-      normalizedInit.credentials = 'include';
+      normalizedInit.credentials = 'same-origin';
     }
 
     return originalFetch(input, normalizedInit);
@@ -3683,9 +3696,11 @@ const DashboardLayout: React.FC<{
               Gestión de usuarios
             </NavLink>
           ) : null}
-          <NavLink to="/personal" className={({ isActive }) => `sidebar-link${isActive ? ' is-active' : ''}`}>
-            Personal
-          </NavLink>
+          {isPersonalEditor(authUser) ? (
+            <NavLink to="/personal" className={({ isActive }) => `sidebar-link${isActive ? ' is-active' : ''}`}>
+              Personal
+            </NavLink>
+          ) : null}
           {canAccessSection(userRole, 'reclamos') ? (
             <NavLink to="/reclamos" className={({ isActive }) => `sidebar-link${isActive ? ' is-active' : ''}`}>
               Reclamos
@@ -12491,6 +12506,7 @@ const LiquidacionesPage: React.FC = () => {
 
         const response = await fetch(`${apiBaseUrl}/api/personal/${selectedPersonaId}/documentos`, {
           method: 'POST',
+          headers: { Accept: 'application/json' },
           body: formData,
         });
 
@@ -12547,6 +12563,7 @@ const LiquidacionesPage: React.FC = () => {
     const hasFuelData =
       hasUnlinkedFuelInvoice ||
       (fuelInvoiceUpload && trimmedFuelAmount !== '' && fuelParentDocumentId.trim() !== '');
+    const shouldAttachFuelInvoices = needsFuelInvoice && hasUnlinkedFuelInvoice && !fuelInvoiceUpload;
 
     if (needsFuelInvoice) {
       if (!hasFuelData) {
@@ -12600,12 +12617,13 @@ const LiquidacionesPage: React.FC = () => {
           formData.append('fechaVencimiento', item.fechaVencimiento);
         }
         formData.append('esLiquidacion', '1');
-        if (needsFuelInvoice) {
+        if (shouldAttachFuelInvoices) {
           formData.append('attachFuelInvoices', '1');
         }
 
         const response = await fetch(`${apiBaseUrl}/api/personal/${selectedPersonaId}/documentos`, {
           method: 'POST',
+          headers: { Accept: 'application/json' },
           body: formData,
         });
 
@@ -12655,6 +12673,7 @@ const LiquidacionesPage: React.FC = () => {
 
         const response = await fetch(`${apiBaseUrl}/api/personal/${selectedPersonaId}/documentos`, {
           method: 'POST',
+          headers: { Accept: 'application/json' },
           body: formData,
         });
 
@@ -12714,6 +12733,7 @@ const LiquidacionesPage: React.FC = () => {
 
         const response = await fetch(`${apiBaseUrl}/api/personal/${selectedPersonaId}/documentos`, {
           method: 'POST',
+          headers: { Accept: 'application/json' },
           body: formData,
         });
 
@@ -13157,6 +13177,7 @@ const LiquidacionesPage: React.FC = () => {
                   <th>Tipo</th>
                   <th>Fecha</th>
                   <th>Peso</th>
+                  <th>Importe a facturar</th>
                   <th style={{ width: '200px' }}>Acciones</th>
                 </tr>
               </thead>
@@ -13187,6 +13208,11 @@ const LiquidacionesPage: React.FC = () => {
                                       : group.main.fechaCarga ?? '—'}
                                 </td>
                                 <td>{formatFileSize(group.main.size)}</td>
+                                <td>
+                                  {group.main.importeCombustible != null
+                                    ? formatCurrency(group.main.importeCombustible)
+                                    : '—'}
+                                </td>
                                 <td className="table-actions">
                                   <button
                                     type="button"
@@ -13237,6 +13263,11 @@ const LiquidacionesPage: React.FC = () => {
                                           : attachment.fechaCarga ?? '—'}
                                     </td>
                                     <td>{formatFileSize(attachment.size)}</td>
+                                    <td>
+                                      {attachment.importeCombustible != null
+                                        ? formatCurrency(attachment.importeCombustible)
+                                        : '—'}
+                                    </td>
                                     <td className="table-actions">
                                       <button
                                         type="button"
