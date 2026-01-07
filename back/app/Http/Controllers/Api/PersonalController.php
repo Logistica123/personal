@@ -28,8 +28,6 @@ use Illuminate\Support\Str;
 class PersonalController extends Controller
 {
     protected array $personalEditorRoles = [
-        'admin',
-        'admin2',
         'administrador',
         'administrador2',
         'encargado',
