@@ -27,10 +27,12 @@ use Illuminate\Support\Str;
 
 class PersonalController extends Controller
 {
-    protected array $personalEditorRoles = [
-        'administrador',
-        'administrador2',
-        'encargado',
+    protected array $personalEditorEmails = [
+        'dgimenez@logisticaargentinasrl.com.ar',
+        'msanchez@logisticaargentinasrl.com.ar',
+        'morellfrancisco@gmail.com',
+        'xmaldonado@logisticaargentinasrl.com.ar',
+        'monica@logisticaargentinasrl.com.ar',
     ];
 
     protected function resolveActorEmail(Request $request): ?string
@@ -75,19 +77,11 @@ class PersonalController extends Controller
 
     protected function ensureCanManagePersonal(Request $request, ?Persona $persona = null): void
     {
-        $actor = $request->user();
-        $actorRole = $actor?->role;
+        $actorEmail = $this->resolveActorEmail($request);
+        $isAllowed = $actorEmail && in_array($actorEmail, $this->personalEditorEmails, true);
+        $isPendingSolicitud = $persona && (! $persona->aprobado) && ($persona->es_solicitud ?? false);
 
-        if (! $actorRole) {
-            $actorEmail = $this->resolveActorEmail($request);
-            if ($actorEmail) {
-                $actorRole = User::query()
-                    ->whereRaw('LOWER(email) = ?', [$actorEmail])
-                    ->value('role');
-            }
-        }
-
-        if ($actorRole && in_array($actorRole, $this->personalEditorRoles, true)) {
+        if ($isAllowed || $isPendingSolicitud) {
             return;
         }
 
@@ -98,8 +92,6 @@ class PersonalController extends Controller
 
     public function index(Request $request): JsonResponse
     {
-        $this->ensureCanManagePersonal($request);
-
         $liquidacionTypeIds = $this->resolveLiquidacionTypeIds();
 
         $query = Persona::query()
@@ -174,8 +166,6 @@ class PersonalController extends Controller
 
     public function show($id): JsonResponse
     {
-        $this->ensureCanManagePersonal(request());
-
         $persona = Persona::withTrashed()
         ->with([
             'cliente:id,nombre',
@@ -517,8 +507,6 @@ class PersonalController extends Controller
 
     public function meta(): JsonResponse
     {
-        $this->ensureCanManagePersonal(request());
-
         return response()->json([
             'perfiles' => [
                 ['value' => 1, 'label' => 'Dueño y chofer'],

@@ -998,26 +998,14 @@ const PERSONAL_EDITOR_EMAILS = [
   'monica@logisticaargentinasrl.com.ar',
 ];
 
-const PERSONAL_EDITOR_ROLES = new Set([
-  'admin',
-  'admin2',
-  'administrador',
-  'administrador2',
-  'encargado',
-]);
-
 const normalizeEmail = (email: string | null | undefined): string | null => {
   const normalized = email?.trim().toLowerCase() ?? '';
   return normalized.length > 0 ? normalized : null;
 };
 
 const isPersonalEditor = (authUser: AuthUser | null | undefined): boolean => {
-  const role = authUser?.role?.trim().toLowerCase();
-  if (role && PERSONAL_EDITOR_ROLES.has(role)) {
-    return true;
-  }
-  const email = normalizeEmail(authUser?.email);
-  return email ? PERSONAL_EDITOR_EMAILS.includes(email) : false;
+  // Permitir que cualquier usuario edite/gestione personal
+  return true;
 };
 
 const buildActorHeaders = (authUser: AuthUser | null | undefined): Record<string, string> => {
@@ -3696,11 +3684,9 @@ const DashboardLayout: React.FC<{
               Gestión de usuarios
             </NavLink>
           ) : null}
-          {isPersonalEditor(authUser) ? (
-            <NavLink to="/personal" className={({ isActive }) => `sidebar-link${isActive ? ' is-active' : ''}`}>
-              Personal
-            </NavLink>
-          ) : null}
+          <NavLink to="/personal" className={({ isActive }) => `sidebar-link${isActive ? ' is-active' : ''}`}>
+            Personal
+          </NavLink>
           {canAccessSection(userRole, 'reclamos') ? (
             <NavLink to="/reclamos" className={({ isActive }) => `sidebar-link${isActive ? ' is-active' : ''}`}>
               Reclamos
