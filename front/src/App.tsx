@@ -425,6 +425,7 @@ type PersonalDetail = {
     parentDocumentId: number | null;
     isAttachment: boolean;
     importeCombustible?: number | null;
+    importeFacturar?: number | null;
   }>;
   comments: Array<{
     id: number;
@@ -11134,6 +11135,7 @@ const LiquidacionesPage: React.FC = () => {
   const [pendingUploads, setPendingUploads] = useState<PendingPersonalUpload[]>([]);
   const [fuelInvoiceUpload, setFuelInvoiceUpload] = useState<PendingPersonalUpload | null>(null);
   const [fuelAmount, setFuelAmount] = useState('');
+  const [facturarAmount, setFacturarAmount] = useState('');
   const [fuelUploading, setFuelUploading] = useState(false);
   const [showFuelPasteModal, setShowFuelPasteModal] = useState(false);
   const [fuelPasteError, setFuelPasteError] = useState<string | null>(null);
@@ -12551,9 +12553,12 @@ const LiquidacionesPage: React.FC = () => {
 
     const needsFuelInvoice = requiresFuelInvoice;
     const trimmedFuelAmount = fuelAmount.trim();
+    const trimmedFacturarAmount = facturarAmount.trim();
     const hasFuelData =
       hasUnlinkedFuelInvoice ||
-      (fuelInvoiceUpload && trimmedFuelAmount !== '' && fuelParentDocumentId.trim() !== '');
+      (fuelInvoiceUpload &&
+        trimmedFuelAmount !== '' &&
+        (fuelParentDocumentId.trim() !== '' || pendingUploads.length > 0));
     const shouldAttachFuelInvoices = needsFuelInvoice && hasUnlinkedFuelInvoice && !fuelInvoiceUpload;
 
     if (needsFuelInvoice) {
@@ -12574,7 +12579,7 @@ const LiquidacionesPage: React.FC = () => {
         return;
       }
 
-      if (fuelInvoiceUpload && fuelParentDocumentId.trim() === '') {
+      if (fuelInvoiceUpload && fuelParentDocumentId.trim() === '' && pendingUploads.length === 0) {
         setUploadStatus({
           type: 'error',
           message: 'Seleccioná la liquidación destino para la factura de combustible.',
@@ -12584,7 +12589,7 @@ const LiquidacionesPage: React.FC = () => {
     }
 
     // Si tenemos factura de combustible seleccionada, la subimos primero.
-    if (needsFuelInvoice && fuelInvoiceUpload) {
+    if (needsFuelInvoice && fuelInvoiceUpload && fuelParentDocumentId.trim() !== '') {
       const uploaded = await uploadFuelInvoiceOnly({ silent: true });
       if (!uploaded) {
         return;
@@ -12604,6 +12609,9 @@ const LiquidacionesPage: React.FC = () => {
         const friendlyName = hasLiquidKeyword ? rawName : `Liquidación - ${rawName}`;
         formData.append('nombre', friendlyName);
         formData.append('tipoArchivoId', String(item.typeId));
+        if (parentDocumentId === null && trimmedFacturarAmount !== '') {
+          formData.append('importeFacturar', trimmedFacturarAmount);
+        }
         if (item.fechaVencimiento) {
           formData.append('fechaVencimiento', item.fechaVencimiento);
         }
@@ -12686,11 +12694,19 @@ const LiquidacionesPage: React.FC = () => {
 
           throw new Error(message);
         }
+
+        if (fuelInvoiceUpload.previewUrl) {
+          revokeImagePreviewUrl(fuelInvoiceUpload.previewUrl);
+        }
+        setFuelInvoiceUpload(null);
+        setFuelAmount('');
+        setFacturarAmount('');
       }
 
       setUploadStatus({ type: 'success', message: 'Liquidaciones cargadas correctamente.' });
       clearPendingUploads();
       setDocumentExpiry('');
+      setFacturarAmount('');
       refreshPersonaDetail();
     } catch (err) {
       setUploadStatus({ type: 'error', message: (err as Error).message ?? 'No se pudieron subir los archivos.' });
@@ -12717,6 +12733,9 @@ const LiquidacionesPage: React.FC = () => {
         const friendlyName = hasLiquidKeyword ? rawName : `Liquidación - ${rawName}`;
         formData.append('nombre', friendlyName);
         formData.append('tipoArchivoId', String(item.typeId));
+        if (facturarAmount.trim() !== '') {
+          formData.append('importeFacturar', facturarAmount.trim());
+        }
         if (item.fechaVencimiento) {
           formData.append('fechaVencimiento', item.fechaVencimiento);
         }
@@ -12751,6 +12770,7 @@ const LiquidacionesPage: React.FC = () => {
       setUploadStatus({ type: 'success', message: 'Liquidaciones guardadas.' });
       clearPendingUploads();
       setDocumentExpiry('');
+      setFacturarAmount('');
       refreshPersonaDetail();
     } catch (err) {
       setUploadStatus({ type: 'error', message: (err as Error).message ?? 'No se pudieron guardar las liquidaciones.' });
@@ -13200,8 +13220,8 @@ const LiquidacionesPage: React.FC = () => {
                                 </td>
                                 <td>{formatFileSize(group.main.size)}</td>
                                 <td>
-                                  {group.main.importeCombustible != null
-                                    ? formatCurrency(group.main.importeCombustible)
+                                  {group.main.importeFacturar != null
+                                    ? formatCurrency(group.main.importeFacturar)
                                     : '—'}
                                 </td>
                                 <td className="table-actions">
@@ -13255,8 +13275,8 @@ const LiquidacionesPage: React.FC = () => {
                                     </td>
                                     <td>{formatFileSize(attachment.size)}</td>
                                     <td>
-                                      {attachment.importeCombustible != null
-                                        ? formatCurrency(attachment.importeCombustible)
+                                      {attachment.importeFacturar != null
+                                        ? formatCurrency(attachment.importeFacturar)
                                         : '—'}
                                     </td>
                                     <td className="table-actions">
@@ -13415,7 +13435,7 @@ const LiquidacionesPage: React.FC = () => {
             ) : null}
             <div className="form-grid">
               <label className="input-control">
-                <span>Importe a facturar</span>
+                <span>Importe combustible</span>
                 <input
                   type="number"
                   min="0"
@@ -13481,6 +13501,19 @@ const LiquidacionesPage: React.FC = () => {
                   </div>
                 </div>
               ) : null}
+            </div>
+            <div className="form-grid" style={{ marginTop: '0.75rem' }}>
+              <label className="input-control">
+                <span>Importe a facturar</span>
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={facturarAmount}
+                  onChange={(event) => setFacturarAmount(event.target.value)}
+                  placeholder="0.00"
+                />
+              </label>
             </div>
           </div>
         ) : null}
@@ -13570,8 +13603,11 @@ const LiquidacionesPage: React.FC = () => {
               documentTypesLoading ||
               !selectedPersonaId ||
               !selectedDocumentTypeId ||
-              (requiresFuelInvoice &&
-                !(hasUnlinkedFuelInvoice || (fuelInvoiceUpload && fuelAmount.trim() !== '' && fuelParentDocumentId.trim() !== '')))
+            (requiresFuelInvoice &&
+              !(hasUnlinkedFuelInvoice ||
+                (fuelInvoiceUpload &&
+                  fuelAmount.trim() !== '' &&
+                  (fuelParentDocumentId.trim() !== '' || pendingUploads.length > 0))))
             }
           >
             {uploading ? 'Subiendo...' : 'Subir liquidaciones'}

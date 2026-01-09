@@ -93,6 +93,11 @@ class PersonalController extends Controller
     public function index(Request $request): JsonResponse
     {
         $liquidacionTypeIds = $this->resolveLiquidacionTypeIds();
+        $fuelTypeIds = $this->resolveFuelTypeIds();
+        $documentTypeIds = $liquidacionTypeIds
+            ->merge($fuelTypeIds)
+            ->unique()
+            ->values();
 
         $query = Persona::query()
             ->with([
@@ -104,18 +109,20 @@ class PersonalController extends Controller
                 'estado:id,nombre',
                 'dueno:id,persona_id,nombreapellido,fecha_nacimiento,email,telefono,cuil,cuil_cobrador,cbu_alias,observaciones',
                 'aprobadoPor:id,name',
-                'documentos' => function ($documentsQuery) use ($liquidacionTypeIds) {
+                'documentos' => function ($documentsQuery) use ($documentTypeIds) {
                     $documentsQuery
                         ->select('id', 'persona_id', 'parent_document_id', 'nombre_original', 'tipo_archivo_id', 'fecha_vencimiento', 'created_at')
                         ->with('tipo:id,nombre');
 
-                    if ($liquidacionTypeIds->isNotEmpty()) {
-                        $documentsQuery->whereIn('tipo_archivo_id', $liquidacionTypeIds);
+                    if ($documentTypeIds->isNotEmpty()) {
+                        $documentsQuery->whereIn('tipo_archivo_id', $documentTypeIds);
                     } else {
                         $documentsQuery->where(function ($inner) {
                             $inner
                                 ->whereRaw('LOWER(nombre_original) LIKE ?', ['%liquid%'])
-                                ->orWhereRaw('LOWER(ruta) LIKE ?', ['%liquid%']);
+                                ->orWhereRaw('LOWER(ruta) LIKE ?', ['%liquid%'])
+                                ->orWhereRaw('LOWER(nombre_original) LIKE ?', ['%combust%'])
+                                ->orWhereRaw('LOWER(ruta) LIKE ?', ['%combust%']);
                         });
                     }
 
@@ -175,7 +182,13 @@ class PersonalController extends Controller
             'agenteResponsable:id,name',
             'estado:id,nombre',
             'dueno:id,persona_id,nombreapellido,fecha_nacimiento,email,telefono,cuil,cuil_cobrador,cbu_alias,observaciones',
-            'documentos' => fn ($query) => $query->with('tipo:id,nombre,vence')->orderByDesc('created_at'),
+            'documentos' => fn ($query) => $query
+                ->with([
+                    'tipo:id,nombre,vence',
+                    'children:id,parent_document_id,nombre_original,tipo_archivo_id',
+                    'children.tipo:id,nombre',
+                ])
+                ->orderByDesc('created_at'),
             'comments.user:id,name',
             'histories.user:id,name',
         ])
@@ -1149,7 +1162,7 @@ class PersonalController extends Controller
                 ], true);
 
                 $nombre = $documento->nombre_original ?? basename($documento->ruta ?? '');
-                $importeCombustible = $this->parseFuelAmount($nombre);
+                $importeCombustible = $this->resolveFuelAmountForDocument($documento, $nombre);
 
                 return [
                     'id' => $documento->id,
@@ -1168,6 +1181,7 @@ class PersonalController extends Controller
                     'tipoNombre' => $documento->tipo?->nombre,
                     'requiereVencimiento' => (bool) $documento->tipo?->vence,
                     'importeCombustible' => $importeCombustible,
+                    'importeFacturar' => $documento->importe_facturar,
                 ];
             })->values(),
             'comments' => $persona->comments->map(function ($comment) {
@@ -1315,6 +1329,18 @@ class PersonalController extends Controller
             ->pluck('id');
     }
 
+    protected function resolveFuelTypeIds(): \Illuminate\Support\Collection
+    {
+        return FileType::query()
+            ->select('id', 'nombre')
+            ->get()
+            ->filter(function (FileType $tipo) {
+                $nombre = Str::lower($tipo->nombre ?? '');
+                return $nombre !== '' && Str::contains($nombre, 'combust');
+            })
+            ->pluck('id');
+    }
+
     protected function buildLiquidacionPeriods(iterable $documents): array
     {
         $periods = [];
@@ -1372,6 +1398,33 @@ class PersonalController extends Controller
         }
 
         return is_numeric($normalized) ? (float) $normalized : null;
+    }
+
+    protected function resolveFuelAmountForDocument(Archivo $documento, ?string $nombre): ?float
+    {
+        if ($documento->parent_document_id) {
+            return null;
+        }
+
+        $fromChildren = $documento->children
+            ? $documento->children
+                ->filter(function (Archivo $child) {
+                    $typeName = Str::lower($child->tipo?->nombre ?? '');
+                    $name = Str::lower($child->nombre_original ?? '');
+                    return Str::contains($typeName, 'combust') || Str::contains($name, 'combust');
+                })
+                ->map(function (Archivo $child) {
+                    return $this->parseFuelAmount($child->nombre_original ?? '');
+                })
+                ->filter()
+                ->values()
+            : collect();
+
+        if ($fromChildren->isNotEmpty()) {
+            return $fromChildren->sum();
+        }
+
+        return $this->parseFuelAmount($nombre);
     }
 
     protected function resolveDocumentDate(Archivo $document): ?Carbon

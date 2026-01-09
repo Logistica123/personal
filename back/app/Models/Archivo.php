@@ -26,6 +26,7 @@ class Archivo extends Model
         'mime',
         'size',
         'fecha_vencimiento',
+        'importe_facturar',
     ];
 
     protected $dates = [

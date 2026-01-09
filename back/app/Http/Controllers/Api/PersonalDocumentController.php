@@ -45,6 +45,7 @@ class PersonalDocumentController extends Controller
                     'tipoId' => $documento->tipo_archivo_id,
                     'tipoNombre' => $documento->tipo?->nombre,
                     'requiereVencimiento' => (bool) $documento->tipo?->vence,
+                    'importeFacturar' => $documento->importe_facturar,
                 ];
             })
             ->values();
@@ -85,15 +86,28 @@ class PersonalDocumentController extends Controller
             })
             ->pluck('id');
 
+        $fuelTypeIds = $this->resolveFuelTypeIds();
+
+        $documentTypeIds = $liquidacionTypeIds
+            ->merge($fuelTypeIds)
+            ->unique()
+            ->values();
+
         $documentos = $persona->documentos()
-            ->with(['tipo:id,nombre,vence'])
-            ->when($liquidacionTypeIds->isNotEmpty(), function ($query) use ($liquidacionTypeIds) {
-                $query->whereIn('tipo_archivo_id', $liquidacionTypeIds);
+            ->with([
+                'tipo:id,nombre,vence',
+                'children:id,parent_document_id,nombre_original,tipo_archivo_id',
+                'children.tipo:id,nombre',
+            ])
+            ->when($documentTypeIds->isNotEmpty(), function ($query) use ($documentTypeIds) {
+                $query->whereIn('tipo_archivo_id', $documentTypeIds);
             }, function ($query) {
                 $query->where(function ($inner) {
                     $inner
                         ->whereRaw('LOWER(nombre_original) LIKE ?', ['%liquid%'])
-                        ->orWhereRaw('LOWER(ruta) LIKE ?', ['%liquid%']);
+                        ->orWhereRaw('LOWER(ruta) LIKE ?', ['%liquid%'])
+                        ->orWhereRaw('LOWER(nombre_original) LIKE ?', ['%combust%'])
+                        ->orWhereRaw('LOWER(ruta) LIKE ?', ['%combust%']);
                 });
             })
             ->orderByDesc('created_at')
@@ -112,6 +126,7 @@ class PersonalDocumentController extends Controller
                 $nombre = $documento->nombre_original
                     ?? $documento->tipo?->nombre
                     ?? basename($documento->ruta ?? '') ?: 'Liquidación';
+                $importeCombustible = $this->resolveFuelAmountForDocument($documento, $nombre);
 
                 return [
                     'id' => $documento->id,
@@ -129,6 +144,8 @@ class PersonalDocumentController extends Controller
                     'tipoId' => $documento->tipo_archivo_id,
                     'tipoNombre' => $documento->tipo?->nombre,
                     'requiereVencimiento' => (bool) $documento->tipo?->vence,
+                    'importeCombustible' => $importeCombustible,
+                    'importeFacturar' => $documento->importe_facturar,
                 ];
             })
             ->values();
@@ -201,12 +218,14 @@ class PersonalDocumentController extends Controller
             'tipoArchivoId' => ['required', 'integer', 'exists:fyle_types,id'],
             'fechaVencimiento' => ['nullable', 'date'],
             'importeCombustible' => ['nullable', 'numeric', 'min:0'],
+            'importeFacturar' => ['nullable', 'numeric', 'min:0'],
             'attachFuelInvoices' => ['nullable', 'boolean'],
         ], [
             'tipoArchivoId.required' => 'Selecciona el tipo de documento.',
             'tipoArchivoId.exists' => 'El tipo de documento seleccionado no es válido.',
             'archivo.max' => 'El archivo es demasiado grande. Permitimos hasta 50 MB por liquidación.',
             'importeCombustible.numeric' => 'El importe de combustible debe ser numérico.',
+            'importeFacturar.numeric' => 'El importe a facturar debe ser numérico.',
         ]);
 
         $validator->after(function ($validator) use ($request) {
@@ -274,6 +293,7 @@ class PersonalDocumentController extends Controller
             'size' => $file->getSize(),
             'tipo_archivo_id' => $validated['tipoArchivoId'],
             'fecha_vencimiento' => $parsedFecha,
+            'importe_facturar' => $validated['importeFacturar'] ?? null,
         ]);
 
         if ($parsedFecha) {
@@ -332,6 +352,7 @@ class PersonalDocumentController extends Controller
                 'tipoNombre' => $documento->tipo?->nombre,
                 'requiereVencimiento' => (bool) $documento->tipo?->vence,
                 'importeCombustible' => $request->input('importeCombustible'),
+                'importeFacturar' => $documento->importe_facturar,
             ],
         ], 201);
     }
@@ -358,9 +379,11 @@ class PersonalDocumentController extends Controller
             'nombre' => ['nullable', 'string'],
             'tipoArchivoId' => ['nullable', 'integer', 'exists:fyle_types,id'],
             'fechaVencimiento' => ['nullable', 'date'],
+            'importeFacturar' => ['nullable', 'numeric', 'min:0'],
         ], [
             'tipoArchivoId.exists' => 'El tipo de documento seleccionado no es válido.',
             'archivo.max' => 'El archivo es demasiado grande. Permitimos hasta 50 MB por liquidación.',
+            'importeFacturar.numeric' => 'El importe a facturar debe ser numérico.',
         ]);
 
         $validator->after(function ($validator) use ($request) {
@@ -436,6 +459,10 @@ class PersonalDocumentController extends Controller
             $documento->parent_document_id = $parentDocumentId;
         }
 
+        if (array_key_exists('importeFacturar', $validated)) {
+            $documento->importe_facturar = $validated['importeFacturar'] ?? null;
+        }
+
         $documento->save();
         $documento->loadMissing('tipo:id,nombre,vence');
 
@@ -459,6 +486,7 @@ class PersonalDocumentController extends Controller
                 'tipoId' => $documento->tipo_archivo_id,
                 'tipoNombre' => $documento->tipo?->nombre,
                 'requiereVencimiento' => (bool) $documento->tipo?->vence,
+                'importeFacturar' => $documento->importe_facturar,
             ],
         ]);
     }
@@ -705,6 +733,59 @@ class PersonalDocumentController extends Controller
             ->pluck('id');
     }
 
+    protected function parseFuelAmount(?string $name): ?float
+    {
+        if (! $name) {
+            return null;
+        }
+
+        if (! preg_match('/\\$\\s*([\\d.,]+)/', $name, $matches)) {
+            return null;
+        }
+
+        $raw = trim($matches[1]);
+        if ($raw === '') {
+            return null;
+        }
+
+        $normalized = $raw;
+        if (str_contains($normalized, ',') && str_contains($normalized, '.')) {
+            $normalized = str_replace('.', '', $normalized);
+            $normalized = str_replace(',', '.', $normalized);
+        } elseif (str_contains($normalized, ',')) {
+            $normalized = str_replace(',', '.', $normalized);
+        }
+
+        return is_numeric($normalized) ? (float) $normalized : null;
+    }
+
+    protected function resolveFuelAmountForDocument(Archivo $documento, ?string $nombre): ?float
+    {
+        if ($documento->parent_document_id) {
+            return null;
+        }
+
+        $fromChildren = $documento->children
+            ? $documento->children
+                ->filter(function (Archivo $child) {
+                    $typeName = Str::lower($child->tipo?->nombre ?? '');
+                    $name = Str::lower($child->nombre_original ?? '');
+                    return Str::contains($typeName, 'combust') || Str::contains($name, 'combust');
+                })
+                ->map(function (Archivo $child) {
+                    return $this->parseFuelAmount($child->nombre_original ?? '');
+                })
+                ->filter()
+                ->values()
+            : collect();
+
+        if ($fromChildren->isNotEmpty()) {
+            return $fromChildren->sum();
+        }
+
+        return $this->parseFuelAmount($nombre);
+    }
+
     protected function streamExternalFile(?string $url, string $fileName, ?string $mime = null)
     {
         if (! $url || ! preg_match('/^https?:\/\//i', $url)) {
@@ -866,7 +947,7 @@ class PersonalDocumentController extends Controller
 
         $documento->delete();
 
-        AuditLogger::log($request, 'document_delete', 'documento', $documento->id, [
+        AuditLogger::log(request(), 'document_delete', 'documento', $documento->id, [
             'persona_id' => $persona->id,
             'nombre' => $documento->nombre_original,
             'tipo_archivo_id' => $documento->tipo_archivo_id,
