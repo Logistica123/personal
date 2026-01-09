@@ -426,6 +426,7 @@ type PersonalDetail = {
     isAttachment: boolean;
     importeCombustible?: number | null;
     importeFacturar?: number | null;
+    pendiente?: boolean;
   }>;
   comments: Array<{
     id: number;
@@ -11134,7 +11135,6 @@ const LiquidacionesPage: React.FC = () => {
   const [detailError, setDetailError] = useState<string | null>(null);
   const [pendingUploads, setPendingUploads] = useState<PendingPersonalUpload[]>([]);
   const [fuelInvoiceUpload, setFuelInvoiceUpload] = useState<PendingPersonalUpload | null>(null);
-  const [fuelAmount, setFuelAmount] = useState('');
   const [facturarAmount, setFacturarAmount] = useState('');
   const [fuelUploading, setFuelUploading] = useState(false);
   const [showFuelPasteModal, setShowFuelPasteModal] = useState(false);
@@ -11247,6 +11247,14 @@ const LiquidacionesPage: React.FC = () => {
   const fuelInvoiceType = useMemo(() => {
     return documentTypes.find((tipo) => (tipo.nombre ?? '').toLowerCase().includes('combustible')) ?? null;
   }, [documentTypes]);
+  const isFuelDocument = useCallback((doc: PersonalDetail['documents'][number]) => {
+    const typeName = (doc.tipoNombre ?? doc.nombre ?? '').toLowerCase();
+    return typeName.includes('combust');
+  }, []);
+  const isLiquidacionDocument = useCallback((doc: PersonalDetail['documents'][number]) => {
+    const typeName = (doc.tipoNombre ?? doc.nombre ?? '').toLowerCase();
+    return typeName.includes('liquid');
+  }, []);
   const requiresFuelInvoice = useMemo(() => {
     if (detail && typeof detail.combustibleValue === 'boolean') {
       return detail.combustibleValue;
@@ -11260,12 +11268,31 @@ const LiquidacionesPage: React.FC = () => {
     }
 
     return detail.documents.some((doc) => {
-      const typeName = (doc.tipoNombre ?? doc.nombre ?? '').toLowerCase();
-      const looksFuel = typeName.includes('combust');
+      const looksFuel = isFuelDocument(doc);
       const isAttachment = doc.isAttachment ?? (doc.parentDocumentId !== null && doc.parentDocumentId !== undefined);
       return looksFuel && !isAttachment;
     });
-  }, [detail]);
+  }, [detail, isFuelDocument]);
+  const hasStoredFuelInvoice = useMemo(() => {
+    if (!detail?.documents) {
+      return false;
+    }
+    return detail.documents.some((doc) => isFuelDocument(doc));
+  }, [detail, isFuelDocument]);
+  const hasPendingStoredDocuments = useMemo(() => {
+    if (!detail?.documents) {
+      return false;
+    }
+    return detail.documents.some(
+      (doc) => (doc.pendiente ?? false) && (isLiquidacionDocument(doc) || isFuelDocument(doc))
+    );
+  }, [detail, isFuelDocument, isLiquidacionDocument]);
+  const canPublishPending = hasPendingStoredDocuments;
+  const canSubmitUploads = pendingUploads.length > 0;
+  const hasAnyUploadTarget = canSubmitUploads || canPublishPending;
+  const hasFuelDataForSubmit =
+    hasStoredFuelInvoice ||
+    (fuelInvoiceUpload && (fuelParentDocumentId.trim() !== '' || canSubmitUploads));
 
   useEffect(() => {
     if (personaIdFromRoute !== selectedPersonaId) {
@@ -11331,7 +11358,7 @@ const LiquidacionesPage: React.FC = () => {
           setDetailError(null);
         }
 
-        const response = await fetch(`${apiBaseUrl}/api/personal/${selectedPersonaId}`, {
+        const response = await fetch(`${apiBaseUrl}/api/personal/${selectedPersonaId}?includePending=1`, {
           signal: options?.signal,
         });
 
@@ -11731,7 +11758,7 @@ const LiquidacionesPage: React.FC = () => {
     return `Mostrando ${filteredPersonal.length} de ${personal.length} registros`;
   }, [loading, error, filteredPersonal.length, personal.length]);
 
-  const liquidacionDocuments = useMemo(() => {
+  const allLiquidacionDocuments = useMemo(() => {
     if (!detail) {
       return [] as PersonalDetail['documents'];
     }
@@ -11754,15 +11781,32 @@ const LiquidacionesPage: React.FC = () => {
       };
     });
 
-    const matches = normalised.filter((doc) => (doc.tipoNombre ?? '').toLowerCase().includes('liquid'));
+    const liquidMainIds = new Set(
+      normalised
+        .filter((doc) => isLiquidacionDocument(doc) && !doc.isAttachment)
+        .map((doc) => doc.id)
+    );
+
+    const matches = normalised.filter((doc) => {
+      if (isLiquidacionDocument(doc)) {
+        return true;
+      }
+      return doc.isAttachment && doc.parentDocumentId !== null && liquidMainIds.has(doc.parentDocumentId);
+    });
+
     if (matches.length > 0) {
       return matches;
     }
     return normalised;
-  }, [detail]);
+  }, [detail, isLiquidacionDocument]);
 
-  const liquidacionGroups = useMemo(() => {
-    if (liquidacionDocuments.length === 0) {
+  const visibleLiquidacionDocuments = useMemo(
+    () => allLiquidacionDocuments.filter((doc) => !(doc.pendiente ?? false)),
+    [allLiquidacionDocuments]
+  );
+
+  const buildLiquidacionGroups = useCallback((documents: LiquidacionDocument[]) => {
+    if (documents.length === 0) {
       return [] as LiquidacionGroup[];
     }
 
@@ -11800,7 +11844,7 @@ const LiquidacionesPage: React.FC = () => {
         return (b.id ?? 0) - (a.id ?? 0);
       });
 
-    liquidacionDocuments.forEach((doc) => {
+    documents.forEach((doc) => {
       const parentId = typeof doc.parentDocumentId === 'number' ? doc.parentDocumentId : null;
       const isAttachment = doc.isAttachment ?? Boolean(parentId);
 
@@ -11837,7 +11881,17 @@ const LiquidacionesPage: React.FC = () => {
     });
 
     return groups;
-  }, [liquidacionDocuments]);
+  }, []);
+
+  const liquidacionGroups = useMemo(
+    () => buildLiquidacionGroups(visibleLiquidacionDocuments),
+    [buildLiquidacionGroups, visibleLiquidacionDocuments]
+  );
+
+  const liquidacionGroupsForSelect = useMemo(
+    () => buildLiquidacionGroups(allLiquidacionDocuments),
+    [buildLiquidacionGroups, allLiquidacionDocuments]
+  );
 
   const liquidacionFortnightSections = useMemo(() => {
     if (liquidacionGroups.length === 0) {
@@ -11980,11 +12034,11 @@ const LiquidacionesPage: React.FC = () => {
   }, [liquidacionFortnightSections]);
 
   useEffect(() => {
-    const firstMain = liquidacionGroups[0]?.main?.id;
+    const firstMain = liquidacionGroupsForSelect[0]?.main?.id;
     if (firstMain && (!fuelParentDocumentId || fuelParentDocumentId === '')) {
       setFuelParentDocumentId(String(firstMain));
     }
-  }, [liquidacionGroups, fuelParentDocumentId]);
+  }, [liquidacionGroupsForSelect, fuelParentDocumentId]);
 
   const liquidacionYearOptions = useMemo(() => {
     const years = new Set<string>();
@@ -12179,7 +12233,6 @@ const LiquidacionesPage: React.FC = () => {
       }
       return null;
     });
-    setFuelAmount('');
     pendingPreviewUrlsRef.current = [];
     closePreviewModal();
   }, [closePreviewModal]);
@@ -12453,20 +12506,18 @@ const LiquidacionesPage: React.FC = () => {
   };
 
   const uploadFuelInvoiceOnly = useCallback(
-    async (options?: { silent?: boolean }) => {
+    async (options?: { silent?: boolean; pending?: boolean }) => {
+      const actionLabel = options?.pending ? 'guardar' : 'subir';
       if (!selectedPersonaId) {
-        setUploadStatus({ type: 'error', message: 'Seleccioná un registro antes de subir la factura de combustible.' });
+        setUploadStatus({
+          type: 'error',
+          message: `Seleccioná un registro antes de ${actionLabel} la factura de combustible.`,
+        });
         return false;
       }
 
       if (!fuelInvoiceUpload) {
         setUploadStatus({ type: 'error', message: 'Seleccioná la factura de combustible.' });
-        return false;
-      }
-
-      const trimmedFuelAmount = fuelAmount.trim();
-      if (trimmedFuelAmount === '') {
-        setUploadStatus({ type: 'error', message: 'Ingresá el importe de la factura de combustible.' });
         return false;
       }
 
@@ -12488,11 +12539,13 @@ const LiquidacionesPage: React.FC = () => {
         formData.append('archivo', fuelInvoiceUpload.file);
         formData.append('nombre', fuelInvoiceUpload.file.name.trim());
         formData.append('tipoArchivoId', String(fuelInvoiceUpload.typeId));
+        if (options?.pending) {
+          formData.append('pendiente', '1');
+        }
         if (fuelInvoiceUpload.fechaVencimiento) {
           formData.append('fechaVencimiento', fuelInvoiceUpload.fechaVencimiento);
         }
         formData.append('esFacturaCombustible', '1');
-        formData.append('importeCombustible', trimmedFuelAmount);
         if (fuelParentDocumentId) {
           formData.append('parentDocumentId', fuelParentDocumentId);
         }
@@ -12526,39 +12579,82 @@ const LiquidacionesPage: React.FC = () => {
         }
 
         if (!options?.silent) {
-          setUploadStatus({ type: 'success', message: 'Factura de combustible cargada correctamente.' });
+          setUploadStatus({
+            type: 'success',
+            message: options?.pending
+              ? 'Factura de combustible guardada. Se publicará al subir las liquidaciones.'
+              : 'Factura de combustible cargada correctamente.',
+          });
         }
 
         if (fuelInvoiceUpload.previewUrl) {
           revokeImagePreviewUrl(fuelInvoiceUpload.previewUrl);
         }
         setFuelInvoiceUpload(null);
-        setFuelAmount('');
         refreshPersonaDetail();
         return true;
       } catch (err) {
-        setUploadStatus({ type: 'error', message: (err as Error).message ?? 'No se pudo subir la factura de combustible.' });
+        setUploadStatus({
+          type: 'error',
+          message: (err as Error).message ?? `No se pudo ${actionLabel} la factura de combustible.`,
+        });
         return false;
       } finally {
         setFuelUploading(false);
       }
     },
-    [apiBaseUrl, fuelInvoiceUpload, fuelAmount, refreshPersonaDetail, selectedPersonaId]
+    [apiBaseUrl, fuelInvoiceUpload, fuelParentDocumentId, refreshPersonaDetail, selectedPersonaId]
   );
 
+  const publishPendingDocuments = useCallback(
+    async (options?: { importeFacturar?: string }) => {
+    if (!selectedPersonaId) {
+      return false;
+    }
+
+    const formData = new FormData();
+    if (options?.importeFacturar && options.importeFacturar.trim() !== '') {
+      formData.append('importeFacturar', options.importeFacturar.trim());
+    }
+
+    const response = await fetch(`${apiBaseUrl}/api/personal/${selectedPersonaId}/documentos/publicar`, {
+      method: 'POST',
+      headers: { Accept: 'application/json' },
+      body: formData,
+    });
+
+    if (!response.ok) {
+      let message = `Error ${response.status}: ${response.statusText}`;
+      try {
+        const payload = await parseJsonSafe(response);
+        if (typeof payload?.message === 'string') {
+          message = payload.message;
+        }
+      } catch {
+        // ignore
+      }
+      throw new Error(message);
+    }
+
+    return true;
+  }, [apiBaseUrl, selectedPersonaId]);
+
   const handleUploadDocumentos = async () => {
-    if (!selectedPersonaId || pendingUploads.length === 0) {
+    if (!selectedPersonaId) {
+      return;
+    }
+
+    const hasLocalUploads = pendingUploads.length > 0;
+    const hasPublishablePending = hasPendingStoredDocuments;
+    if (!hasLocalUploads && !hasPublishablePending) {
       return;
     }
 
     const needsFuelInvoice = requiresFuelInvoice;
-    const trimmedFuelAmount = fuelAmount.trim();
     const trimmedFacturarAmount = facturarAmount.trim();
     const hasFuelData =
-      hasUnlinkedFuelInvoice ||
-      (fuelInvoiceUpload &&
-        trimmedFuelAmount !== '' &&
-        (fuelParentDocumentId.trim() !== '' || pendingUploads.length > 0));
+      hasStoredFuelInvoice ||
+      (fuelInvoiceUpload && (fuelParentDocumentId.trim() !== '' || hasLocalUploads));
     const shouldAttachFuelInvoices = needsFuelInvoice && hasUnlinkedFuelInvoice && !fuelInvoiceUpload;
 
     if (needsFuelInvoice) {
@@ -12566,26 +12662,33 @@ const LiquidacionesPage: React.FC = () => {
         setUploadStatus({
           type: 'error',
           message:
-            'Necesitás tener cargada la factura de combustible, importe y liquidación destino antes de subir las liquidaciones.',
+            'Necesitás tener guardada la factura de combustible y la liquidación destino antes de subir las liquidaciones.',
         });
         return;
       }
 
-      if (fuelInvoiceUpload && trimmedFuelAmount === '') {
-        setUploadStatus({
-          type: 'error',
-          message: 'Ingresá el importe de la factura de combustible.',
-        });
-        return;
-      }
-
-      if (fuelInvoiceUpload && fuelParentDocumentId.trim() === '' && pendingUploads.length === 0) {
+      if (fuelInvoiceUpload && fuelParentDocumentId.trim() === '' && !hasLocalUploads) {
         setUploadStatus({
           type: 'error',
           message: 'Seleccioná la liquidación destino para la factura de combustible.',
         });
         return;
       }
+    }
+
+    if (!hasLocalUploads && hasPublishablePending) {
+      try {
+        setUploading(true);
+        setUploadStatus(null);
+        await publishPendingDocuments({ importeFacturar: trimmedFacturarAmount });
+        setUploadStatus({ type: 'success', message: 'Liquidaciones publicadas correctamente.' });
+        refreshPersonaDetail();
+      } catch (err) {
+        setUploadStatus({ type: 'error', message: (err as Error).message ?? 'No se pudieron publicar las liquidaciones.' });
+      } finally {
+        setUploading(false);
+      }
+      return;
     }
 
     // Si tenemos factura de combustible seleccionada, la subimos primero.
@@ -12616,6 +12719,7 @@ const LiquidacionesPage: React.FC = () => {
           formData.append('fechaVencimiento', item.fechaVencimiento);
         }
         formData.append('esLiquidacion', '1');
+        formData.append('pendiente', '1');
         if (shouldAttachFuelInvoices) {
           formData.append('attachFuelInvoices', '1');
         }
@@ -12668,7 +12772,6 @@ const LiquidacionesPage: React.FC = () => {
         }
         formData.append('parentDocumentId', String(parentDocumentId));
         formData.append('esFacturaCombustible', '1');
-        formData.append('importeCombustible', trimmedFuelAmount);
 
         const response = await fetch(`${apiBaseUrl}/api/personal/${selectedPersonaId}/documentos`, {
           method: 'POST',
@@ -12699,8 +12802,11 @@ const LiquidacionesPage: React.FC = () => {
           revokeImagePreviewUrl(fuelInvoiceUpload.previewUrl);
         }
         setFuelInvoiceUpload(null);
-        setFuelAmount('');
         setFacturarAmount('');
+      }
+
+      if (hasPublishablePending) {
+        await publishPendingDocuments({ importeFacturar: trimmedFacturarAmount });
       }
 
       setUploadStatus({ type: 'success', message: 'Liquidaciones cargadas correctamente.' });
@@ -12724,6 +12830,7 @@ const LiquidacionesPage: React.FC = () => {
     try {
       setUploading(true);
       setUploadStatus(null);
+      let lastSavedId: number | null = null;
 
       for (const item of pendingUploads) {
         const formData = new FormData();
@@ -12765,9 +12872,24 @@ const LiquidacionesPage: React.FC = () => {
 
           throw new Error(message);
         }
+
+        try {
+          const payload = (await response.json()) as { data?: { id?: number } };
+          if (payload?.data?.id) {
+            lastSavedId = payload.data.id;
+          }
+        } catch {
+          // ignore
+        }
       }
 
-      setUploadStatus({ type: 'success', message: 'Liquidaciones guardadas.' });
+      setUploadStatus({
+        type: 'success',
+        message: 'Liquidaciones guardadas. Se publicarán al subir las liquidaciones.',
+      });
+      if (lastSavedId) {
+        setFuelParentDocumentId(String(lastSavedId));
+      }
       clearPendingUploads();
       setDocumentExpiry('');
       setFacturarAmount('');
@@ -13356,6 +13478,19 @@ const LiquidacionesPage: React.FC = () => {
             </label>
           ) : null}
         </div>
+        <div className="form-grid" style={{ marginTop: '0.75rem' }}>
+          <label className="input-control">
+            <span>Importe a facturar</span>
+            <input
+              type="number"
+              min="0"
+              step="0.01"
+              value={facturarAmount}
+              onChange={(event) => setFacturarAmount(event.target.value)}
+              placeholder="0.00"
+            />
+          </label>
+        </div>
 
         {documentTypesError ? (
           <p className="form-info form-info--error">{documentTypesError}</p>
@@ -13426,7 +13561,7 @@ const LiquidacionesPage: React.FC = () => {
           <div className="card" style={{ marginTop: '1rem' }}>
             <h4 style={{ marginTop: 0 }}>Factura de combustible</h4>
             <p className="form-info form-info--warning">
-              Este personal tiene combustible. Subí la factura de combustible y el importe. Luego podrás enviar la liquidación.
+              Este personal tiene combustible. Subí la factura de combustible. Luego podrás enviar la liquidación.
             </p>
             {hasUnlinkedFuelInvoice ? (
               <p className="form-info form-info--success">
@@ -13435,28 +13570,23 @@ const LiquidacionesPage: React.FC = () => {
             ) : null}
             <div className="form-grid">
               <label className="input-control">
-                <span>Importe combustible</span>
-                <input
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  value={fuelAmount}
-                  onChange={(event) => setFuelAmount(event.target.value)}
-                  placeholder="0.00"
-                />
-              </label>
-              <label className="input-control">
                 <span>Liquidación destino</span>
                 <select
                   value={fuelParentDocumentId}
                   onChange={(event) => setFuelParentDocumentId(event.target.value)}
                 >
                   <option value="">Seleccioná la liquidación</option>
-                  {liquidacionGroups.map((group) => (
-                    <option key={group.main.id ?? `main-${group.main.nombre}`} value={group.main.id ?? ''}>
-                      {`${group.main.nombre ?? `Liquidación #${group.main.id ?? ''}`}${group.main.fechaCarga ? ` - ${group.main.fechaCarga}` : ''}`}
-                    </option>
-                  ))}
+                  {liquidacionGroupsForSelect.map((group) => {
+                    const isPending = group.main.pendiente ?? false;
+                    const baseLabel = group.main.nombre ?? `Liquidación #${group.main.id ?? ''}`;
+                    const dateLabel = group.main.fechaCarga ? ` - ${group.main.fechaCarga}` : '';
+                    const pendingLabel = isPending ? ' (Pendiente)' : '';
+                    return (
+                      <option key={group.main.id ?? `main-${group.main.nombre}`} value={group.main.id ?? ''}>
+                        {`${baseLabel}${dateLabel}${pendingLabel}`}
+                      </option>
+                    );
+                  })}
                 </select>
               </label>
             </div>
@@ -13478,7 +13608,7 @@ const LiquidacionesPage: React.FC = () => {
           >
             Pegar captura (Ctrl+V)
           </button>
-          {fuelInvoiceUpload ? (
+            {fuelInvoiceUpload ? (
             <div className="pending-upload-list" style={{ marginTop: '0.75rem' }}>
               <div className="pending-upload-item">
                 <div>
@@ -13502,18 +13632,15 @@ const LiquidacionesPage: React.FC = () => {
                 </div>
               ) : null}
             </div>
-            <div className="form-grid" style={{ marginTop: '0.75rem' }}>
-              <label className="input-control">
-                <span>Importe a facturar</span>
-                <input
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  value={facturarAmount}
-                  onChange={(event) => setFacturarAmount(event.target.value)}
-                  placeholder="0.00"
-                />
-              </label>
+            <div className="form-actions" style={{ marginTop: '0.75rem' }}>
+              <button
+                type="button"
+                className="secondary-action"
+                onClick={() => uploadFuelInvoiceOnly({ pending: true })}
+                disabled={!fuelInvoiceUpload || !fuelParentDocumentId || fuelUploading}
+              >
+                {fuelUploading ? 'Guardando...' : 'Guardar factura de combustible'}
+              </button>
             </div>
           </div>
         ) : null}
@@ -13599,15 +13726,11 @@ const LiquidacionesPage: React.FC = () => {
             onClick={handleUploadDocumentos}
             disabled={
               uploading ||
-              pendingUploads.length === 0 ||
               documentTypesLoading ||
               !selectedPersonaId ||
-              !selectedDocumentTypeId ||
-            (requiresFuelInvoice &&
-              !(hasUnlinkedFuelInvoice ||
-                (fuelInvoiceUpload &&
-                  fuelAmount.trim() !== '' &&
-                  (fuelParentDocumentId.trim() !== '' || pendingUploads.length > 0))))
+              !hasAnyUploadTarget ||
+              (canSubmitUploads && !selectedDocumentTypeId) ||
+            (requiresFuelInvoice && !hasFuelDataForSubmit)
             }
           >
             {uploading ? 'Subiendo...' : 'Subir liquidaciones'}

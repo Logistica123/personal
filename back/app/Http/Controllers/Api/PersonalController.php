@@ -126,6 +126,7 @@ class PersonalController extends Controller
                         });
                     }
 
+                    $documentsQuery->where('es_pendiente', false);
                     $documentsQuery->whereNull('parent_document_id')->orderByDesc('created_at');
                 },
             ])
@@ -171,8 +172,9 @@ class PersonalController extends Controller
         return response()->json(['data' => $personas]);
     }
 
-    public function show($id): JsonResponse
+    public function show(Request $request, $id): JsonResponse
     {
+        $includePending = $request->boolean('includePending');
         $persona = Persona::withTrashed()
         ->with([
             'cliente:id,nombre',
@@ -201,7 +203,7 @@ class PersonalController extends Controller
     }
 
         return response()->json([
-            'data' => $this->buildPersonaDetail($persona),
+            'data' => $this->buildPersonaDetail($persona, $includePending),
         ]);
     }
 
@@ -1053,7 +1055,7 @@ class PersonalController extends Controller
         }
     }
 
-    protected function buildPersonaDetail(Persona $persona): array
+    protected function buildPersonaDetail(Persona $persona, bool $includePending = false): array
     {
         $perfilMap = [
             1 => 'Dueño y chofer',
@@ -1088,6 +1090,12 @@ class PersonalController extends Controller
         $cobradorEmail = $hasExplicitCobrador ? $persona->cobrador_email : null;
         $cobradorCuil = $hasExplicitCobrador ? $persona->cobrador_cuil : null;
         $cobradorCbuAlias = $hasExplicitCobrador ? $persona->cobrador_cbu_alias : null;
+
+        $documents = $persona->documentos;
+        if (! $includePending) {
+            $documents = $documents->reject(fn ($documento) => (bool) $documento->es_pendiente);
+        }
+        $documents = $documents->values();
 
         return [
             'id' => $persona->id,
@@ -1150,7 +1158,7 @@ class PersonalController extends Controller
             'documentsDownloadAllAbsoluteUrl' => route('personal.documentos.descargarTodos', [
                 'persona' => $persona->id,
             ], true),
-            'documents' => $persona->documentos->map(function ($documento) {
+            'documents' => $documents->map(function ($documento) {
                 $relativeDownloadUrl = route('personal.documentos.descargar', [
                     'persona' => $documento->persona_id,
                     'documento' => $documento->id,
@@ -1182,6 +1190,7 @@ class PersonalController extends Controller
                     'requiereVencimiento' => (bool) $documento->tipo?->vence,
                     'importeCombustible' => $importeCombustible,
                     'importeFacturar' => $documento->importe_facturar,
+                    'pendiente' => (bool) $documento->es_pendiente,
                 ];
             })->values(),
             'comments' => $persona->comments->map(function ($comment) {

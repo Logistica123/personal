@@ -21,10 +21,14 @@ use App\Services\AuditLogger;
 
 class PersonalDocumentController extends Controller
 {
-    public function index(Persona $persona): JsonResponse
+    public function index(Request $request, Persona $persona): JsonResponse
     {
+        $includePending = $request->boolean('includePending');
         $documentos = $persona->documentos()
             ->with(['tipo:id,nombre,vence'])
+            ->when(! $includePending, function ($query) {
+                $query->where('es_pendiente', false);
+            })
             ->orderByDesc('created_at')
             ->get()
             ->map(function ($documento) {
@@ -46,6 +50,7 @@ class PersonalDocumentController extends Controller
                     'tipoNombre' => $documento->tipo?->nombre,
                     'requiereVencimiento' => (bool) $documento->tipo?->vence,
                     'importeFacturar' => $documento->importe_facturar,
+                    'pendiente' => (bool) $documento->es_pendiente,
                 ];
             })
             ->values();
@@ -75,8 +80,9 @@ class PersonalDocumentController extends Controller
         ]);
     }
 
-    public function liquidaciones(Persona $persona): JsonResponse
+    public function liquidaciones(Request $request, Persona $persona): JsonResponse
     {
+        $includePending = $request->boolean('includePending');
         $liquidacionTypeIds = FileType::query()
             ->select('id', 'nombre')
             ->get()
@@ -109,6 +115,9 @@ class PersonalDocumentController extends Controller
                         ->orWhereRaw('LOWER(nombre_original) LIKE ?', ['%combust%'])
                         ->orWhereRaw('LOWER(ruta) LIKE ?', ['%combust%']);
                 });
+            })
+            ->when(! $includePending, function ($query) {
+                $query->where('es_pendiente', false);
             })
             ->orderByDesc('created_at')
             ->get()
@@ -146,6 +155,7 @@ class PersonalDocumentController extends Controller
                     'requiereVencimiento' => (bool) $documento->tipo?->vence,
                     'importeCombustible' => $importeCombustible,
                     'importeFacturar' => $documento->importe_facturar,
+                    'pendiente' => (bool) $documento->es_pendiente,
                 ];
             })
             ->values();
@@ -220,6 +230,7 @@ class PersonalDocumentController extends Controller
             'importeCombustible' => ['nullable', 'numeric', 'min:0'],
             'importeFacturar' => ['nullable', 'numeric', 'min:0'],
             'attachFuelInvoices' => ['nullable', 'boolean'],
+            'pendiente' => ['nullable', 'boolean'],
         ], [
             'tipoArchivoId.required' => 'Selecciona el tipo de documento.',
             'tipoArchivoId.exists' => 'El tipo de documento seleccionado no es válido.',
@@ -241,12 +252,6 @@ class PersonalDocumentController extends Controller
 
             if ($tipo->vence && ! $request->filled('fechaVencimiento')) {
                 $validator->errors()->add('fechaVencimiento', 'Este tipo de documento requiere fecha de vencimiento.');
-            }
-
-            if ($request->boolean('esFacturaCombustible')) {
-                if (! $request->filled('importeCombustible')) {
-                    $validator->errors()->add('importeCombustible', 'Ingresá el importe de la factura de combustible.');
-                }
             }
         });
 
@@ -286,6 +291,7 @@ class PersonalDocumentController extends Controller
             'carpeta' => $directory,
             'ruta' => $storedPath,
             'parent_document_id' => $parentDocumentId,
+            'es_pendiente' => $request->boolean('pendiente'),
             'download_url' => null,
             'disk' => $disk,
             'nombre_original' => $nombreOriginal,
@@ -349,12 +355,64 @@ class PersonalDocumentController extends Controller
                 'size' => $documento->size,
                 'fechaVencimiento' => optional($documento->fecha_vencimiento)->format('Y-m-d'),
                 'tipoId' => $documento->tipo_archivo_id,
-                'tipoNombre' => $documento->tipo?->nombre,
-                'requiereVencimiento' => (bool) $documento->tipo?->vence,
-                'importeCombustible' => $request->input('importeCombustible'),
-                'importeFacturar' => $documento->importe_facturar,
+            'tipoNombre' => $documento->tipo?->nombre,
+            'requiereVencimiento' => (bool) $documento->tipo?->vence,
+            'importeCombustible' => $request->input('importeCombustible'),
+            'importeFacturar' => $documento->importe_facturar,
+            'pendiente' => (bool) $documento->es_pendiente,
+        ],
+    ], 201);
+    }
+
+    public function publishPending(Request $request, Persona $persona): JsonResponse
+    {
+        $validated = $request->validate([
+            'documentIds' => ['nullable', 'array'],
+            'documentIds.*' => ['integer'],
+            'importeFacturar' => ['nullable', 'numeric', 'min:0'],
+        ]);
+
+        $query = $persona->documentos()->where('es_pendiente', true);
+
+        if (! empty($validated['documentIds'])) {
+            $query->whereIn('id', $validated['documentIds']);
+        }
+
+        $updated = $query->update(['es_pendiente' => false]);
+
+        if (array_key_exists('importeFacturar', $validated)) {
+            $liquidacionTypeIds = $this->resolveLiquidacionTypeIds();
+
+            $importeQuery = $persona->documentos()
+                ->where('es_pendiente', false)
+                ->whereNull('parent_document_id')
+                ->whereNull('importe_facturar');
+
+            if ($liquidacionTypeIds->isNotEmpty()) {
+                $importeQuery->whereIn('tipo_archivo_id', $liquidacionTypeIds);
+            } else {
+                $importeQuery->where(function ($inner) {
+                    $inner
+                        ->whereRaw('LOWER(nombre_original) LIKE ?', ['%liquid%'])
+                        ->orWhereRaw('LOWER(ruta) LIKE ?', ['%liquid%']);
+                });
+            }
+
+            if (! empty($validated['documentIds'])) {
+                $importeQuery->whereIn('id', $validated['documentIds']);
+            }
+
+            $importeQuery->update([
+                'importe_facturar' => $validated['importeFacturar'],
+            ]);
+        }
+
+        return response()->json([
+            'message' => 'Documentos publicados correctamente.',
+            'data' => [
+                'updated' => $updated,
             ],
-        ], 201);
+        ]);
     }
 
     public function updateDocument(Request $request, Persona $persona, Archivo $documento): JsonResponse
@@ -487,6 +545,7 @@ class PersonalDocumentController extends Controller
                 'tipoNombre' => $documento->tipo?->nombre,
                 'requiereVencimiento' => (bool) $documento->tipo?->vence,
                 'importeFacturar' => $documento->importe_facturar,
+                'pendiente' => (bool) $documento->es_pendiente,
             ],
         ]);
     }
@@ -729,6 +788,18 @@ class PersonalDocumentController extends Controller
             ->filter(function (FileType $tipo) {
                 $nombre = Str::lower($tipo->nombre ?? '');
                 return $nombre !== '' && Str::contains($nombre, 'combust');
+            })
+            ->pluck('id');
+    }
+
+    protected function resolveLiquidacionTypeIds()
+    {
+        return FileType::query()
+            ->select('id', 'nombre')
+            ->get()
+            ->filter(function (FileType $tipo) {
+                $nombre = Str::lower($tipo->nombre ?? '');
+                return $nombre !== '' && Str::contains($nombre, 'liquid');
             })
             ->pluck('id');
     }
