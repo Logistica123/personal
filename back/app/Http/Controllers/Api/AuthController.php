@@ -145,6 +145,23 @@ class AuthController extends Controller
             }
         }
 
+        $plainToken = Str::random(80);
+        $hashedToken = hash('sha256', $plainToken);
+
+        $user->forceFill(['remember_token' => $hashedToken])->save();
+
+        $tokenCookie = cookie(
+            'api_token',
+            $plainToken,
+            60 * 24 * 30,
+            '/',
+            null,
+            $request->isSecure(),
+            true,
+            false,
+            'Lax'
+        );
+
         return response()->json([
             'message' => 'Inicio de sesión exitoso.',
             'data' => [
@@ -152,8 +169,10 @@ class AuthController extends Controller
                 'name' => $user->name,
                 'email' => $user->email,
                 'role' => $user->role,
+                'token' => $plainToken,
+                'totpEnabled' => (bool) $user->totp_secret,
             ],
-        ]);
+        ])->withCookie($tokenCookie);
     }
 
     public function setupTotp(Request $request): JsonResponse

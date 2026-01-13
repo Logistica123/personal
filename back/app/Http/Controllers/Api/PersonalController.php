@@ -1191,6 +1191,7 @@ class PersonalController extends Controller
                     'importeCombustible' => $importeCombustible,
                     'importeFacturar' => $documento->importe_facturar,
                     'pendiente' => (bool) $documento->es_pendiente,
+                    'liquidacionId' => $documento->liquidacion_id,
                 ];
             })->values(),
             'comments' => $persona->comments->map(function ($comment) {

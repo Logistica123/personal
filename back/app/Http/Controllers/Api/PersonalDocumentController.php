@@ -51,6 +51,7 @@ class PersonalDocumentController extends Controller
                     'requiereVencimiento' => (bool) $documento->tipo?->vence,
                     'importeFacturar' => $documento->importe_facturar,
                     'pendiente' => (bool) $documento->es_pendiente,
+                    'liquidacionId' => $documento->liquidacion_id,
                 ];
             })
             ->values();
@@ -156,6 +157,7 @@ class PersonalDocumentController extends Controller
                     'importeCombustible' => $importeCombustible,
                     'importeFacturar' => $documento->importe_facturar,
                     'pendiente' => (bool) $documento->es_pendiente,
+                    'liquidacionId' => $documento->liquidacion_id,
                 ];
             })
             ->values();
@@ -231,6 +233,7 @@ class PersonalDocumentController extends Controller
             'importeFacturar' => ['nullable', 'numeric', 'min:0'],
             'attachFuelInvoices' => ['nullable', 'boolean'],
             'pendiente' => ['nullable', 'boolean'],
+            'liquidacionId' => ['nullable', 'integer', 'min:1'],
         ], [
             'tipoArchivoId.required' => 'Selecciona el tipo de documento.',
             'tipoArchivoId.exists' => 'El tipo de documento seleccionado no es válido.',
@@ -291,6 +294,7 @@ class PersonalDocumentController extends Controller
             'carpeta' => $directory,
             'ruta' => $storedPath,
             'parent_document_id' => $parentDocumentId,
+            'liquidacion_id' => $validated['liquidacionId'] ?? null,
             'es_pendiente' => $request->boolean('pendiente'),
             'download_url' => null,
             'disk' => $disk,
@@ -360,6 +364,7 @@ class PersonalDocumentController extends Controller
             'importeCombustible' => $request->input('importeCombustible'),
             'importeFacturar' => $documento->importe_facturar,
             'pendiente' => (bool) $documento->es_pendiente,
+            'liquidacionId' => $documento->liquidacion_id,
         ],
     ], 201);
     }
@@ -438,6 +443,7 @@ class PersonalDocumentController extends Controller
             'tipoArchivoId' => ['nullable', 'integer', 'exists:fyle_types,id'],
             'fechaVencimiento' => ['nullable', 'date'],
             'importeFacturar' => ['nullable', 'numeric', 'min:0'],
+            'liquidacionId' => ['nullable', 'integer', 'min:1'],
         ], [
             'tipoArchivoId.exists' => 'El tipo de documento seleccionado no es válido.',
             'archivo.max' => 'El archivo es demasiado grande. Permitimos hasta 50 MB por liquidación.',
@@ -521,6 +527,10 @@ class PersonalDocumentController extends Controller
             $documento->importe_facturar = $validated['importeFacturar'] ?? null;
         }
 
+        if (array_key_exists('liquidacionId', $validated)) {
+            $documento->liquidacion_id = $validated['liquidacionId'] ?? null;
+        }
+
         $documento->save();
         $documento->loadMissing('tipo:id,nombre,vence');
 
@@ -546,6 +556,7 @@ class PersonalDocumentController extends Controller
                 'requiereVencimiento' => (bool) $documento->tipo?->vence,
                 'importeFacturar' => $documento->importe_facturar,
                 'pendiente' => (bool) $documento->es_pendiente,
+                'liquidacionId' => $documento->liquidacion_id,
             ],
         ]);
     }

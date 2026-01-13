@@ -17,6 +17,7 @@ class Archivo extends Model
     protected $fillable = [
         'persona_id',
         'parent_document_id',
+        'liquidacion_id',
         'es_pendiente',
         'tipo_archivo_id',
         'carpeta',

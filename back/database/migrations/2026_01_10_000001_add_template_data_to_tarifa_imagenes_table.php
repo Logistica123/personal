@@ -7,9 +7,11 @@ use Illuminate\Support\Facades\Schema;
 return new class extends Migration {
     public function up(): void
     {
-        Schema::table('tarifa_imagenes', function (Blueprint $table) {
-            $table->json('template_data')->nullable()->after('size');
-        });
+        if (! Schema::hasColumn('tarifa_imagenes', 'template_data')) {
+            Schema::table('tarifa_imagenes', function (Blueprint $table) {
+                $table->json('template_data')->nullable()->after('size');
+            });
+        }
     }
 
     public function down(): void
