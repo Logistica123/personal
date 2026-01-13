@@ -124,6 +124,64 @@ type Usuario = {
   status?: string | null;
   role?: string | null;
 };
+type TarifaImagenItem = {
+  id: number;
+  clienteId: number | null;
+  sucursalId: number | null;
+  mes: number | null;
+  anio: number | null;
+  nombreOriginal: string | null;
+  url: string | null;
+  relativeUrl?: string | null;
+  dataUrl?: string | null;
+  templateData?: TarifaTemplate | null;
+  clienteNombre?: string | null;
+  sucursalNombre?: string | null;
+  updatedAt?: string | null;
+};
+type TarifaTemplateRow = {
+  label: string;
+  values: string[];
+};
+type TarifaTemplate = {
+  title: string;
+  subtitle: string;
+  tableTitle: string;
+  columns: string[];
+  rows: TarifaTemplateRow[];
+  observations: string;
+};
+
+const normalizeTarifaTemplate = (template: TarifaTemplate): TarifaTemplate => {
+  let columns = [...template.columns];
+  const observations = template.observations ?? '';
+  if (columns.length === 0) {
+    columns.push('Columna 1');
+  }
+  const observationsIndex = columns.findIndex((col) => col.trim().toLowerCase() === 'observaciones');
+  if (observationsIndex !== -1) {
+    columns = columns.filter((_, index) => index !== observationsIndex);
+  }
+  const normalizedRows = template.rows.map((row, index) => {
+    const values = [...row.values];
+    while (values.length < columns.length) {
+      values.push('');
+    }
+    if (values.length > columns.length) {
+      values.length = columns.length;
+    }
+    return {
+      label: row.label || `Zona ${index + 1}`,
+      values,
+    };
+  });
+  return {
+    ...template,
+    columns,
+    rows: normalizedRows,
+    observations,
+  };
+};
 type UserRole = 'admin' | 'admin2' | 'encargado' | 'operator' | 'asesor';
 type AccessSection =
   | 'clientes'
@@ -148,6 +206,36 @@ type TicketCategory = (typeof TICKET_CATEGORIES)[number];
 const HR_EMAIL = 'dgimenez@logisticaargentinasrl.com.ar';
 const HR_USER_ID =
   (Number.isFinite(Number(process.env.REACT_APP_HR_USER_ID)) && Number(process.env.REACT_APP_HR_USER_ID)) || 22;
+const DEFAULT_TARIFA_TEMPLATE: TarifaTemplate = {
+  title: 'Tarifa resistencia',
+  subtitle: 'Camioneta chica',
+  tableTitle: 'Tipo de paquetería',
+  columns: ['Chico', 'Grande', 'Valorado', 'Farmacia', 'Bolson', 'Fijo'],
+  rows: [
+    { label: 'Zona 1', values: ['', '', '', '', '', ''] },
+    { label: 'Zona 3', values: ['', '', '', '', '', ''] },
+    { label: 'Zona 4', values: ['', '', '', '', '', ''] },
+    { label: 'Zona 5', values: ['', '', '', '', '', ''] },
+    { label: 'Zona 6', values: ['', '', '', '', '', ''] },
+    { label: 'Zona 7', values: ['', '', '', '', '', ''] },
+    { label: 'Zona 10', values: ['', '', '', '', '', ''] },
+  ],
+  observations: '',
+};
+const TARIFA_MONTH_OPTIONS = [
+  { value: '1', label: 'Enero' },
+  { value: '2', label: 'Febrero' },
+  { value: '3', label: 'Marzo' },
+  { value: '4', label: 'Abril' },
+  { value: '5', label: 'Mayo' },
+  { value: '6', label: 'Junio' },
+  { value: '7', label: 'Julio' },
+  { value: '8', label: 'Agosto' },
+  { value: '9', label: 'Septiembre' },
+  { value: '10', label: 'Octubre' },
+  { value: '11', label: 'Noviembre' },
+  { value: '12', label: 'Diciembre' },
+];
 
 type FacturaAttachment = {
   id: string;
@@ -427,6 +515,7 @@ type PersonalDetail = {
     importeCombustible?: number | null;
     importeFacturar?: number | null;
     pendiente?: boolean;
+    liquidacionId?: number | null;
   }>;
   comments: Array<{
     id: number;
@@ -3726,9 +3815,9 @@ const DashboardLayout: React.FC<{
               Liquidaciones
             </NavLink>
           ) : null}
-          <a className="sidebar-link" href="#tarifas" onClick={(event) => event.preventDefault()}>
+          <NavLink to="/tarifas" className={({ isActive }) => `sidebar-link${isActive ? ' is-active' : ''}`}>
             Tarifas
-          </a>
+          </NavLink>
           <a className="sidebar-link" href="#bases" onClick={(event) => event.preventDefault()}>
             Bases de Distribución
           </a>
@@ -5404,11 +5493,17 @@ const ChatPage: React.FC = () => {
     </DashboardLayout>
   );
 };
-const DashboardPage: React.FC<{ showPersonalPanel?: boolean }> = ({ showPersonalPanel = false }) => {
+const DashboardPage: React.FC<{
+  showPersonalPanel?: boolean;
+  pageTitle?: string;
+  pageSubtitle?: string;
+  viewMode?: 'clientes' | 'tarifas';
+}> = ({ showPersonalPanel = false, pageTitle, pageSubtitle, viewMode = 'clientes' }) => {
   const navigate = useNavigate();
   const location = useLocation();
   const authUser = useStoredAuthUser();
   const userRole = useMemo(() => getUserRole(authUser), [authUser]);
+  const { brandLogoSrc } = useBranding();
   const [clientes, setClientes] = useState<Cliente[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -5451,6 +5546,30 @@ const DashboardPage: React.FC<{ showPersonalPanel?: boolean }> = ({ showPersonal
   const [teamShoutSaving, setTeamShoutSaving] = useState(false);
   const [teamShoutError, setTeamShoutError] = useState<string | null>(null);
   const [showTeamShoutPopup, setShowTeamShoutPopup] = useState(false);
+  const [tarifasClienteFilter, setTarifasClienteFilter] = useState('');
+  const [tarifasSucursalFilter, setTarifasSucursalFilter] = useState('');
+  const [tarifasMonthFilter, setTarifasMonthFilter] = useState('');
+  const [tarifasYearFilter, setTarifasYearFilter] = useState('');
+  const [tarifaUploadName, setTarifaUploadName] = useState<string | null>(null);
+  const [tarifaUploadPreviewUrl, setTarifaUploadPreviewUrl] = useState<string | null>(null);
+  const [tarifaUploadFile, setTarifaUploadFile] = useState<File | null>(null);
+  const [tarifaSaveState, setTarifaSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+  const [tarifaSaveError, setTarifaSaveError] = useState<string | null>(null);
+  const [tarifaImageLoading, setTarifaImageLoading] = useState(false);
+  const [tarifaImageError, setTarifaImageError] = useState<string | null>(null);
+  const [tarifaView, setTarifaView] = useState<'list' | 'form'>('list');
+  const [tarifaList, setTarifaList] = useState<TarifaImagenItem[]>([]);
+  const [tarifaListLoading, setTarifaListLoading] = useState(false);
+  const [tarifaListError, setTarifaListError] = useState<string | null>(null);
+  const [tarifaListRefreshToken, setTarifaListRefreshToken] = useState(0);
+  const [tarifaModalUrl, setTarifaModalUrl] = useState<string | null>(null);
+  const [tarifaModalTitle, setTarifaModalTitle] = useState<string | null>(null);
+  const [tarifaTemplate, setTarifaTemplate] = useState<TarifaTemplate>(normalizeTarifaTemplate(DEFAULT_TARIFA_TEMPLATE));
+  const [tarifaTemplateDirty, setTarifaTemplateDirty] = useState(false);
+  const [tarifaDeleteId, setTarifaDeleteId] = useState<number | null>(null);
+  const tarifaUploadInputRef = useRef<HTMLInputElement | null>(null);
+  const tarifaPreviewUrlRef = useRef<string | null>(null);
+  const tarifaPreviewIsObjectRef = useRef(false);
   const lastTeamShoutRef = useRef<string>('');
   const monitorMode = useMemo(() => {
     if (!showPersonalPanel) {
@@ -5481,6 +5600,7 @@ const DashboardPage: React.FC<{ showPersonalPanel?: boolean }> = ({ showPersonal
   const [currentCycleIndex, setCurrentCycleIndex] = useState(0);
   const [cycleCountdown, setCycleCountdown] = useState<number | null>(null);
   const apiBaseUrl = useMemo(() => resolveApiBaseUrl(), []);
+  const isTarifasView = viewMode === 'tarifas';
   const [showRecentAltaPanel, setShowRecentAltaPanel] = useState(false);
   const [reclamoStats, setReclamoStats] = useState({ total: 0, resueltos: 0, rechazados: 0 });
   const [reclamoStatsLoading, setReclamoStatsLoading] = useState(false);
@@ -5660,6 +5780,364 @@ const DashboardPage: React.FC<{ showPersonalPanel?: boolean }> = ({ showPersonal
 
     return () => controller.abort();
   }, [apiBaseUrl]);
+
+  useEffect(() => {
+    setTarifasSucursalFilter('');
+  }, [tarifasClienteFilter]);
+
+  const setTarifaPreview = useCallback((url: string | null, isObjectUrl: boolean) => {
+    if (tarifaPreviewUrlRef.current && tarifaPreviewIsObjectRef.current) {
+      URL.revokeObjectURL(tarifaPreviewUrlRef.current);
+    }
+    tarifaPreviewUrlRef.current = url;
+    tarifaPreviewIsObjectRef.current = isObjectUrl;
+    setTarifaUploadPreviewUrl(url);
+  }, []);
+
+  const resolveTarifaImageUrl = useCallback(
+    (url: string | null): string | null => {
+      if (!url) {
+        return null;
+      }
+      if (url.startsWith('http://') || url.startsWith('https://')) {
+        return url;
+      }
+      if (url.startsWith('/')) {
+        return `${apiBaseUrl}${url}`;
+      }
+      return `${apiBaseUrl}/${url}`;
+    },
+    [apiBaseUrl]
+  );
+
+  const resolveTarifaDisplayUrl = useCallback(
+    (item: TarifaImagenItem): string | null =>
+      item.dataUrl ?? resolveTarifaImageUrl(item.relativeUrl ?? item.url ?? null),
+    [resolveTarifaImageUrl]
+  );
+
+  const monthLabelLookup = useMemo(() => {
+    const map = new Map<string, string>();
+    TARIFA_MONTH_OPTIONS.forEach((option) => map.set(option.value, option.label));
+    return map;
+  }, []);
+
+  const buildTarifaCanvas = useCallback(async (template: TarifaTemplate, logoSrc?: string | null) => {
+    const canvas = document.createElement('canvas');
+    const width = 1200;
+    const height = 800;
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) {
+      return canvas;
+    }
+
+    ctx.fillStyle = '#fdf6f6';
+    ctx.fillRect(0, 0, width, height);
+
+    const rightPanelWidth = 300;
+    const rightPanelX = width - rightPanelWidth;
+    ctx.fillStyle = '#d3e4ea';
+    ctx.fillRect(rightPanelX, 0, rightPanelWidth, height);
+
+    if (logoSrc) {
+      const loadImage = (src: string) =>
+        new Promise<HTMLImageElement>((resolve, reject) => {
+          const img = new Image();
+          img.crossOrigin = 'anonymous';
+          img.onload = () => resolve(img);
+          img.onerror = reject;
+          img.src = src;
+        });
+      try {
+        const logo = await loadImage(logoSrc);
+        const logoWidth = 230;
+        const ratio = logo.width ? logoWidth / logo.width : 1;
+        const logoHeight = Math.max(40, Math.round(logo.height * ratio));
+        const logoX = rightPanelX - logoWidth - 20;
+        const logoY = -40;
+        ctx.drawImage(logo, logoX, logoY, logoWidth, logoHeight);
+      } catch {
+        // ignore logo errors
+      }
+    }
+
+    ctx.fillStyle = '#1f2937';
+    ctx.font = 'bold 52px "Arial", sans-serif';
+    ctx.fillText(template.title || 'Tarifa', 40, 70);
+
+    ctx.fillStyle = '#2f3e4d';
+    ctx.font = 'bold 28px "Arial", sans-serif';
+    ctx.fillText(template.subtitle || '', 40, 110);
+
+    const tableTop = 150;
+    const tableLeft = 40;
+    const tableWidth = width - tableLeft * 2 - rightPanelWidth + 20;
+    const headerHeight = 42;
+    const rowHeight = 40;
+    const firstColWidth = 180;
+    const otherCols = template.columns.length;
+    const otherColWidth = otherCols > 0 ? (tableWidth - firstColWidth) / otherCols : tableWidth - firstColWidth;
+
+    ctx.fillStyle = '#f04343';
+    ctx.fillRect(tableLeft, tableTop - 34, tableWidth, 30);
+    ctx.fillStyle = '#ffffff';
+    ctx.font = 'bold 18px "Arial", sans-serif';
+    ctx.fillText(template.tableTitle || 'Tipo de paquetería', tableLeft + 12, tableTop - 14);
+
+    ctx.fillStyle = '#f0f4ff';
+    ctx.fillRect(tableLeft, tableTop, tableWidth, headerHeight);
+    ctx.strokeStyle = '#1f2937';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(tableLeft, tableTop, tableWidth, headerHeight);
+
+    ctx.fillStyle = '#1f2937';
+    ctx.font = 'bold 16px "Arial", sans-serif';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('Zona', tableLeft + 12, tableTop + headerHeight / 2);
+
+    template.columns.forEach((col, index) => {
+      const x = tableLeft + firstColWidth + otherColWidth * index;
+      ctx.strokeRect(x, tableTop, otherColWidth, headerHeight);
+      ctx.fillText(col, x + 8, tableTop + headerHeight / 2);
+    });
+
+    template.rows.forEach((row, rowIndex) => {
+      const y = tableTop + headerHeight + rowHeight * rowIndex;
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(tableLeft, y, tableWidth, rowHeight);
+      ctx.strokeStyle = '#1f2937';
+      ctx.strokeRect(tableLeft, y, tableWidth, rowHeight);
+
+      ctx.fillStyle = '#1f2937';
+      ctx.font = 'bold 14px "Arial", sans-serif';
+      ctx.fillText(row.label, tableLeft + 12, y + rowHeight / 2);
+
+      row.values.forEach((value, colIndex) => {
+        const x = tableLeft + firstColWidth + otherColWidth * colIndex;
+        ctx.strokeRect(x, y, otherColWidth, rowHeight);
+        ctx.fillStyle = '#1f2937';
+        ctx.font = '14px "Arial", sans-serif';
+        ctx.fillText(value, x + 8, y + rowHeight / 2);
+      });
+    });
+
+    const drawWrappedText = (text: string, x: number, y: number, maxWidth: number, lineHeight: number) => {
+      const words = text.split(/\s+/);
+      let line = '';
+      let offsetY = y;
+      ctx.fillStyle = '#1f2937';
+      ctx.font = '16px "Arial", sans-serif';
+      words.forEach((word, index) => {
+        const testLine = `${line}${word} `;
+        const { width: lineWidth } = ctx.measureText(testLine);
+        if (lineWidth > maxWidth && index > 0) {
+          ctx.fillText(line.trim(), x, offsetY);
+          line = `${word} `;
+          offsetY += lineHeight;
+        } else {
+          line = testLine;
+        }
+      });
+      if (line.trim()) {
+        ctx.fillText(line.trim(), x, offsetY);
+      }
+    };
+
+    if (template.observations?.trim()) {
+      drawWrappedText(template.observations.trim(), rightPanelX + 16, 120, rightPanelWidth - 32, 20);
+    }
+
+    return canvas;
+  }, []);
+
+  const buildTarifaImageFile = useCallback(
+    async (template: TarifaTemplate): Promise<File> =>
+      new Promise((resolve, reject) => {
+        void (async () => {
+          try {
+            const canvas = await buildTarifaCanvas(template, brandLogoSrc);
+            canvas.toBlob((blob) => {
+              if (!blob) {
+                reject(new Error('No se pudo generar la imagen.'));
+                return;
+              }
+              const safeTitle = (template.title || 'tarifa').toLowerCase().replace(/\s+/g, '-');
+              resolve(new File([blob], `${safeTitle}.png`, { type: 'image/png' }));
+            }, 'image/png');
+          } catch (err) {
+            reject(err as Error);
+          }
+        })();
+      }),
+    [brandLogoSrc, buildTarifaCanvas]
+  );
+
+  useEffect(() => {
+    return () => {
+      if (tarifaPreviewUrlRef.current && tarifaPreviewIsObjectRef.current) {
+        URL.revokeObjectURL(tarifaPreviewUrlRef.current);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!isTarifasView || tarifaView !== 'form') {
+      return;
+    }
+
+    const controller = new AbortController();
+    const params = new URLSearchParams();
+    if (tarifasClienteFilter) {
+      params.set('clienteId', tarifasClienteFilter);
+    }
+    if (tarifasSucursalFilter) {
+      params.set('sucursalId', tarifasSucursalFilter);
+    }
+    if (tarifasMonthFilter) {
+      params.set('mes', tarifasMonthFilter);
+    }
+    if (tarifasYearFilter) {
+      params.set('anio', tarifasYearFilter);
+    }
+
+    const fetchTarifaImage = async () => {
+      try {
+        setTarifaImageLoading(true);
+        setTarifaImageError(null);
+        setTarifaSaveState('idle');
+        setTarifaSaveError(null);
+        setTarifaUploadFile(null);
+        setTarifaUploadName(null);
+
+        const response = await fetch(`${apiBaseUrl}/api/tarifas/imagen?${params.toString()}`, {
+          signal: controller.signal,
+        });
+
+        if (!response.ok) {
+          throw new Error(`Error ${response.status}: ${response.statusText}`);
+        }
+
+        const payload = (await response.json()) as {
+          data?: {
+            url?: string | null;
+            relativeUrl?: string | null;
+            dataUrl?: string | null;
+            nombreOriginal?: string | null;
+            templateData?: TarifaTemplate | null;
+          } | null;
+        };
+        const dataUrl = payload?.data?.dataUrl ?? null;
+        const url = resolveTarifaImageUrl(payload?.data?.relativeUrl ?? payload?.data?.url ?? null);
+        setTarifaPreview(dataUrl ?? url, Boolean(dataUrl));
+        setTarifaUploadName(payload?.data?.nombreOriginal ?? null);
+        setTarifaTemplate(normalizeTarifaTemplate(payload?.data?.templateData ?? DEFAULT_TARIFA_TEMPLATE));
+        setTarifaTemplateDirty(false);
+      } catch (err) {
+        if ((err as Error).name === 'AbortError') {
+          return;
+        }
+        setTarifaImageError((err as Error).message ?? 'No se pudo cargar la imagen.');
+        setTarifaPreview(null, false);
+      } finally {
+        setTarifaImageLoading(false);
+      }
+    };
+
+    fetchTarifaImage();
+    return () => controller.abort();
+  }, [
+    apiBaseUrl,
+    isTarifasView,
+    tarifaView,
+    tarifasClienteFilter,
+    tarifasSucursalFilter,
+    tarifasMonthFilter,
+    tarifasYearFilter,
+    setTarifaPreview,
+  ]);
+
+  useEffect(() => {
+    if (!isTarifasView || tarifaView !== 'list') {
+      return;
+    }
+
+    const controller = new AbortController();
+    const params = new URLSearchParams();
+    if (searchTerm.trim()) {
+      params.set('search', searchTerm.trim());
+    }
+    if (tarifasClienteFilter) {
+      params.set('clienteId', tarifasClienteFilter);
+    }
+    if (tarifasSucursalFilter) {
+      params.set('sucursalId', tarifasSucursalFilter);
+    }
+    if (tarifasMonthFilter) {
+      params.set('mes', tarifasMonthFilter);
+    }
+    if (tarifasYearFilter) {
+      params.set('anio', tarifasYearFilter);
+    }
+
+    const fetchTarifaList = async () => {
+      try {
+        setTarifaListLoading(true);
+        setTarifaListError(null);
+        const response = await fetch(`${apiBaseUrl}/api/tarifas/imagenes?${params.toString()}`, {
+          signal: controller.signal,
+        });
+        if (!response.ok) {
+          throw new Error(`Error ${response.status}: ${response.statusText}`);
+        }
+        const payload = (await response.json()) as { data?: TarifaImagenItem[] };
+        setTarifaList(Array.isArray(payload?.data) ? payload.data : []);
+      } catch (err) {
+        if ((err as Error).name === 'AbortError') {
+          return;
+        }
+        setTarifaListError((err as Error).message ?? 'No se pudieron cargar las tarifas.');
+      } finally {
+        setTarifaListLoading(false);
+      }
+    };
+
+    fetchTarifaList();
+    return () => controller.abort();
+  }, [
+    apiBaseUrl,
+    isTarifasView,
+    tarifaView,
+    searchTerm,
+    tarifasClienteFilter,
+    tarifasSucursalFilter,
+    tarifasMonthFilter,
+    tarifasYearFilter,
+    tarifaListRefreshToken,
+  ]);
+
+  useEffect(() => {
+    if (!isTarifasView || tarifaView !== 'form') {
+      return;
+    }
+    if (tarifaUploadFile) {
+      return;
+    }
+    let alive = true;
+    const run = async () => {
+      const canvas = await buildTarifaCanvas(tarifaTemplate, brandLogoSrc);
+      if (!alive) {
+        return;
+      }
+      const dataUrl = canvas.toDataURL('image/png');
+      setTarifaPreview(dataUrl, true);
+    };
+    void run();
+    return () => {
+      alive = false;
+    };
+  }, [brandLogoSrc, buildTarifaCanvas, isTarifasView, tarifaTemplate, tarifaUploadFile, tarifaView, setTarifaPreview]);
 
   useEffect(() => {
     if (!showPersonalPanel) {
@@ -6117,25 +6595,558 @@ const DashboardPage: React.FC<{ showPersonalPanel?: boolean }> = ({ showPersonal
     return `Mostrando ${filteredClientes.length} de ${clientes.length} clientes`;
   }, [loading, error, filteredClientes.length, clientes.length]);
 
+  const tarifasClienteOptions = useMemo(
+    () =>
+      clientes
+        .map((cliente) => ({
+          value: String(cliente.id),
+          label: cliente.nombre ?? `Cliente #${cliente.id}`,
+        }))
+        .sort((a, b) => a.label.localeCompare(b.label)),
+    [clientes]
+  );
+
+  const tarifasSucursalOptions = useMemo(() => {
+    const sourceClientes = tarifasClienteFilter
+      ? clientes.filter((cliente) => String(cliente.id) === tarifasClienteFilter)
+      : clientes;
+    const options = new Map<number, string>();
+    sourceClientes.forEach((cliente) => {
+      cliente.sucursales.forEach((sucursal) => {
+        if (sucursal.id == null) {
+          return;
+        }
+        const labelParts = [
+          sucursal.nombre ?? undefined,
+          sucursal.direccion ?? undefined,
+        ].filter(Boolean);
+        const label = labelParts.length > 0 ? labelParts.join(' - ') : 'Sin datos';
+        options.set(sucursal.id, label);
+      });
+    });
+    return Array.from(options.entries())
+      .map(([id, label]) => ({ value: String(id), label }))
+      .sort((a, b) => a.label.localeCompare(b.label));
+  }, [clientes, tarifasClienteFilter]);
+
+  const tarifasYearOptions = useMemo(() => {
+    const currentYear = new Date().getFullYear();
+    return Array.from({ length: 7 }, (_, index) => String(currentYear - 3 + index));
+  }, []);
+
+  const clienteTableColCount = isTarifasView ? 2 : 6;
+  const handleSaveTarifaImage = async () => {
+    let fileToUpload = tarifaUploadFile;
+    if (!fileToUpload) {
+      try {
+        fileToUpload = await buildTarifaImageFile(tarifaTemplate);
+      } catch (err) {
+        setTarifaSaveState('error');
+        setTarifaSaveError((err as Error).message ?? 'No se pudo generar la imagen.');
+        return;
+      }
+    }
+
+    try {
+      setTarifaSaveState('saving');
+      setTarifaSaveError(null);
+      const formData = new FormData();
+      formData.append('archivo', fileToUpload);
+      if (tarifasClienteFilter) {
+        formData.append('clienteId', tarifasClienteFilter);
+      }
+      if (tarifasSucursalFilter) {
+        formData.append('sucursalId', tarifasSucursalFilter);
+      }
+      if (tarifasMonthFilter) {
+        formData.append('mes', tarifasMonthFilter);
+      }
+      if (tarifasYearFilter) {
+        formData.append('anio', tarifasYearFilter);
+      }
+      formData.append('templateData', JSON.stringify(tarifaTemplate));
+
+      const response = await fetch(`${apiBaseUrl}/api/tarifas/imagen`, {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (!response.ok) {
+        let message = `Error ${response.status}: ${response.statusText}`;
+        try {
+          const payload = await response.json();
+          if (typeof payload?.message === 'string') {
+            message = payload.message;
+          }
+        } catch {
+          // ignore
+        }
+        throw new Error(message);
+      }
+
+      const payload = (await response.json()) as {
+        data?: {
+          url?: string | null;
+          relativeUrl?: string | null;
+          dataUrl?: string | null;
+          nombreOriginal?: string | null;
+        };
+      };
+      setTarifaSaveState('saved');
+      setTarifaUploadFile(null);
+      setTarifaTemplateDirty(false);
+      const dataUrl = payload?.data?.dataUrl ?? null;
+      const resolvedUrl = resolveTarifaImageUrl(payload?.data?.relativeUrl ?? payload?.data?.url ?? null);
+      if (dataUrl || resolvedUrl) {
+        setTarifaPreview(dataUrl ?? resolvedUrl, Boolean(dataUrl));
+      }
+      setTarifaUploadName(payload?.data?.nombreOriginal ?? tarifaUploadName);
+      setTarifaListRefreshToken((prev) => prev + 1);
+    } catch (err) {
+      setTarifaSaveState('error');
+      setTarifaSaveError((err as Error).message ?? 'No se pudo guardar la imagen.');
+    }
+  };
+
   const headerContent = showPersonalPanel
     ? null
     : (
       <div className="card-header">
-        <div className="search-wrapper">
-          <input
-            type="search"
-            placeholder="Buscar"
-            value={searchTerm}
-            onChange={(event) => setSearchTerm(event.target.value)}
-          />
-        </div>
-        <button
-          className="primary-action"
-          type="button"
-          onClick={() => navigate('/clientes/nuevo')}
-        >
-          Registrar cliente
-        </button>
+        {!isTarifasView ? (
+          <div className="search-wrapper">
+            <input
+              type="search"
+              placeholder="Buscar"
+              value={searchTerm}
+              onChange={(event) => setSearchTerm(event.target.value)}
+            />
+          </div>
+        ) : null}
+        {!isTarifasView ? (
+          <button
+            className="primary-action"
+            type="button"
+            onClick={() => navigate('/clientes/nuevo')}
+          >
+            Registrar cliente
+          </button>
+        ) : null}
+        {isTarifasView && tarifaView === 'list' ? (
+          <div className="filters-bar">
+            <div className="filters-actions">
+              <div className="search-wrapper">
+                <input
+                  type="search"
+                  placeholder="Buscar"
+                  value={searchTerm}
+                  onChange={(event) => setSearchTerm(event.target.value)}
+                />
+              </div>
+              <button
+                className="primary-action"
+                type="button"
+                onClick={() => setTarifaView('form')}
+              >
+                Agregar tarifa
+              </button>
+            </div>
+            <div className="filters-grid filters-grid--tarifas-list">
+              <label className="filter-field">
+                <span>Cliente</span>
+                <select
+                  value={tarifasClienteFilter}
+                  onChange={(event) => setTarifasClienteFilter(event.target.value)}
+                >
+                  <option value="">Todos los clientes</option>
+                  {tarifasClienteOptions.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="filter-field">
+                <span>Sucursal</span>
+                <select
+                  value={tarifasSucursalFilter}
+                  onChange={(event) => setTarifasSucursalFilter(event.target.value)}
+                  disabled={tarifasSucursalOptions.length === 0}
+                >
+                  <option value="">Todas las sucursales</option>
+                  {tarifasSucursalOptions.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="filter-field">
+                <span>Mes</span>
+                <select
+                  value={tarifasMonthFilter}
+                  onChange={(event) => setTarifasMonthFilter(event.target.value)}
+                >
+                  <option value="">Todos los meses</option>
+                  {TARIFA_MONTH_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="filter-field">
+                <span>Año</span>
+                <select
+                  value={tarifasYearFilter}
+                  onChange={(event) => setTarifasYearFilter(event.target.value)}
+                >
+                  <option value="">Todos los años</option>
+                  {tarifasYearOptions.map((year) => (
+                    <option key={year} value={year}>
+                      {year}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+          </div>
+        ) : null}
+        {isTarifasView && tarifaView === 'form' ? (
+          <div className="filters-bar filters-bar--tarifas" style={{ marginTop: '0.75rem' }}>
+            <div className="tarifas-filters">
+              <div className="tarifas-filters__left">
+                <div className="search-wrapper">
+                  <input
+                    type="search"
+                    placeholder="Buscar"
+                    value={searchTerm}
+                    onChange={(event) => setSearchTerm(event.target.value)}
+                  />
+                </div>
+                <div className="filters-grid">
+                  <label className="filter-field">
+                    <span>Cliente</span>
+                    <select
+                      value={tarifasClienteFilter}
+                      onChange={(event) => setTarifasClienteFilter(event.target.value)}
+                    >
+                      <option value="">Todos los clientes</option>
+                      {tarifasClienteOptions.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="filter-field">
+                    <span>Sucursal</span>
+                    <select
+                      value={tarifasSucursalFilter}
+                      onChange={(event) => setTarifasSucursalFilter(event.target.value)}
+                      disabled={tarifasSucursalOptions.length === 0}
+                    >
+                      <option value="">Todas las sucursales</option>
+                      {tarifasSucursalOptions.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="filter-field">
+                    <span>Mes</span>
+                    <select
+                      value={tarifasMonthFilter}
+                      onChange={(event) => setTarifasMonthFilter(event.target.value)}
+                    >
+                      <option value="">Todos los meses</option>
+                      {TARIFA_MONTH_OPTIONS.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="filter-field">
+                    <span>Año</span>
+                    <select
+                      value={tarifasYearFilter}
+                      onChange={(event) => setTarifasYearFilter(event.target.value)}
+                    >
+                      <option value="">Todos los años</option>
+                      {tarifasYearOptions.map((year) => (
+                        <option key={year} value={year}>
+                          {year}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+                <div className="filters-actions">
+                  <input
+                    ref={tarifaUploadInputRef}
+                    type="file"
+                    accept="image/*"
+                    onChange={(event) => {
+                      const file = event.target.files?.[0] ?? null;
+                      setTarifaUploadFile(file);
+                      setTarifaUploadName(file ? file.name : null);
+                      setTarifaSaveState('idle');
+                      setTarifaSaveError(null);
+                      setTarifaPreview(file ? URL.createObjectURL(file) : null, Boolean(file));
+                    }}
+                    hidden
+                  />
+                  <button
+                    type="button"
+                    className="secondary-action"
+                    onClick={() => tarifaUploadInputRef.current?.click()}
+                  >
+                    Subir imagen
+                  </button>
+                  <button
+                    type="button"
+                    className="primary-action"
+                    onClick={handleSaveTarifaImage}
+                    disabled={tarifaSaveState === 'saving'}
+                  >
+                    {tarifaSaveState === 'saving' ? 'Guardando...' : 'Guardar'}
+                  </button>
+                  <button
+                    type="button"
+                    className="secondary-action"
+                    onClick={() => setTarifaView('list')}
+                  >
+                    Volver
+                  </button>
+                  {tarifaUploadName ? (
+                    <span className="form-info">Archivo: {tarifaUploadName}</span>
+                  ) : null}
+                  {tarifaSaveState === 'saved' ? (
+                    <span className="form-info">Imagen guardada.</span>
+                  ) : null}
+                  {tarifaSaveState === 'error' && tarifaSaveError ? (
+                    <span className="form-info form-info--error">{tarifaSaveError}</span>
+                  ) : null}
+                </div>
+                <div className="tarifa-template">
+                  <div className="tarifa-template__header">
+                    <h4>Plantilla</h4>
+                    {tarifaTemplateDirty ? <span className="form-info">Cambios sin guardar</span> : null}
+                  </div>
+                  <div className="tarifa-template__actions">
+                    <button
+                      type="button"
+                      className="secondary-action"
+                      onClick={() => {
+                        setTarifaTemplate((prev) => ({
+                          ...prev,
+                          columns: [...prev.columns, `Columna ${prev.columns.length + 1}`],
+                          rows: prev.rows.map((row) => ({
+                            ...row,
+                            values: [...row.values, ''],
+                          })),
+                        }));
+                        setTarifaTemplateDirty(true);
+                      }}
+                    >
+                      Agregar columna
+                    </button>
+                    <button
+                      type="button"
+                      className="secondary-action"
+                      onClick={() => {
+                        setTarifaTemplate((prev) => {
+                          if (prev.columns.length <= 1) {
+                            return prev;
+                          }
+                          const nextColumns = prev.columns.slice(0, -1);
+                          const nextRows = prev.rows.map((row) => ({
+                            ...row,
+                            values: row.values.slice(0, -1),
+                          }));
+                          return { ...prev, columns: nextColumns, rows: nextRows };
+                        });
+                        setTarifaTemplateDirty(true);
+                      }}
+                      disabled={tarifaTemplate.columns.length <= 1}
+                    >
+                      Quitar columna
+                    </button>
+                    <button
+                      type="button"
+                      className="secondary-action"
+                      onClick={() => {
+                        setTarifaTemplate((prev) => ({
+                          ...prev,
+                          rows: [
+                            ...prev.rows,
+                            { label: `Zona ${prev.rows.length + 1}`, values: prev.columns.map(() => '') },
+                          ],
+                        }));
+                        setTarifaTemplateDirty(true);
+                      }}
+                    >
+                      Agregar fila
+                    </button>
+                    <button
+                      type="button"
+                      className="secondary-action"
+                      onClick={() => {
+                        setTarifaTemplate((prev) => {
+                          if (prev.rows.length <= 1) {
+                            return prev;
+                          }
+                          return { ...prev, rows: prev.rows.slice(0, -1) };
+                        });
+                        setTarifaTemplateDirty(true);
+                      }}
+                      disabled={tarifaTemplate.rows.length <= 1}
+                    >
+                      Quitar fila
+                    </button>
+                  </div>
+                  <div className="tarifa-template__fields">
+                    <label className="filter-field">
+                      <span>Título</span>
+                      <input
+                        type="text"
+                        value={tarifaTemplate.title}
+                        onChange={(event) => {
+                          const value = event.target.value;
+                          setTarifaTemplate((prev) => ({ ...prev, title: value }));
+                          setTarifaTemplateDirty(true);
+                        }}
+                      />
+                    </label>
+                    <label className="filter-field">
+                      <span>Subtítulo</span>
+                      <input
+                        type="text"
+                        value={tarifaTemplate.subtitle}
+                        onChange={(event) => {
+                          const value = event.target.value;
+                          setTarifaTemplate((prev) => ({ ...prev, subtitle: value }));
+                          setTarifaTemplateDirty(true);
+                        }}
+                      />
+                    </label>
+                    <label className="filter-field">
+                      <span>Título tabla</span>
+                      <input
+                        type="text"
+                        value={tarifaTemplate.tableTitle}
+                        onChange={(event) => {
+                          const value = event.target.value;
+                          setTarifaTemplate((prev) => ({ ...prev, tableTitle: value }));
+                          setTarifaTemplateDirty(true);
+                        }}
+                      />
+                    </label>
+                    <label className="filter-field" style={{ gridColumn: '1 / -1' }}>
+                      <span>Observaciones</span>
+                      <textarea
+                        rows={4}
+                        value={tarifaTemplate.observations}
+                        onChange={(event) => {
+                          const value = event.target.value;
+                          setTarifaTemplate((prev) => ({ ...prev, observations: value }));
+                          setTarifaTemplateDirty(true);
+                        }}
+                      />
+                    </label>
+                  </div>
+                  <div className="tarifa-template__table">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>Zona</th>
+                          {tarifaTemplate.columns.map((col, colIndex) => (
+                            <th key={`col-${colIndex}`}>
+                              <input
+                                type="text"
+                                value={col}
+                                onChange={(event) => {
+                                  const value = event.target.value;
+                                  setTarifaTemplate((prev) => {
+                                    const next = [...prev.columns];
+                                    next[colIndex] = value;
+                                    return { ...prev, columns: next };
+                                  });
+                                  setTarifaTemplateDirty(true);
+                                }}
+                              />
+                            </th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {tarifaTemplate.rows.map((row, rowIndex) => (
+                          <tr key={`row-${rowIndex}`}>
+                            <td>
+                              <input
+                                type="text"
+                                value={row.label}
+                                onChange={(event) => {
+                                  const value = event.target.value;
+                                  setTarifaTemplate((prev) => {
+                                    const nextRows = prev.rows.map((item, idx) =>
+                                      idx === rowIndex ? { ...item, label: value } : item
+                                    );
+                                    return { ...prev, rows: nextRows };
+                                  });
+                                  setTarifaTemplateDirty(true);
+                                }}
+                              />
+                            </td>
+                            {row.values.map((cell, colIndex) => (
+                              <td key={`cell-${rowIndex}-${colIndex}`}>
+                                <input
+                                  type="text"
+                                  value={cell}
+                                  onChange={(event) => {
+                                    const value = event.target.value;
+                                    setTarifaTemplate((prev) => {
+                                      const nextRows = prev.rows.map((item, idx) => {
+                                        if (idx !== rowIndex) return item;
+                                        const nextValues = [...item.values];
+                                        nextValues[colIndex] = value;
+                                        return { ...item, values: nextValues };
+                                      });
+                                      return { ...prev, rows: nextRows };
+                                    });
+                                    setTarifaTemplateDirty(true);
+                                  }}
+                                />
+                              </td>
+                            ))}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+              <div className="tarifas-filters__preview">
+                {tarifaImageLoading ? (
+                  <div className="tarifas-preview__placeholder">Cargando imagen...</div>
+                ) : tarifaImageError ? (
+                  <div className="tarifas-preview__placeholder">{tarifaImageError}</div>
+                ) : tarifaUploadPreviewUrl ? (
+                  <a href={tarifaUploadPreviewUrl} target="_blank" rel="noreferrer">
+                    <img
+                      src={tarifaUploadPreviewUrl}
+                      alt="Vista previa de tarifa"
+                      onError={() => setTarifaPreview(null, false)}
+                    />
+                  </a>
+                ) : (
+                  <div className="tarifas-preview__placeholder">Vista previa</div>
+                )}
+              </div>
+            </div>
+          </div>
+        ) : null}
       </div>
     );
 
@@ -6289,8 +7300,8 @@ const DashboardPage: React.FC<{ showPersonalPanel?: boolean }> = ({ showPersonal
     return found?.name ?? null;
   }, [monitorTeamId, teamGroups]);
 
-  const resolvedTitle = showPersonalPanel ? 'Panel general' : 'Gestionar clientes';
-  const resolvedSubtitle = showPersonalPanel ? 'Resumen de personal y clientes' : 'Gestionar clientes';
+  const resolvedTitle = showPersonalPanel ? 'Panel general' : (pageTitle ?? 'Gestionar clientes');
+  const resolvedSubtitle = showPersonalPanel ? 'Resumen de personal y clientes' : (pageSubtitle ?? 'Gestionar clientes');
 
   const baseFilteredPersonal = useMemo(
     () =>
@@ -7028,30 +8039,194 @@ const DashboardPage: React.FC<{ showPersonalPanel?: boolean }> = ({ showPersonal
         </>
       ) : null}
 
-      {!showPersonalPanel ? (
+      {!showPersonalPanel && isTarifasView && tarifaView === 'list' ? (
         <>
           <div className="table-wrapper">
             <table>
               <thead>
                 <tr>
-                  <th>Código</th>
-                  <th>Nombre</th>
-                  <th>Documento fiscal</th>
-                  <th>Dirección</th>
-                  <th>Sucursales</th>
+                  <th>Cliente</th>
+                  <th>Sucursal</th>
+                  <th>Mes</th>
+                  <th>Año</th>
+                  <th>Archivo</th>
                   <th>Acciones</th>
+                </tr>
+              </thead>
+              <tbody>
+                {tarifaListLoading && (
+                  <tr>
+                    <td colSpan={6}>Cargando tarifas...</td>
+                  </tr>
+                )}
+                {tarifaListError && !tarifaListLoading && (
+                  <tr>
+                    <td colSpan={6} className="error-cell">
+                      {tarifaListError}
+                    </td>
+                  </tr>
+                )}
+                {!tarifaListLoading && !tarifaListError && tarifaList.length === 0 && (
+                  <tr>
+                    <td colSpan={6}>No hay tarifas para mostrar.</td>
+                  </tr>
+                )}
+                {!tarifaListLoading &&
+                  !tarifaListError &&
+                  tarifaList.map((item) => {
+                    const displayUrl = resolveTarifaDisplayUrl(item);
+                    const monthLabel = item.mes ? monthLabelLookup.get(String(item.mes)) ?? String(item.mes) : '—';
+                    return (
+                      <tr key={item.id}>
+                        <td>{item.clienteNombre ?? '—'}</td>
+                        <td>{item.sucursalNombre ?? '—'}</td>
+                        <td>{monthLabel}</td>
+                        <td>{item.anio ?? '—'}</td>
+                        <td>{item.nombreOriginal ?? '—'}</td>
+                        <td>
+                          <div className="action-buttons">
+                            <button
+                              type="button"
+                              aria-label="Ver tarifa"
+                              onClick={() => {
+                                if (displayUrl) {
+                                  setTarifaModalUrl(displayUrl);
+                                  setTarifaModalTitle(item.nombreOriginal ?? 'Tarifa');
+                                }
+                              }}
+                              disabled={!displayUrl}
+                            >
+                              👁️
+                            </button>
+                            <button
+                              type="button"
+                              aria-label="Descargar tarifa"
+                              onClick={() => {
+                                if (!displayUrl) {
+                                  return;
+                                }
+                                const link = document.createElement('a');
+                                link.href = displayUrl;
+                                link.download = item.nombreOriginal ?? `tarifa-${item.id}`;
+                                link.rel = 'noopener';
+                                document.body.appendChild(link);
+                                link.click();
+                                document.body.removeChild(link);
+                              }}
+                              disabled={!displayUrl}
+                            >
+                              ⬇️
+                            </button>
+                            <button
+                              type="button"
+                              aria-label="Eliminar tarifa"
+                              onClick={async () => {
+                                if (!window.confirm('¿Eliminar esta tarifa?')) {
+                                  return;
+                                }
+                                try {
+                                  setTarifaDeleteId(item.id);
+                                  const response = await fetch(`${apiBaseUrl}/api/tarifas/imagen/${item.id}`, {
+                                    method: 'DELETE',
+                                  });
+                                  if (!response.ok) {
+                                    let message = `Error ${response.status}: ${response.statusText}`;
+                                    try {
+                                      const payload = await response.json();
+                                      if (typeof payload?.message === 'string') {
+                                        message = payload.message;
+                                      }
+                                    } catch {
+                                      // ignore
+                                    }
+                                    throw new Error(message);
+                                  }
+                                  setTarifaList((prev) => prev.filter((row) => row.id !== item.id));
+                                } catch (err) {
+                                  window.alert((err as Error).message ?? 'No se pudo eliminar la tarifa.');
+                                } finally {
+                                  setTarifaDeleteId(null);
+                                }
+                              }}
+                              disabled={tarifaDeleteId === item.id}
+                            >
+                              🗑️
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+              </tbody>
+            </table>
+          </div>
+          <footer className="table-footer">
+            <span>
+              {tarifaListLoading
+                ? 'Cargando tarifas...'
+                : `Mostrando ${tarifaList.length} tarifa${tarifaList.length === 1 ? '' : 's'}`}
+            </span>
+            <div className="pagination">
+              <button disabled aria-label="Anterior">
+                ‹
+              </button>
+              <button disabled aria-label="Siguiente">
+                ›
+              </button>
+            </div>
+          </footer>
+          {tarifaModalUrl ? (
+            <div className="tarifa-modal" role="dialog" aria-modal="true">
+              <div className="tarifa-modal__backdrop" onClick={() => setTarifaModalUrl(null)} />
+              <div className="tarifa-modal__content">
+                <div className="tarifa-modal__header">
+                  <h3>{tarifaModalTitle ?? 'Tarifa'}</h3>
+                  <button type="button" onClick={() => setTarifaModalUrl(null)} aria-label="Cerrar">
+                    ✕
+                  </button>
+                </div>
+                <div className="tarifa-modal__body">
+                  <img src={tarifaModalUrl} alt={tarifaModalTitle ?? 'Tarifa'} />
+                </div>
+              </div>
+            </div>
+          ) : null}
+        </>
+      ) : null}
+
+      {!showPersonalPanel && !isTarifasView ? (
+        <>
+          <div className="table-wrapper">
+            <table>
+              <thead>
+                <tr>
+                  {isTarifasView ? (
+                    <>
+                      <th>Nombre</th>
+                      <th>Acciones</th>
+                    </>
+                  ) : (
+                    <>
+                      <th>Código</th>
+                      <th>Nombre</th>
+                      <th>Documento fiscal</th>
+                      <th>Dirección</th>
+                      <th>Sucursales</th>
+                      <th>Acciones</th>
+                    </>
+                  )}
                 </tr>
               </thead>
               <tbody>
                 {loading && (
                   <tr>
-                    <td colSpan={6}>Cargando clientes...</td>
+                    <td colSpan={clienteTableColCount}>Cargando clientes...</td>
                   </tr>
                 )}
 
                 {error && !loading && (
                   <tr>
-                    <td colSpan={6} className="error-cell">
+                    <td colSpan={clienteTableColCount} className="error-cell">
                       {error}
                     </td>
                   </tr>
@@ -7059,7 +8234,7 @@ const DashboardPage: React.FC<{ showPersonalPanel?: boolean }> = ({ showPersonal
 
                 {!loading && !error && filteredClientes.length === 0 && (
                   <tr>
-                    <td colSpan={6}>No hay clientes para mostrar.</td>
+                    <td colSpan={clienteTableColCount}>No hay clientes para mostrar.</td>
                   </tr>
                 )}
 
@@ -7067,45 +8242,64 @@ const DashboardPage: React.FC<{ showPersonalPanel?: boolean }> = ({ showPersonal
                   !error &&
                   filteredClientes.map((cliente) => (
                     <tr key={cliente.id}>
-                      <td>{cliente.codigo ?? '—'}</td>
-                      <td>{cliente.nombre ?? '—'}</td>
-                      <td>{cliente.documento_fiscal ?? '—'}</td>
-                      <td>{cliente.direccion ?? '—'}</td>
-                      <td>
-                        <div className="tag-list">
-                          {cliente.sucursales.map((sucursal) => {
-                            const labelParts = [
-                              sucursal.nombre ?? undefined,
-                              sucursal.direccion ?? undefined,
-                            ].filter(Boolean);
+                      {isTarifasView ? (
+                        <>
+                          <td>{cliente.nombre ?? '—'}</td>
+                          <td>
+                            <div className="action-buttons">
+                              <button
+                                type="button"
+                                aria-label={`Editar cliente ${cliente.nombre ?? ''}`}
+                                onClick={() => navigate(`/clientes/${cliente.id}/editar`)}
+                              >
+                                ✏️
+                              </button>
+                            </div>
+                          </td>
+                        </>
+                      ) : (
+                        <>
+                          <td>{cliente.codigo ?? '—'}</td>
+                          <td>{cliente.nombre ?? '—'}</td>
+                          <td>{cliente.documento_fiscal ?? '—'}</td>
+                          <td>{cliente.direccion ?? '—'}</td>
+                          <td>
+                            <div className="tag-list">
+                              {cliente.sucursales.map((sucursal) => {
+                                const labelParts = [
+                                  sucursal.nombre ?? undefined,
+                                  sucursal.direccion ?? undefined,
+                                ].filter(Boolean);
 
-                            return (
-                              <span key={`${cliente.id}-${sucursal.id ?? uniqueKey()}`} className="tag">
-                                {labelParts.length > 0 ? labelParts.join(' - ') : 'Sin datos'}
-                              </span>
-                            );
-                          })}
-                        </div>
-                      </td>
-                      <td>
-                        <div className="action-buttons">
-                          <button
-                            type="button"
-                            aria-label={`Editar cliente ${cliente.nombre ?? ''}`}
-                            onClick={() => navigate(`/clientes/${cliente.id}/editar`)}
-                          >
-                            ✏️
-                          </button>
-                          <button
-                            type="button"
-                            aria-label={`Eliminar cliente ${cliente.nombre ?? ''}`}
-                            onClick={() => handleDeleteCliente(cliente)}
-                            disabled={deletingClienteId === cliente.id}
-                          >
-                            🗑️
-                          </button>
-                        </div>
-                      </td>
+                                return (
+                                  <span key={`${cliente.id}-${sucursal.id ?? uniqueKey()}`} className="tag">
+                                    {labelParts.length > 0 ? labelParts.join(' - ') : 'Sin datos'}
+                                  </span>
+                                );
+                              })}
+                            </div>
+                          </td>
+                          <td>
+                            <div className="action-buttons">
+                              <button
+                                type="button"
+                                aria-label={`Editar cliente ${cliente.nombre ?? ''}`}
+                                onClick={() => navigate(`/clientes/${cliente.id}/editar`)}
+                              >
+                                ✏️
+                              </button>
+                              <button
+                                type="button"
+                                aria-label={`Eliminar cliente ${cliente.nombre ?? ''}`}
+                                onClick={() => handleDeleteCliente(cliente)}
+                                disabled={deletingClienteId === cliente.id}
+                              >
+                                🗑️
+                              </button>
+                            </div>
+                          </td>
+                        </>
+                      )}
                     </tr>
                   ))}
               </tbody>
@@ -11135,7 +12329,6 @@ const LiquidacionesPage: React.FC = () => {
   const [detailError, setDetailError] = useState<string | null>(null);
   const [pendingUploads, setPendingUploads] = useState<PendingPersonalUpload[]>([]);
   const [fuelInvoiceUpload, setFuelInvoiceUpload] = useState<PendingPersonalUpload | null>(null);
-  const [facturarAmount, setFacturarAmount] = useState('');
   const [fuelUploading, setFuelUploading] = useState(false);
   const [showFuelPasteModal, setShowFuelPasteModal] = useState(false);
   const [fuelPasteError, setFuelPasteError] = useState<string | null>(null);
@@ -12542,6 +13735,9 @@ const LiquidacionesPage: React.FC = () => {
         if (options?.pending) {
           formData.append('pendiente', '1');
         }
+        if (fuelParentDocumentId) {
+          formData.append('liquidacionId', fuelParentDocumentId);
+        }
         if (fuelInvoiceUpload.fechaVencimiento) {
           formData.append('fechaVencimiento', fuelInvoiceUpload.fechaVencimiento);
         }
@@ -12606,16 +13802,12 @@ const LiquidacionesPage: React.FC = () => {
     [apiBaseUrl, fuelInvoiceUpload, fuelParentDocumentId, refreshPersonaDetail, selectedPersonaId]
   );
 
-  const publishPendingDocuments = useCallback(
-    async (options?: { importeFacturar?: string }) => {
+  const publishPendingDocuments = useCallback(async () => {
     if (!selectedPersonaId) {
       return false;
     }
 
     const formData = new FormData();
-    if (options?.importeFacturar && options.importeFacturar.trim() !== '') {
-      formData.append('importeFacturar', options.importeFacturar.trim());
-    }
 
     const response = await fetch(`${apiBaseUrl}/api/personal/${selectedPersonaId}/documentos/publicar`, {
       method: 'POST',
@@ -12651,7 +13843,6 @@ const LiquidacionesPage: React.FC = () => {
     }
 
     const needsFuelInvoice = requiresFuelInvoice;
-    const trimmedFacturarAmount = facturarAmount.trim();
     const hasFuelData =
       hasStoredFuelInvoice ||
       (fuelInvoiceUpload && (fuelParentDocumentId.trim() !== '' || hasLocalUploads));
@@ -12680,7 +13871,7 @@ const LiquidacionesPage: React.FC = () => {
       try {
         setUploading(true);
         setUploadStatus(null);
-        await publishPendingDocuments({ importeFacturar: trimmedFacturarAmount });
+        await publishPendingDocuments();
         setUploadStatus({ type: 'success', message: 'Liquidaciones publicadas correctamente.' });
         refreshPersonaDetail();
       } catch (err) {
@@ -12712,9 +13903,6 @@ const LiquidacionesPage: React.FC = () => {
         const friendlyName = hasLiquidKeyword ? rawName : `Liquidación - ${rawName}`;
         formData.append('nombre', friendlyName);
         formData.append('tipoArchivoId', String(item.typeId));
-        if (parentDocumentId === null && trimmedFacturarAmount !== '') {
-          formData.append('importeFacturar', trimmedFacturarAmount);
-        }
         if (item.fechaVencimiento) {
           formData.append('fechaVencimiento', item.fechaVencimiento);
         }
@@ -12771,6 +13959,7 @@ const LiquidacionesPage: React.FC = () => {
           formData.append('fechaVencimiento', fuelInvoiceUpload.fechaVencimiento);
         }
         formData.append('parentDocumentId', String(parentDocumentId));
+        formData.append('liquidacionId', String(parentDocumentId));
         formData.append('esFacturaCombustible', '1');
 
         const response = await fetch(`${apiBaseUrl}/api/personal/${selectedPersonaId}/documentos`, {
@@ -12802,17 +13991,15 @@ const LiquidacionesPage: React.FC = () => {
           revokeImagePreviewUrl(fuelInvoiceUpload.previewUrl);
         }
         setFuelInvoiceUpload(null);
-        setFacturarAmount('');
       }
 
       if (hasPublishablePending) {
-        await publishPendingDocuments({ importeFacturar: trimmedFacturarAmount });
+        await publishPendingDocuments();
       }
 
       setUploadStatus({ type: 'success', message: 'Liquidaciones cargadas correctamente.' });
       clearPendingUploads();
       setDocumentExpiry('');
-      setFacturarAmount('');
       refreshPersonaDetail();
     } catch (err) {
       setUploadStatus({ type: 'error', message: (err as Error).message ?? 'No se pudieron subir los archivos.' });
@@ -12840,9 +14027,6 @@ const LiquidacionesPage: React.FC = () => {
         const friendlyName = hasLiquidKeyword ? rawName : `Liquidación - ${rawName}`;
         formData.append('nombre', friendlyName);
         formData.append('tipoArchivoId', String(item.typeId));
-        if (facturarAmount.trim() !== '') {
-          formData.append('importeFacturar', facturarAmount.trim());
-        }
         if (item.fechaVencimiento) {
           formData.append('fechaVencimiento', item.fechaVencimiento);
         }
@@ -12892,7 +14076,6 @@ const LiquidacionesPage: React.FC = () => {
       }
       clearPendingUploads();
       setDocumentExpiry('');
-      setFacturarAmount('');
       refreshPersonaDetail();
     } catch (err) {
       setUploadStatus({ type: 'error', message: (err as Error).message ?? 'No se pudieron guardar las liquidaciones.' });
@@ -13331,7 +14514,10 @@ const LiquidacionesPage: React.FC = () => {
                           return (
                             <React.Fragment key={group.main.id}>
                               <tr>
-                                <td>{group.main.nombre ?? `Documento #${group.main.id}`}</td>
+                                <td>
+                                  <div style={{ fontSize: '0.85rem', color: '#6b7a90' }}>{`ID ${group.main.id}`}</div>
+                                  <div>{group.main.nombre ?? `Documento #${group.main.id}`}</div>
+                                </td>
                                 <td>{group.main.tipoNombre ?? '—'}</td>
                                 <td>
                                   {group.main.fechaVencimiento
@@ -13478,20 +14664,6 @@ const LiquidacionesPage: React.FC = () => {
             </label>
           ) : null}
         </div>
-        <div className="form-grid" style={{ marginTop: '0.75rem' }}>
-          <label className="input-control">
-            <span>Importe a facturar</span>
-            <input
-              type="number"
-              min="0"
-              step="0.01"
-              value={facturarAmount}
-              onChange={(event) => setFacturarAmount(event.target.value)}
-              placeholder="0.00"
-            />
-          </label>
-        </div>
-
         {documentTypesError ? (
           <p className="form-info form-info--error">{documentTypesError}</p>
         ) : null}
@@ -26717,6 +27889,14 @@ const AppRoutes: React.FC = () => (
         element={
           <RequireAccess section="clientes">
             <DashboardPage />
+          </RequireAccess>
+        }
+      />
+      <Route
+        path="/tarifas"
+        element={
+          <RequireAccess section="clientes">
+            <DashboardPage pageTitle="Tarifas" pageSubtitle="Listado de clientes" viewMode="tarifas" />
           </RequireAccess>
         }
       />

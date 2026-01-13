@@ -17,6 +17,7 @@ use App\Http\Controllers\Api\AuditController;
 use App\Http\Controllers\Api\TeamGroupController;
 use App\Http\Controllers\Api\TicketRequestController;
 use App\Http\Controllers\Api\NosisController;
+use App\Http\Controllers\Api\TarifaImagenController;
 use Illuminate\Support\Facades\Route;
 
 Route::post('/login', [AuthController::class, 'login']);
@@ -112,6 +113,11 @@ Route::middleware('auth.api')->group(function () {
     Route::post('/team-groups', [TeamGroupController::class, 'store']);
     Route::put('/team-groups/{teamGroup}', [TeamGroupController::class, 'update']);
     Route::delete('/team-groups/{teamGroup}', [TeamGroupController::class, 'destroy']);
+
+    Route::get('/tarifas/imagenes', [TarifaImagenController::class, 'index']);
+    Route::get('/tarifas/imagen', [TarifaImagenController::class, 'show']);
+    Route::post('/tarifas/imagen', [TarifaImagenController::class, 'store']);
+    Route::delete('/tarifas/imagen/{tarifaImagen}', [TarifaImagenController::class, 'destroy']);
 });
 
 Route::options('/{any}', fn () => response()->noContent())->where('any', '.*');
