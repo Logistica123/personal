@@ -12975,24 +12975,22 @@ const LiquidacionesPage: React.FC = () => {
       };
     });
 
-    const liquidMainIds = new Set(
+    const isRelevant = (doc: PersonalDetail['documents'][number]) =>
+      isLiquidacionDocument(doc) || isFuelDocument(doc);
+
+    const mainIds = new Set(
       normalised
-        .filter((doc) => isLiquidacionDocument(doc) && !doc.isAttachment)
+        .filter((doc) => isRelevant(doc) && !doc.isAttachment)
         .map((doc) => doc.id)
     );
 
-    const matches = normalised.filter((doc) => {
-      if (isLiquidacionDocument(doc)) {
+    return normalised.filter((doc) => {
+      if (isRelevant(doc)) {
         return true;
       }
-      return doc.isAttachment && doc.parentDocumentId !== null && liquidMainIds.has(doc.parentDocumentId);
+      return doc.isAttachment && doc.parentDocumentId !== null && mainIds.has(doc.parentDocumentId);
     });
-
-    if (matches.length > 0) {
-      return matches;
-    }
-    return normalised;
-  }, [detail, isLiquidacionDocument]);
+  }, [detail, isFuelDocument, isLiquidacionDocument]);
 
   const visibleLiquidacionDocuments = useMemo(
     () => allLiquidacionDocuments.filter((doc) => !(doc.pendiente ?? false)),
