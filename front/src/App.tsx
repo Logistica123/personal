@@ -12323,6 +12323,7 @@ const LiquidacionesPage: React.FC = () => {
   const [liquidacionMonthFilter, setLiquidacionMonthFilter] = useState('');
   const [liquidacionFortnightFilter, setLiquidacionFortnightFilter] = useState('');
   const [liquidacionYearFilter, setLiquidacionYearFilter] = useState('');
+  const [liquidacionImporteManual, setLiquidacionImporteManual] = useState('');
   const [selectedPersonaId, setSelectedPersonaId] = useState<number | null>(personaIdFromRoute);
   const [detail, setDetail] = useState<PersonalDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
@@ -13906,6 +13907,9 @@ const LiquidacionesPage: React.FC = () => {
         if (item.fechaVencimiento) {
           formData.append('fechaVencimiento', item.fechaVencimiento);
         }
+        if (liquidacionImporteManual.trim() !== '') {
+          formData.append('importeFacturar', liquidacionImporteManual.replace(',', '.'));
+        }
         formData.append('esLiquidacion', '1');
         formData.append('pendiente', '1');
         if (shouldAttachFuelInvoices) {
@@ -14029,6 +14033,9 @@ const LiquidacionesPage: React.FC = () => {
         formData.append('tipoArchivoId', String(item.typeId));
         if (item.fechaVencimiento) {
           formData.append('fechaVencimiento', item.fechaVencimiento);
+        }
+        if (liquidacionImporteManual.trim() !== '') {
+          formData.append('importeFacturar', liquidacionImporteManual.replace(',', '.'));
         }
         formData.append('esLiquidacion', '1');
 
@@ -14652,6 +14659,18 @@ const LiquidacionesPage: React.FC = () => {
                 readOnly
               />
             )}
+          </label>
+          <label className="input-control">
+            <span>Importe a facturar</span>
+            <input
+              type="number"
+              inputMode="decimal"
+              min="0"
+              step="0.01"
+              placeholder="0,00"
+              value={liquidacionImporteManual}
+              onChange={(event) => setLiquidacionImporteManual(event.target.value)}
+            />
           </label>
           {selectedDocumentType?.vence ? (
             <label className="input-control">
