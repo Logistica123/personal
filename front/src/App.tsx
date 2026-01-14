@@ -14503,7 +14503,7 @@ const LiquidacionesPage: React.FC = () => {
                     {monthSection.sections.map((section) => (
                       <React.Fragment key={`month-${monthSection.monthKey}-${section.key}`}>
                         <tr className="fortnight-row">
-                          <td colSpan={5}>
+                          <td colSpan={6}>
                             <strong>{monthSection.monthLabel}</strong>
                             <span className="fortnight-row__separator">•</span>
                             <span>{section.label}</span>
