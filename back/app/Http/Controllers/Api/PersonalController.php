@@ -120,6 +120,7 @@ class PersonalController extends Controller
                             'tipo_archivo_id',
                             'fecha_vencimiento',
                             'created_at',
+                            'importe_facturar',
                             'enviada',
                             'recibido',
                             'pagado'
@@ -1259,6 +1260,30 @@ class PersonalController extends Controller
             : null;
         $liquidacionPagado = $latestLiquidacion ? (bool) $latestLiquidacion->pagado : null;
         $liquidacionImporteFacturar = $latestLiquidacion?->importe_facturar;
+        $liquidacionesResumen = collect($persona->documentos ?? [])
+            ->filter(function (Archivo $documento) {
+                return ! $documento->parent_document_id && $this->isLiquidacionDocument($documento);
+            })
+            ->map(function (Archivo $documento) {
+                $date = $this->resolveDocumentDate($documento);
+                $monthKey = $date ? $date->format('Y-m') : 'unknown';
+                $fortnightKey = $date ? $this->determineFortnightKey($documento, $date) : 'NO_DATE';
+
+                $childrenCount = $documento->children_count ?? 0;
+                $recibido = (bool) $documento->recibido || $childrenCount > 0;
+
+                return [
+                    'id' => $documento->id,
+                    'fecha' => $date ? $date->format('Y-m-d') : null,
+                    'monthKey' => $monthKey,
+                    'fortnightKey' => $fortnightKey,
+                    'enviada' => (bool) $documento->enviada,
+                    'recibido' => $recibido,
+                    'pagado' => (bool) $documento->pagado,
+                    'importeFacturar' => $documento->importe_facturar,
+                ];
+            })
+            ->values();
         $perfilMap = [
             1 => 'Dueño y chofer',
             2 => 'Chofer',
@@ -1357,6 +1382,7 @@ class PersonalController extends Controller
             'liquidacionPagado' => $liquidacionPagado,
             'liquidacionIdLatest' => $latestLiquidacion?->id,
             'liquidacionImporteFacturar' => $liquidacionImporteFacturar,
+            'liquidaciones' => $liquidacionesResumen,
         ];
     }
 
@@ -1382,6 +1408,14 @@ class PersonalController extends Controller
                 return $nombre !== '' && Str::contains($nombre, 'combust');
             })
             ->pluck('id');
+    }
+
+    protected function isLiquidacionDocument(Archivo $document): bool
+    {
+        $typeName = Str::lower($document->tipo?->nombre ?? '');
+        $name = Str::lower($document->nombre_original ?? '');
+
+        return Str::contains($typeName, 'liquid') || Str::contains($name, 'liquid');
     }
 
     protected function buildLiquidacionPeriods(iterable $documents): array

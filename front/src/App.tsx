@@ -373,8 +373,20 @@ type PersonalHistoryEntry = {
   changes: PersonalHistoryChange[];
 };
 
+type LiquidacionSummary = {
+  id: number;
+  fecha: string | null;
+  monthKey: string | null;
+  fortnightKey: string | null;
+  enviada: boolean | null;
+  recibido: boolean | null;
+  pagado: boolean | null;
+  importeFacturar: number | null;
+};
+
 type PersonalRecord = {
   id: number;
+  rowId?: string;
   nombre: string | null;
   nombres?: string | null;
   apellidos?: string | null;
@@ -441,6 +453,7 @@ type PersonalRecord = {
   liquidacionPagado?: boolean | null;
   liquidacionIdLatest?: number | null;
   liquidacionImporteFacturar?: number | null;
+  liquidaciones?: LiquidacionSummary[] | null;
 };
 
 type PersonalDetail = {
@@ -12224,7 +12237,7 @@ const PersonalPage: React.FC = () => {
             {!loading &&
               !error &&
               pageRecords.map((registro) => (
-                <tr key={registro.id}>
+                <tr key={registro.rowId ?? registro.id}>
                   <td>{registro.id}</td>
                   <td>{registro.nombre ?? '—'}</td>
                   <td>{registro.legajo ?? '—'}</td>
@@ -12582,76 +12595,6 @@ const LiquidacionesPage: React.FC = () => {
     [apiBaseUrl]
   );
 
-  const updateListPagadoStatus = useCallback(
-    async (pagado: boolean) => {
-      if (selectedListPagadoIds.size === 0) {
-        return;
-      }
-
-      try {
-        setListPagadoUpdating(true);
-        setUploadStatus(null);
-
-        const token = readAuthTokenFromStorage();
-        const baseHeaders: Record<string, string> = {
-          'Content-Type': 'application/json',
-          Accept: 'application/json',
-        };
-        if (token) {
-          baseHeaders.Authorization = `Bearer ${token}`;
-        }
-
-        const targets = Array.from(selectedListPagadoIds)
-          .map((docId) => {
-            const record = personal.find((item) => item.liquidacionIdLatest === docId);
-            return record ? { personaId: record.id, documentId: docId } : null;
-          })
-          .filter((item): item is { personaId: number; documentId: number } => item !== null);
-
-        if (targets.length === 0) {
-          throw new Error('No se pudieron resolver las liquidaciones seleccionadas.');
-        }
-
-        for (const target of targets) {
-          const response = await fetch(`${apiBaseUrl}/api/personal/${target.personaId}/documentos/pagado`, {
-            method: 'POST',
-            headers: baseHeaders,
-            credentials: 'include',
-            body: JSON.stringify({ documentIds: [target.documentId], pagado }),
-          });
-
-          if (!response.ok) {
-            let message = `Error ${response.status}: ${response.statusText}`;
-            try {
-              const payload = await parseJsonSafe(response);
-              if (typeof payload?.message === 'string') {
-                message = payload.message;
-              }
-            } catch {
-              // ignore
-            }
-            throw new Error(message);
-          }
-        }
-
-        setUploadStatus({
-          type: 'success',
-          message: pagado ? 'Pagos marcados correctamente.' : 'Pagos desmarcados correctamente.',
-        });
-        setSelectedListPagadoIds(new Set());
-        await fetchPersonal();
-      } catch (err) {
-        setUploadStatus({
-          type: 'error',
-          message: (err as Error).message ?? 'No se pudo actualizar el estado de pago.',
-        });
-      } finally {
-        setListPagadoUpdating(false);
-      }
-    },
-    [apiBaseUrl, actorHeaders, fetchPersonal, personal, selectedListPagadoIds]
-  );
-
   const refreshPersonaDetail = useCallback(
     async (options?: { signal?: AbortSignal; silent?: boolean }) => {
       if (!selectedPersonaId) {
@@ -12700,6 +12643,104 @@ const LiquidacionesPage: React.FC = () => {
       }
     },
     [apiBaseUrl, selectedPersonaId]
+  );
+
+  const isPagosView = useMemo(() => location.pathname.startsWith('/pagos'), [location.pathname]);
+  const listRecords = useMemo(() => {
+    if (!isPagosView) {
+      return personal;
+    }
+
+    return personal.flatMap((registro) => {
+      const liquidaciones = registro.liquidaciones ?? [];
+      if (liquidaciones.length === 0) {
+        return [];
+      }
+
+      return liquidaciones.map((liquidacion) => ({
+        ...registro,
+        rowId: `${registro.id}-${liquidacion.id}`,
+        liquidacionIdLatest: liquidacion.id,
+        liquidacionEnviada: liquidacion.enviada ?? null,
+        liquidacionRecibido: liquidacion.recibido ?? null,
+        liquidacionPagado: liquidacion.pagado ?? null,
+        liquidacionImporteFacturar: liquidacion.importeFacturar ?? null,
+        liquidacionPeriods:
+          liquidacion.monthKey && liquidacion.fortnightKey
+            ? [{ monthKey: liquidacion.monthKey, fortnightKey: liquidacion.fortnightKey }]
+            : [],
+      }));
+    });
+  }, [isPagosView, personal]);
+
+  const updateListPagadoStatus = useCallback(
+    async (pagado: boolean) => {
+      if (selectedListPagadoIds.size === 0) {
+        return;
+      }
+
+      try {
+        setListPagadoUpdating(true);
+        setUploadStatus(null);
+
+        const token = readAuthTokenFromStorage();
+        const baseHeaders: Record<string, string> = {
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+        };
+        if (token) {
+          baseHeaders.Authorization = `Bearer ${token}`;
+        }
+
+        const targets = Array.from(selectedListPagadoIds)
+          .map((docId) => {
+            const record = listRecords.find((item) => item.liquidacionIdLatest === docId);
+            return record ? { personaId: record.id, documentId: docId } : null;
+          })
+          .filter((item): item is { personaId: number; documentId: number } => item !== null);
+
+        if (targets.length === 0) {
+          throw new Error('No se pudieron resolver las liquidaciones seleccionadas.');
+        }
+
+        for (const target of targets) {
+          const response = await fetch(`${apiBaseUrl}/api/personal/${target.personaId}/documentos/pagado`, {
+            method: 'POST',
+            headers: baseHeaders,
+            credentials: 'include',
+            body: JSON.stringify({ documentIds: [target.documentId], pagado }),
+          });
+
+          if (!response.ok) {
+            let message = `Error ${response.status}: ${response.statusText}`;
+            try {
+              const payload = await parseJsonSafe(response);
+              if (typeof payload?.message === 'string') {
+                message = payload.message;
+              }
+            } catch {
+              // ignore
+            }
+            throw new Error(message);
+          }
+        }
+
+        setUploadStatus({
+          type: 'success',
+          message: pagado ? 'Pagos marcados correctamente.' : 'Pagos desmarcados correctamente.',
+        });
+        setSelectedListPagadoIds(new Set());
+        await fetchPersonal();
+      } catch (err) {
+        setUploadStatus({
+          type: 'error',
+          message: (err as Error).message ?? 'No se pudo actualizar el estado de pago.',
+        });
+      } finally {
+        setListPagadoUpdating(false);
+      }
+    },
+    [apiBaseUrl, actorHeaders, fetchPersonal, listRecords, selectedListPagadoIds]
   );
 
   useEffect(() => {
@@ -12833,7 +12874,6 @@ const LiquidacionesPage: React.FC = () => {
     []
   );
 
-  const isPagosView = useMemo(() => location.pathname.startsWith('/pagos'), [location.pathname]);
 
   const filteredPersonal = useMemo(() => {
     const term = searchTerm.trim().toLowerCase();
@@ -12870,7 +12910,7 @@ const LiquidacionesPage: React.FC = () => {
       return fortnightKey === liquidacionFortnightFilter;
     };
 
-    return personal.filter((registro) => {
+    return listRecords.filter((registro) => {
       if (isPagosView) {
         const pagoValue = parsePagoFlag(registro.pago);
         const pagoFlag = pagoValue === true || registro.liquidacionPagado === true;
@@ -12965,7 +13005,7 @@ const LiquidacionesPage: React.FC = () => {
       return fields.some((field) => field?.toLowerCase().includes(term));
     });
   }, [
-    personal,
+    listRecords,
     searchTerm,
     isPagosView,
     clienteFilter,
@@ -12982,7 +13022,7 @@ const LiquidacionesPage: React.FC = () => {
   ]);
 
   const handleExportPagos = useCallback(() => {
-    const dataset = filteredPersonal.length > 0 ? filteredPersonal : personal;
+    const dataset = filteredPersonal.length > 0 ? filteredPersonal : listRecords;
 
     if (dataset.length === 0) {
       window.alert('No hay registros para exportar.');
@@ -13047,7 +13087,7 @@ const LiquidacionesPage: React.FC = () => {
     link.click();
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
-  }, [filteredPersonal, personal]);
+  }, [filteredPersonal, listRecords]);
 
   useEffect(() => {
     setCurrentPage(1);
@@ -13190,12 +13230,12 @@ const LiquidacionesPage: React.FC = () => {
       return 'No hay registros para mostrar.';
     }
 
-    if (filteredPersonal.length === personal.length) {
-      return `Mostrando ${personal.length} registro${personal.length === 1 ? '' : 's'}`;
+    if (filteredPersonal.length === listRecords.length) {
+      return `Mostrando ${listRecords.length} registro${listRecords.length === 1 ? '' : 's'}`;
     }
 
-    return `Mostrando ${filteredPersonal.length} de ${personal.length} registros`;
-  }, [loading, error, filteredPersonal.length, personal.length]);
+    return `Mostrando ${filteredPersonal.length} de ${listRecords.length} registros`;
+  }, [loading, error, filteredPersonal.length, listRecords.length]);
 
   const allLiquidacionDocuments = useMemo(() => {
     if (!detail) {
