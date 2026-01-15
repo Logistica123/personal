@@ -71,7 +71,7 @@ class TicketRequestController extends Controller
             });
         }
 
-        $tickets = $query->get();
+        $tickets = $query->get()->map(fn (TicketRequest $ticket) => $this->attachFacturaUrls($ticket));
 
         return response()->json(['data' => $tickets]);
     }
@@ -146,12 +146,12 @@ class TicketRequestController extends Controller
             ]);
         }
 
-        return response()->json(['data' => $ticket], 201);
+        return response()->json(['data' => $this->attachFacturaUrls($ticket)], 201);
     }
 
     public function show(TicketRequest $ticketRequest): JsonResponse
     {
-        return response()->json(['data' => $ticketRequest]);
+        return response()->json(['data' => $this->attachFacturaUrls($ticketRequest)]);
     }
 
     public function update(Request $request, TicketRequest $ticketRequest): JsonResponse
@@ -249,6 +249,43 @@ class TicketRequestController extends Controller
             ]);
         }
 
-        return response()->json(['data' => $ticketRequest]);
+        return response()->json(['data' => $this->attachFacturaUrls($ticketRequest)]);
+    }
+
+    public function downloadFactura(Request $request, TicketRequest $ticketRequest, int $index)
+    {
+        $facturas = is_array($ticketRequest->factura_archivos) ? $ticketRequest->factura_archivos : [];
+        if (! array_key_exists($index, $facturas)) {
+            abort(404, 'Archivo no encontrado.');
+        }
+
+        $factura = $facturas[$index];
+        $path = $factura['path'] ?? null;
+        if (! $path || ! Storage::disk('public')->exists($path)) {
+            abort(404, 'Archivo no encontrado.');
+        }
+
+        $filename = $factura['name'] ?? basename($path);
+
+        return Storage::disk('public')->download($path, $filename);
+    }
+
+    protected function attachFacturaUrls(TicketRequest $ticketRequest): TicketRequest
+    {
+        $facturas = is_array($ticketRequest->factura_archivos) ? $ticketRequest->factura_archivos : [];
+        if (empty($facturas)) {
+            return $ticketRequest;
+        }
+
+        foreach ($facturas as $index => $factura) {
+            $facturas[$index]['dataUrl'] = route('tickets.facturas.download', [
+                'ticketRequest' => $ticketRequest->id,
+                'index' => $index,
+            ], false);
+        }
+
+        $ticketRequest->factura_archivos = $facturas;
+
+        return $ticketRequest;
     }
 }

@@ -33,6 +33,8 @@ Route::middleware('auth.api')->group(function () {
     Route::get('/personal/{persona}/documentos', [PersonalDocumentController::class, 'index']);
     Route::post('/personal/{persona}/documentos', [PersonalDocumentController::class, 'store']);
     Route::post('/personal/{persona}/documentos/publicar', [PersonalDocumentController::class, 'publishPending']);
+    Route::post('/personal/{persona}/documentos/pagado', [PersonalDocumentController::class, 'updatePagado']);
+    Route::post('/documentos/pagado', [PersonalDocumentController::class, 'updatePagadoBulk']);
     Route::put('/personal/{persona}/documentos/{documento}', [PersonalDocumentController::class, 'updateDocument']);
     Route::delete('/personal/{persona}/documentos/{documento}', [PersonalDocumentController::class, 'destroy']);
     Route::get('/personal/{persona}/documentos/descargar-todos', [PersonalDocumentController::class, 'downloadAll'])
@@ -99,6 +101,9 @@ Route::middleware('auth.api')->group(function () {
     Route::post('/tickets', [TicketRequestController::class, 'store']);
     Route::get('/tickets/{ticketRequest}', [TicketRequestController::class, 'show']);
     Route::put('/tickets/{ticketRequest}', [TicketRequestController::class, 'update']);
+    Route::get('/tickets/{ticketRequest}/facturas/{index}/descargar', [TicketRequestController::class, 'downloadFactura'])
+        ->whereNumber('index')
+        ->name('tickets.facturas.download');
 
     Route::get('/general-info/posts', [GeneralInfoController::class, 'index']);
     Route::post('/general-info/posts', [GeneralInfoController::class, 'store']);
