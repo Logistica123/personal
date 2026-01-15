@@ -1896,6 +1896,33 @@ tbody tr:nth-child(even) {
   text-transform: uppercase;
 }
 
+.liquidaciones-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+}
+
+.liquidaciones-pagado-header {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.liquidaciones-pagado-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.liquidaciones-pagado-cell input[type='checkbox'],
+.liquidaciones-pagado-header input[type='checkbox'] {
+  width: 16px;
+  height: 16px;
+  accent-color: #2563eb;
+}
+
 .error-cell {
   color: #d92d20;
   font-weight: 600;
@@ -1911,6 +1938,27 @@ tbody tr:nth-child(even) {
   color: #047857;
   font-size: 0.8rem;
   font-weight: 600;
+}
+
+.status-badge--liquidacion {
+  min-width: 56px;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+.status-badge--liquidacion.is-yes {
+  background-color: rgba(16, 185, 129, 0.18);
+  color: #047857;
+}
+
+.status-badge--liquidacion.is-no {
+  background-color: rgba(248, 113, 113, 0.2);
+  color: #b91c1c;
+}
+
+.status-badge--liquidacion.is-unknown {
+  background-color: rgba(148, 163, 184, 0.2);
+  color: #475569;
 }
 
 .status-badge--state {
@@ -2340,10 +2388,11 @@ tbody tr:nth-child(even) {
 }
 
 .tarifa-template {
-  background: #f8fafc;
-  border: 1px solid #e4e9f2;
-  border-radius: 16px;
-  padding: 1rem;
+  background: linear-gradient(135deg, #f9fbff 0%, #f2f6fb 100%);
+  border: 1px solid #d7e0ee;
+  border-radius: 18px;
+  padding: 1.25rem;
+  box-shadow: 0 16px 40px -32px rgba(15, 23, 42, 0.35);
 }
 
 .tarifa-template__header {
@@ -2362,7 +2411,9 @@ tbody tr:nth-child(even) {
 
 .tarifa-template__header h4 {
   margin: 0;
-  font-size: 1rem;
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: #1f2a44;
 }
 
 .tarifa-template__fields {
@@ -2378,23 +2429,49 @@ tbody tr:nth-child(even) {
 
 .tarifa-template__table table {
   width: 100%;
-  border-collapse: collapse;
+  border-collapse: separate;
+  border-spacing: 0;
   min-width: 640px;
+  background: #ffffff;
+  border-radius: 14px;
+  overflow: hidden;
+  box-shadow: 0 14px 32px -28px rgba(15, 23, 42, 0.35);
 }
 
 .tarifa-template__table th,
 .tarifa-template__table td {
-  border: 1px solid #e4e9f2;
-  padding: 0.35rem;
+  border-bottom: 1px solid #e7edf7;
+  padding: 0.55rem 0.6rem;
+}
+
+.tarifa-template__table th {
+  background: #eef3fb;
+  color: #2b3b57;
+  font-size: 0.8rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.tarifa-template__table tr:nth-child(even) td {
+  background: #f8fbff;
 }
 
 .tarifa-template__table input[type='text'] {
   width: 100%;
-  border: 1px solid #d7deeb;
-  border-radius: 8px;
-  padding: 0.35rem 0.5rem;
+  border: 1px solid #d6deec;
+  border-radius: 10px;
+  padding: 0.45rem 0.6rem;
   background: #ffffff;
   font-size: 0.85rem;
+  color: #1f2a44;
+  transition: border-color 150ms ease, box-shadow 150ms ease;
+}
+
+.tarifa-template__table input[type='text']:focus {
+  outline: none;
+  border-color: #7aa2ff;
+  box-shadow: 0 0 0 3px rgba(122, 162, 255, 0.25);
 }
 
 .filters-actions .search-wrapper {

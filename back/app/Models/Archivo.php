@@ -29,6 +29,9 @@ class Archivo extends Model
         'size',
         'fecha_vencimiento',
         'importe_facturar',
+        'enviada',
+        'recibido',
+        'pagado',
     ];
 
     protected $dates = [

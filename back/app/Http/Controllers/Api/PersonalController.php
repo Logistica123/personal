@@ -92,6 +92,7 @@ class PersonalController extends Controller
 
     public function index(Request $request): JsonResponse
     {
+        $includePending = $request->boolean('includePending');
         $liquidacionTypeIds = $this->resolveLiquidacionTypeIds();
         $fuelTypeIds = $this->resolveFuelTypeIds();
         $documentTypeIds = $liquidacionTypeIds
@@ -109,10 +110,22 @@ class PersonalController extends Controller
                 'estado:id,nombre',
                 'dueno:id,persona_id,nombreapellido,fecha_nacimiento,email,telefono,cuil,cuil_cobrador,cbu_alias,observaciones',
                 'aprobadoPor:id,name',
-                'documentos' => function ($documentsQuery) use ($documentTypeIds) {
+                'documentos' => function ($documentsQuery) use ($documentTypeIds, $includePending) {
                     $documentsQuery
-                        ->select('id', 'persona_id', 'parent_document_id', 'nombre_original', 'tipo_archivo_id', 'fecha_vencimiento', 'created_at')
-                        ->with('tipo:id,nombre');
+                        ->select(
+                            'id',
+                            'persona_id',
+                            'parent_document_id',
+                            'nombre_original',
+                            'tipo_archivo_id',
+                            'fecha_vencimiento',
+                            'created_at',
+                            'enviada',
+                            'recibido',
+                            'pagado'
+                        )
+                        ->with('tipo:id,nombre')
+                        ->withCount('children');
 
                     if ($documentTypeIds->isNotEmpty()) {
                         $documentsQuery->whereIn('tipo_archivo_id', $documentTypeIds);
@@ -126,7 +139,9 @@ class PersonalController extends Controller
                         });
                     }
 
-                    $documentsQuery->where('es_pendiente', false);
+                    if (! $includePending) {
+                        $documentsQuery->where('es_pendiente', false);
+                    }
                     $documentsQuery->whereNull('parent_document_id')->orderByDesc('created_at');
                 },
             ])
@@ -1159,6 +1174,8 @@ class PersonalController extends Controller
                 'persona' => $persona->id,
             ], true),
             'documents' => $documents->map(function ($documento) {
+                $hasAttachments = $documento->parent_document_id === null
+                    && ($documento->children?->isNotEmpty() ?? false);
                 $relativeDownloadUrl = route('personal.documentos.descargar', [
                     'persona' => $documento->persona_id,
                     'documento' => $documento->id,
@@ -1192,6 +1209,9 @@ class PersonalController extends Controller
                     'importeFacturar' => $documento->importe_facturar,
                     'pendiente' => (bool) $documento->es_pendiente,
                     'liquidacionId' => $documento->liquidacion_id,
+                    'enviada' => (bool) $documento->enviada,
+                    'recibido' => (bool) $documento->recibido || $hasAttachments,
+                    'pagado' => (bool) $documento->pagado,
                 ];
             })->values(),
             'comments' => $persona->comments->map(function ($comment) {
@@ -1231,6 +1251,14 @@ class PersonalController extends Controller
 
     protected function transformPersonaListItem(Persona $persona): array
     {
+        $latestLiquidacion = $persona->documentos?->first();
+        $childrenCount = $latestLiquidacion?->children_count ?? 0;
+        $liquidacionEnviada = $latestLiquidacion ? (bool) $latestLiquidacion->enviada : null;
+        $liquidacionRecibido = $latestLiquidacion
+            ? ((bool) $latestLiquidacion->recibido || $childrenCount > 0)
+            : null;
+        $liquidacionPagado = $latestLiquidacion ? (bool) $latestLiquidacion->pagado : null;
+        $liquidacionImporteFacturar = $latestLiquidacion?->importe_facturar;
         $perfilMap = [
             1 => 'Dueño y chofer',
             2 => 'Chofer',
@@ -1324,6 +1352,11 @@ class PersonalController extends Controller
             'duenoCbuAlias' => $persona->dueno?->cbu_alias,
             'duenoObservaciones' => $persona->dueno?->observaciones,
             'liquidacionPeriods' => $this->buildLiquidacionPeriods($persona->documentos ?? []),
+            'liquidacionEnviada' => $liquidacionEnviada,
+            'liquidacionRecibido' => $liquidacionRecibido,
+            'liquidacionPagado' => $liquidacionPagado,
+            'liquidacionIdLatest' => $latestLiquidacion?->id,
+            'liquidacionImporteFacturar' => $liquidacionImporteFacturar,
         ];
     }
 

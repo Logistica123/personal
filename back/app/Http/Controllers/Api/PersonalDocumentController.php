@@ -3,9 +3,9 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Models\Archivo;
 use App\Models\FileType;
 use App\Models\Persona;
-use App\Models\Archivo;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\UploadedFile;
@@ -52,6 +52,9 @@ class PersonalDocumentController extends Controller
                     'importeFacturar' => $documento->importe_facturar,
                     'pendiente' => (bool) $documento->es_pendiente,
                     'liquidacionId' => $documento->liquidacion_id,
+                    'enviada' => (bool) $documento->enviada,
+                    'recibido' => (bool) $documento->recibido,
+                    'pagado' => (bool) $documento->pagado,
                 ];
             })
             ->values();
@@ -137,6 +140,8 @@ class PersonalDocumentController extends Controller
                     ?? $documento->tipo?->nombre
                     ?? basename($documento->ruta ?? '') ?: 'Liquidación';
                 $importeCombustible = $this->resolveFuelAmountForDocument($documento, $nombre);
+                $hasAttachments = $documento->parent_document_id === null
+                    && ($documento->children?->isNotEmpty() ?? false);
 
                 return [
                     'id' => $documento->id,
@@ -158,6 +163,9 @@ class PersonalDocumentController extends Controller
                     'importeFacturar' => $documento->importe_facturar,
                     'pendiente' => (bool) $documento->es_pendiente,
                     'liquidacionId' => $documento->liquidacion_id,
+                    'enviada' => (bool) $documento->enviada,
+                    'recibido' => (bool) $documento->recibido || $hasAttachments,
+                    'pagado' => (bool) $documento->pagado,
                 ];
             })
             ->values();
@@ -290,6 +298,8 @@ class PersonalDocumentController extends Controller
             );
         }
 
+        $isLiquidacion = $request->boolean('esLiquidacion');
+
         $documento = $persona->documentos()->create([
             'carpeta' => $directory,
             'ruta' => $storedPath,
@@ -304,6 +314,9 @@ class PersonalDocumentController extends Controller
             'tipo_archivo_id' => $validated['tipoArchivoId'],
             'fecha_vencimiento' => $parsedFecha,
             'importe_facturar' => $validated['importeFacturar'] ?? null,
+            'enviada' => $isLiquidacion,
+            'recibido' => false,
+            'pagado' => false,
         ]);
 
         if ($parsedFecha) {
@@ -340,6 +353,12 @@ class PersonalDocumentController extends Controller
             $this->attachPendingFuelInvoices($persona, $documento);
         }
 
+        if ($parentDocumentId && ! $request->boolean('esLiquidacion')) {
+            $persona->documentos()
+                ->where('id', $parentDocumentId)
+                ->update(['recibido' => true]);
+        }
+
         AuditLogger::log($request, 'document_create', 'documento', $documento->id, [
             'persona_id' => $persona->id,
             'nombre' => $documento->nombre_original,
@@ -365,6 +384,9 @@ class PersonalDocumentController extends Controller
             'importeFacturar' => $documento->importe_facturar,
             'pendiente' => (bool) $documento->es_pendiente,
             'liquidacionId' => $documento->liquidacion_id,
+            'enviada' => (bool) $documento->enviada,
+            'recibido' => (bool) $documento->recibido,
+            'pagado' => (bool) $documento->pagado,
         ],
     ], 201);
     }
@@ -384,6 +406,27 @@ class PersonalDocumentController extends Controller
         }
 
         $updated = $query->update(['es_pendiente' => false]);
+
+        $liquidacionTypeIds = $this->resolveLiquidacionTypeIds();
+        $enviadaQuery = $persona->documentos()
+            ->where('es_pendiente', false)
+            ->whereNull('parent_document_id');
+
+        if ($liquidacionTypeIds->isNotEmpty()) {
+            $enviadaQuery->whereIn('tipo_archivo_id', $liquidacionTypeIds);
+        } else {
+            $enviadaQuery->where(function ($inner) {
+                $inner
+                    ->whereRaw('LOWER(nombre_original) LIKE ?', ['%liquid%'])
+                    ->orWhereRaw('LOWER(ruta) LIKE ?', ['%liquid%']);
+            });
+        }
+
+        if (! empty($validated['documentIds'])) {
+            $enviadaQuery->whereIn('id', $validated['documentIds']);
+        }
+
+        $enviadaQuery->update(['enviada' => true]);
 
         if (array_key_exists('importeFacturar', $validated)) {
             $liquidacionTypeIds = $this->resolveLiquidacionTypeIds();
@@ -414,6 +457,48 @@ class PersonalDocumentController extends Controller
 
         return response()->json([
             'message' => 'Documentos publicados correctamente.',
+            'data' => [
+                'updated' => $updated,
+            ],
+        ]);
+    }
+
+    public function updatePagado(Request $request, Persona $persona): JsonResponse
+    {
+        $validated = $request->validate([
+            'documentIds' => ['required', 'array', 'min:1'],
+            'documentIds.*' => ['integer'],
+            'pagado' => ['required', 'boolean'],
+        ]);
+
+        $updated = $persona->documentos()
+            ->whereIn('id', $validated['documentIds'])
+            ->whereNull('parent_document_id')
+            ->update(['pagado' => $validated['pagado']]);
+
+        return response()->json([
+            'message' => 'Estado de pago actualizado correctamente.',
+            'data' => [
+                'updated' => $updated,
+            ],
+        ]);
+    }
+
+    public function updatePagadoBulk(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'documentIds' => ['required', 'array', 'min:1'],
+            'documentIds.*' => ['integer'],
+            'pagado' => ['required', 'boolean'],
+        ]);
+
+        $updated = Archivo::query()
+            ->whereIn('id', $validated['documentIds'])
+            ->whereNull('parent_document_id')
+            ->update(['pagado' => $validated['pagado']]);
+
+        return response()->json([
+            'message' => 'Estado de pago actualizado correctamente.',
             'data' => [
                 'updated' => $updated,
             ],
@@ -534,6 +619,12 @@ class PersonalDocumentController extends Controller
         $documento->save();
         $documento->loadMissing('tipo:id,nombre,vence');
 
+        if ($hasParentAssignment && $parentDocumentId) {
+            $persona->documentos()
+                ->where('id', $parentDocumentId)
+                ->update(['recibido' => true]);
+        }
+
         return response()->json([
             'message' => 'Liquidación actualizada correctamente.',
             'data' => [
@@ -557,6 +648,9 @@ class PersonalDocumentController extends Controller
                 'importeFacturar' => $documento->importe_facturar,
                 'pendiente' => (bool) $documento->es_pendiente,
                 'liquidacionId' => $documento->liquidacion_id,
+                'enviada' => (bool) $documento->enviada,
+                'recibido' => (bool) $documento->recibido,
+                'pagado' => (bool) $documento->pagado,
             ],
         ]);
     }
@@ -788,6 +882,11 @@ class PersonalDocumentController extends Controller
         foreach ($pendingInvoices as $invoice) {
             $invoice->parent_document_id = $liquidacion->id;
             $invoice->save();
+        }
+
+        if ($pendingInvoices->isNotEmpty()) {
+            $liquidacion->recibido = true;
+            $liquidacion->save();
         }
     }
 
