@@ -191,6 +191,7 @@ type AccessSection =
   | 'reclamos'
   | 'control-horario'
   | 'liquidaciones'
+  | 'pagos'
   | 'auditoria'
   | 'ticketera';
 
@@ -435,6 +436,11 @@ type PersonalRecord = {
   duenoCbuAlias?: string | null;
   duenoObservaciones?: string | null;
   liquidacionPeriods?: Array<{ monthKey: string; fortnightKey: string }>;
+  liquidacionEnviada?: boolean | null;
+  liquidacionRecibido?: boolean | null;
+  liquidacionPagado?: boolean | null;
+  liquidacionIdLatest?: number | null;
+  liquidacionImporteFacturar?: number | null;
 };
 
 type PersonalDetail = {
@@ -516,6 +522,9 @@ type PersonalDetail = {
     importeFacturar?: number | null;
     pendiente?: boolean;
     liquidacionId?: number | null;
+    enviada?: boolean;
+    recibido?: boolean;
+    pagado?: boolean;
   }>;
   comments: Array<{
     id: number;
@@ -914,6 +923,8 @@ const canAccessSection = (role: UserRole, section: AccessSection): boolean => {
     case 'control-horario':
       return role === 'admin';
     case 'liquidaciones':
+      return role === 'admin' || role === 'admin2';
+    case 'pagos':
       return role === 'admin' || role === 'admin2';
     case 'auditoria':
       return role === 'admin';
@@ -3813,6 +3824,11 @@ const DashboardLayout: React.FC<{
           {canAccessSection(userRole, 'liquidaciones') ? (
             <NavLink to="/liquidaciones" className={({ isActive }) => `sidebar-link${isActive ? ' is-active' : ''}`}>
               Liquidaciones
+            </NavLink>
+          ) : null}
+          {canAccessSection(userRole, 'pagos') ? (
+            <NavLink to="/pagos" className={({ isActive }) => `sidebar-link${isActive ? ' is-active' : ''}`}>
+              Pago
             </NavLink>
           ) : null}
           <NavLink to="/tarifas" className={({ isActive }) => `sidebar-link${isActive ? ' is-active' : ''}`}>
@@ -11646,6 +11662,7 @@ const PersonalPage: React.FC = () => {
   const safePage = Math.min(currentPage, totalPages);
   const startIndex = (safePage - 1) * itemsPerPage;
   const pageRecords = filteredPersonal.slice(startIndex, startIndex + itemsPerPage);
+
   const endIndex = Math.min(startIndex + pageRecords.length, totalRecords);
 
   const clienteOptions = useMemo(
@@ -11778,52 +11795,52 @@ const PersonalPage: React.FC = () => {
     };
 
     const columns: Array<{ header: string; resolve: (registro: PersonalRecord) => string | number | null | undefined }> = [
-      { header: 'ID', resolve: (registro) => registro.id },
-      { header: 'Nombre completo', resolve: (registro) => registro.nombre ?? '' },
-      { header: 'Nombres', resolve: (registro) => registro.nombres ?? '' },
-      { header: 'Apellidos', resolve: (registro) => registro.apellidos ?? '' },
-      { header: 'Legajo', resolve: (registro) => registro.legajo ?? '' },
-      { header: 'CUIL', resolve: (registro) => registro.cuil ?? '' },
-      { header: 'Teléfono', resolve: (registro) => registro.telefono ?? '' },
-      { header: 'Email', resolve: (registro) => registro.email ?? '' },
-      { header: 'Perfil', resolve: (registro) => getPerfilDisplayLabel(registro.perfilValue ?? null, registro.perfil ?? '') },
-      { header: 'Perfil ID', resolve: (registro) => registro.perfilValue ?? '' },
-      { header: 'Agente', resolve: (registro) => registro.agente ?? '' },
-      { header: 'Agente ID', resolve: (registro) => registro.agenteId ?? '' },
-      { header: 'Agente responsable', resolve: (registro) => registro.agenteResponsable ?? '' },
-      { header: 'Agente responsable ID', resolve: (registro) => registro.agenteResponsableId ?? '' },
-      { header: 'Estado', resolve: (registro) => registro.estado ?? '' },
-      { header: 'Estado ID', resolve: (registro) => registro.estadoId ?? '' },
-      { header: 'Cliente', resolve: (registro) => registro.cliente ?? '' },
-      { header: 'Cliente ID', resolve: (registro) => registro.clienteId ?? '' },
-      { header: 'Sucursal', resolve: (registro) => registro.sucursal ?? '' },
-      { header: 'Sucursal ID', resolve: (registro) => registro.sucursalId ?? '' },
-      { header: 'Unidad', resolve: (registro) => registro.unidad ?? '' },
-      { header: 'Unidad ID', resolve: (registro) => registro.unidadId ?? '' },
-      { header: 'Unidad detalle', resolve: (registro) => registro.unidadDetalle ?? '' },
-      { header: 'Fecha alta', resolve: (registro) => registro.fechaAlta ?? '' },
-      { header: 'Combustible', resolve: (registro) => booleanLabel(registro.combustibleValue) },
-      { header: 'Estado combustible', resolve: (registro) => registro.combustibleEstado ?? '' },
-      { header: 'Tarifa especial', resolve: (registro) => booleanLabel(registro.tarifaEspecialValue) },
-      { header: 'Pago', resolve: (registro) => formatPagoLabel(registro.pago) },
-      { header: 'CBU alias', resolve: (registro) => registro.cbuAlias ?? '' },
-      { header: 'Patente', resolve: (registro) => registro.patente ?? '' },
-      { header: 'Observación tarifa', resolve: (registro) => registro.observacionTarifa ?? '' },
-      { header: 'Observaciones', resolve: (registro) => registro.observaciones ?? '' },
-      { header: 'Aprobado', resolve: (registro) => booleanLabel(registro.aprobado) },
-      { header: 'Aprobado el', resolve: (registro) => registro.aprobadoAt ?? '' },
-      { header: 'Aprobado por', resolve: (registro) => registro.aprobadoPor ?? '' },
-      { header: 'Aprobado por ID', resolve: (registro) => registro.aprobadoPorId ?? '' },
-      { header: 'Es solicitud', resolve: (registro) => booleanLabel(registro.esSolicitud) },
-      { header: 'Tipo de solicitud', resolve: (registro) => registro.solicitudTipo ?? '' },
-      { header: 'Dueño nombre', resolve: (registro) => registro.duenoNombre ?? '' },
-      { header: 'Dueño fecha nacimiento', resolve: (registro) => registro.duenoFechaNacimiento ?? '' },
-      { header: 'Dueño CUIL', resolve: (registro) => registro.duenoCuil ?? '' },
-      { header: 'Dueño CUIL cobrador', resolve: (registro) => registro.duenoCuilCobrador ?? '' },
-      { header: 'Dueño CBU alias', resolve: (registro) => registro.duenoCbuAlias ?? '' },
-      { header: 'Dueño correo', resolve: (registro) => registro.duenoEmail ?? '' },
-      { header: 'Dueño teléfono', resolve: (registro) => registro.duenoTelefono ?? '' },
-      { header: 'Dueño observaciones', resolve: (registro) => registro.duenoObservaciones ?? '' },
+            { header: 'ID', resolve: (registro) => registro.id },
+            { header: 'Nombre completo', resolve: (registro) => registro.nombre ?? '' },
+            { header: 'Nombres', resolve: (registro) => registro.nombres ?? '' },
+            { header: 'Apellidos', resolve: (registro) => registro.apellidos ?? '' },
+            { header: 'Legajo', resolve: (registro) => registro.legajo ?? '' },
+            { header: 'CUIL', resolve: (registro) => registro.cuil ?? '' },
+            { header: 'Teléfono', resolve: (registro) => registro.telefono ?? '' },
+            { header: 'Email', resolve: (registro) => registro.email ?? '' },
+            { header: 'Perfil', resolve: (registro) => getPerfilDisplayLabel(registro.perfilValue ?? null, registro.perfil ?? '') },
+            { header: 'Perfil ID', resolve: (registro) => registro.perfilValue ?? '' },
+            { header: 'Agente', resolve: (registro) => registro.agente ?? '' },
+            { header: 'Agente ID', resolve: (registro) => registro.agenteId ?? '' },
+            { header: 'Agente responsable', resolve: (registro) => registro.agenteResponsable ?? '' },
+            { header: 'Agente responsable ID', resolve: (registro) => registro.agenteResponsableId ?? '' },
+            { header: 'Estado', resolve: (registro) => registro.estado ?? '' },
+            { header: 'Estado ID', resolve: (registro) => registro.estadoId ?? '' },
+            { header: 'Cliente', resolve: (registro) => registro.cliente ?? '' },
+            { header: 'Cliente ID', resolve: (registro) => registro.clienteId ?? '' },
+            { header: 'Sucursal', resolve: (registro) => registro.sucursal ?? '' },
+            { header: 'Sucursal ID', resolve: (registro) => registro.sucursalId ?? '' },
+            { header: 'Unidad', resolve: (registro) => registro.unidad ?? '' },
+            { header: 'Unidad ID', resolve: (registro) => registro.unidadId ?? '' },
+            { header: 'Unidad detalle', resolve: (registro) => registro.unidadDetalle ?? '' },
+            { header: 'Fecha alta', resolve: (registro) => registro.fechaAlta ?? '' },
+            { header: 'Combustible', resolve: (registro) => booleanLabel(registro.combustibleValue) },
+            { header: 'Estado combustible', resolve: (registro) => registro.combustibleEstado ?? '' },
+            { header: 'Tarifa especial', resolve: (registro) => booleanLabel(registro.tarifaEspecialValue) },
+            { header: 'Pago', resolve: (registro) => formatPagoLabel(registro.pago) },
+            { header: 'CBU alias', resolve: (registro) => registro.cbuAlias ?? '' },
+            { header: 'Patente', resolve: (registro) => registro.patente ?? '' },
+            { header: 'Observación tarifa', resolve: (registro) => registro.observacionTarifa ?? '' },
+            { header: 'Observaciones', resolve: (registro) => registro.observaciones ?? '' },
+            { header: 'Aprobado', resolve: (registro) => booleanLabel(registro.aprobado) },
+            { header: 'Aprobado el', resolve: (registro) => registro.aprobadoAt ?? '' },
+            { header: 'Aprobado por', resolve: (registro) => registro.aprobadoPor ?? '' },
+            { header: 'Aprobado por ID', resolve: (registro) => registro.aprobadoPorId ?? '' },
+            { header: 'Es solicitud', resolve: (registro) => booleanLabel(registro.esSolicitud) },
+            { header: 'Tipo de solicitud', resolve: (registro) => registro.solicitudTipo ?? '' },
+            { header: 'Dueño nombre', resolve: (registro) => registro.duenoNombre ?? '' },
+            { header: 'Dueño fecha nacimiento', resolve: (registro) => registro.duenoFechaNacimiento ?? '' },
+            { header: 'Dueño CUIL', resolve: (registro) => registro.duenoCuil ?? '' },
+            { header: 'Dueño CUIL cobrador', resolve: (registro) => registro.duenoCuilCobrador ?? '' },
+            { header: 'Dueño CBU alias', resolve: (registro) => registro.duenoCbuAlias ?? '' },
+            { header: 'Dueño correo', resolve: (registro) => registro.duenoEmail ?? '' },
+            { header: 'Dueño teléfono', resolve: (registro) => registro.duenoTelefono ?? '' },
+            { header: 'Dueño observaciones', resolve: (registro) => registro.duenoObservaciones ?? '' },
     ];
 
     const sanitizeCell = (raw: string): string => {
@@ -12295,6 +12312,7 @@ const PersonalPage: React.FC = () => {
 
 const LiquidacionesPage: React.FC = () => {
   const navigate = useNavigate();
+  const location = useLocation();
   const { personaId: personaIdParam } = useParams<{ personaId?: string }>();
   const personaIdFromRoute = useMemo(() => {
     if (!personaIdParam) {
@@ -12324,6 +12342,8 @@ const LiquidacionesPage: React.FC = () => {
   const [liquidacionFortnightFilter, setLiquidacionFortnightFilter] = useState('');
   const [liquidacionYearFilter, setLiquidacionYearFilter] = useState('');
   const [liquidacionImporteManual, setLiquidacionImporteManual] = useState('');
+  const [selectedPagadoIds, setSelectedPagadoIds] = useState<Set<number>>(() => new Set());
+  const [selectedListPagadoIds, setSelectedListPagadoIds] = useState<Set<number>>(() => new Set());
   const [selectedPersonaId, setSelectedPersonaId] = useState<number | null>(personaIdFromRoute);
   const [detail, setDetail] = useState<PersonalDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
@@ -12395,6 +12415,8 @@ const LiquidacionesPage: React.FC = () => {
     [openPreviewModal, resolveDocumentPreviewUrl]
   );
   const [uploading, setUploading] = useState(false);
+  const [pagadoUpdating, setPagadoUpdating] = useState(false);
+  const [listPagadoUpdating, setListPagadoUpdating] = useState(false);
   const [uploadStatus, setUploadStatus] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
   const [deletingDocumentIds, setDeletingDocumentIds] = useState<Set<number>>(() => new Set());
   const [documentTypes, setDocumentTypes] = useState<PersonalDocumentType[]>([]);
@@ -12411,6 +12433,7 @@ const LiquidacionesPage: React.FC = () => {
     setLiquidacionFortnightFilter('');
     setLiquidacionYearFilter('');
     setDeletingDocumentIds(new Set<number>());
+    setSelectedPagadoIds(new Set<number>());
   }, [selectedPersonaId]);
 
   useEffect(() => {
@@ -12507,6 +12530,17 @@ const LiquidacionesPage: React.FC = () => {
     return `${(size / (1024 * 1024)).toFixed(1)} MB`;
   };
 
+  const renderLiquidacionStatus = (value?: boolean | null) => {
+    if (value === null || value === undefined) {
+      return <span className="status-badge status-badge--liquidacion is-unknown">—</span>;
+    }
+    return (
+      <span className={`status-badge status-badge--liquidacion ${value ? 'is-yes' : 'is-no'}`}>
+        {value ? 'Sí' : 'No'}
+      </span>
+    );
+  };
+
   const fetchPersonal = useCallback(
     async (options?: { signal?: AbortSignal }) => {
       try {
@@ -12538,6 +12572,76 @@ const LiquidacionesPage: React.FC = () => {
       }
     },
     [apiBaseUrl]
+  );
+
+  const updateListPagadoStatus = useCallback(
+    async (pagado: boolean) => {
+      if (selectedListPagadoIds.size === 0) {
+        return;
+      }
+
+      try {
+        setListPagadoUpdating(true);
+        setUploadStatus(null);
+
+        const token = readAuthTokenFromStorage();
+        const baseHeaders: Record<string, string> = {
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+        };
+        if (token) {
+          baseHeaders.Authorization = `Bearer ${token}`;
+        }
+
+        const targets = Array.from(selectedListPagadoIds)
+          .map((docId) => {
+            const record = personal.find((item) => item.liquidacionIdLatest === docId);
+            return record ? { personaId: record.id, documentId: docId } : null;
+          })
+          .filter((item): item is { personaId: number; documentId: number } => item !== null);
+
+        if (targets.length === 0) {
+          throw new Error('No se pudieron resolver las liquidaciones seleccionadas.');
+        }
+
+        for (const target of targets) {
+          const response = await fetch(`${apiBaseUrl}/api/personal/${target.personaId}/documentos/pagado`, {
+            method: 'POST',
+            headers: baseHeaders,
+            credentials: 'include',
+            body: JSON.stringify({ documentIds: [target.documentId], pagado }),
+          });
+
+          if (!response.ok) {
+            let message = `Error ${response.status}: ${response.statusText}`;
+            try {
+              const payload = await parseJsonSafe(response);
+              if (typeof payload?.message === 'string') {
+                message = payload.message;
+              }
+            } catch {
+              // ignore
+            }
+            throw new Error(message);
+          }
+        }
+
+        setUploadStatus({
+          type: 'success',
+          message: pagado ? 'Pagos marcados correctamente.' : 'Pagos desmarcados correctamente.',
+        });
+        setSelectedListPagadoIds(new Set());
+        await fetchPersonal();
+      } catch (err) {
+        setUploadStatus({
+          type: 'error',
+          message: (err as Error).message ?? 'No se pudo actualizar el estado de pago.',
+        });
+      } finally {
+        setListPagadoUpdating(false);
+      }
+    },
+    [apiBaseUrl, actorHeaders, fetchPersonal, personal, selectedListPagadoIds]
   );
 
   const refreshPersonaDetail = useCallback(
@@ -12721,6 +12825,8 @@ const LiquidacionesPage: React.FC = () => {
     []
   );
 
+  const isPagosView = useMemo(() => location.pathname.startsWith('/pagos'), [location.pathname]);
+
   const filteredPersonal = useMemo(() => {
     const term = searchTerm.trim().toLowerCase();
     const monthMatches = (monthKey: string): boolean => {
@@ -12757,6 +12863,13 @@ const LiquidacionesPage: React.FC = () => {
     };
 
     return personal.filter((registro) => {
+      if (isPagosView) {
+        const pagoValue = parsePagoFlag(registro.pago);
+        const pagoFlag = pagoValue === true || registro.liquidacionPagado === true;
+        if (!pagoFlag) {
+          return false;
+        }
+      }
       if (clienteFilter && registro.cliente !== clienteFilter) {
         return false;
       }
@@ -12846,6 +12959,7 @@ const LiquidacionesPage: React.FC = () => {
   }, [
     personal,
     searchTerm,
+    isPagosView,
     clienteFilter,
     sucursalFilter,
     perfilFilter,
@@ -12858,6 +12972,74 @@ const LiquidacionesPage: React.FC = () => {
     liquidacionFortnightFilter,
     perfilNames,
   ]);
+
+  const handleExportPagos = useCallback(() => {
+    const dataset = filteredPersonal.length > 0 ? filteredPersonal : personal;
+
+    if (dataset.length === 0) {
+      window.alert('No hay registros para exportar.');
+      return;
+    }
+
+    const booleanLabel = (value: boolean | null | undefined) => {
+      if (value === true) {
+        return 'Sí';
+      }
+      if (value === false) {
+        return 'No';
+      }
+      return '';
+    };
+
+    const columns: Array<{ header: string; resolve: (registro: PersonalRecord) => string | number | null | undefined }> = [
+      { header: 'ID', resolve: (registro) => registro.id },
+      { header: 'Nombre completo', resolve: (registro) => registro.nombre ?? '' },
+      { header: 'CUIL', resolve: (registro) => registro.cuil ?? '' },
+      { header: 'Teléfono', resolve: (registro) => registro.telefono ?? '' },
+      { header: 'Email', resolve: (registro) => registro.email ?? '' },
+      { header: 'Perfil', resolve: (registro) => getPerfilDisplayLabel(registro.perfilValue ?? null, registro.perfil ?? '') },
+      { header: 'Agente', resolve: (registro) => registro.agente ?? '' },
+      { header: 'Estado', resolve: (registro) => registro.estado ?? '' },
+      { header: 'Cliente', resolve: (registro) => registro.cliente ?? '' },
+      { header: 'Unidad', resolve: (registro) => registro.unidad ?? '' },
+      { header: 'Sucursal', resolve: (registro) => registro.sucursal ?? '' },
+      { header: 'Fecha alta', resolve: (registro) => registro.fechaAlta ?? '' },
+      { header: 'Enviada', resolve: (registro) => booleanLabel(registro.liquidacionEnviada ?? null) },
+      { header: 'Facturado', resolve: (registro) => booleanLabel(registro.liquidacionRecibido ?? null) },
+      { header: 'Pagado', resolve: (registro) => booleanLabel(registro.liquidacionPagado ?? null) },
+      { header: 'Liquidación ID', resolve: (registro) => registro.liquidacionIdLatest ?? '' },
+    ];
+
+    const sanitizeCell = (raw: string): string => {
+      const cleaned = raw.replace(/[\t\r\n]+/g, ' ').trim();
+      if (/^\d+$/.test(cleaned) && (cleaned.length >= 10 || cleaned.startsWith('0'))) {
+        return `\u2060${cleaned}`;
+      }
+      return cleaned;
+    };
+
+    const rows = dataset.map((registro) =>
+      columns.map((column) => {
+        const value = column.resolve(registro);
+        const text = value === null || value === undefined ? '' : String(value);
+        return sanitizeCell(text);
+      })
+    );
+
+    const headerRow = columns.map((column) => column.header);
+    const tsv = [headerRow, ...rows].map((row) => row.join('\t')).join('\n');
+
+    const BOM = '\ufeff';
+    const blob = new Blob([BOM + tsv], { type: 'application/vnd.ms-excel' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `pagos-${Date.now()}.xls`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  }, [filteredPersonal, personal]);
 
   useEffect(() => {
     setCurrentPage(1);
@@ -12885,6 +13067,61 @@ const LiquidacionesPage: React.FC = () => {
   const safePage = Math.min(currentPage, totalPages);
   const startIndex = (safePage - 1) * itemsPerPage;
   const pageRecords = filteredPersonal.slice(startIndex, startIndex + itemsPerPage);
+
+  const visibleListPagadoIds = useMemo(
+    () =>
+      pageRecords
+        .map((registro) => (typeof registro.liquidacionIdLatest === 'number' ? registro.liquidacionIdLatest : null))
+        .filter((id): id is number => typeof id === 'number'),
+    [pageRecords]
+  );
+
+  useEffect(() => {
+    setSelectedListPagadoIds((prev) => {
+      if (prev.size === 0) {
+        return prev;
+      }
+      const visibleSet = new Set(visibleListPagadoIds);
+      const next = new Set<number>();
+      prev.forEach((id) => {
+        if (visibleSet.has(id)) {
+          next.add(id);
+        }
+      });
+      return next;
+    });
+  }, [visibleListPagadoIds]);
+
+  const toggleListPagadoSelection = useCallback((id: number) => {
+    setSelectedListPagadoIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  }, []);
+
+  const toggleListPagadoSelectAll = useCallback(() => {
+    setSelectedListPagadoIds((prev) => {
+      if (visibleListPagadoIds.length === 0) {
+        return prev;
+      }
+      const next = new Set(prev);
+      const allSelected = visibleListPagadoIds.every((id) => next.has(id));
+      if (allSelected) {
+        visibleListPagadoIds.forEach((id) => next.delete(id));
+        return next;
+      }
+      visibleListPagadoIds.forEach((id) => next.add(id));
+      return next;
+    });
+  }, [visibleListPagadoIds]);
+
+  const allListPagadoSelected =
+    visibleListPagadoIds.length > 0 && visibleListPagadoIds.every((id) => selectedListPagadoIds.has(id));
 
   const clienteOptions = useMemo(
     () =>
@@ -13395,6 +13632,118 @@ const LiquidacionesPage: React.FC = () => {
       })
       .filter((monthSection) => monthSection.sections.length > 0);
   }, [liquidacionFortnightSections, liquidacionMonthFilter, liquidacionFortnightFilter, liquidacionYearFilter]);
+
+  const visibleMainLiquidacionIds = useMemo(() => {
+    const ids: number[] = [];
+    filteredLiquidacionSections.forEach((section) => {
+      section.sections.forEach((subsection) => {
+        subsection.rows.forEach((group) => {
+          if (typeof group.main.id === 'number') {
+            ids.push(group.main.id);
+          }
+        });
+      });
+    });
+    return ids;
+  }, [filteredLiquidacionSections]);
+
+  useEffect(() => {
+    setSelectedPagadoIds((prev) => {
+      if (prev.size === 0) {
+        return prev;
+      }
+      const visibleSet = new Set(visibleMainLiquidacionIds);
+      const next = new Set<number>();
+      prev.forEach((id) => {
+        if (visibleSet.has(id)) {
+          next.add(id);
+        }
+      });
+      return next;
+    });
+  }, [visibleMainLiquidacionIds]);
+
+  const togglePagadoSelection = useCallback((id: number) => {
+    setSelectedPagadoIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  }, []);
+
+  const togglePagadoSelectAll = useCallback(() => {
+    setSelectedPagadoIds((prev) => {
+      if (visibleMainLiquidacionIds.length === 0) {
+        return prev;
+      }
+      const next = new Set(prev);
+      const allSelected = visibleMainLiquidacionIds.every((id) => next.has(id));
+      if (allSelected) {
+        visibleMainLiquidacionIds.forEach((id) => next.delete(id));
+        return next;
+      }
+      visibleMainLiquidacionIds.forEach((id) => next.add(id));
+      return next;
+    });
+  }, [visibleMainLiquidacionIds]);
+
+  const updatePagadoStatus = useCallback(
+    async (pagado: boolean) => {
+      if (!selectedPersonaId || selectedPagadoIds.size === 0) {
+        return;
+      }
+
+      try {
+        setPagadoUpdating(true);
+        setUploadStatus(null);
+
+        const response = await fetch(`${apiBaseUrl}/api/personal/${selectedPersonaId}/documentos/pagado`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+          body: JSON.stringify({
+            documentIds: Array.from(selectedPagadoIds),
+            pagado,
+          }),
+        });
+
+        if (!response.ok) {
+          let message = `Error ${response.status}: ${response.statusText}`;
+          try {
+            const payload = await parseJsonSafe(response);
+            if (typeof payload?.message === 'string') {
+              message = payload.message;
+            }
+          } catch {
+            // ignore
+          }
+          throw new Error(message);
+        }
+
+        setUploadStatus({
+          type: 'success',
+          message: pagado ? 'Liquidaciones marcadas como pagadas.' : 'Pagos desmarcados correctamente.',
+        });
+        setSelectedPagadoIds(new Set());
+        refreshPersonaDetail({ silent: true });
+      } catch (err) {
+        setUploadStatus({
+          type: 'error',
+          message: (err as Error).message ?? 'No se pudo actualizar el estado de pago.',
+        });
+      } finally {
+        setPagadoUpdating(false);
+      }
+    },
+    [apiBaseUrl, refreshPersonaDetail, selectedPagadoIds, selectedPersonaId]
+  );
+
+  const allPagadoSelected =
+    visibleMainLiquidacionIds.length > 0 &&
+    visibleMainLiquidacionIds.every((id) => selectedPagadoIds.has(id));
 
   const handleSelectPersona = (registro: PersonalRecord) => {
     setSelectedPersonaId(registro.id);
@@ -14301,9 +14650,33 @@ const LiquidacionesPage: React.FC = () => {
         <button type="button" className="secondary-action" onClick={clearFilters}>
           Limpiar
         </button>
+        {isPagosView ? (
+          <button type="button" className="secondary-action" onClick={handleExportPagos}>
+            Exportar Excel
+          </button>
+        ) : null}
         <button type="button" className="secondary-action" onClick={() => navigate('/personal')}>
           Ir a personal
         </button>
+        <button
+          type="button"
+          className="secondary-action"
+          onClick={() => updateListPagadoStatus(true)}
+          disabled={selectedListPagadoIds.size === 0 || listPagadoUpdating}
+        >
+          Marcar pagado
+        </button>
+        <button
+          type="button"
+          className="secondary-action secondary-action--ghost"
+          onClick={() => updateListPagadoStatus(false)}
+          disabled={selectedListPagadoIds.size === 0 || listPagadoUpdating}
+        >
+          Desmarcar pagado
+        </button>
+        {selectedListPagadoIds.size > 0 ? (
+          <span className="form-info">{`${selectedListPagadoIds.size} seleccionada${selectedListPagadoIds.size === 1 ? '' : 's'}`}</span>
+        ) : null}
       </div>
     </div>
   );
@@ -14321,8 +14694,16 @@ const LiquidacionesPage: React.FC = () => {
     return detail.email ?? `Registro #${detail.id}`;
   }, [detail]);
 
+  const listTitle = isPagosView ? 'Pagos' : 'Liquidaciones';
+  const listSubtitle = isPagosView ? 'Gestión de pagos del personal' : 'Gestión de liquidaciones del personal';
+
   const listView = (
-    <DashboardLayout title="Liquidaciones" subtitle="Gestión de liquidaciones del personal" headerContent={headerContent}>
+    <DashboardLayout title={listTitle} subtitle={listSubtitle} headerContent={headerContent}>
+      {uploadStatus ? (
+        <p className={`form-info${uploadStatus.type === 'error' ? ' form-info--error' : ''}`}>
+          {uploadStatus.message}
+        </p>
+      ) : null}
       <div className="table-wrapper">
         <table>
           <thead>
@@ -14341,19 +14722,23 @@ const LiquidacionesPage: React.FC = () => {
               <th>Unidad</th>
               <th>Sucursal</th>
               <th>Fecha alta</th>
+              <th>Importe a facturar</th>
+              <th>Enviada</th>
+              <th>Facturado</th>
+              <th>Pagado</th>
               <th>Acciones</th>
             </tr>
           </thead>
           <tbody>
             {loading && (
               <tr>
-                <td colSpan={15}>Cargando personal...</td>
+                <td colSpan={19}>Cargando personal...</td>
               </tr>
             )}
 
             {error && !loading && (
               <tr>
-                <td colSpan={15} className="error-cell">
+                <td colSpan={19} className="error-cell">
                   {error}
                 </td>
               </tr>
@@ -14361,7 +14746,7 @@ const LiquidacionesPage: React.FC = () => {
 
             {!loading && !error && filteredPersonal.length === 0 && (
               <tr>
-                <td colSpan={15}>No hay registros para mostrar.</td>
+                <td colSpan={19}>No hay registros para mostrar.</td>
               </tr>
             )}
 
@@ -14383,6 +14768,28 @@ const LiquidacionesPage: React.FC = () => {
                   <td>{registro.unidad ?? '—'}</td>
                   <td>{registro.sucursal ?? '—'}</td>
                   <td>{registro.fechaAlta ?? '—'}</td>
+                  <td>
+                    {registro.liquidacionImporteFacturar != null
+                      ? formatCurrency(registro.liquidacionImporteFacturar)
+                      : '—'}
+                  </td>
+                  <td>{renderLiquidacionStatus(registro.liquidacionEnviada)}</td>
+                  <td>{renderLiquidacionStatus(registro.liquidacionRecibido)}</td>
+                  <td>
+                    {typeof registro.liquidacionIdLatest === 'number' ? (
+                      <div className="liquidaciones-pagado-cell">
+                        {renderLiquidacionStatus(registro.liquidacionPagado)}
+                        <input
+                          type="checkbox"
+                          aria-label={`Seleccionar pago de ${registro.nombre ?? `ID ${registro.id}`}`}
+                          checked={selectedListPagadoIds.has(registro.liquidacionIdLatest)}
+                          onChange={() => toggleListPagadoSelection(registro.liquidacionIdLatest!)}
+                        />
+                      </div>
+                    ) : (
+                      renderLiquidacionStatus(registro.liquidacionPagado)
+                    )}
+                  </td>
                   <td>
                     <button
                       type="button"
@@ -14483,6 +14890,28 @@ const LiquidacionesPage: React.FC = () => {
           </label>
         </div>
 
+        <div className="liquidaciones-actions">
+          <button
+            type="button"
+            className="secondary-action"
+            onClick={() => updatePagadoStatus(true)}
+            disabled={selectedPagadoIds.size === 0 || pagadoUpdating}
+          >
+            Marcar pagado
+          </button>
+          <button
+            type="button"
+            className="secondary-action secondary-action--ghost"
+            onClick={() => updatePagadoStatus(false)}
+            disabled={selectedPagadoIds.size === 0 || pagadoUpdating}
+          >
+            Desmarcar pagado
+          </button>
+          {selectedPagadoIds.size > 0 ? (
+            <span className="form-info">{`${selectedPagadoIds.size} seleccionada${selectedPagadoIds.size === 1 ? '' : 's'}`}</span>
+          ) : null}
+        </div>
+
         {!detailLoading && !detailError && detail && filteredLiquidacionSections.length === 0 ? (
           <p className="form-info">
             No hay liquidaciones cargadas para este personal. Podés subir nuevas utilizando el formulario inferior.
@@ -14499,6 +14928,20 @@ const LiquidacionesPage: React.FC = () => {
                   <th>Fecha</th>
                   <th>Peso</th>
                   <th>Importe a facturar</th>
+                  <th>Enviada</th>
+                  <th>Facturado</th>
+                  <th>
+                    <div className="liquidaciones-pagado-header">
+                      <span>Pagado</span>
+                      <input
+                        type="checkbox"
+                        aria-label="Seleccionar todas las liquidaciones"
+                        checked={allPagadoSelected}
+                        onChange={togglePagadoSelectAll}
+                        disabled={visibleMainLiquidacionIds.length === 0}
+                      />
+                    </div>
+                  </th>
                   <th style={{ width: '200px' }}>Acciones</th>
                 </tr>
               </thead>
@@ -14508,7 +14951,7 @@ const LiquidacionesPage: React.FC = () => {
                     {monthSection.sections.map((section) => (
                       <React.Fragment key={`month-${monthSection.monthKey}-${section.key}`}>
                         <tr className="fortnight-row">
-                          <td colSpan={6}>
+                          <td colSpan={9}>
                             <strong>{monthSection.monthLabel}</strong>
                             <span className="fortnight-row__separator">•</span>
                             <span>{section.label}</span>
@@ -14536,6 +14979,19 @@ const LiquidacionesPage: React.FC = () => {
                                   {group.main.importeFacturar != null
                                     ? formatCurrency(group.main.importeFacturar)
                                     : '—'}
+                                </td>
+                                <td>{renderLiquidacionStatus(group.main.enviada)}</td>
+                                <td>{renderLiquidacionStatus(group.main.recibido)}</td>
+                                <td>
+                                  <div className="liquidaciones-pagado-cell">
+                                    {renderLiquidacionStatus(group.main.pagado)}
+                                    <input
+                                      type="checkbox"
+                                      aria-label={`Seleccionar liquidación ${group.main.id}`}
+                                      checked={selectedPagadoIds.has(group.main.id)}
+                                      onChange={() => togglePagadoSelection(group.main.id)}
+                                    />
+                                  </div>
                                 </td>
                                 <td className="table-actions">
                                   <button
@@ -14587,12 +15043,15 @@ const LiquidacionesPage: React.FC = () => {
                                           : attachment.fechaCarga ?? '—'}
                                     </td>
                                     <td>{formatFileSize(attachment.size)}</td>
-                                    <td>
-                                      {attachment.importeFacturar != null
-                                        ? formatCurrency(attachment.importeFacturar)
-                                        : '—'}
-                                    </td>
-                                    <td className="table-actions">
+                                  <td>
+                                    {attachment.importeFacturar != null
+                                      ? formatCurrency(attachment.importeFacturar)
+                                      : '—'}
+                                  </td>
+                                  <td>—</td>
+                                  <td>—</td>
+                                  <td>—</td>
+                                  <td className="table-actions">
                                       <button
                                         type="button"
                                         className="secondary-action"
@@ -22148,7 +22607,11 @@ const adaptTicketFromApi = useCallback(
     const facturaArchivos = Array.isArray(ticket.factura_archivos)
       ? ticket.factura_archivos.map((file, index) => {
           const filePath = (file?.path ?? '').replace(/^\/+/, '');
-          const fileUrl = file?.dataUrl ?? (filePath ? `${baseUrl}/storage/${filePath}` : '');
+          const rawUrl = file?.dataUrl ?? (filePath ? `${baseUrl}/storage/${filePath}` : '');
+          const fileUrl =
+            rawUrl && !/^https?:\/\//i.test(rawUrl)
+              ? `${baseUrl}${rawUrl.startsWith('/') ? '' : '/'}${rawUrl}`
+              : rawUrl;
           return {
             id: filePath || file?.name || `${ticket.id}-factura-${index}`,
             name: file?.name ?? `Adjunto ${index + 1}`,
@@ -22288,6 +22751,51 @@ const adaptTicketFromApi = useCallback(
   const handleRemoveFacturaFile = (id: string) => {
     setFacturaFiles((prev) => prev.filter((file) => file.id !== id));
   };
+
+  const downloadTicketFactura = useCallback(async (file: FacturaAttachment) => {
+    if (!file.dataUrl) {
+      setFlash({ type: 'error', message: 'No se pudo determinar la URL del archivo.' });
+      return;
+    }
+
+    if (file.dataUrl.startsWith('data:')) {
+      const anchor = document.createElement('a');
+      anchor.href = file.dataUrl;
+      anchor.download = file.name || 'factura';
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      return;
+    }
+
+    try {
+      const response = await fetch(file.dataUrl);
+      if (!response.ok) {
+        let message = `Error ${response.status}: ${response.statusText}`;
+        try {
+          const payload = await response.json();
+          if (typeof payload?.message === 'string') {
+            message = payload.message;
+          }
+        } catch {
+          // ignore parse errors
+        }
+        throw new Error(message);
+      }
+
+      const blob = await response.blob();
+      const blobUrl = window.URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = blobUrl;
+      anchor.download = file.name || 'factura';
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      window.URL.revokeObjectURL(blobUrl);
+    } catch (err) {
+      setFlash({ type: 'error', message: (err as Error).message ?? 'No se pudo descargar la factura.' });
+    }
+  }, [setFlash]);
 
   const getEstadoLabel = (estado: TicketStatus) => {
     switch (estado) {
@@ -23441,16 +23949,14 @@ const adaptTicketFromApi = useCallback(
                                       {ticket.facturaArchivos?.length ? (
                                         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
                                           {ticket.facturaArchivos.map((file) => (
-                                            <a
+                                            <button
+                                              type="button"
                                               key={file.id}
-                                              href={file.dataUrl}
-                                              download={file.name}
-                                              target="_blank"
-                                              rel="noreferrer"
                                               className="chip"
+                                              onClick={() => downloadTicketFactura(file)}
                                             >
                                               {file.name} <span className="small-text">({Math.round(file.size / 1024)} KB)</span>
-                                            </a>
+                                            </button>
                                           ))}
                                         </div>
                                       ) : (
@@ -28010,6 +28516,22 @@ const AppRoutes: React.FC = () => (
         path="/liquidaciones/:personaId"
         element={
           <RequireAccess section="liquidaciones">
+            <LiquidacionesPage />
+          </RequireAccess>
+        }
+      />
+      <Route
+        path="/pagos"
+        element={
+          <RequireAccess section="pagos">
+            <LiquidacionesPage />
+          </RequireAccess>
+        }
+      />
+      <Route
+        path="/pagos/:personaId"
+        element={
+          <RequireAccess section="pagos">
             <LiquidacionesPage />
           </RequireAccess>
         }
