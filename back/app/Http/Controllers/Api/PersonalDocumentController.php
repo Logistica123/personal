@@ -4,8 +4,14 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\Archivo;
+use App\Models\Factura;
+use App\Models\FacturaOcr;
+use App\Models\FacturaValidacion;
 use App\Models\FileType;
 use App\Models\Persona;
+use App\Services\FacturaAi\FacturaValidationService;
+use App\Services\FacturaAi\OpenAiFacturaParser;
+use App\Services\FacturaAi\PdfTextExtractor;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\UploadedFile;
@@ -86,6 +92,25 @@ class PersonalDocumentController extends Controller
 
     public function liquidaciones(Request $request, Persona $persona): JsonResponse
     {
+        $actorEmail = strtolower(trim((string) $request->input('email', '')));
+        if ($actorEmail !== '') {
+            $persona->loadMissing('dueno:id,persona_id,email');
+            $allowedEmails = array_filter([
+                $persona->email,
+                $persona->cobrador_email,
+                $persona->dueno?->email,
+            ]);
+            $allowedEmails = array_map(
+                fn ($email) => strtolower(trim((string) $email)),
+                $allowedEmails
+            );
+            if (! in_array($actorEmail, $allowedEmails, true)) {
+                return response()->json([
+                    'message' => 'No tenés permisos para ver estas liquidaciones.',
+                ], 403);
+            }
+        }
+
         $includePending = $request->boolean('includePending');
         $liquidacionTypeIds = FileType::query()
             ->select('id', 'nombre')
@@ -299,13 +324,14 @@ class PersonalDocumentController extends Controller
         }
 
         $isLiquidacion = $request->boolean('esLiquidacion');
+        $isPending = $request->boolean('pendiente');
 
         $documento = $persona->documentos()->create([
             'carpeta' => $directory,
             'ruta' => $storedPath,
             'parent_document_id' => $parentDocumentId,
             'liquidacion_id' => $validated['liquidacionId'] ?? null,
-            'es_pendiente' => $request->boolean('pendiente'),
+            'es_pendiente' => $isPending,
             'download_url' => null,
             'disk' => $disk,
             'nombre_original' => $nombreOriginal,
@@ -314,7 +340,7 @@ class PersonalDocumentController extends Controller
             'tipo_archivo_id' => $validated['tipoArchivoId'],
             'fecha_vencimiento' => $parsedFecha,
             'importe_facturar' => $validated['importeFacturar'] ?? null,
-            'enviada' => $isLiquidacion,
+            'enviada' => $isLiquidacion && ! $isPending,
             'recibido' => false,
             'pagado' => false,
         ]);
@@ -349,14 +375,23 @@ class PersonalDocumentController extends Controller
             'origin' => $request->header('User-Agent'),
         ]);
 
-        if ($request->boolean('esLiquidacion') && $request->boolean('attachFuelInvoices')) {
-            $this->attachPendingFuelInvoices($persona, $documento);
+        $isLiquidacionDoc = $request->boolean('esLiquidacion')
+            || Str::contains(Str::lower($documento->tipo?->nombre ?? ''), 'liquid');
+
+        if ($isLiquidacionDoc && $request->boolean('attachFuelInvoices')) {
+            $this->attachPendingFuelInvoices($persona, $documento, $request->boolean('marcarRecibido'));
         }
 
-        if ($parentDocumentId && ! $request->boolean('esLiquidacion')) {
+        if ($parentDocumentId && ! $isLiquidacionDoc && $request->boolean('marcarRecibido')) {
             $persona->documentos()
                 ->where('id', $parentDocumentId)
                 ->update(['recibido' => true]);
+        }
+
+        if (! $request->boolean('skipAutoValidacion')) {
+            if ($documento->parent_document_id !== null) {
+                $this->runFacturaAiValidation($documento);
+            }
         }
 
         AuditLogger::log($request, 'document_create', 'documento', $documento->id, [
@@ -427,6 +462,37 @@ class PersonalDocumentController extends Controller
         }
 
         $enviadaQuery->update(['enviada' => true]);
+
+        if ($request->boolean('marcarRecibido')) {
+            $liquidacionIds = $enviadaQuery->pluck('id');
+            if ($liquidacionIds->isNotEmpty()) {
+                $fuelTypeIds = $this->resolveFuelTypeIds();
+                $attachmentsQuery = $persona->documentos()
+                    ->whereIn('parent_document_id', $liquidacionIds);
+
+                if ($fuelTypeIds->isNotEmpty()) {
+                    $attachmentsQuery->whereIn('tipo_archivo_id', $fuelTypeIds);
+                } else {
+                    $attachmentsQuery->where(function ($inner) {
+                        $inner
+                            ->whereRaw('LOWER(nombre_original) LIKE ?', ['%combust%'])
+                            ->orWhereRaw('LOWER(ruta) LIKE ?', ['%combust%']);
+                    });
+                }
+
+                $parentIds = $attachmentsQuery
+                    ->pluck('parent_document_id')
+                    ->filter()
+                    ->unique()
+                    ->values();
+
+                if ($parentIds->isNotEmpty()) {
+                    $persona->documentos()
+                        ->whereIn('id', $parentIds)
+                        ->update(['recibido' => true]);
+                }
+            }
+        }
 
         if (array_key_exists('importeFacturar', $validated)) {
             $liquidacionTypeIds = $this->resolveLiquidacionTypeIds();
@@ -619,7 +685,7 @@ class PersonalDocumentController extends Controller
         $documento->save();
         $documento->loadMissing('tipo:id,nombre,vence');
 
-        if ($hasParentAssignment && $parentDocumentId) {
+        if ($hasParentAssignment && $parentDocumentId && $request->boolean('marcarRecibido')) {
             $persona->documentos()
                 ->where('id', $parentDocumentId)
                 ->update(['recibido' => true]);
@@ -856,7 +922,7 @@ class PersonalDocumentController extends Controller
         return $parentId;
     }
 
-    protected function attachPendingFuelInvoices(Persona $persona, Archivo $liquidacion): void
+    protected function attachPendingFuelInvoices(Persona $persona, Archivo $liquidacion, bool $markReceived = false): void
     {
         $fuelTypeIds = $this->resolveFuelTypeIds();
 
@@ -884,7 +950,7 @@ class PersonalDocumentController extends Controller
             $invoice->save();
         }
 
-        if ($pendingInvoices->isNotEmpty()) {
+        if ($markReceived && $pendingInvoices->isNotEmpty()) {
             $liquidacion->recibido = true;
             $liquidacion->save();
         }
@@ -912,6 +978,136 @@ class PersonalDocumentController extends Controller
                 return $nombre !== '' && Str::contains($nombre, 'liquid');
             })
             ->pluck('id');
+    }
+
+    protected function runFacturaAiValidation(Archivo $documento): void
+    {
+        try {
+            $documento->loadMissing('persona');
+            $disk = $documento->disk ?: 'public';
+            $absolutePath = Storage::disk($disk)->path($documento->ruta);
+            $mime = $documento->mime ?? '';
+            $isPdf = $mime !== '' && str_contains($mime, 'pdf');
+            $isImage = $mime !== '' && str_starts_with($mime, 'image/');
+            if (! $isPdf && ! $isImage) {
+                return;
+            }
+            $skipCuil = ! $isPdf;
+
+            /** @var PdfTextExtractor $extractor */
+            $extractor = app(PdfTextExtractor::class);
+            /** @var OpenAiFacturaParser $parser */
+            $parser = app(OpenAiFacturaParser::class);
+            /** @var FacturaValidationService $validator */
+            $validator = app(FacturaValidationService::class);
+
+            $rawText = $extractor->extract($absolutePath);
+            $parsed = $parser->parse($rawText);
+            $liquidacion = $documento;
+            if ($documento->parent_document_id) {
+                $liquidacion = Archivo::query()->find($documento->parent_document_id);
+            }
+
+            $factura = Factura::create([
+                'archivo_path' => $documento->ruta,
+                'archivo_disk' => $disk,
+                'estado' => 'pendiente',
+                'liquidacion_id' => $documento->id,
+                'persona_id' => $documento->persona_id,
+                'razon_social' => $this->stringOrNull($parsed['razon_social'] ?? null),
+                'cuit_emisor' => $this->normalizeTaxId($parsed['cuit'] ?? null),
+                'numero_factura' => $this->stringOrNull($parsed['numero_factura'] ?? null),
+                'fecha_emision' => $this->parseDate($parsed['fecha_emision'] ?? null),
+                'tipo_factura' => $this->normalizeFacturaType($parsed['tipo_factura'] ?? null),
+                'importe_total' => $this->parseAmount($parsed['importe_total'] ?? null),
+                'iva' => $this->parseAmount($parsed['iva'] ?? null),
+                'concepto' => $this->stringOrNull($parsed['concepto'] ?? null),
+                'cbu' => $this->stringOrNull($parsed['cbu'] ?? null),
+            ]);
+
+            FacturaOcr::create([
+                'factura_id' => $factura->id,
+                'raw_text' => $rawText,
+                'extracted_json' => $parsed,
+                'model' => config('services.openai.model', 'gpt-4o-mini'),
+            ]);
+
+            $result = $validator->validate($factura, $liquidacion, $documento->persona, $skipCuil, false);
+            $factura->estado = $result['decision']['estado'];
+            $factura->decision_motivo = $result['decision']['motivo'];
+            $factura->decision_mensaje = $result['decision']['mensaje'];
+            $factura->save();
+
+            foreach ($result['validations'] as $validation) {
+                FacturaValidacion::create([
+                    'factura_id' => $factura->id,
+                    'regla' => $validation['regla'],
+                    'resultado' => $validation['resultado'],
+                    'mensaje' => $validation['mensaje'],
+                ]);
+            }
+        } catch (\Throwable $exception) {
+            Log::warning('Validación IA fallida al subir liquidación', [
+                'documento_id' => $documento->id,
+                'error' => $exception->getMessage(),
+            ]);
+        }
+    }
+
+    protected function parseDate($value): ?string
+    {
+        if (! $value) {
+            return null;
+        }
+
+        try {
+            return Carbon::parse($value)->format('Y-m-d');
+        } catch (\Throwable $exception) {
+            return null;
+        }
+    }
+
+    protected function parseAmount($value): ?float
+    {
+        if ($value === null || $value === '') {
+            return null;
+        }
+
+        $raw = is_numeric($value) ? (string) $value : (string) $value;
+        $normalized = str_replace(['$', ' '], '', $raw);
+        if (str_contains($normalized, ',') && str_contains($normalized, '.')) {
+            $normalized = str_replace('.', '', $normalized);
+            $normalized = str_replace(',', '.', $normalized);
+        } elseif (str_contains($normalized, ',')) {
+            $normalized = str_replace(',', '.', $normalized);
+        }
+
+        return is_numeric($normalized) ? (float) $normalized : null;
+    }
+
+    protected function normalizeTaxId($value): ?string
+    {
+        if (! $value) {
+            return null;
+        }
+        $normalized = preg_replace('/\\D+/', '', (string) $value) ?? '';
+        return $normalized !== '' ? $normalized : null;
+    }
+
+    protected function normalizeFacturaType($value): ?string
+    {
+        $trimmed = strtoupper(trim((string) $value));
+        if (in_array($trimmed, ['A', 'B', 'C'], true)) {
+            return $trimmed;
+        }
+
+        return null;
+    }
+
+    protected function stringOrNull($value): ?string
+    {
+        $trimmed = trim((string) $value);
+        return $trimmed !== '' ? $trimmed : null;
     }
 
     protected function parseFuelAmount(?string $name): ?float

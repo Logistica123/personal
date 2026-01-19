@@ -123,6 +123,8 @@ Route::middleware('auth.api')->group(function () {
     Route::get('/tarifas/imagen', [TarifaImagenController::class, 'show']);
     Route::post('/tarifas/imagen', [TarifaImagenController::class, 'store']);
     Route::delete('/tarifas/imagen/{tarifaImagen}', [TarifaImagenController::class, 'destroy']);
+
+    Route::post('/facturas/validar', [\App\Http\Controllers\Api\FacturaAiController::class, 'validar']);
 });
 
 Route::options('/{any}', fn () => response()->noContent())->where('any', '.*');

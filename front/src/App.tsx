@@ -538,6 +538,9 @@ type PersonalDetail = {
     enviada?: boolean;
     recibido?: boolean;
     pagado?: boolean;
+    validacionIaEstado?: string | null;
+    validacionIaMotivo?: string | null;
+    validacionIaMensaje?: string | null;
   }>;
   comments: Array<{
     id: number;
@@ -12439,6 +12442,9 @@ const LiquidacionesPage: React.FC = () => {
   const [pagadoUpdating, setPagadoUpdating] = useState(false);
   const [listPagadoUpdating, setListPagadoUpdating] = useState(false);
   const [uploadStatus, setUploadStatus] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  const [validationStatus, setValidationStatus] = useState<{ type: 'success' | 'error'; message: string } | null>(
+    null
+  );
   const [deletingDocumentIds, setDeletingDocumentIds] = useState<Set<number>>(() => new Set());
   const [documentTypes, setDocumentTypes] = useState<PersonalDocumentType[]>([]);
   const [documentTypesLoading, setDocumentTypesLoading] = useState(true);
@@ -12531,6 +12537,49 @@ const LiquidacionesPage: React.FC = () => {
   const hasFuelDataForSubmit =
     hasStoredFuelInvoice ||
     (fuelInvoiceUpload && (fuelParentDocumentId.trim() !== '' || canSubmitUploads));
+  const isPdfFile = useCallback((file: File) => {
+    if (file.type === 'application/pdf') {
+      return true;
+    }
+    return file.name.toLowerCase().endsWith('.pdf');
+  }, []);
+
+  const buildValidationStatus = useCallback(
+    (
+      payload: {
+        data?: {
+          estado?: string;
+          decision_mensaje?: string | null;
+          validaciones?: Array<{ regla?: string; resultado?: boolean; mensaje?: string | null }>;
+        };
+      },
+      okMessage: string
+    ): { type: 'success' | 'error'; message: string } => {
+      const estado = payload?.data?.estado ?? 'rechazada';
+      const decisionMessage = payload?.data?.decision_mensaje ?? null;
+      const validations = Array.isArray(payload?.data?.validaciones) ? payload?.data?.validaciones ?? [] : [];
+      const failedMessages = validations
+        .filter((validation) => validation?.resultado === false && validation?.mensaje)
+        .map((validation) => validation?.mensaje)
+        .filter((message): message is string => Boolean(message));
+
+      if (estado === 'aprobada') {
+        if (failedMessages.length > 0) {
+          return {
+            type: 'error',
+            message: `Validación automática: ${failedMessages.join(' | ')}.`,
+          };
+        }
+        return { type: 'success', message: okMessage };
+      }
+
+      return {
+        type: 'error',
+        message: decisionMessage ?? 'La validación automática fue rechazada.',
+      };
+    },
+    []
+  );
 
   useEffect(() => {
     if (personaIdFromRoute !== selectedPersonaId) {
@@ -12558,6 +12607,22 @@ const LiquidacionesPage: React.FC = () => {
     return (
       <span className={`status-badge status-badge--liquidacion ${value ? 'is-yes' : 'is-no'}`}>
         {value ? 'Sí' : 'No'}
+      </span>
+    );
+  };
+
+  const renderAiValidationStatus = (documento: LiquidacionDocument) => {
+    const estado = (documento.validacionIaEstado ?? '').toLowerCase();
+    if (!estado) {
+      return <span className="status-badge status-badge--liquidacion is-unknown">—</span>;
+    }
+
+    const message = documento.validacionIaMensaje ?? documento.validacionIaMotivo ?? '';
+    const label = estado === 'aprobada' ? 'Aprobada' : 'Rechazada';
+    const className = estado === 'aprobada' ? 'is-yes' : 'is-no';
+    return (
+      <span className={`status-badge status-badge--liquidacion ${className}`} title={message}>
+        {label}
       </span>
     );
   };
@@ -14118,11 +14183,12 @@ const LiquidacionesPage: React.FC = () => {
         return false;
       }
 
-    try {
+      try {
       setFuelUploading(true);
       if (!options?.silent) {
         setUploadStatus(null);
       }
+      setValidationStatus(null);
 
         const formData = new FormData();
         formData.append('archivo', fuelInvoiceUpload.file);
@@ -14138,6 +14204,7 @@ const LiquidacionesPage: React.FC = () => {
           formData.append('fechaVencimiento', fuelInvoiceUpload.fechaVencimiento);
         }
         formData.append('esFacturaCombustible', '1');
+        formData.append('skipAutoValidacion', '1');
         if (fuelParentDocumentId) {
           formData.append('parentDocumentId', fuelParentDocumentId);
         }
@@ -14170,13 +14237,81 @@ const LiquidacionesPage: React.FC = () => {
           throw new Error(message);
         }
 
+        let validationStatus: { type: 'success' | 'error'; message: string } | null = null;
+        const shouldValidateFactura =
+          !options?.pending &&
+          isPdfFile(fuelInvoiceUpload.file) &&
+          fuelParentDocumentId &&
+          fuelParentDocumentId.trim() !== '';
+
+        if (shouldValidateFactura) {
+          try {
+            const token = readAuthTokenFromStorage();
+            const headers: Record<string, string> = { Accept: 'application/json' };
+            if (token) {
+              headers.Authorization = `Bearer ${token}`;
+            }
+
+            const validationData = new FormData();
+            validationData.append('archivo', fuelInvoiceUpload.file);
+            validationData.append('liquidacionId', fuelParentDocumentId.trim());
+            if (!isPdfFile(fuelInvoiceUpload.file)) {
+              validationData.append('skipCuil', '1');
+            }
+
+            const validationResponse = await fetch(`${apiBaseUrl}/api/facturas/validar`, {
+              method: 'POST',
+              headers,
+              body: validationData,
+            });
+
+            if (validationResponse.ok) {
+              const payload = (await parseJsonSafe(validationResponse)) as {
+                data?: {
+                  estado?: string;
+                  decision_mensaje?: string | null;
+                  validaciones?: Array<{ regla?: string; resultado?: boolean; mensaje?: string | null }>;
+                };
+              };
+              validationStatus = buildValidationStatus(payload, 'Factura validada correctamente.');
+            } else {
+              let message = `Error ${validationResponse.status}: ${validationResponse.statusText}`;
+              try {
+                const payload = await parseJsonSafe(validationResponse);
+                if (typeof payload?.message === 'string') {
+                  message = payload.message;
+                }
+              } catch {
+                // ignore
+              }
+              validationStatus = {
+                type: 'error',
+                message: `Factura cargada, pero no se pudo validar automáticamente. ${message}`,
+              };
+            }
+          } catch (validationErr) {
+            validationStatus = {
+              type: 'error',
+              message:
+                (validationErr as Error).message ??
+                'Factura cargada, pero no se pudo validar automáticamente.',
+            };
+          }
+        }
+
+        if (validationStatus) {
+          setValidationStatus(validationStatus);
+        }
+
         if (!options?.silent) {
-          setUploadStatus({
-            type: 'success',
-            message: options?.pending
-              ? 'Factura de combustible guardada. Se publicará al subir las liquidaciones.'
-              : 'Factura de combustible cargada correctamente.',
-          });
+          setUploadStatus(
+            validationStatus ?? {
+              type: 'success',
+              message: options?.pending
+                ? 'Factura de combustible guardada. Se publicará al subir las liquidaciones.'
+                : 'Factura de combustible cargada correctamente.',
+            }
+          );
         }
 
         if (fuelInvoiceUpload.previewUrl) {
@@ -14195,7 +14330,15 @@ const LiquidacionesPage: React.FC = () => {
         setFuelUploading(false);
       }
     },
-    [apiBaseUrl, fuelInvoiceUpload, fuelParentDocumentId, refreshPersonaDetail, selectedPersonaId]
+    [
+      apiBaseUrl,
+      buildValidationStatus,
+      fuelInvoiceUpload,
+      fuelParentDocumentId,
+      isPdfFile,
+      refreshPersonaDetail,
+      selectedPersonaId,
+    ]
   );
 
   const publishPendingDocuments = useCallback(async () => {
@@ -14289,7 +14432,9 @@ const LiquidacionesPage: React.FC = () => {
     try {
       setUploading(true);
       setUploadStatus(null);
+      setValidationStatus(null);
       let parentDocumentId: number | null = null;
+      let validationStatus: { type: 'success' | 'error'; message: string } | null = null;
 
       for (const item of pendingUploads) {
         const formData = new FormData();
@@ -14306,7 +14451,7 @@ const LiquidacionesPage: React.FC = () => {
           formData.append('importeFacturar', liquidacionImporteManual.replace(',', '.'));
         }
         formData.append('esLiquidacion', '1');
-        formData.append('pendiente', '1');
+        formData.append('skipAutoValidacion', '1');
         if (shouldAttachFuelInvoices) {
           formData.append('attachFuelInvoices', '1');
         }
@@ -14342,6 +14487,61 @@ const LiquidacionesPage: React.FC = () => {
         const payload = (await response.json()) as { data?: { id?: number } };
         if (parentDocumentId === null && payload?.data?.id) {
           parentDocumentId = payload.data.id;
+        }
+
+        if (payload?.data?.id && isPdfFile(item.file)) {
+          try {
+            const token = readAuthTokenFromStorage();
+            const headers: Record<string, string> = { Accept: 'application/json' };
+            if (token) {
+              headers.Authorization = `Bearer ${token}`;
+            }
+
+            const validationData = new FormData();
+            validationData.append('archivo', item.file);
+            validationData.append('liquidacionId', String(payload.data.id));
+            if (!isPdfFile(item.file)) {
+              validationData.append('skipCuil', '1');
+            }
+
+            const validationResponse = await fetch(`${apiBaseUrl}/api/facturas/validar`, {
+              method: 'POST',
+              headers,
+              body: validationData,
+            });
+
+            if (validationResponse.ok) {
+              const validationPayload = (await parseJsonSafe(validationResponse)) as {
+                data?: {
+                  estado?: string;
+                  decision_mensaje?: string | null;
+                  validaciones?: Array<{ regla?: string; resultado?: boolean; mensaje?: string | null }>;
+                };
+              };
+              validationStatus = buildValidationStatus(validationPayload, 'Liquidación validada correctamente.');
+            } else {
+              let message = `Error ${validationResponse.status}: ${validationResponse.statusText}`;
+              try {
+                const validationPayload = await parseJsonSafe(validationResponse);
+                if (typeof validationPayload?.message === 'string') {
+                  message = validationPayload.message;
+                }
+              } catch {
+                // ignore
+              }
+              validationStatus = {
+                type: 'error',
+                message: `Liquidación cargada, pero no se pudo validar automáticamente. ${message}`,
+              };
+            }
+          } catch (validationErr) {
+            validationStatus = {
+              type: 'error',
+              message:
+                (validationErr as Error).message ??
+                'Liquidación cargada, pero no se pudo validar automáticamente.',
+            };
+          }
         }
       }
 
@@ -14396,7 +14596,10 @@ const LiquidacionesPage: React.FC = () => {
         await publishPendingDocuments();
       }
 
-      setUploadStatus({ type: 'success', message: 'Liquidaciones cargadas correctamente.' });
+      if (validationStatus) {
+        setValidationStatus(validationStatus);
+      }
+      setUploadStatus(validationStatus ?? { type: 'success', message: 'Liquidaciones cargadas correctamente.' });
       clearPendingUploads();
       setDocumentExpiry('');
       refreshPersonaDetail();
@@ -14416,7 +14619,9 @@ const LiquidacionesPage: React.FC = () => {
     try {
       setUploading(true);
       setUploadStatus(null);
+      setValidationStatus(null);
       let lastSavedId: number | null = null;
+      let validationStatus: { type: 'success' | 'error'; message: string } | null = null;
 
       for (const item of pendingUploads) {
         const formData = new FormData();
@@ -14433,6 +14638,8 @@ const LiquidacionesPage: React.FC = () => {
           formData.append('importeFacturar', liquidacionImporteManual.replace(',', '.'));
         }
         formData.append('esLiquidacion', '1');
+        formData.append('pendiente', '1');
+        formData.append('skipAutoValidacion', '1');
 
         const response = await fetch(`${apiBaseUrl}/api/personal/${selectedPersonaId}/documentos`, {
           method: 'POST',
@@ -14463,16 +14670,75 @@ const LiquidacionesPage: React.FC = () => {
           const payload = (await response.json()) as { data?: { id?: number } };
           if (payload?.data?.id) {
             lastSavedId = payload.data.id;
+            if (isPdfFile(item.file)) {
+              try {
+                const token = readAuthTokenFromStorage();
+                const headers: Record<string, string> = { Accept: 'application/json' };
+                if (token) {
+                  headers.Authorization = `Bearer ${token}`;
+                }
+
+                const validationData = new FormData();
+                validationData.append('archivo', item.file);
+                validationData.append('liquidacionId', String(payload.data.id));
+                if (!isPdfFile(item.file)) {
+                  validationData.append('skipCuil', '1');
+                }
+
+                const validationResponse = await fetch(`${apiBaseUrl}/api/facturas/validar`, {
+                  method: 'POST',
+                  headers,
+                  body: validationData,
+                });
+
+                if (validationResponse.ok) {
+                  const validationPayload = (await parseJsonSafe(validationResponse)) as {
+                    data?: {
+                      estado?: string;
+                      decision_mensaje?: string | null;
+                      validaciones?: Array<{ regla?: string; resultado?: boolean; mensaje?: string | null }>;
+                    };
+                  };
+                  validationStatus = buildValidationStatus(validationPayload, 'Liquidación validada correctamente.');
+                } else {
+                  let message = `Error ${validationResponse.status}: ${validationResponse.statusText}`;
+                  try {
+                    const validationPayload = await parseJsonSafe(validationResponse);
+                    if (typeof validationPayload?.message === 'string') {
+                      message = validationPayload.message;
+                    }
+                  } catch {
+                    // ignore
+                  }
+                  validationStatus = {
+                    type: 'error',
+                    message: `Liquidación guardada, pero no se pudo validar automáticamente. ${message}`,
+                  };
+                }
+              } catch (validationErr) {
+                validationStatus = {
+                  type: 'error',
+                  message:
+                    (validationErr as Error).message ??
+                    'Liquidación guardada, pero no se pudo validar automáticamente.',
+                };
+              }
+            }
           }
         } catch {
           // ignore
         }
       }
 
-      setUploadStatus({
-        type: 'success',
-        message: 'Liquidaciones guardadas. Se publicarán al subir las liquidaciones.',
-      });
+      if (validationStatus) {
+        setValidationStatus(validationStatus);
+      }
+      setUploadStatus(
+        validationStatus ?? {
+          type: 'success',
+          message: 'Liquidaciones guardadas. Se publicarán al subir las liquidaciones.',
+        }
+      );
       if (lastSavedId) {
         setFuelParentDocumentId(String(lastSavedId));
       }
@@ -14978,6 +15244,7 @@ const LiquidacionesPage: React.FC = () => {
                   <th>Importe a facturar</th>
                   <th>Enviada</th>
                   <th>Facturado</th>
+                  <th>Validación IA</th>
                   <th>
                     <div className="liquidaciones-pagado-header">
                       <span>Pagado</span>
@@ -14999,7 +15266,7 @@ const LiquidacionesPage: React.FC = () => {
                     {monthSection.sections.map((section) => (
                       <React.Fragment key={`month-${monthSection.monthKey}-${section.key}`}>
                         <tr className="fortnight-row">
-                          <td colSpan={9}>
+                          <td colSpan={10}>
                             <strong>{monthSection.monthLabel}</strong>
                             <span className="fortnight-row__separator">•</span>
                             <span>{section.label}</span>
@@ -15030,6 +15297,7 @@ const LiquidacionesPage: React.FC = () => {
                                 </td>
                                 <td>{renderLiquidacionStatus(group.main.enviada)}</td>
                                 <td>{renderLiquidacionStatus(group.main.recibido)}</td>
+                                <td>{renderAiValidationStatus(group.main)}</td>
                                 <td>
                                   <div className="liquidaciones-pagado-cell">
                                     {renderLiquidacionStatus(group.main.pagado)}
@@ -15096,6 +15364,7 @@ const LiquidacionesPage: React.FC = () => {
                                       ? formatCurrency(attachment.importeFacturar)
                                       : '—'}
                                   </td>
+                                  <td>—</td>
                                   <td>—</td>
                                   <td>—</td>
                                   <td>—</td>
@@ -15348,6 +15617,17 @@ const LiquidacionesPage: React.FC = () => {
             }
           >
             {uploadStatus.message}
+          </p>
+        ) : null}
+        {validationStatus ? (
+          <p
+            className={
+              validationStatus.type === 'error'
+                ? 'form-info form-info--error'
+                : 'form-info form-info--success'
+            }
+          >
+            {validationStatus.message}
           </p>
         ) : null}
 

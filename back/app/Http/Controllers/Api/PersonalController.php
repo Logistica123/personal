@@ -15,6 +15,7 @@ use App\Models\Dueno;
 use App\Models\PersonaComment;
 use App\Models\PersonaHistory;
 use App\Models\Archivo;
+use App\Models\Factura;
 use App\Models\ContactReveal;
 use App\Services\AuditLogger;
 use Illuminate\Http\JsonResponse;
@@ -1112,6 +1113,11 @@ class PersonalController extends Controller
             $documents = $documents->reject(fn ($documento) => (bool) $documento->es_pendiente);
         }
         $documents = $documents->values();
+        $facturasPorLiquidacion = Factura::query()
+            ->whereIn('liquidacion_id', $documents->pluck('id')->all())
+            ->orderByDesc('id')
+            ->get()
+            ->groupBy('liquidacion_id');
 
         return [
             'id' => $persona->id,
@@ -1174,7 +1180,8 @@ class PersonalController extends Controller
             'documentsDownloadAllAbsoluteUrl' => route('personal.documentos.descargarTodos', [
                 'persona' => $persona->id,
             ], true),
-            'documents' => $documents->map(function ($documento) {
+            'documents' => $documents->map(function ($documento) use ($facturasPorLiquidacion) {
+                $factura = $facturasPorLiquidacion->get($documento->id)?->first();
                 $hasAttachments = $documento->parent_document_id === null
                     && ($documento->children?->isNotEmpty() ?? false);
                 $relativeDownloadUrl = route('personal.documentos.descargar', [
@@ -1211,8 +1218,11 @@ class PersonalController extends Controller
                     'pendiente' => (bool) $documento->es_pendiente,
                     'liquidacionId' => $documento->liquidacion_id,
                     'enviada' => (bool) $documento->enviada,
-                    'recibido' => (bool) $documento->recibido || $hasAttachments,
+                    'recibido' => (bool) $documento->recibido,
                     'pagado' => (bool) $documento->pagado,
+                    'validacionIaEstado' => $factura?->estado,
+                    'validacionIaMotivo' => $factura?->decision_motivo,
+                    'validacionIaMensaje' => $factura?->decision_mensaje,
                 ];
             })->values(),
             'comments' => $persona->comments->map(function ($comment) {
@@ -1253,11 +1263,8 @@ class PersonalController extends Controller
     protected function transformPersonaListItem(Persona $persona): array
     {
         $latestLiquidacion = $persona->documentos?->first();
-        $childrenCount = $latestLiquidacion?->children_count ?? 0;
         $liquidacionEnviada = $latestLiquidacion ? (bool) $latestLiquidacion->enviada : null;
-        $liquidacionRecibido = $latestLiquidacion
-            ? ((bool) $latestLiquidacion->recibido || $childrenCount > 0)
-            : null;
+        $liquidacionRecibido = $latestLiquidacion ? (bool) $latestLiquidacion->recibido : null;
         $liquidacionPagado = $latestLiquidacion ? (bool) $latestLiquidacion->pagado : null;
         $liquidacionImporteFacturar = $latestLiquidacion?->importe_facturar;
         $liquidacionesResumen = collect($persona->documentos ?? [])
@@ -1269,8 +1276,7 @@ class PersonalController extends Controller
                 $monthKey = $date ? $date->format('Y-m') : 'unknown';
                 $fortnightKey = $date ? $this->determineFortnightKey($documento, $date) : 'NO_DATE';
 
-                $childrenCount = $documento->children_count ?? 0;
-                $recibido = (bool) $documento->recibido || $childrenCount > 0;
+                $recibido = (bool) $documento->recibido;
 
                 return [
                     'id' => $documento->id,
