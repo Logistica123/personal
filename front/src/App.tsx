@@ -454,6 +454,10 @@ type PersonalRecord = {
   liquidacionIdLatest?: number | null;
   liquidacionImporteFacturar?: number | null;
   liquidaciones?: LiquidacionSummary[] | null;
+  documentacionStatus?: 'sin_documentos' | 'vigente' | 'por_vencer' | 'vencido' | null;
+  documentacionVencidos?: number | null;
+  documentacionPorVencer?: number | null;
+  documentacionTotal?: number | null;
 };
 
 type PersonalDetail = {
@@ -641,6 +645,8 @@ const FORTNIGHT_FILTER_OPTIONS = [
   { value: 'Q2', label: 'Segunda quincena' },
   { value: 'NO_DATE', label: 'Sin quincena' },
 ];
+
+const DOCUMENT_ALERT_DAYS = 30;
 
 const PERFIL_DISPLAY_LABELS: Record<number, string> = {
   1: 'Transportista',
@@ -11918,6 +11924,46 @@ const PersonalPage: React.FC = () => {
     return `Mostrando ${startIndex + 1} - ${endIndex} de ${totalRecords} registros`;
   }, [loading, error, totalRecords, startIndex, endIndex]);
 
+  const resolveDocumentacionBadge = (registro: PersonalRecord) => {
+    const status = registro.documentacionStatus ?? null;
+    const vencidos = registro.documentacionVencidos ?? 0;
+    const porVencer = registro.documentacionPorVencer ?? 0;
+    const total = registro.documentacionTotal ?? 0;
+
+    switch (status) {
+      case 'vencido':
+        return {
+          label: `Vencido (${vencidos})`,
+          className: 'badge badge--danger',
+          filter: 'vencido',
+        };
+      case 'por_vencer':
+        return {
+          label: `Por vencer (${porVencer})`,
+          className: 'badge badge--warning',
+          filter: 'por_vencer',
+        };
+      case 'vigente':
+        return {
+          label: total > 0 ? `OK (${total})` : 'OK',
+          className: 'badge badge--success',
+          filter: 'vigente',
+        };
+      case 'sin_documentos':
+        return {
+          label: 'Sin docs',
+          className: 'badge',
+          filter: 'sin_vencimiento',
+        };
+      default:
+        return {
+          label: '—',
+          className: 'badge',
+          filter: 'todos',
+        };
+    }
+  };
+
   const logContactReveal = useCallback(
     async (personaId: number, field: 'phone' | 'email') => {
       try {
@@ -12213,19 +12259,20 @@ const PersonalPage: React.FC = () => {
               <th>Sucursal</th>
               <th>Fecha alta</th>
               <th>Fecha baja</th>
+              <th>Docs</th>
               <th>Acciones</th>
             </tr>
           </thead>
           <tbody>
             {loading && (
               <tr>
-                <td colSpan={19}>Cargando personal...</td>
+                <td colSpan={20}>Cargando personal...</td>
               </tr>
             )}
 
             {error && !loading && (
               <tr>
-                <td colSpan={19} className="error-cell">
+                <td colSpan={20} className="error-cell">
                   {error}
                 </td>
               </tr>
@@ -12233,7 +12280,7 @@ const PersonalPage: React.FC = () => {
 
             {!loading && !error && filteredPersonal.length === 0 && (
               <tr>
-                <td colSpan={19}>No hay registros para mostrar.</td>
+                <td colSpan={20}>No hay registros para mostrar.</td>
               </tr>
             )}
 
@@ -12285,6 +12332,23 @@ const PersonalPage: React.FC = () => {
                   <td>{registro.sucursal ?? '—'}</td>
                   <td>{registro.fechaAlta ?? '—'}</td>
                   <td>{registro.fechaBaja ?? '—'}</td>
+                  <td>
+                    {(() => {
+                      const badge = resolveDocumentacionBadge(registro);
+                      if (badge.label === '—') {
+                        return '—';
+                      }
+                      return (
+                        <button
+                          type="button"
+                          className={badge.className}
+                          onClick={() => navigate(`/personal/${registro.id}/editar?docFilter=${badge.filter}`)}
+                        >
+                          {badge.label}
+                        </button>
+                      );
+                    })()}
+                  </td>
                   <td>
                     <div className="action-buttons">
                       <button
@@ -19674,6 +19738,10 @@ const sucursalOptions = useMemo(() => {
           detail: { persona: resolvedPersonalRecord },
         })
       );
+
+      if (!isRejection) {
+        navigate(`/personal/${resolvedPersonalRecord.id}/editar`);
+      }
     } catch (err) {
       setFlash({
         type: 'error',
@@ -24871,6 +24939,7 @@ const EditUserPage: React.FC = () => {
 const PersonalEditPage: React.FC = () => {
   const { personaId } = useParams<{ personaId: string }>();
   const navigate = useNavigate();
+  const location = useLocation();
   const apiBaseUrl = useMemo(() => resolveApiBaseUrl(), []);
   const authUser = useStoredAuthUser();
   const userRole = useMemo(() => getUserRole(authUser), [authUser]);
@@ -24925,6 +24994,15 @@ const PersonalEditPage: React.FC = () => {
   const [pendingUploads, setPendingUploads] = useState<PendingPersonalUpload[]>([]);
   const [uploading, setUploading] = useState(false);
   const [uploadStatus, setUploadStatus] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  const [commentText, setCommentText] = useState('');
+  const [commentSaving, setCommentSaving] = useState(false);
+  const [commentError, setCommentError] = useState<string | null>(null);
+  const [commentInfo, setCommentInfo] = useState<string | null>(null);
+  const [disapproving, setDisapproving] = useState(false);
+  const [disapproveError, setDisapproveError] = useState<string | null>(null);
+  const [documentFilter, setDocumentFilter] = useState<
+    'todos' | 'vencido' | 'por_vencer' | 'vigente' | 'sin_vencimiento'
+  >('todos');
   const [documentTypes, setDocumentTypes] = useState<PersonalDocumentType[]>([]);
   const [documentTypesLoading, setDocumentTypesLoading] = useState(true);
   const [documentTypesError, setDocumentTypesError] = useState<string | null>(null);
@@ -24952,6 +25030,65 @@ const PersonalEditPage: React.FC = () => {
 
     return detail.documents.find((doc) => doc.id === selectedDocumentId) ?? null;
   }, [detail, selectedDocumentId]);
+
+  const documentsWithStatus = useMemo(() => {
+    if (!detail) {
+      return [] as Array<PersonalDetail['documents'][number] & { status: string; daysLeft: number | null }>;
+    }
+
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    return detail.documents.map((doc) => {
+      const rawDate = doc.fechaVencimiento;
+      if (!rawDate) {
+        return { ...doc, status: 'sin_vencimiento', daysLeft: null };
+      }
+      const parsed = new Date(`${rawDate}T00:00:00`);
+      if (Number.isNaN(parsed.getTime())) {
+        return { ...doc, status: 'sin_vencimiento', daysLeft: null };
+      }
+      const diffMs = parsed.getTime() - today.getTime();
+      const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+      if (diffDays < 0) {
+        return { ...doc, status: 'vencido', daysLeft: diffDays };
+      }
+      if (diffDays <= DOCUMENT_ALERT_DAYS) {
+        return { ...doc, status: 'por_vencer', daysLeft: diffDays };
+      }
+      return { ...doc, status: 'vigente', daysLeft: diffDays };
+    });
+  }, [detail]);
+
+  const documentStatusCounts = useMemo(() => {
+    const counts = {
+      total: 0,
+      vencidos: 0,
+      porVencer: 0,
+      vigentes: 0,
+      sinVencimiento: 0,
+    };
+    documentsWithStatus.forEach((doc) => {
+      counts.total += 1;
+      if (doc.status === 'vencido') {
+        counts.vencidos += 1;
+      } else if (doc.status === 'por_vencer') {
+        counts.porVencer += 1;
+      } else if (doc.status === 'vigente') {
+        counts.vigentes += 1;
+      } else {
+        counts.sinVencimiento += 1;
+      }
+    });
+    return counts;
+  }, [documentsWithStatus]);
+
+  const filteredDocuments = useMemo(() => {
+    if (documentFilter === 'todos') {
+      return documentsWithStatus;
+    }
+    return documentsWithStatus.filter((doc) => doc.status === documentFilter);
+  }, [documentsWithStatus, documentFilter]);
 
   const handleRemovePendingUpload = useCallback((id: string) => {
     setPendingUploads((prev) => prev.filter((item) => item.id !== id));
@@ -25015,7 +25152,7 @@ const PersonalEditPage: React.FC = () => {
       setLoading(true);
       setLoadError(null);
 
-      const response = await fetch(`${apiBaseUrl}/api/personal/${personaId}`);
+        const response = await fetch(`${apiBaseUrl}/api/personal/${personaId}?includePending=1`);
 
       if (!response.ok) {
         throw new Error(`Error ${response.status}: ${response.statusText}`);
@@ -25139,6 +25276,24 @@ const PersonalEditPage: React.FC = () => {
   useEffect(() => {
     fetchDetail();
   }, [fetchDetail]);
+
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const filter = params.get('docFilter');
+    const normalized =
+      filter === 'vencidos' ? 'vencido' :
+      filter === 'vigentes' ? 'vigente' :
+      filter;
+    if (
+      normalized === 'todos' ||
+      normalized === 'vencido' ||
+      normalized === 'por_vencer' ||
+      normalized === 'vigente' ||
+      normalized === 'sin_vencimiento'
+    ) {
+      setDocumentFilter(normalized);
+    }
+  }, [location.search]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -25582,6 +25737,146 @@ const PersonalEditPage: React.FC = () => {
     }
 
     window.open(resolvedUrl, '_blank', 'noopener');
+  };
+
+  const handleCommentSubmit = async () => {
+    if (!detail) {
+      return;
+    }
+    if (isReadOnly) {
+      setCommentError('Solo los usuarios autorizados pueden agregar comentarios.');
+      return;
+    }
+
+    const trimmed = commentText.trim();
+    if (trimmed.length === 0) {
+      setCommentError('Escribe un mensaje antes de enviarlo.');
+      return;
+    }
+
+    try {
+      setCommentSaving(true);
+      setCommentError(null);
+      setCommentInfo(null);
+
+      const response = await fetch(`${apiBaseUrl}/api/personal/${detail.id}/comentarios`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...actorHeaders,
+        },
+        body: JSON.stringify({
+          message: trimmed,
+          userId: authUser?.id ?? null,
+        }),
+      });
+
+      if (!response.ok) {
+        let message = `Error ${response.status}: ${response.statusText}`;
+        try {
+          const payload = await response.json();
+          if (typeof payload?.message === 'string') {
+            message = payload.message;
+          }
+        } catch {
+          // ignore
+        }
+        throw new Error(message);
+      }
+
+      const payload = (await response.json()) as {
+        message?: string;
+        data: {
+          id: number;
+          message: string | null;
+          userId: number | null;
+          userName: string | null;
+          createdAt: string | null;
+          createdAtLabel: string | null;
+        };
+      };
+
+      setDetail((prev) => {
+        if (!prev) {
+          return prev;
+        }
+        const existing = Array.isArray(prev.comments) ? prev.comments : [];
+        return {
+          ...prev,
+          comments: [payload.data, ...existing],
+        };
+      });
+
+      setCommentText('');
+      setCommentInfo(payload.message ?? 'Comentario agregado.');
+    } catch (err) {
+      setCommentError((err as Error).message ?? 'No se pudo enviar el comentario.');
+    } finally {
+      setCommentSaving(false);
+    }
+  };
+
+  const handleDisapprove = async () => {
+    if (!detail || !detail.aprobado) {
+      return;
+    }
+    if (isReadOnly) {
+      setDisapproveError('Solo los usuarios autorizados pueden revertir aprobaciones.');
+      return;
+    }
+
+    const confirmed = window.confirm('¿Querés revertir la aprobación y volver a la solicitud?');
+    if (!confirmed) {
+      return;
+    }
+
+    try {
+      setDisapproving(true);
+      setDisapproveError(null);
+
+      const response = await fetch(`${apiBaseUrl}/api/personal/${detail.id}/desaprobar`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...actorHeaders,
+        },
+        body: JSON.stringify({
+          userId: authUser?.id ?? null,
+        }),
+      });
+
+      if (!response.ok) {
+        let message = `Error ${response.status}: ${response.statusText}`;
+        try {
+          const payload = await response.json();
+          if (typeof payload?.message === 'string') {
+            message = payload.message;
+          }
+        } catch {
+          // ignore
+        }
+        throw new Error(message);
+      }
+
+      const payload = (await response.json()) as {
+        message?: string;
+        data?: { personalRecord?: PersonalRecord };
+      };
+
+      if (payload.data?.personalRecord) {
+        window.dispatchEvent(
+          new CustomEvent('personal:updated', {
+            detail: { persona: payload.data.personalRecord },
+          })
+        );
+      }
+
+      navigate(`/aprobaciones?personaId=${detail.id}`);
+    } catch (err) {
+      setDisapproveError((err as Error).message ?? 'No se pudo revertir la aprobación.');
+    } finally {
+      setDisapproving(false);
+    }
   };
 
   const handleUploadDocumentos = async () => {
@@ -26072,11 +26367,11 @@ const PersonalEditPage: React.FC = () => {
         </section>
       ) : null}
 
-    <section className="personal-edit-section">
-      <h2>Observaciones</h2>
-      <label className="input-control">
-        <textarea
-          value={formValues.observaciones}
+      <section className="personal-edit-section">
+        <h2>Observaciones</h2>
+        <label className="input-control">
+          <textarea
+            value={formValues.observaciones}
           onChange={(event) => setFormValues((prev) => ({ ...prev, observaciones: event.target.value }))}
           rows={3}
           disabled={isReadOnly}
@@ -26084,10 +26379,21 @@ const PersonalEditPage: React.FC = () => {
       </label>
       {saveError ? <p className="form-info form-info--error">{saveError}</p> : null}
       {saveSuccess ? <p className="form-info form-info--success">{saveSuccess}</p> : null}
+      {disapproveError ? <p className="form-info form-info--error">{disapproveError}</p> : null}
       <div className="form-actions">
         <button type="button" className="secondary-action" onClick={() => navigate('/personal')}>
           Cancelar
         </button>
+        {detail.aprobado ? (
+          <button
+            type="button"
+            className="secondary-action"
+            onClick={handleDisapprove}
+            disabled={disapproving || isReadOnly}
+          >
+            {disapproving ? 'Revirtiendo...' : 'Revertir aprobación'}
+          </button>
+        ) : null}
         <button type="button" className="primary-action" onClick={handleSave} disabled={saving || isReadOnly}>
           {saving ? 'Guardando...' : 'Guardar'}
         </button>
@@ -26131,6 +26437,82 @@ const PersonalEditPage: React.FC = () => {
       </section>
 
       <section className="personal-edit-section">
+        <h2>Chat interno</h2>
+        {Array.isArray(detail.comments) && detail.comments.length > 0 ? (
+          <ul className="review-comment-list">
+            {detail.comments.map((comment) => (
+              <li key={comment.id} className="review-comment-item">
+                <div className="review-comment-header">
+                  <span>{comment.userName ?? 'Usuario'}</span>
+                  <span>
+                    {(() => {
+                      const raw = comment.createdAt ?? comment.createdAtLabel;
+                      if (!raw) {
+                        return '—';
+                      }
+                      const parsed = new Date(raw);
+                      if (Number.isNaN(parsed.getTime())) {
+                        return comment.createdAtLabel ?? raw;
+                      }
+                      return parsed.toLocaleString('es-AR', {
+                        dateStyle: 'short',
+                        timeStyle: 'short',
+                      });
+                    })()}
+                  </span>
+                </div>
+                <p>{comment.message ?? ''}</p>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="form-info">Todavía no hay comentarios internos.</p>
+        )}
+
+        <div className="review-comment-form">
+          <label className="input-control">
+            <span>Agregar comentario</span>
+            <textarea
+              rows={3}
+              value={commentText}
+              onChange={(event) => {
+                setCommentText(event.target.value);
+                if (commentError) {
+                  setCommentError(null);
+                }
+              }}
+              placeholder="Escribe un mensaje para tu equipo"
+              disabled={commentSaving || isReadOnly}
+            />
+          </label>
+          <div className="form-actions">
+            <button
+              type="button"
+              className="secondary-action"
+              onClick={() => {
+                setCommentText('');
+                setCommentError(null);
+                setCommentInfo(null);
+              }}
+              disabled={commentSaving}
+            >
+              Cancelar
+            </button>
+            <button
+              type="button"
+              className="primary-action"
+              onClick={handleCommentSubmit}
+              disabled={commentSaving || isReadOnly}
+            >
+              {commentSaving ? 'Enviando...' : 'Enviar'}
+            </button>
+          </div>
+          {commentError ? <p className="form-info form-info--error">{commentError}</p> : null}
+          {commentInfo ? <p className="form-info form-info--success">{commentInfo}</p> : null}
+        </div>
+      </section>
+
+      <section className="personal-edit-section">
         <h2>Documentos</h2>
         {detail.documents.length > 0
           ? (() => {
@@ -26152,6 +26534,88 @@ const PersonalEditPage: React.FC = () => {
               ) : null;
             })()
           : null}
+        <div className="form-actions">
+          <button
+            type="button"
+            className={documentFilter === 'todos' ? 'primary-action' : 'secondary-action'}
+            onClick={() => setDocumentFilter('todos')}
+          >
+            Todos ({documentStatusCounts.total})
+          </button>
+          <button
+            type="button"
+            className={documentFilter === 'vencido' ? 'primary-action' : 'secondary-action'}
+            onClick={() => setDocumentFilter('vencido')}
+          >
+            Vencidos ({documentStatusCounts.vencidos})
+          </button>
+          <button
+            type="button"
+            className={documentFilter === 'por_vencer' ? 'primary-action' : 'secondary-action'}
+            onClick={() => setDocumentFilter('por_vencer')}
+          >
+            Por vencer ({documentStatusCounts.porVencer})
+          </button>
+          <button
+            type="button"
+            className={documentFilter === 'vigente' ? 'primary-action' : 'secondary-action'}
+            onClick={() => setDocumentFilter('vigente')}
+          >
+            Vigentes ({documentStatusCounts.vigentes})
+          </button>
+          <button
+            type="button"
+            className={documentFilter === 'sin_vencimiento' ? 'primary-action' : 'secondary-action'}
+            onClick={() => setDocumentFilter('sin_vencimiento')}
+          >
+            Sin vencimiento ({documentStatusCounts.sinVencimiento})
+          </button>
+        </div>
+        {filteredDocuments.length > 0 ? (
+          <ul className="document-status-list">
+            {filteredDocuments.map((doc) => {
+              const fallbackPath = `/api/personal/${detail.id}/documentos/${doc.id}/descargar`;
+              const resolvedUrl = resolveApiUrl(apiBaseUrl, doc.absoluteDownloadUrl ?? doc.downloadUrl ?? fallbackPath);
+              const statusLabel = (() => {
+                switch (doc.status) {
+                  case 'vencido':
+                    return { label: 'Vencido', className: 'badge badge--danger' };
+                  case 'por_vencer':
+                    return { label: 'Por vencer', className: 'badge badge--warning' };
+                  case 'vigente':
+                    return { label: 'Vigente', className: 'badge badge--success' };
+                  default:
+                    return { label: 'Sin vencimiento', className: 'badge' };
+                }
+              })();
+              const docLabel = doc.tipoNombre
+                ? `${doc.tipoNombre}${doc.nombre ? ` – ${doc.nombre}` : ''}`
+                : doc.nombre ?? `Documento #${doc.id}`;
+              return (
+                <li key={doc.id} className="document-status-item">
+                  <div className="document-status-info">
+                    <span>{docLabel}</span>
+                    {doc.fechaVencimiento ? (
+                      <small>Vence: {doc.fechaVencimiento}</small>
+                    ) : (
+                      <small>Sin vencimiento</small>
+                    )}
+                  </div>
+                  <div className="document-status-actions">
+                    <span className={statusLabel.className}>{statusLabel.label}</span>
+                    {resolvedUrl ? (
+                      <a className="secondary-action" href={resolvedUrl} target="_blank" rel="noopener noreferrer">
+                        Descargar
+                      </a>
+                    ) : null}
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        ) : (
+          <p className="form-info">No hay documentos para este filtro.</p>
+        )}
         <div className="form-grid">
           <label className="input-control">
             <span>Documento</span>

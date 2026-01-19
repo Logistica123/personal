@@ -106,6 +106,11 @@ class Persona extends Model
         return $this->hasMany(Archivo::class, 'persona_id');
     }
 
+    public function documentosVencimientos()
+    {
+        return $this->hasMany(Archivo::class, 'persona_id');
+    }
+
     public function dueno()
     {
         return $this->hasOne(Dueno::class, 'persona_id');

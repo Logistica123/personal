@@ -111,6 +111,16 @@ class PersonalController extends Controller
                 'estado:id,nombre',
                 'dueno:id,persona_id,nombreapellido,fecha_nacimiento,email,telefono,cuil,cuil_cobrador,cbu_alias,observaciones',
                 'aprobadoPor:id,name',
+                'documentosVencimientos' => function ($documentsQuery) use ($includePending) {
+                    $documentsQuery
+                        ->select('id', 'persona_id', 'fecha_vencimiento', 'tipo_archivo_id', 'es_pendiente')
+                        ->with('tipo:id,vence')
+                        ->whereHas('tipo', fn ($query) => $query->where('vence', true))
+                        ->whereNotNull('fecha_vencimiento');
+                    if (! $includePending) {
+                        $documentsQuery->where('es_pendiente', false);
+                    }
+                },
                 'documentos' => function ($documentsQuery) use ($documentTypeIds, $includePending) {
                     $documentsQuery
                         ->select(
@@ -318,6 +328,8 @@ class PersonalController extends Controller
             'duenoObservaciones' => ['nullable', 'string'],
         ]);
 
+        $originalClienteId = $persona->cliente_id;
+        $originalClienteName = $this->resolveClienteName($originalClienteId);
         $personaHistoryDefinitions = $this->getPersonaHistoryFieldDefinitions();
         $ownerHistoryDefinitions = $this->getPersonaOwnerHistoryFieldDefinitions();
         $originalPersonaSnapshot = $this->capturePersonaHistorySnapshot($persona, $personaHistoryDefinitions);
@@ -378,6 +390,19 @@ class PersonalController extends Controller
             if (array_key_exists($inputKey, $validated)) {
                 $persona->{$attribute} = $validated[$inputKey] ?? null;
             }
+        }
+
+        $clienteChanged = false;
+        if (array_key_exists('clienteId', $validated)) {
+            $newClienteId = $validated['clienteId'] ?? null;
+            $clienteChanged = (string) ($newClienteId ?? '') !== (string) ($originalClienteId ?? '');
+        }
+
+        if ($clienteChanged) {
+            $persona->es_solicitud = true;
+            $persona->aprobado = false;
+            $persona->aprobado_at = null;
+            $persona->aprobado_por = null;
         }
 
         if ($request->has('agenteResponsableId') || $request->has('agenteResponsableIds')) {
@@ -480,6 +505,19 @@ class PersonalController extends Controller
             ]);
         }
 
+        if ($clienteChanged) {
+            $persona->histories()->create([
+                'user_id' => $request->user()?->id,
+                'description' => 'Cambio de cliente',
+                'changes' => [[
+                    'field' => 'cliente_id',
+                    'label' => 'Cliente',
+                    'oldValue' => $originalClienteName,
+                    'newValue' => $this->resolveClienteName($persona->cliente_id),
+                ]],
+            ]);
+        }
+
         $changed = $persona->getChanges();
         $trackedFields = [
             'nombres',
@@ -505,6 +543,13 @@ class PersonalController extends Controller
             AuditLogger::log($request, 'persona_update', 'persona', $persona->id, [
                 'changes' => $diff,
             ]);
+        }
+
+        if ($clienteChanged) {
+            $this->notifyAgenteResponsable(
+                $persona,
+                'Se registró una nueva solicitud de cambio de cliente para %s.'
+            );
         }
 
         $persona->refresh();
@@ -849,7 +894,100 @@ class PersonalController extends Controller
         ]);
     }
 
-    protected function notifyAgenteResponsable(Persona $persona): bool
+    public function disapprove(Request $request, Persona $persona): JsonResponse
+    {
+        $this->ensureCanManagePersonal($request);
+
+        $validated = $request->validate([
+            'userId' => ['nullable', 'integer', 'exists:users,id'],
+            'estadoId' => ['nullable', 'integer', 'exists:estados,id'],
+        ]);
+
+        if (! $persona->aprobado) {
+            return response()->json([
+                'message' => 'La solicitud ya está desaprobada.',
+                'data' => [
+                    'aprobado' => false,
+                    'aprobadoAt' => null,
+                    'aprobadoPorId' => null,
+                ],
+            ]);
+        }
+
+        $oldApprovedAt = $persona->aprobado_at;
+        $oldApprovedBy = $persona->aprobado_por;
+
+        $persona->aprobado = false;
+        $persona->aprobado_at = null;
+        $persona->aprobado_por = null;
+        $persona->es_solicitud = true;
+
+        if (array_key_exists('estadoId', $validated)) {
+            $persona->estado_id = $validated['estadoId'] ?? null;
+        }
+
+        $persona->save();
+
+        $persona->histories()->create([
+            'user_id' => $request->user()?->id,
+            'description' => 'Aprobación revertida',
+            'changes' => [
+                [
+                    'field' => 'aprobado',
+                    'label' => 'Aprobado',
+                    'oldValue' => 'Sí',
+                    'newValue' => 'No',
+                ],
+                [
+                    'field' => 'aprobado_at',
+                    'label' => 'Aprobado el',
+                    'oldValue' => optional($oldApprovedAt)->toIso8601String(),
+                    'newValue' => null,
+                ],
+                [
+                    'field' => 'aprobado_por',
+                    'label' => 'Aprobado por',
+                    'oldValue' => $this->resolveUserName($oldApprovedBy),
+                    'newValue' => null,
+                ],
+            ],
+        ]);
+
+        $this->notifyAgenteResponsable(
+            $persona,
+            'Se revirtió la aprobación y la solicitud volvió a revisión para %s.'
+        );
+
+        $persona->loadMissing([
+            'cliente:id,nombre',
+            'unidad:id,matricula,marca,modelo',
+            'sucursal:id,nombre',
+            'agente:id,name',
+            'agenteResponsable:id,name',
+            'estado:id,nombre',
+        ]);
+
+        AuditLogger::log($request, 'persona_disapprove', 'persona', $persona->id, [
+            'aprobado' => false,
+            'aprobado_at' => null,
+            'aprobado_por' => null,
+            'estado_id' => $persona->estado_id,
+        ]);
+
+        return response()->json([
+            'message' => 'Aprobación revertida correctamente.',
+            'data' => [
+                'aprobado' => false,
+                'aprobadoAt' => null,
+                'aprobadoPorId' => null,
+                'aprobadoPorNombre' => null,
+                'esSolicitud' => (bool) $persona->es_solicitud,
+                'personalRecord' => $this->transformPersonaListItem($persona),
+            ],
+        ]);
+    }
+
+    protected function notifyAgenteResponsable(Persona $persona, ?string $customMessageTemplate = null): bool
     {
         $responsableIds = collect($this->getResponsableIds($persona));
 
@@ -870,7 +1008,8 @@ class PersonalController extends Controller
         );
         $personaLabel = $nombreCompleto !== '' ? $nombreCompleto : sprintf('ID #%d', $persona->id);
 
-        $message = sprintf('Se registró una nueva solicitud de alta para %s.', $personaLabel);
+        $messageTemplate = $customMessageTemplate ?? 'Se registró una nueva solicitud de alta para %s.';
+        $message = sprintf($messageTemplate, $personaLabel);
 
         $hasMessageColumn = Schema::hasColumn('notifications', 'message');
         $hasDescriptionColumn = Schema::hasColumn('notifications', 'description');
@@ -1216,7 +1355,7 @@ class PersonalController extends Controller
                     'sizeLabel' => $this->formatFileSize($documento->size),
                     'fechaCarga' => optional($documento->created_at)->format('Y-m-d'),
                     'fechaCargaIso' => optional($documento->created_at)->toIso8601String(),
-                    'fechaVencimiento' => optional($documento->fecha_vencimiento)->format('Y-m-d'),
+                    'fechaVencimiento' => $this->formatFechaVencimiento($documento->fecha_vencimiento),
                     'tipoId' => $documento->tipo_archivo_id,
                     'tipoNombre' => $documento->tipo?->nombre,
                     'requiereVencimiento' => (bool) $documento->tipo?->vence,
@@ -1330,6 +1469,7 @@ class PersonalController extends Controller
         $cobradorEmail = $hasExplicitCobrador ? $persona->cobrador_email : null;
         $cobradorCuil = $hasExplicitCobrador ? $persona->cobrador_cuil : null;
         $cobradorCbuAlias = $hasExplicitCobrador ? $persona->cobrador_cbu_alias : null;
+        $documentacionStatus = $this->resolveDocumentacionStatus($persona);
 
         return [
             'id' => $persona->id,
@@ -1396,6 +1536,10 @@ class PersonalController extends Controller
             'liquidacionIdLatest' => $latestLiquidacion?->id,
             'liquidacionImporteFacturar' => $liquidacionImporteFacturar,
             'liquidaciones' => $liquidacionesResumen,
+            'documentacionStatus' => $documentacionStatus['status'],
+            'documentacionVencidos' => $documentacionStatus['vencidos'],
+            'documentacionPorVencer' => $documentacionStatus['porVencer'],
+            'documentacionTotal' => $documentacionStatus['total'],
         ];
     }
 
@@ -1409,6 +1553,63 @@ class PersonalController extends Controller
                 return $nombre !== '' && Str::contains($nombre, 'liquid');
             })
             ->pluck('id');
+    }
+
+    protected function resolveDocumentacionStatus(Persona $persona): array
+    {
+        $documents = $persona->documentosVencimientos ?? collect();
+        $total = 0;
+        $expired = 0;
+        $expiring = 0;
+        $today = Carbon::today();
+        $warningDate = $today->copy()->addDays(30);
+
+        foreach ($documents as $documento) {
+            $expiry = $documento->fecha_vencimiento ?? null;
+            if (! $expiry) {
+                continue;
+            }
+            $expiryDate = $expiry instanceof Carbon ? $expiry : Carbon::parse($expiry);
+            $total++;
+            if ($expiryDate->lt($today)) {
+                $expired++;
+            } elseif ($expiryDate->lte($warningDate)) {
+                $expiring++;
+            }
+        }
+
+        $status = 'sin_documentos';
+        if ($total > 0) {
+            if ($expired > 0) {
+                $status = 'vencido';
+            } elseif ($expiring > 0) {
+                $status = 'por_vencer';
+            } else {
+                $status = 'vigente';
+            }
+        }
+
+        return [
+            'status' => $status,
+            'vencidos' => $expired,
+            'porVencer' => $expiring,
+            'total' => $total,
+        ];
+    }
+
+    protected function formatFechaVencimiento($value): ?string
+    {
+        if (! $value) {
+            return null;
+        }
+        if ($value instanceof Carbon) {
+            return $value->format('Y-m-d');
+        }
+        try {
+            return Carbon::parse($value)->format('Y-m-d');
+        } catch (\Throwable $exception) {
+            return null;
+        }
     }
 
     protected function resolveFuelTypeIds(): \Illuminate\Support\Collection

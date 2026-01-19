@@ -42,6 +42,7 @@ Route::middleware('auth.api')->group(function () {
     Route::get('/personal/{persona}/documentos/{documento}/descargar', [PersonalDocumentController::class, 'download'])->name('personal.documentos.descargar');
     Route::post('/personal/{persona}/comentarios', [PersonalCommentController::class, 'store']);
     Route::post('/personal/{persona}/aprobar', [PersonalController::class, 'approve']);
+    Route::post('/personal/{persona}/desaprobar', [PersonalController::class, 'disapprove']);
     Route::get('/personal-meta', [PersonalController::class, 'meta']);
     Route::get('/personal', [PersonalController::class, 'index']);
     Route::post('/personal', [PersonalController::class, 'store']);

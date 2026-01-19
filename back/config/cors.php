@@ -33,7 +33,15 @@ return [
         '^https?://(localhost|127\\.0\\.0\\.1)(:\\d+)?$',
     ],
 
-    'allowed_headers' => ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin', 'X-Api-Token'],
+    'allowed_headers' => [
+        'Content-Type',
+        'Authorization',
+        'X-Requested-With',
+        'Accept',
+        'Origin',
+        'X-Api-Token',
+        'X-Actor-Email',
+    ],
 
     'exposed_headers' => [],
 

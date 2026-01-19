@@ -51,7 +51,7 @@ class PersonalDocumentController extends Controller
                     'downloadUrl' => $downloadUrl,
                     'mime' => $documento->mime,
                     'size' => $documento->size,
-                    'fechaVencimiento' => optional($documento->fecha_vencimiento)->format('Y-m-d'),
+                    'fechaVencimiento' => $this->formatFechaVencimiento($documento->fecha_vencimiento),
                     'tipoId' => $documento->tipo_archivo_id,
                     'tipoNombre' => $documento->tipo?->nombre,
                     'requiereVencimiento' => (bool) $documento->tipo?->vence,
@@ -180,7 +180,7 @@ class PersonalDocumentController extends Controller
                     'sizeLabel' => $this->formatFileSize($documento->size),
                     'fechaCarga' => optional($documento->created_at)->format('Y-m-d'),
                     'fechaCargaIso' => optional($documento->created_at)->toIso8601String(),
-                    'fechaVencimiento' => optional($documento->fecha_vencimiento)->format('Y-m-d'),
+                    'fechaVencimiento' => $this->formatFechaVencimiento($documento->fecha_vencimiento),
                     'tipoId' => $documento->tipo_archivo_id,
                     'tipoNombre' => $documento->tipo?->nombre,
                     'requiereVencimiento' => (bool) $documento->tipo?->vence,
@@ -419,7 +419,7 @@ class PersonalDocumentController extends Controller
                 'absoluteDownloadUrl' => $absoluteDownloadUrl,
                 'mime' => $documento->mime,
                 'size' => $documento->size,
-                'fechaVencimiento' => optional($documento->fecha_vencimiento)->format('Y-m-d'),
+                'fechaVencimiento' => $this->formatFechaVencimiento($documento->fecha_vencimiento),
                 'tipoId' => $documento->tipo_archivo_id,
             'tipoNombre' => $documento->tipo?->nombre,
             'requiereVencimiento' => (bool) $documento->tipo?->vence,
@@ -715,7 +715,7 @@ class PersonalDocumentController extends Controller
                 'size' => $documento->size,
                 'sizeLabel' => $this->formatFileSize($documento->size),
                 'fechaCarga' => optional($documento->created_at)->format('Y-m-d'),
-                'fechaVencimiento' => optional($documento->fecha_vencimiento)->format('Y-m-d'),
+                'fechaVencimiento' => $this->formatFechaVencimiento($documento->fecha_vencimiento),
                 'tipoId' => $documento->tipo_archivo_id,
                 'tipoNombre' => $documento->tipo?->nombre,
                 'requiereVencimiento' => (bool) $documento->tipo?->vence,
@@ -1313,6 +1313,21 @@ class PersonalDocumentController extends Controller
         $formatted = $index === 0 ? (string) round($size) : number_format($size, 1, ',', '.');
 
         return sprintf('%s %s', $formatted, $units[$index]);
+    }
+
+    protected function formatFechaVencimiento($value): ?string
+    {
+        if (! $value) {
+            return null;
+        }
+        if ($value instanceof Carbon) {
+            return $value->format('Y-m-d');
+        }
+        try {
+            return Carbon::parse($value)->format('Y-m-d');
+        } catch (\Throwable $exception) {
+            return null;
+        }
     }
 
     public function update(Request $request, FileType $tipo): JsonResponse
