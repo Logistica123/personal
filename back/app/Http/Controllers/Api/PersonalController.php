@@ -1182,6 +1182,13 @@ class PersonalController extends Controller
             ], true),
             'documents' => $documents->map(function ($documento) use ($facturasPorLiquidacion) {
                 $factura = $facturasPorLiquidacion->get($documento->id)?->first();
+                if (! $factura && ($documento->children?->isNotEmpty() ?? false)) {
+                    $factura = $documento->children
+                        ->map(fn ($child) => $facturasPorLiquidacion->get($child->id)?->first())
+                        ->filter()
+                        ->sortByDesc('id')
+                        ->first();
+                }
                 $hasAttachments = $documento->parent_document_id === null
                     && ($documento->children?->isNotEmpty() ?? false);
                 $relativeDownloadUrl = route('personal.documentos.descargar', [

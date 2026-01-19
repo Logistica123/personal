@@ -12621,9 +12621,14 @@ const LiquidacionesPage: React.FC = () => {
     const label = estado === 'aprobada' ? 'Aprobada' : 'Rechazada';
     const className = estado === 'aprobada' ? 'is-yes' : 'is-no';
     return (
-      <span className={`status-badge status-badge--liquidacion ${className}`} title={message}>
-        {label}
-      </span>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+        <span className={`status-badge status-badge--liquidacion ${className}`} title={message}>
+          {label}
+        </span>
+        {message ? (
+          <span style={{ fontSize: '0.75rem', color: '#5c667a' }}>{message}</span>
+        ) : null}
+      </div>
     );
   };
 
@@ -15364,7 +15369,7 @@ const LiquidacionesPage: React.FC = () => {
                                       ? formatCurrency(attachment.importeFacturar)
                                       : '—'}
                                   </td>
-                                  <td>—</td>
+                                  <td>{renderAiValidationStatus(attachment)}</td>
                                   <td>—</td>
                                   <td>—</td>
                                   <td>—</td>

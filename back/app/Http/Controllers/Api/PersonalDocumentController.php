@@ -378,6 +378,14 @@ class PersonalDocumentController extends Controller
         $isLiquidacionDoc = $request->boolean('esLiquidacion')
             || Str::contains(Str::lower($documento->tipo?->nombre ?? ''), 'liquid');
 
+        Log::info('Chequeo auto validacion IA', [
+            'documento_id' => $documento->id,
+            'parent_document_id' => $documento->parent_document_id,
+            'skip_auto_validacion' => $request->boolean('skipAutoValidacion'),
+            'is_liquidacion_doc' => $isLiquidacionDoc,
+            'mime' => $documento->mime,
+        ]);
+
         if ($isLiquidacionDoc && $request->boolean('attachFuelInvoices')) {
             $this->attachPendingFuelInvoices($persona, $documento, $request->boolean('marcarRecibido'));
         }
@@ -1001,6 +1009,13 @@ class PersonalDocumentController extends Controller
             /** @var FacturaValidationService $validator */
             $validator = app(FacturaValidationService::class);
 
+            Log::info('Validacion IA iniciada', [
+                'documento_id' => $documento->id,
+                'parent_document_id' => $documento->parent_document_id,
+                'mime' => $mime,
+                'skip_cuil' => $skipCuil,
+            ]);
+
             $rawText = $extractor->extract($absolutePath);
             $parsed = $parser->parse($rawText);
             $liquidacion = $documento;
@@ -1046,6 +1061,20 @@ class PersonalDocumentController extends Controller
                     'mensaje' => $validation['mensaje'],
                 ]);
             }
+
+            if ($result['decision']['estado'] === 'aprobada') {
+                if ($liquidacion && $liquidacion->recibido !== true) {
+                    $liquidacion->recibido = true;
+                    $liquidacion->save();
+                }
+            }
+
+            Log::info('Validacion IA completada', [
+                'documento_id' => $documento->id,
+                'factura_id' => $factura->id,
+                'estado' => $factura->estado,
+                'motivo' => $factura->decision_motivo,
+            ]);
         } catch (\Throwable $exception) {
             Log::warning('Validación IA fallida al subir liquidación', [
                 'documento_id' => $documento->id,
