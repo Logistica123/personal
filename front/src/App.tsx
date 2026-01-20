@@ -194,6 +194,7 @@ type AccessSection =
   | 'liquidaciones'
   | 'pagos'
   | 'auditoria'
+  | 'tarifas'
   | 'ticketera';
 
 type TicketStatus =
@@ -963,6 +964,8 @@ const canAccessSection = (role: UserRole, section: AccessSection): boolean => {
       return true; // Todos los roles pueden crear/ver reclamos (incluido asesor)
     case 'personal':
       return role === 'asesor' || role === 'encargado' || role === 'admin' || role === 'admin2';
+    case 'tarifas':
+      return true;
     default:
       return true;
   }
@@ -5654,6 +5657,7 @@ const DashboardPage: React.FC<{
   const [cycleCountdown, setCycleCountdown] = useState<number | null>(null);
   const apiBaseUrl = useMemo(() => resolveApiBaseUrl(), []);
   const isTarifasView = viewMode === 'tarifas';
+  const canEditTarifas = useMemo(() => userRole !== 'operator', [userRole]);
   const [showRecentAltaPanel, setShowRecentAltaPanel] = useState(false);
   const [reclamoStats, setReclamoStats] = useState({ total: 0, resueltos: 0, rechazados: 0 });
   const [reclamoStatsLoading, setReclamoStatsLoading] = useState(false);
@@ -6187,6 +6191,10 @@ const DashboardPage: React.FC<{
     if (!isTarifasView || tarifaView !== 'form') {
       return;
     }
+    if (!canEditTarifas) {
+      setTarifaView('list');
+      return;
+    }
     if (tarifaUploadFile) {
       return;
     }
@@ -6203,7 +6211,7 @@ const DashboardPage: React.FC<{
     return () => {
       alive = false;
     };
-  }, [brandLogoSrc, buildTarifaCanvas, isTarifasView, tarifaTemplate, tarifaUploadFile, tarifaView, setTarifaPreview]);
+  }, [brandLogoSrc, buildTarifaCanvas, canEditTarifas, isTarifasView, tarifaTemplate, tarifaUploadFile, tarifaView, setTarifaPreview]);
 
   useEffect(() => {
     if (!showPersonalPanel) {
@@ -6815,6 +6823,8 @@ const DashboardPage: React.FC<{
                 className="primary-action"
                 type="button"
                 onClick={() => setTarifaView('form')}
+                disabled={!canEditTarifas}
+                title={canEditTarifas ? undefined : 'Solo lectura para operadores.'}
               >
                 Agregar tarifa
               </button>
@@ -6998,6 +7008,8 @@ const DashboardPage: React.FC<{
                     type="button"
                     className="secondary-action"
                     onClick={() => tarifaUploadInputRef.current?.click()}
+                    disabled={!canEditTarifas}
+                    title={canEditTarifas ? undefined : 'Solo lectura para operadores.'}
                   >
                     Subir imagen
                   </button>
@@ -7005,7 +7017,8 @@ const DashboardPage: React.FC<{
                     type="button"
                     className="primary-action"
                     onClick={handleSaveTarifaImage}
-                    disabled={tarifaSaveState === 'saving'}
+                    disabled={tarifaSaveState === 'saving' || !canEditTarifas}
+                    title={canEditTarifas ? undefined : 'Solo lectura para operadores.'}
                   >
                     {tarifaSaveState === 'saving' ? 'Guardando...' : 'Guardar'}
                   </button>
@@ -29591,7 +29604,7 @@ const AppRoutes: React.FC = () => (
       <Route
         path="/tarifas"
         element={
-          <RequireAccess section="clientes">
+          <RequireAccess section="tarifas">
             <DashboardPage pageTitle="Tarifas" pageSubtitle="Listado de clientes" viewMode="tarifas" />
           </RequireAccess>
         }
