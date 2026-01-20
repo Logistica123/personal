@@ -3821,7 +3821,7 @@ const DashboardLayout: React.FC<{
           ) : null}
           {canAccessSection(userRole, 'personal') ? (
             <NavLink to="/personal" className={({ isActive }) => `sidebar-link${isActive ? ' is-active' : ''}`}>
-              Personal
+              Proveedores
             </NavLink>
           ) : null}
           {canAccessSection(userRole, 'reclamos') ? (
@@ -11337,6 +11337,8 @@ const PersonalPage: React.FC = () => {
   const [pagoFilter, setPagoFilter] = useState(() => resolveStoredFilters().pago ?? '');
   const [patenteFilter, setPatenteFilter] = useState('');
   const [legajoFilter, setLegajoFilter] = useState(() => resolveStoredFilters().legajo ?? '');
+  const [docStatusFilter, setDocStatusFilter] = useState<'vencido' | 'por_vencer' | 'vigente' | ''>('');
+  const [docsSortActive, setDocsSortActive] = useState(false);
   const [deletingPersonalId, setDeletingPersonalId] = useState<number | null>(null);
   const [revealedContacts, setRevealedContacts] = useState<Record<number, { phone: boolean; email: boolean }>>({});
   const bypassContactGuard = useMemo(
@@ -11457,7 +11459,7 @@ const PersonalPage: React.FC = () => {
     []
   );
 
-  const filteredPersonal = useMemo(() => {
+  const baseFilteredPersonal = useMemo(() => {
     const term = searchTerm.trim().toLowerCase();
     const resolvePerfilLabel = (registro: PersonalRecord) =>
       getPerfilDisplayLabel(registro.perfilValue ?? null, registro.perfil ?? '');
@@ -11660,6 +11662,57 @@ const PersonalPage: React.FC = () => {
     pagoFilter,
   ]);
 
+  const filteredPersonal = useMemo(() => {
+    let list = baseFilteredPersonal;
+
+    if (docStatusFilter) {
+      list = list.filter((registro) => (registro.documentacionStatus ?? null) === docStatusFilter);
+    }
+
+    if (!docsSortActive) {
+      return list;
+    }
+
+    const statusRank = (status: PersonalRecord['documentacionStatus']): number => {
+      switch (status) {
+        case 'vencido':
+          return 0;
+        case 'por_vencer':
+          return 1;
+        case 'vigente':
+          return 2;
+        case 'sin_documentos':
+          return 3;
+        default:
+          return 4;
+      }
+    };
+
+    return [...list].sort((a, b) => {
+      const rankDiff = statusRank(a.documentacionStatus ?? null) - statusRank(b.documentacionStatus ?? null);
+      if (rankDiff !== 0) {
+        return rankDiff;
+      }
+
+      const vencidosDiff = (b.documentacionVencidos ?? 0) - (a.documentacionVencidos ?? 0);
+      if (vencidosDiff !== 0) {
+        return vencidosDiff;
+      }
+
+      const porVencerDiff = (b.documentacionPorVencer ?? 0) - (a.documentacionPorVencer ?? 0);
+      if (porVencerDiff !== 0) {
+        return porVencerDiff;
+      }
+
+      const totalDiff = (b.documentacionTotal ?? 0) - (a.documentacionTotal ?? 0);
+      if (totalDiff !== 0) {
+        return totalDiff;
+      }
+
+      return (a.nombre ?? '').localeCompare(b.nombre ?? '');
+    });
+  }, [baseFilteredPersonal, docStatusFilter, docsSortActive]);
+
   useEffect(() => {
     setCurrentPage(1);
   }, [
@@ -11678,6 +11731,8 @@ const PersonalPage: React.FC = () => {
     altaDateFrom,
     altaDateTo,
     pagoFilter,
+    docsSortActive,
+    docStatusFilter,
   ]);
 
   useEffect(() => {
@@ -11745,6 +11800,7 @@ const PersonalPage: React.FC = () => {
     setCombustibleFilter('');
     setTarifaFilter('');
     setPagoFilter('');
+    setDocStatusFilter('');
     setAltaDatePreset('');
     setAltaDateFrom('');
     setAltaDateTo('');
@@ -11757,7 +11813,7 @@ const PersonalPage: React.FC = () => {
 
   const handleDeletePersonal = async (registro: PersonalRecord) => {
     if (!canManagePersonal) {
-      window.alert('Solo los usuarios autorizados pueden eliminar personal.');
+      window.alert('Solo los usuarios autorizados pueden eliminar proveedores.');
       return;
     }
     if (deletingPersonalId !== null) {
@@ -11910,11 +11966,11 @@ const PersonalPage: React.FC = () => {
 
   const footerLabel = useMemo(() => {
     if (loading) {
-      return 'Cargando personal...';
+      return 'Cargando proveedores...';
     }
 
     if (error) {
-      return 'No se pudo cargar el personal';
+      return 'No se pudo cargar los proveedores';
     }
 
     if (totalRecords === 0) {
@@ -12053,6 +12109,33 @@ const PersonalPage: React.FC = () => {
       </div>
     );
   };
+
+  const documentSummary = useMemo(() => {
+    const counts = {
+      vencidos: 0,
+      porVencer: 0,
+      vigentes: 0,
+      total: 0,
+      sinDocs: 0,
+    };
+
+    baseFilteredPersonal.forEach((registro) => {
+      const status = registro.documentacionStatus ?? null;
+      if (status === 'vencido') {
+        counts.vencidos += 1;
+      } else if (status === 'por_vencer') {
+        counts.porVencer += 1;
+      } else if (status === 'vigente') {
+        counts.vigentes += 1;
+      } else if (status === 'sin_documentos') {
+        counts.sinDocs += 1;
+      }
+    });
+
+    counts.total = baseFilteredPersonal.length;
+
+    return counts;
+  }, [baseFilteredPersonal]);
 
   const headerContent = (
     <div className="filters-bar">
@@ -12221,20 +12304,59 @@ const PersonalPage: React.FC = () => {
           title={
             canManagePersonal
               ? undefined
-              : 'Solo los usuarios autorizados pueden cargar personal.'
+              : 'Solo los usuarios autorizados pueden cargar proveedores.'
           }
         >
-          Agregar personal
+          Agregar proveedor
         </button>
+      </div>
+      <div className="summary-cards">
+        <button
+          type="button"
+          className={`summary-card summary-card--danger summary-card--button${docStatusFilter === 'vencido' ? ' is-active' : ''}`}
+          onClick={() => setDocStatusFilter((prev) => (prev === 'vencido' ? '' : 'vencido'))}
+          title="Filtrar por proveedores con docs vencidos"
+        >
+          <span className="summary-card__label">Proveedores con docs vencidos</span>
+          <strong className="summary-card__value">{documentSummary.vencidos}</strong>
+        </button>
+        <button
+          type="button"
+          className={`summary-card summary-card--warning summary-card--button${docStatusFilter === 'por_vencer' ? ' is-active' : ''}`}
+          onClick={() => setDocStatusFilter((prev) => (prev === 'por_vencer' ? '' : 'por_vencer'))}
+          title="Filtrar por proveedores con docs por vencer"
+        >
+          <span className="summary-card__label">Proveedores con docs por vencer</span>
+          <strong className="summary-card__value">{documentSummary.porVencer}</strong>
+        </button>
+        <button
+          type="button"
+          className={`summary-card summary-card--accent summary-card--button${docStatusFilter === 'vigente' ? ' is-active' : ''}`}
+          onClick={() => setDocStatusFilter((prev) => (prev === 'vigente' ? '' : 'vigente'))}
+          title="Filtrar por proveedores con docs vigentes"
+        >
+          <span className="summary-card__label">Proveedores con docs vigentes</span>
+          <strong className="summary-card__value">{documentSummary.vigentes}</strong>
+        </button>
+        <div className="summary-card summary-card--muted">
+          <span className="summary-card__label">Total proveedores</span>
+          <strong className="summary-card__value">{documentSummary.total}</strong>
+        </div>
+        {documentSummary.sinDocs > 0 ? (
+          <div className="summary-card summary-card--neutral">
+            <span className="summary-card__label">Personas sin docs</span>
+            <strong className="summary-card__value">{documentSummary.sinDocs}</strong>
+          </div>
+        ) : null}
       </div>
     </div>
   );
 
   return (
-    <DashboardLayout title="Gestionar personal" subtitle="Gestionar personal" headerContent={headerContent}>
+    <DashboardLayout title="Gestionar proveedores" subtitle="Gestionar proveedores" headerContent={headerContent}>
       {!canManagePersonal ? (
         <p className="form-info">
-          Solo los usuarios autorizados pueden crear o editar personal. Estás en modo lectura.
+          Solo los usuarios autorizados pueden crear o editar proveedores. Estás en modo lectura.
         </p>
       ) : null}
       <div className="table-wrapper">
@@ -12259,14 +12381,23 @@ const PersonalPage: React.FC = () => {
               <th>Sucursal</th>
               <th>Fecha alta</th>
               <th>Fecha baja</th>
-              <th>Docs</th>
+              <th>
+                  <button
+                    type="button"
+                    className="secondary-action secondary-action--ghost"
+                    onClick={() => setDocsSortActive((prev: boolean) => !prev)}
+                    title="Ordenar por vencidos, por vencer y vigentes"
+                  >
+                  Docs{docsSortActive ? ' (orden)' : ''}
+                </button>
+              </th>
               <th>Acciones</th>
             </tr>
           </thead>
           <tbody>
             {loading && (
               <tr>
-                <td colSpan={20}>Cargando personal...</td>
+                <td colSpan={20}>Cargando proveedores...</td>
               </tr>
             )}
 
@@ -12353,7 +12484,7 @@ const PersonalPage: React.FC = () => {
                     <div className="action-buttons">
                       <button
                         type="button"
-                        aria-label={`Editar personal ${registro.nombre ?? ''}`}
+                        aria-label={`Editar proveedor ${registro.nombre ?? ''}`}
                         onClick={() => navigate(`/personal/${registro.id}/editar`)}
                         disabled={!canManagePersonal}
                       >
@@ -12361,7 +12492,7 @@ const PersonalPage: React.FC = () => {
                       </button>
                       <button
                         type="button"
-                        aria-label={`Eliminar personal ${registro.nombre ?? ''}`}
+                        aria-label={`Eliminar proveedor ${registro.nombre ?? ''}`}
                         onClick={() => handleDeletePersonal(registro)}
                         disabled={!canManagePersonal || deletingPersonalId === registro.id}
                       >
@@ -18730,7 +18861,7 @@ const ApprovalsRequestsPage: React.FC = () => {
   const headerContent = (
     <div className="card-header card-header--compact">
       <button type="button" className="secondary-action" onClick={() => navigate('/personal')}>
-        ← Volver a personal
+        ← Volver a proveedores
       </button>
     </div>
   );
@@ -25942,14 +26073,14 @@ const PersonalEditPage: React.FC = () => {
 
   if (loading) {
     return (
-      <DashboardLayout title="Editar personal" subtitle={`Registro #${personaId ?? ''}`} headerContent={headerContent}>
-        <p className="form-info">Cargando información del personal...</p>
+      <DashboardLayout title="Editar proveedor" subtitle={`Registro #${personaId ?? ''}`} headerContent={headerContent}>
+        <p className="form-info">Cargando información del proveedor...</p>
       </DashboardLayout>
     );
   }
   if (loadError || !detail) {
     return (
-      <DashboardLayout title="Editar personal" subtitle={`Registro #${personaId ?? ''}`} headerContent={headerContent}>
+      <DashboardLayout title="Editar proveedor" subtitle={`Registro #${personaId ?? ''}`} headerContent={headerContent}>
         <p className="form-info form-info--error">{loadError ?? 'No se encontraron datos.'}</p>
       </DashboardLayout>
     );
@@ -25959,17 +26090,17 @@ const PersonalEditPage: React.FC = () => {
   const historyEntries = detail.history ?? [];
 
   return (
-    <DashboardLayout title="Editar personal" subtitle={fullName || `Registro #${detail.id}`} headerContent={headerContent}>
+    <DashboardLayout title="Editar proveedor" subtitle={fullName || `Registro #${detail.id}`} headerContent={headerContent}>
       {metaError ? <p className="form-info form-info--error">{metaError}</p> : null}
       {metaLoading ? <p className="form-info">Cargando datos de referencia...</p> : null}
       {isReadOnly ? (
         <p className="form-info">
-          Solo los usuarios autorizados pueden editar personal. Estás en modo lectura.
+          Solo los usuarios autorizados pueden editar proveedores. Estás en modo lectura.
         </p>
       ) : null}
       <fieldset disabled={isReadOnly} className="personal-edit-fieldset">
       <section className="personal-edit-section">
-        <h2>Datos personales</h2>
+        <h2>Datos del proveedor</h2>
         <div className="form-grid">
           <label className="input-control">
             <span>Nombre</span>
@@ -27200,12 +27331,12 @@ const PersonalCreatePage: React.FC = () => {
 
   if (!canManagePersonal) {
     return (
-      <DashboardLayout title="Registrar personal" subtitle="Personal" headerContent={null}>
+      <DashboardLayout title="Registrar proveedor" subtitle="Proveedor" headerContent={null}>
         <p className="form-info form-info--error">
-          Solo los usuarios autorizados pueden cargar personal.
+          Solo los usuarios autorizados pueden cargar proveedores.
         </p>
         <button type="button" className="secondary-action" onClick={() => navigate('/personal')}>
-          ← Volver a personal
+          ← Volver a proveedores
         </button>
       </DashboardLayout>
     );
@@ -27213,7 +27344,7 @@ const PersonalCreatePage: React.FC = () => {
 
   if (loading) {
     return (
-      <DashboardLayout title="Registrar personal" subtitle="Personal" headerContent={null}>
+      <DashboardLayout title="Registrar proveedor" subtitle="Proveedor" headerContent={null}>
         <p className="form-info">Cargando información necesaria...</p>
       </DashboardLayout>
     );
@@ -27221,10 +27352,10 @@ const PersonalCreatePage: React.FC = () => {
 
   if (loadError || !meta) {
     return (
-      <DashboardLayout title="Registrar personal" subtitle="Personal" headerContent={null}>
+      <DashboardLayout title="Registrar proveedor" subtitle="Proveedor" headerContent={null}>
         <p className="form-info form-info--error">{loadError ?? 'No se pudieron cargar los datos necesarios.'}</p>
         <button type="button" className="secondary-action" onClick={() => navigate('/personal')}>
-          ← Volver a personal
+          ← Volver a proveedores
         </button>
       </DashboardLayout>
     );
@@ -27233,15 +27364,15 @@ const PersonalCreatePage: React.FC = () => {
   const headerContent = (
     <div className="card-header card-header--compact">
       <button type="button" className="secondary-action" onClick={() => navigate('/personal')}>
-        ← Volver a personal
+        ← Volver a proveedores
       </button>
     </div>
   );
 
   return (
-    <DashboardLayout title="Registrar personal" subtitle="Personal" headerContent={headerContent}>
+    <DashboardLayout title="Registrar proveedor" subtitle="Proveedor" headerContent={headerContent}>
       <form className="personal-edit-section" onSubmit={handleSubmit}>
-        <h2>Datos personales</h2>
+        <h2>Datos del proveedor</h2>
 
         <div className="radio-group">
           <span>Seleccionar perfil</span>
