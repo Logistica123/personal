@@ -4125,6 +4125,18 @@ tbody tr:nth-child(even) {
   word-break: break-word;
 }
 
+.file-dropzone__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: center;
+  justify-content: center;
+}
+
+.file-dropzone__actions .secondary-action {
+  margin-top: 0;
+}
+
 .file-dropzone .secondary-action {
   margin-top: 0.75rem;
 }
@@ -5628,22 +5640,29 @@ tbody tr:nth-child(even) {
 }
 
 .client-card__stats {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 0.5rem;
+  display: flex;
+  gap: 0.45rem;
+  flex-wrap: nowrap;
+  justify-content: center;
 }
 
 .client-card__stats div {
   background: #f7f9fd;
   border: 1px solid #e6ecf5;
   border-radius: 10px;
-  padding: 0.6rem 0.75rem;
+  padding: 0.5rem 0.6rem;
+  min-width: 0;
+  flex: 0 0 auto;
+  min-width: 64px;
+  text-align: center;
 }
 
 .client-card__stats small {
   display: block;
   color: #516277;
-  font-size: 0.75rem;
+  font-size: 0.7rem;
+  line-height: 1.1;
+  white-space: nowrap;
 }
 
 .client-card__stats strong {

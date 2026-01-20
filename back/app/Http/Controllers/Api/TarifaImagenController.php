@@ -31,6 +31,9 @@ class TarifaImagenController extends Controller
         if ($filters['anio']) {
             $query->where('anio', $filters['anio']);
         }
+        if ($filters['tipo']) {
+            $query->where('tipo', $filters['tipo']);
+        }
         if ($search) {
             $query->where(function ($inner) use ($search) {
                 $inner->where('nombre_original', 'like', '%'.$search.'%')
@@ -92,6 +95,7 @@ class TarifaImagenController extends Controller
                 'url' => $url,
                 'mime' => $file->getClientMimeType(),
                 'size' => $file->getSize(),
+                'tipo' => $filters['tipo'],
                 'template_data' => $templateData ?? $record->template_data,
             ]);
             $record->save();
@@ -101,6 +105,7 @@ class TarifaImagenController extends Controller
                 'sucursal_id' => $filters['sucursal_id'],
                 'mes' => $filters['mes'],
                 'anio' => $filters['anio'],
+                'tipo' => $filters['tipo'],
                 'nombre_original' => $file->getClientOriginalName(),
                 'disk' => $disk,
                 'path' => $storedPath,
@@ -130,7 +135,7 @@ class TarifaImagenController extends Controller
     protected function normalizeFilters(Request $request): array
     {
         $input = $request->all();
-        foreach (['clienteId', 'sucursalId', 'mes', 'anio'] as $key) {
+        foreach (['clienteId', 'sucursalId', 'mes', 'anio', 'tipo'] as $key) {
             if (array_key_exists($key, $input) && $input[$key] === '') {
                 $input[$key] = null;
             }
@@ -142,6 +147,7 @@ class TarifaImagenController extends Controller
             'sucursalId' => ['nullable', 'integer', 'min:1'],
             'mes' => ['nullable', 'integer', 'min:1', 'max:12'],
             'anio' => ['nullable', 'integer', 'min:2000', 'max:2100'],
+            'tipo' => ['nullable', 'string', 'max:32'],
         ]);
 
         return [
@@ -149,13 +155,16 @@ class TarifaImagenController extends Controller
             'sucursal_id' => $validated['sucursalId'] ?? null,
             'mes' => $validated['mes'] ?? null,
             'anio' => $validated['anio'] ?? null,
+            'tipo' => isset($validated['tipo']) && is_string($validated['tipo'])
+                ? trim($validated['tipo'])
+                : null,
         ];
     }
 
     protected function normalizeOptionalFilters(Request $request): array
     {
         $input = $request->all();
-        foreach (['clienteId', 'sucursalId', 'mes', 'anio', 'search'] as $key) {
+        foreach (['clienteId', 'sucursalId', 'mes', 'anio', 'tipo', 'search'] as $key) {
             if (array_key_exists($key, $input) && $input[$key] === '') {
                 $input[$key] = null;
             }
@@ -167,6 +176,7 @@ class TarifaImagenController extends Controller
             'sucursalId' => ['nullable', 'integer', 'min:1'],
             'mes' => ['nullable', 'integer', 'min:1', 'max:12'],
             'anio' => ['nullable', 'integer', 'min:2000', 'max:2100'],
+            'tipo' => ['nullable', 'string', 'max:32'],
             'search' => ['nullable', 'string', 'max:200'],
         ]);
 
@@ -175,6 +185,9 @@ class TarifaImagenController extends Controller
             'sucursal_id' => $validated['sucursalId'] ?? null,
             'mes' => $validated['mes'] ?? null,
             'anio' => $validated['anio'] ?? null,
+            'tipo' => isset($validated['tipo']) && is_string($validated['tipo'])
+                ? trim($validated['tipo'])
+                : null,
             'search' => isset($validated['search']) && is_string($validated['search'])
                 ? trim($validated['search'])
                 : null,
@@ -192,6 +205,8 @@ class TarifaImagenController extends Controller
             ->when($filters['mes'] !== null, fn ($query) => $query->where('mes', $filters['mes']))
             ->when($filters['anio'] === null, fn ($query) => $query->whereNull('anio'))
             ->when($filters['anio'] !== null, fn ($query) => $query->where('anio', $filters['anio']))
+            ->when($filters['tipo'] === null, fn ($query) => $query->whereNull('tipo'))
+            ->when($filters['tipo'] !== null, fn ($query) => $query->where('tipo', $filters['tipo']))
             ->orderByDesc('updated_at');
     }
 
@@ -203,6 +218,7 @@ class TarifaImagenController extends Controller
             'sucursalId' => $record->sucursal_id,
             'mes' => $record->mes,
             'anio' => $record->anio,
+            'tipo' => $record->tipo,
             'nombreOriginal' => $record->nombre_original,
             'url' => $publicUrl ?? $record->url,
             'relativeUrl' => $this->buildRelativeUrl($record->disk, $record->path),

@@ -130,6 +130,7 @@ type TarifaImagenItem = {
   sucursalId: number | null;
   mes: number | null;
   anio: number | null;
+  tipo?: string | null;
   nombreOriginal: string | null;
   url: string | null;
   relativeUrl?: string | null;
@@ -236,6 +237,11 @@ const TARIFA_MONTH_OPTIONS = [
   { value: '10', label: 'Octubre' },
   { value: '11', label: 'Noviembre' },
   { value: '12', label: 'Diciembre' },
+];
+const TARIFA_PORTE_OPTIONS = [
+  { value: 'chico', label: 'Porte chico' },
+  { value: 'mediano', label: 'Porte mediano' },
+  { value: 'grande', label: 'Porte grande' },
 ];
 
 type FacturaAttachment = {
@@ -5596,6 +5602,7 @@ const DashboardPage: React.FC<{
   const [tarifasSucursalFilter, setTarifasSucursalFilter] = useState('');
   const [tarifasMonthFilter, setTarifasMonthFilter] = useState('');
   const [tarifasYearFilter, setTarifasYearFilter] = useState('');
+  const [tarifasPorteFilter, setTarifasPorteFilter] = useState('');
   const [tarifaUploadName, setTarifaUploadName] = useState<string | null>(null);
   const [tarifaUploadPreviewUrl, setTarifaUploadPreviewUrl] = useState<string | null>(null);
   const [tarifaUploadFile, setTarifaUploadFile] = useState<File | null>(null);
@@ -5867,6 +5874,11 @@ const DashboardPage: React.FC<{
     TARIFA_MONTH_OPTIONS.forEach((option) => map.set(option.value, option.label));
     return map;
   }, []);
+  const porteLabelLookup = useMemo(() => {
+    const map = new Map<string, string>();
+    TARIFA_PORTE_OPTIONS.forEach((option) => map.set(option.value, option.label));
+    return map;
+  }, []);
 
   const buildTarifaCanvas = useCallback(async (template: TarifaTemplate, logoSrc?: string | null) => {
     const canvas = document.createElement('canvas');
@@ -6047,6 +6059,9 @@ const DashboardPage: React.FC<{
     if (tarifasYearFilter) {
       params.set('anio', tarifasYearFilter);
     }
+    if (tarifasPorteFilter) {
+      params.set('tipo', tarifasPorteFilter);
+    }
 
     const fetchTarifaImage = async () => {
       try {
@@ -6101,6 +6116,7 @@ const DashboardPage: React.FC<{
     tarifasSucursalFilter,
     tarifasMonthFilter,
     tarifasYearFilter,
+    tarifasPorteFilter,
     setTarifaPreview,
   ]);
 
@@ -6125,6 +6141,9 @@ const DashboardPage: React.FC<{
     }
     if (tarifasYearFilter) {
       params.set('anio', tarifasYearFilter);
+    }
+    if (tarifasPorteFilter) {
+      params.set('tipo', tarifasPorteFilter);
     }
 
     const fetchTarifaList = async () => {
@@ -6160,6 +6179,7 @@ const DashboardPage: React.FC<{
     tarifasSucursalFilter,
     tarifasMonthFilter,
     tarifasYearFilter,
+    tarifasPorteFilter,
     tarifaListRefreshToken,
   ]);
 
@@ -6710,6 +6730,9 @@ const DashboardPage: React.FC<{
       if (tarifasYearFilter) {
         formData.append('anio', tarifasYearFilter);
       }
+      if (tarifasPorteFilter) {
+        formData.append('tipo', tarifasPorteFilter);
+      }
       formData.append('templateData', JSON.stringify(tarifaTemplate));
 
       const response = await fetch(`${apiBaseUrl}/api/tarifas/imagen`, {
@@ -6840,21 +6863,35 @@ const DashboardPage: React.FC<{
                   ))}
                 </select>
               </label>
-              <label className="filter-field">
-                <span>Año</span>
-                <select
-                  value={tarifasYearFilter}
-                  onChange={(event) => setTarifasYearFilter(event.target.value)}
-                >
-                  <option value="">Todos los años</option>
-                  {tarifasYearOptions.map((year) => (
-                    <option key={year} value={year}>
-                      {year}
-                  </option>
-                ))}
-              </select>
-            </label>
-          </div>
+                  <label className="filter-field">
+                    <span>Año</span>
+                    <select
+                      value={tarifasYearFilter}
+                      onChange={(event) => setTarifasYearFilter(event.target.value)}
+                    >
+                      <option value="">Todos los años</option>
+                      {tarifasYearOptions.map((year) => (
+                        <option key={year} value={year}>
+                          {year}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="filter-field">
+                    <span>Porte</span>
+                    <select
+                      value={tarifasPorteFilter}
+                      onChange={(event) => setTarifasPorteFilter(event.target.value)}
+                    >
+                      <option value="">Todos los portes</option>
+                      {TARIFA_PORTE_OPTIONS.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
           </div>
         ) : null}
         {isTarifasView && tarifaView === 'form' ? (
@@ -6923,6 +6960,20 @@ const DashboardPage: React.FC<{
                       {tarifasYearOptions.map((year) => (
                         <option key={year} value={year}>
                           {year}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="filter-field">
+                    <span>Porte</span>
+                    <select
+                      value={tarifasPorteFilter}
+                      onChange={(event) => setTarifasPorteFilter(event.target.value)}
+                    >
+                      <option value="">Todos los portes</option>
+                      {TARIFA_PORTE_OPTIONS.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
                         </option>
                       ))}
                     </select>
@@ -7735,7 +7786,7 @@ const DashboardPage: React.FC<{
                             <strong>{counts.baja}</strong>
                           </div>
                           <div>
-                            <small>Suspendido</small>
+                            <small title="Suspendido">Susp.</small>
                             <strong>{counts.suspendido}</strong>
                           </div>
                         </div>
@@ -8095,6 +8146,7 @@ const DashboardPage: React.FC<{
                   <th>Sucursal</th>
                   <th>Mes</th>
                   <th>Año</th>
+                  <th>Porte</th>
                   <th>Archivo</th>
                   <th>Acciones</th>
                 </tr>
@@ -8102,19 +8154,19 @@ const DashboardPage: React.FC<{
               <tbody>
                 {tarifaListLoading && (
                   <tr>
-                    <td colSpan={6}>Cargando tarifas...</td>
+                    <td colSpan={7}>Cargando tarifas...</td>
                   </tr>
                 )}
                 {tarifaListError && !tarifaListLoading && (
                   <tr>
-                    <td colSpan={6} className="error-cell">
+                    <td colSpan={7} className="error-cell">
                       {tarifaListError}
                     </td>
                   </tr>
                 )}
                 {!tarifaListLoading && !tarifaListError && tarifaList.length === 0 && (
                   <tr>
-                    <td colSpan={6}>No hay tarifas para mostrar.</td>
+                    <td colSpan={7}>No hay tarifas para mostrar.</td>
                   </tr>
                 )}
                 {!tarifaListLoading &&
@@ -8122,12 +8174,14 @@ const DashboardPage: React.FC<{
                   tarifaList.map((item) => {
                     const displayUrl = resolveTarifaDisplayUrl(item);
                     const monthLabel = item.mes ? monthLabelLookup.get(String(item.mes)) ?? String(item.mes) : '—';
+                    const porteLabel = item.tipo ? porteLabelLookup.get(item.tipo) ?? item.tipo : '—';
                     return (
                       <tr key={item.id}>
                         <td>{item.clienteNombre ?? '—'}</td>
                         <td>{item.sucursalNombre ?? '—'}</td>
                         <td>{monthLabel}</td>
                         <td>{item.anio ?? '—'}</td>
+                        <td>{porteLabel}</td>
                         <td>{item.nombreOriginal ?? '—'}</td>
                         <td>
                           <div className="action-buttons">
@@ -18148,6 +18202,7 @@ const ApprovalsRequestsPage: React.FC = () => {
     return value && value.trim().length > 0 ? value : null;
   }, [location.search]);
   const [altaSubmitting, setAltaSubmitting] = useState(false);
+  const [altaAttachmentsSaving, setAltaAttachmentsSaving] = useState(false);
   const [combustibleSubmitting, setCombustibleSubmitting] = useState(false);
   const [aumentoSubmitting, setAumentoSubmitting] = useState(false);
   const [adelantoSubmitting, setAdelantoSubmitting] = useState(false);
@@ -19024,6 +19079,185 @@ const sucursalOptions = useMemo(() => {
 
     setFlash((prev) => (prev?.type === 'error' ? null : prev));
     event.target.value = '';
+  };
+
+  const handleAltaAttachmentsSave = async () => {
+    if (altaAttachments.length === 0) {
+      setFlash({ type: 'error', message: 'No hay archivos para guardar.' });
+      return;
+    }
+
+    try {
+      setAltaAttachmentsSaving(true);
+      setFlash(null);
+
+      let personaId = reviewPersonaDetail?.id ?? null;
+
+      if (!personaId) {
+        if (!validateAltaRequiredFields(altaForm)) {
+          return;
+        }
+
+        const requestPayload = {
+          ...buildAltaRequestPayload(altaForm),
+          esSolicitud: true,
+        };
+
+        const response = await fetch(`${apiBaseUrl}/api/personal`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...actorHeaders,
+          },
+          body: JSON.stringify(requestPayload),
+        });
+
+        if (!response.ok) {
+          let message = `Error ${response.status}: ${response.statusText}`;
+          try {
+            const errorPayload = await response.json();
+            if (typeof errorPayload?.message === 'string') {
+              message = errorPayload.message;
+            } else if (errorPayload?.errors) {
+              const firstError = Object.values(errorPayload.errors)[0];
+              if (Array.isArray(firstError) && firstError[0]) {
+                message = firstError[0] as string;
+              }
+            }
+          } catch {
+            // ignore
+          }
+          throw new Error(message);
+        }
+
+        const payload = (await response.json()) as { message?: string; data?: { id?: number } };
+        personaId = payload.data?.id ?? null;
+        if (personaId) {
+          cacheSolicitudCreated(personaId, new Date().toISOString());
+          writeCachedSolicitudData(personaId, { form: altaForm });
+        }
+      }
+
+      if (!personaId) {
+        throw new Error('No se pudo identificar la solicitud para guardar archivos.');
+      }
+
+      const uploadErrors: string[] = [];
+      const completedUploadIds: string[] = [];
+
+      for (const item of altaAttachments) {
+        const tipoArchivoId = Number(item.typeId);
+        if (Number.isNaN(tipoArchivoId)) {
+          uploadErrors.push(`${item.file.name}: el tipo de documento no es válido.`);
+          continue;
+        }
+
+        if (item.file.size > MAX_UPLOAD_SIZE_BYTES) {
+          uploadErrors.push(
+            `${item.file.name}: supera los ${Math.round(MAX_UPLOAD_SIZE_BYTES / (1024 * 1024))} MB permitidos.`
+          );
+          continue;
+        }
+
+        const formData = new FormData();
+        formData.append('archivo', item.file, item.file.name);
+        formData.append('tipoArchivoId', String(tipoArchivoId));
+
+        const nombrePartes: string[] = [];
+        if (item.typeName.trim().length > 0) {
+          nombrePartes.push(item.typeName.trim());
+        }
+        if (item.positionLabel) {
+          nombrePartes.push(item.positionLabel);
+        }
+        if (nombrePartes.length > 0) {
+          formData.append('nombre', nombrePartes.join(' – '));
+        }
+        if (item.vence) {
+          formData.append('fechaVencimiento', item.vence);
+        }
+
+        try {
+          const uploadResponse = await fetch(
+            `${apiBaseUrl}/api/personal/${personaId}/documentos`,
+            buildPersonalUploadRequestInit(formData)
+          );
+
+          if (!uploadResponse.ok) {
+            let uploadMessage = `${item.file.name}: Error ${uploadResponse.status}`;
+            try {
+              const uploadPayload = await uploadResponse.json();
+              if (typeof uploadPayload?.message === 'string') {
+                uploadMessage = `${item.file.name}: ${uploadPayload.message}`;
+              } else if (uploadPayload?.errors) {
+                const firstUploadError = Object.values(uploadPayload.errors)[0];
+                if (Array.isArray(firstUploadError) && firstUploadError[0]) {
+                  uploadMessage = `${item.file.name}: ${firstUploadError[0]}`;
+                }
+              }
+            } catch {
+              // ignore
+            }
+
+            uploadErrors.push(uploadMessage);
+            continue;
+          }
+
+          completedUploadIds.push(item.id);
+        } catch (uploadErr) {
+          // eslint-disable-next-line no-console
+          console.error('Error subiendo documento de alta', uploadErr);
+          uploadErrors.push(
+            `${item.file.name}: ${(uploadErr as Error).message ?? 'No se pudo subir el archivo.'}`
+          );
+        }
+      }
+
+      if (completedUploadIds.length > 0) {
+        setAltaAttachments((prev) => prev.filter((item) => !completedUploadIds.includes(item.id)));
+        setAltaFilesVersion((value) => value + 1);
+      }
+
+      if (uploadErrors.length > 0) {
+        setFlash({
+          type: 'error',
+          message: `Se guardaron algunos archivos, pero hubo errores: ${uploadErrors.join(' | ')}.`,
+        });
+      } else {
+        setFlash({ type: 'success', message: 'Archivos guardados correctamente.' });
+      }
+
+      try {
+        const response = await fetch(`${apiBaseUrl}/api/personal/${personaId}`);
+        if (response.ok) {
+          const payload = (await response.json()) as { data: PersonalDetail };
+          const resolvedEstado =
+            resolveEstadoNombre(payload.data.estadoId, payload.data.estado) ??
+            ((isExplicitRejection(payload.data.estadoId, payload.data.estado) ||
+              rejectedIds.has(payload.data.id)) &&
+            payload.data.esSolicitud
+              ? 'Rechazado'
+              : payload.data.estado ?? null);
+          setReviewPersonaDetail({
+            ...payload.data,
+            estado: resolvedEstado,
+            comments: Array.isArray(payload.data.comments) ? payload.data.comments : [],
+            documentsDownloadAllUrl: payload.data.documentsDownloadAllUrl ?? null,
+            documentsDownloadAllAbsoluteUrl: payload.data.documentsDownloadAllAbsoluteUrl ?? null,
+          });
+          setApprovalEstadoId(payload.data.estadoId ? String(payload.data.estadoId) : '');
+        }
+      } catch {
+        // ignore refresh errors
+      }
+    } catch (err) {
+      setFlash({
+        type: 'error',
+        message: (err as Error).message ?? 'No se pudieron guardar los archivos.',
+      });
+    } finally {
+      setAltaAttachmentsSaving(false);
+    }
   };
 
   const handleAltaCheckboxChange = (field: 'tarifaEspecial' | 'combustible') => (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -22160,17 +22394,28 @@ const handleAdelantoFieldChange =
           <div className="file-dropzone">
             <span className="file-dropzone__icon">📄</span>
             <p className="file-dropzone__text">Arrastra y suelta archivos aquí o selecciona desde tu equipo.</p>
-            <label className="secondary-action secondary-action--ghost">
-              Seleccionar archivos
-              <input
-                key={`alta-files-${altaFilesVersion}`}
-                type="file"
-                multiple
-                accept="application/pdf,.pdf,image/*"
-                onChange={handleAltaFilesChange}
-                style={{ display: 'none' }}
-              />
-            </label>
+            <div className="file-dropzone__actions">
+              <label className="secondary-action secondary-action--ghost">
+                Seleccionar archivos
+                <input
+                  key={`alta-files-${altaFilesVersion}`}
+                  type="file"
+                  multiple
+                  accept="application/pdf,.pdf,image/*"
+                  onChange={handleAltaFilesChange}
+                  style={{ display: 'none' }}
+                />
+              </label>
+              <button
+                type="button"
+                className="secondary-action"
+                onClick={handleAltaAttachmentsSave}
+                disabled={altaAttachmentsSaving || altaSubmitting || altaAttachments.length === 0}
+                title="Guardar archivos en la solicitud"
+              >
+                {altaAttachmentsSaving ? 'Guardando...' : 'Guardar archivos'}
+              </button>
+            </div>
             {altaImagePreviews.length > 0 ? (
               <div className="pending-upload-previews">
                 {altaImagePreviews.map((item) => (

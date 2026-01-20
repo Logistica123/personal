@@ -18,6 +18,7 @@ class TarifaImagen extends Model
         'sucursal_id',
         'mes',
         'anio',
+        'tipo',
         'nombre_original',
         'disk',
         'path',
