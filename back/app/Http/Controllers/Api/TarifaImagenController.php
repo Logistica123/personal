@@ -8,6 +8,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Str;
 
 class TarifaImagenController extends Controller
 {
@@ -69,6 +70,10 @@ class TarifaImagenController extends Controller
 
     public function store(Request $request): JsonResponse
     {
+        if ($denied = $this->ensureTarifaWriteAccess($request)) {
+            return $denied;
+        }
+
         $filters = $this->normalizeFilters($request);
 
         $validated = $request->validate([
@@ -124,6 +129,10 @@ class TarifaImagenController extends Controller
 
     public function destroy(TarifaImagen $tarifaImagen): JsonResponse
     {
+        if ($denied = $this->ensureTarifaWriteAccess(request())) {
+            return $denied;
+        }
+
         $this->deleteStoredFile($tarifaImagen);
         $tarifaImagen->delete();
 
@@ -301,5 +310,16 @@ class TarifaImagenController extends Controller
         if ($path && Storage::disk($disk)->exists($path)) {
             Storage::disk($disk)->delete($path);
         }
+    }
+
+    private function ensureTarifaWriteAccess(Request $request): ?JsonResponse
+    {
+        $role = strtolower(trim((string) $request->user()?->role));
+
+        if ($role === '' || ! Str::contains($role, 'admin')) {
+            return response()->json(['message' => 'No autorizado.'], 403);
+        }
+
+        return null;
     }
 }

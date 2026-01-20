@@ -472,6 +472,37 @@ body {
   font-weight: 600;
 }
 
+.sidebar-submenu {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  margin: -0.25rem 0 0.5rem 0.65rem;
+  padding-left: 0.65rem;
+  border-left: 1px solid #dbe4f5;
+}
+
+.sidebar-sublink {
+  border: 0;
+  background: transparent;
+  text-align: left;
+  padding: 0.4rem 0.6rem;
+  border-radius: 8px;
+  color: #516277;
+  cursor: pointer;
+  font-size: 0.88rem;
+}
+
+.sidebar-sublink:hover {
+  background-color: #eef3ff;
+  color: #1d74f5;
+}
+
+.sidebar-sublink.is-active {
+  background-color: rgba(29, 116, 245, 0.12);
+  color: #1d74f5;
+  font-weight: 600;
+}
+
 .general-info-layout {
   display: grid;
   gap: 1.5rem;
@@ -4023,6 +4054,23 @@ tbody tr:nth-child(even) {
   margin-top: 1.5rem;
 }
 
+.review-comments__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.review-comments__body {
+  max-height: 260px;
+  overflow: hidden;
+  transition: max-height 0.2s ease;
+}
+
+.review-comments__body.is-open {
+  max-height: 1200px;
+}
+
 .review-comment-list {
   display: flex;
   flex-direction: column;
@@ -4987,6 +5035,37 @@ tbody tr:nth-child(even) {
 
 .summary-card__spark--flat {
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 240 80'%3E%3Crect fill='%23f6f8fb' width='240' height='80'/%3E%3Cpolyline fill='none' stroke='%239aa9bf' stroke-width='3' stroke-linejoin='round' stroke-linecap='round' points='0,46 40,45 80,47 120,45 160,46 200,45 240,46'/%3E%3C/svg%3E");
+}
+
+.column-picker {
+  position: relative;
+  display: inline-flex;
+}
+
+.column-picker__menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 0.5rem);
+  background: #ffffff;
+  border: 1px solid #dbe4f5;
+  border-radius: 10px;
+  padding: 0.6rem;
+  box-shadow: 0 16px 32px rgba(15, 31, 58, 0.16);
+  min-width: 200px;
+  z-index: 10;
+}
+
+.column-picker__option {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.9rem;
+  color: #3a4a63;
+  padding: 0.35rem 0.25rem;
+}
+
+.column-picker__option input:disabled + span {
+  color: #9aa9bf;
 }
 
 .recent-altas-strip {

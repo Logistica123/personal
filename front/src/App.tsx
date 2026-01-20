@@ -2771,6 +2771,15 @@ const DashboardLayout: React.FC<{
   const lastIncomingChatMessageIdRef = useRef<number | null>(null);
   const location = useLocation();
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const [personalSubmenuOpen, setPersonalSubmenuOpen] = useState(false);
+  const isPersonalListRoute = location.pathname === '/personal';
+  const personalEstadoParam = useMemo(() => {
+    if (!isPersonalListRoute) {
+      return 'todos';
+    }
+    const params = new URLSearchParams(location.search);
+    return (params.get('estado') ?? 'todos').toLowerCase();
+  }, [isPersonalListRoute, location.search]);
   const toggleSidebarVisibility = useCallback(() => {
     setIsSidebarOpen((prev) => !prev);
   }, []);
@@ -2780,6 +2789,11 @@ const DashboardLayout: React.FC<{
   useEffect(() => {
     closeSidebar();
   }, [location.pathname, closeSidebar]);
+  useEffect(() => {
+    if (location.pathname !== '/personal') {
+      setPersonalSubmenuOpen(false);
+    }
+  }, [location.pathname]);
   useEffect(() => {
     setAuthUser(readAuthUserFromStorage());
   }, []);
@@ -3829,9 +3843,46 @@ const DashboardLayout: React.FC<{
             </NavLink>
           ) : null}
           {canAccessSection(userRole, 'personal') ? (
-            <NavLink to="/personal" className={({ isActive }) => `sidebar-link${isActive ? ' is-active' : ''}`}>
-              Proveedores
-            </NavLink>
+            <>
+              <NavLink
+                to="/personal"
+                className={({ isActive }) => `sidebar-link${isActive ? ' is-active' : ''}`}
+                onClick={(event) => {
+                  if (location.pathname === '/personal') {
+                    event.preventDefault();
+                    setPersonalSubmenuOpen((prev) => !prev);
+                  } else {
+                    setPersonalSubmenuOpen(true);
+                  }
+                }}
+              >
+                Proveedores
+              </NavLink>
+              {isPersonalListRoute && personalSubmenuOpen ? (
+                <div className="sidebar-submenu">
+                  {[
+                    { value: 'todos', label: 'Todos' },
+                    { value: 'activo', label: 'Activos' },
+                    { value: 'baja', label: 'Baja' },
+                    { value: 'suspendido', label: 'Suspendido' },
+                    { value: 'sin_estado', label: 'Sin estado' },
+                  ].map((item) => (
+                    <button
+                      key={item.value}
+                      type="button"
+                      className={`sidebar-sublink${personalEstadoParam === item.value ? ' is-active' : ''}`}
+                      onClick={() => {
+                        const params = new URLSearchParams(location.search);
+                        params.set('estado', item.value);
+                        navigate({ pathname: '/personal', search: params.toString() });
+                      }}
+                    >
+                      {item.label}
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+            </>
           ) : null}
           {canAccessSection(userRole, 'reclamos') ? (
             <NavLink to="/reclamos" className={({ isActive }) => `sidebar-link${isActive ? ' is-active' : ''}`}>
@@ -11374,6 +11425,7 @@ const ReclamoDetailPage: React.FC = () => {
 
 const PersonalPage: React.FC = () => {
   const navigate = useNavigate();
+  const location = useLocation();
   const apiBaseUrl = useMemo(() => resolveApiBaseUrl(), []);
   const authUser = useStoredAuthUser();
   const userRole = useMemo(() => getUserRole(authUser), [authUser]);
@@ -11406,6 +11458,105 @@ const PersonalPage: React.FC = () => {
   const [legajoFilter, setLegajoFilter] = useState(() => resolveStoredFilters().legajo ?? '');
   const [docStatusFilter, setDocStatusFilter] = useState<'vencido' | 'por_vencer' | 'vigente' | ''>('');
   const [docsSortActive, setDocsSortActive] = useState(false);
+  const sinEstadoFilterValue = 'sin_estado';
+  const [showColumnPicker, setShowColumnPicker] = useState(false);
+  const personalColumnsStorageKey = 'personal.visibleColumns';
+  const personalColumnOptions = useMemo(
+    () => [
+      { key: 'id', label: 'ID' },
+      { key: 'nombre', label: 'Nombre' },
+      { key: 'legajo', label: 'Legajo' },
+      { key: 'cuil', label: 'CUIL' },
+      { key: 'telefono', label: 'Teléfono' },
+      { key: 'email', label: 'Email' },
+      { key: 'perfil', label: 'Perfil' },
+      { key: 'agente', label: 'Agente' },
+      { key: 'estado', label: 'Estado' },
+      { key: 'combustible', label: 'Combustible' },
+      { key: 'combustibleEstado', label: 'Estado combustible' },
+      { key: 'tarifaEspecial', label: 'Tarifa especial' },
+      { key: 'pago', label: 'Pago' },
+      { key: 'cliente', label: 'Cliente' },
+      { key: 'unidad', label: 'Unidad' },
+      { key: 'sucursal', label: 'Sucursal' },
+      { key: 'fechaAlta', label: 'Fecha alta' },
+      { key: 'fechaBaja', label: 'Fecha baja' },
+      { key: 'docs', label: 'Docs' },
+      { key: 'acciones', label: 'Acciones', locked: true },
+    ],
+    []
+  );
+  const [visibleColumns, setVisibleColumns] = useState<Record<string, boolean>>(() => {
+    const initial: Record<string, boolean> = {};
+    let stored: Record<string, boolean> | null = null;
+    try {
+      const raw = localStorage.getItem(personalColumnsStorageKey);
+      stored = raw ? (JSON.parse(raw) as Record<string, boolean>) : null;
+    } catch (error) {
+      stored = null;
+    }
+    personalColumnOptions.forEach((column) => {
+      initial[column.key] = stored?.[column.key] ?? true;
+    });
+    return initial;
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem(personalColumnsStorageKey, JSON.stringify(visibleColumns));
+    } catch (error) {
+      // ignore storage failures (private mode, quota, etc)
+    }
+  }, [personalColumnsStorageKey, visibleColumns]);
+  const mapEstadoParamToFilter = useCallback(
+    (value: string | null): string => {
+      if (!value) {
+        return '';
+      }
+      const normalized = value.trim().toLowerCase();
+      if (normalized === 'todos') {
+        return '';
+      }
+      if (normalized === sinEstadoFilterValue || normalized === 'sin estado') {
+        return sinEstadoFilterValue;
+      }
+      if (normalized === 'activo') {
+        return 'Activo';
+      }
+      if (normalized === 'baja') {
+        return 'Baja';
+      }
+      if (normalized === 'suspendido') {
+        return 'Suspendido';
+      }
+      return normalized;
+    },
+    [sinEstadoFilterValue]
+  );
+  const updateEstadoQuery = useCallback(
+    (value: string) => {
+      if (location.pathname !== '/personal') {
+        return;
+      }
+      const params = new URLSearchParams(location.search);
+      const normalized =
+        value === ''
+          ? 'todos'
+          : value === sinEstadoFilterValue
+          ? sinEstadoFilterValue
+          : value.toLowerCase();
+      params.set('estado', normalized);
+      navigate({ pathname: location.pathname, search: params.toString() }, { replace: true });
+    },
+    [location.pathname, location.search, navigate, sinEstadoFilterValue]
+  );
+  const isColumnVisible = useCallback(
+    (key: string) => visibleColumns[key] !== false,
+    [visibleColumns]
+  );
+  const visibleColumnCount = useMemo(
+    () => personalColumnOptions.filter((column) => visibleColumns[column.key] !== false).length,
+    [personalColumnOptions, visibleColumns]
+  );
   const [deletingPersonalId, setDeletingPersonalId] = useState<number | null>(null);
   const [revealedContacts, setRevealedContacts] = useState<Record<number, { phone: boolean; email: boolean }>>({});
   const bypassContactGuard = useMemo(
@@ -11644,7 +11795,13 @@ const PersonalPage: React.FC = () => {
       }
 
       if (estadoFilter && registro.estado !== estadoFilter) {
-        return false;
+        if (estadoFilter === sinEstadoFilterValue) {
+          if (registro.estado) {
+            return false;
+          }
+        } else {
+          return false;
+        }
       }
 
       if (combustibleFilter) {
@@ -11855,6 +12012,34 @@ const PersonalPage: React.FC = () => {
     [personal]
   );
 
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const estadoParam = params.get('estado');
+    if (!estadoParam) {
+      return;
+    }
+    const mapped = mapEstadoParamToFilter(estadoParam);
+    if (!mapped && estadoFilter) {
+      setEstadoFilter('');
+      return;
+    }
+    if (mapped === sinEstadoFilterValue) {
+      if (estadoFilter !== sinEstadoFilterValue) {
+        setEstadoFilter(sinEstadoFilterValue);
+      }
+      return;
+    }
+    const match = estadoOptions.find((option) => option.toLowerCase() === mapped.toLowerCase());
+    if (match && match !== estadoFilter) {
+      setEstadoFilter(match);
+      return;
+    }
+    if (!match && mapped && mapped !== estadoFilter) {
+      setEstadoFilter(mapped);
+    }
+  }, [estadoFilter, estadoOptions, location.search, mapEstadoParamToFilter, sinEstadoFilterValue]);
+
+
   const clearFilters = () => {
     setClienteFilter('');
     setSucursalFilter('');
@@ -11864,6 +12049,7 @@ const PersonalPage: React.FC = () => {
     setPatenteFilter('');
     setLegajoFilter('');
     setEstadoFilter('');
+    updateEstadoQuery('');
     setCombustibleFilter('');
     setTarifaFilter('');
     setPagoFilter('');
@@ -12287,17 +12473,6 @@ const PersonalPage: React.FC = () => {
           />
         </label>
         <label className="filter-field">
-          <span>Estado</span>
-          <select value={estadoFilter} onChange={(event) => setEstadoFilter(event.target.value)}>
-            <option value="">Estado</option>
-            {estadoOptions.map((option) => (
-              <option key={option} value={option}>
-                {option}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="filter-field">
           <span>Combustible</span>
           <select value={combustibleFilter} onChange={(event) => setCombustibleFilter(event.target.value)}>
             <option value="">Combustible</option>
@@ -12356,6 +12531,35 @@ const PersonalPage: React.FC = () => {
             value={searchTerm}
             onChange={(event) => setSearchTerm(event.target.value)}
           />
+        </div>
+        <div className="column-picker">
+          <button
+            type="button"
+            className="secondary-action"
+            onClick={() => setShowColumnPicker((prev) => !prev)}
+          >
+            Columnas
+          </button>
+          {showColumnPicker ? (
+            <div className="column-picker__menu">
+              {personalColumnOptions.map((column) => (
+                <label key={column.key} className="column-picker__option">
+                  <input
+                    type="checkbox"
+                    checked={visibleColumns[column.key] !== false}
+                    disabled={Boolean(column.locked)}
+                    onChange={() =>
+                      setVisibleColumns((prev) => ({
+                        ...prev,
+                        [column.key]: column.locked ? true : !prev[column.key],
+                      }))
+                    }
+                  />
+                  <span>{column.label}</span>
+                </label>
+              ))}
+            </div>
+          ) : null}
         </div>
         <button type="button" className="secondary-action" onClick={clearFilters}>
           Limpiar
@@ -12430,47 +12634,49 @@ const PersonalPage: React.FC = () => {
         <table>
           <thead>
             <tr>
-              <th>ID</th>
-              <th>Nombre</th>
-              <th>Legajo</th>
-              <th>CUIL</th>
-              <th>Teléfono</th>
-              <th>Email</th>
-              <th>Perfil</th>
-              <th>Agente</th>
-              <th>Estado</th>
-              <th>Combustible</th>
-              <th>Estado combustible</th>
-              <th>Tarifa especial</th>
-              <th>Pago</th>
-              <th>Cliente</th>
-              <th>Unidad</th>
-              <th>Sucursal</th>
-              <th>Fecha alta</th>
-              <th>Fecha baja</th>
-              <th>
+              {isColumnVisible('id') ? <th>ID</th> : null}
+              {isColumnVisible('nombre') ? <th>Nombre</th> : null}
+              {isColumnVisible('legajo') ? <th>Legajo</th> : null}
+              {isColumnVisible('cuil') ? <th>CUIL</th> : null}
+              {isColumnVisible('telefono') ? <th>Teléfono</th> : null}
+              {isColumnVisible('email') ? <th>Email</th> : null}
+              {isColumnVisible('perfil') ? <th>Perfil</th> : null}
+              {isColumnVisible('agente') ? <th>Agente</th> : null}
+              {isColumnVisible('estado') ? <th>Estado</th> : null}
+              {isColumnVisible('combustible') ? <th>Combustible</th> : null}
+              {isColumnVisible('combustibleEstado') ? <th>Estado combustible</th> : null}
+              {isColumnVisible('tarifaEspecial') ? <th>Tarifa especial</th> : null}
+              {isColumnVisible('pago') ? <th>Pago</th> : null}
+              {isColumnVisible('cliente') ? <th>Cliente</th> : null}
+              {isColumnVisible('unidad') ? <th>Unidad</th> : null}
+              {isColumnVisible('sucursal') ? <th>Sucursal</th> : null}
+              {isColumnVisible('fechaAlta') ? <th>Fecha alta</th> : null}
+              {isColumnVisible('fechaBaja') ? <th>Fecha baja</th> : null}
+              {isColumnVisible('docs') ? (
+                <th>
                   <button
                     type="button"
                     className="secondary-action secondary-action--ghost"
                     onClick={() => setDocsSortActive((prev: boolean) => !prev)}
                     title="Ordenar por vencidos, por vencer y vigentes"
                   >
-                  Docs{docsSortActive ? ' (orden)' : ''}
-                </button>
-              </th>
-              <th>Acciones</th>
+                    Docs{docsSortActive ? ' (orden)' : ''}
+                  </button>
+                </th>
+              ) : null}
+              {isColumnVisible('acciones') ? <th>Acciones</th> : null}
             </tr>
           </thead>
           <tbody>
             {loading && (
               <tr>
-                <td colSpan={20}>Cargando proveedores...</td>
+                <td colSpan={visibleColumnCount}>Cargando proveedores...</td>
               </tr>
             )}
 
             {error && !loading && (
               <tr>
-                <td colSpan={20} className="error-cell">
+                <td colSpan={visibleColumnCount} className="error-cell">
                   {error}
                 </td>
               </tr>
@@ -12478,7 +12684,7 @@ const PersonalPage: React.FC = () => {
 
             {!loading && !error && filteredPersonal.length === 0 && (
               <tr>
-                <td colSpan={20}>No hay registros para mostrar.</td>
+                <td colSpan={visibleColumnCount}>No hay registros para mostrar.</td>
               </tr>
             )}
 
@@ -12486,87 +12692,103 @@ const PersonalPage: React.FC = () => {
               !error &&
               pageRecords.map((registro) => (
                 <tr key={registro.rowId ?? registro.id}>
-                  <td>{registro.id}</td>
-                  <td>{registro.nombre ?? '—'}</td>
-                  <td>{registro.legajo ?? '—'}</td>
-                  <td>{registro.cuil ?? '—'}</td>
-                  <td>{renderProtectedValue(registro.id, 'phone', registro.telefono)}</td>
-                  <td>{renderProtectedValue(registro.id, 'email', registro.email)}</td>
-                  <td>{getPerfilDisplayLabel(registro.perfilValue ?? null, registro.perfil ?? '—') || '—'}</td>
-                  <td>{registro.agente ?? '—'}</td>
-                  <td>
-                    {registro.estado ? (
-                      <span className={`estado-badge ${getEstadoBadgeClass(registro.estado)}`}>
-                        {registro.estado}
-                      </span>
-                    ) : (
-                      '—'
-                    )}
-                  </td>
-                  <td>
-                    {registro.combustibleValue ? (
-                      <span className="badge badge--success">Sí</span>
-                    ) : (
-                      <span className="badge badge--danger">No</span>
-                    )}
-                  </td>
-                  <td>
-                    {registro.combustibleValue && registro.combustibleEstado ? (
-                      <span
-                        className={
-                          registro.combustibleEstado === 'suspendido' ? 'badge badge--warning' : 'badge badge--success'
+                  {isColumnVisible('id') ? <td>{registro.id}</td> : null}
+                  {isColumnVisible('nombre') ? <td>{registro.nombre ?? '—'}</td> : null}
+                  {isColumnVisible('legajo') ? <td>{registro.legajo ?? '—'}</td> : null}
+                  {isColumnVisible('cuil') ? <td>{registro.cuil ?? '—'}</td> : null}
+                  {isColumnVisible('telefono') ? (
+                    <td>{renderProtectedValue(registro.id, 'phone', registro.telefono)}</td>
+                  ) : null}
+                  {isColumnVisible('email') ? (
+                    <td>{renderProtectedValue(registro.id, 'email', registro.email)}</td>
+                  ) : null}
+                  {isColumnVisible('perfil') ? (
+                    <td>{getPerfilDisplayLabel(registro.perfilValue ?? null, registro.perfil ?? '—') || '—'}</td>
+                  ) : null}
+                  {isColumnVisible('agente') ? <td>{registro.agente ?? '—'}</td> : null}
+                  {isColumnVisible('estado') ? (
+                    <td>
+                      {registro.estado ? (
+                        <span className={`estado-badge ${getEstadoBadgeClass(registro.estado)}`}>
+                          {registro.estado}
+                        </span>
+                      ) : (
+                        '—'
+                      )}
+                    </td>
+                  ) : null}
+                  {isColumnVisible('combustible') ? (
+                    <td>
+                      {registro.combustibleValue ? (
+                        <span className="badge badge--success">Sí</span>
+                      ) : (
+                        <span className="badge badge--danger">No</span>
+                      )}
+                    </td>
+                  ) : null}
+                  {isColumnVisible('combustibleEstado') ? (
+                    <td>
+                      {registro.combustibleValue && registro.combustibleEstado ? (
+                        <span
+                          className={
+                            registro.combustibleEstado === 'suspendido' ? 'badge badge--warning' : 'badge badge--success'
+                          }
+                        >
+                          {registro.combustibleEstado === 'suspendido' ? 'Suspendido' : 'Activo'}
+                        </span>
+                      ) : (
+                        '—'
+                      )}
+                    </td>
+                  ) : null}
+                  {isColumnVisible('tarifaEspecial') ? <td>{registro.tarifaEspecial ?? '—'}</td> : null}
+                  {isColumnVisible('pago') ? <td>{formatPagoLabel(registro.pago) || '—'}</td> : null}
+                  {isColumnVisible('cliente') ? <td>{registro.cliente ?? '—'}</td> : null}
+                  {isColumnVisible('unidad') ? <td>{registro.unidad ?? '—'}</td> : null}
+                  {isColumnVisible('sucursal') ? <td>{registro.sucursal ?? '—'}</td> : null}
+                  {isColumnVisible('fechaAlta') ? <td>{registro.fechaAlta ?? '—'}</td> : null}
+                  {isColumnVisible('fechaBaja') ? <td>{registro.fechaBaja ?? '—'}</td> : null}
+                  {isColumnVisible('docs') ? (
+                    <td>
+                      {(() => {
+                        const badge = resolveDocumentacionBadge(registro);
+                        if (badge.label === '—') {
+                          return '—';
                         }
-                      >
-                        {registro.combustibleEstado === 'suspendido' ? 'Suspendido' : 'Activo'}
-                      </span>
-                    ) : (
-                      '—'
-                    )}
-                  </td>
-                  <td>{registro.tarifaEspecial ?? '—'}</td>
-                  <td>{formatPagoLabel(registro.pago) || '—'}</td>
-                  <td>{registro.cliente ?? '—'}</td>
-                  <td>{registro.unidad ?? '—'}</td>
-                  <td>{registro.sucursal ?? '—'}</td>
-                  <td>{registro.fechaAlta ?? '—'}</td>
-                  <td>{registro.fechaBaja ?? '—'}</td>
-                  <td>
-                    {(() => {
-                      const badge = resolveDocumentacionBadge(registro);
-                      if (badge.label === '—') {
-                        return '—';
-                      }
-                      return (
+                        return (
+                          <button
+                            type="button"
+                            className={badge.className}
+                            onClick={() => navigate(`/personal/${registro.id}/editar?docFilter=${badge.filter}`)}
+                          >
+                            {badge.label}
+                          </button>
+                        );
+                      })()}
+                    </td>
+                  ) : null}
+                  {isColumnVisible('acciones') ? (
+                    <td>
+                      <div className="action-buttons">
                         <button
                           type="button"
-                          className={badge.className}
-                          onClick={() => navigate(`/personal/${registro.id}/editar?docFilter=${badge.filter}`)}
+                          aria-label={`Editar proveedor ${registro.nombre ?? ''}`}
+                          onClick={() => navigate(`/personal/${registro.id}/editar`)}
+                          disabled={!canManagePersonal}
                         >
-                          {badge.label}
+                          ✏️
                         </button>
-                      );
-                    })()}
-                  </td>
-                  <td>
-                    <div className="action-buttons">
-                      <button
-                        type="button"
-                        aria-label={`Editar proveedor ${registro.nombre ?? ''}`}
-                        onClick={() => navigate(`/personal/${registro.id}/editar`)}
-                        disabled={!canManagePersonal}
-                      >
-                        ✏️
-                      </button>
-                      <button
-                        type="button"
-                        aria-label={`Eliminar proveedor ${registro.nombre ?? ''}`}
-                        onClick={() => handleDeletePersonal(registro)}
-                        disabled={!canManagePersonal || deletingPersonalId === registro.id}
-                      >
-                        🗑️
-                      </button>
-                    </div>
-                  </td>
+                        <button
+                          type="button"
+                          aria-label={`Eliminar proveedor ${registro.nombre ?? ''}`}
+                          onClick={() => handleDeletePersonal(registro)}
+                          disabled={!canManagePersonal || deletingPersonalId === registro.id}
+                        >
+                          🗑️
+                        </button>
+                      </div>
+                    </td>
+                  ) : null}
                 </tr>
               ))}
           </tbody>
@@ -18207,6 +18429,7 @@ const ApprovalsRequestsPage: React.FC = () => {
   const [reviewCommentSaving, setReviewCommentSaving] = useState(false);
   const [reviewCommentError, setReviewCommentError] = useState<string | null>(null);
   const [reviewCommentInfo, setReviewCommentInfo] = useState<string | null>(null);
+  const [reviewChatOpen, setReviewChatOpen] = useState(false);
   const [reviewEditMode, setReviewEditMode] = useState(false);
   const [reviewDeletingDocumentIds, setReviewDeletingDocumentIds] = useState<Set<number>>(() => new Set());
   const personaIdFromQuery = useMemo(() => {
@@ -21933,34 +22156,47 @@ const handleAdelantoFieldChange =
               </div>
 
               <div className="review-comments">
-                <h3>Chat interno</h3>
+                <div className="review-comments__header">
+                  <h3>Chat interno</h3>
+                  {Array.isArray(reviewPersonaDetail.comments) && reviewPersonaDetail.comments.length > 3 ? (
+                    <button
+                      type="button"
+                      className="secondary-action secondary-action--ghost"
+                      onClick={() => setReviewChatOpen((prev) => !prev)}
+                    >
+                      {reviewChatOpen ? 'Ocultar' : 'Ver todo'}
+                    </button>
+                  ) : null}
+                </div>
                 {Array.isArray(reviewPersonaDetail.comments) && reviewPersonaDetail.comments.length > 0 ? (
-                  <ul className="review-comment-list">
-                    {reviewPersonaDetail.comments.map((comment) => (
-                      <li key={comment.id} className="review-comment-item">
-                        <div className="review-comment-header">
-                          <span>{comment.userName ?? 'Usuario'}</span>
-                          <span>
-                            {(() => {
-                              const raw = comment.createdAt ?? comment.createdAtLabel;
-                              if (!raw) {
-                                return '—';
-                              }
-                              const parsed = new Date(raw);
-                              if (Number.isNaN(parsed.getTime())) {
-                                return comment.createdAtLabel ?? raw;
-                              }
-                              return parsed.toLocaleString('es-AR', {
-                                dateStyle: 'short',
-                                timeStyle: 'short',
-                              });
-                            })()}
-                          </span>
-                        </div>
-                        <p>{comment.message ?? ''}</p>
-                      </li>
-                    ))}
-                  </ul>
+                  <div className={`review-comments__body${reviewChatOpen ? ' is-open' : ''}`}>
+                    <ul className="review-comment-list">
+                      {reviewPersonaDetail.comments.map((comment) => (
+                        <li key={comment.id} className="review-comment-item">
+                          <div className="review-comment-header">
+                            <span>{comment.userName ?? 'Usuario'}</span>
+                            <span>
+                              {(() => {
+                                const raw = comment.createdAt ?? comment.createdAtLabel;
+                                if (!raw) {
+                                  return '—';
+                                }
+                                const parsed = new Date(raw);
+                                if (Number.isNaN(parsed.getTime())) {
+                                  return comment.createdAtLabel ?? raw;
+                                }
+                                return parsed.toLocaleString('es-AR', {
+                                  dateStyle: 'short',
+                                  timeStyle: 'short',
+                                });
+                              })()}
+                            </span>
+                          </div>
+                          <p>{comment.message ?? ''}</p>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
                 ) : (
                   <p className="form-info">Todavía no hay comentarios internos.</p>
                 )}
@@ -25387,6 +25623,7 @@ const PersonalEditPage: React.FC = () => {
   const [commentSaving, setCommentSaving] = useState(false);
   const [commentError, setCommentError] = useState<string | null>(null);
   const [commentInfo, setCommentInfo] = useState<string | null>(null);
+  const [detailChatOpen, setDetailChatOpen] = useState(false);
   const [disapproving, setDisapproving] = useState(false);
   const [disapproveError, setDisapproveError] = useState<string | null>(null);
   const [documentFilter, setDocumentFilter] = useState<
@@ -26826,34 +27063,47 @@ const PersonalEditPage: React.FC = () => {
       </section>
 
       <section className="personal-edit-section">
-        <h2>Chat interno</h2>
+        <div className="review-comments__header">
+          <h2>Chat interno</h2>
+          {Array.isArray(detail.comments) && detail.comments.length > 3 ? (
+            <button
+              type="button"
+              className="secondary-action secondary-action--ghost"
+              onClick={() => setDetailChatOpen((prev) => !prev)}
+            >
+              {detailChatOpen ? 'Ocultar' : 'Ver todo'}
+            </button>
+          ) : null}
+        </div>
         {Array.isArray(detail.comments) && detail.comments.length > 0 ? (
-          <ul className="review-comment-list">
-            {detail.comments.map((comment) => (
-              <li key={comment.id} className="review-comment-item">
-                <div className="review-comment-header">
-                  <span>{comment.userName ?? 'Usuario'}</span>
-                  <span>
-                    {(() => {
-                      const raw = comment.createdAt ?? comment.createdAtLabel;
-                      if (!raw) {
-                        return '—';
-                      }
-                      const parsed = new Date(raw);
-                      if (Number.isNaN(parsed.getTime())) {
-                        return comment.createdAtLabel ?? raw;
-                      }
-                      return parsed.toLocaleString('es-AR', {
-                        dateStyle: 'short',
-                        timeStyle: 'short',
-                      });
-                    })()}
-                  </span>
-                </div>
-                <p>{comment.message ?? ''}</p>
-              </li>
-            ))}
-          </ul>
+          <div className={`review-comments__body${detailChatOpen ? ' is-open' : ''}`}>
+            <ul className="review-comment-list">
+              {detail.comments.map((comment) => (
+                <li key={comment.id} className="review-comment-item">
+                  <div className="review-comment-header">
+                    <span>{comment.userName ?? 'Usuario'}</span>
+                    <span>
+                      {(() => {
+                        const raw = comment.createdAt ?? comment.createdAtLabel;
+                        if (!raw) {
+                          return '—';
+                        }
+                        const parsed = new Date(raw);
+                        if (Number.isNaN(parsed.getTime())) {
+                          return comment.createdAtLabel ?? raw;
+                        }
+                        return parsed.toLocaleString('es-AR', {
+                          dateStyle: 'short',
+                          timeStyle: 'short',
+                        });
+                      })()}
+                    </span>
+                  </div>
+                  <p>{comment.message ?? ''}</p>
+                </li>
+              ))}
+            </ul>
+          </div>
         ) : (
           <p className="form-info">Todavía no hay comentarios internos.</p>
         )}
