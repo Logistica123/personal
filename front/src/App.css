@@ -2885,6 +2885,13 @@ tbody tr:nth-child(even) {
   border: 1px solid #dbe4f0;
 }
 
+.preview-modal__frame {
+  width: 100%;
+  height: min(70vh, 520px);
+  border-radius: 10px;
+  border: 1px solid #dbe4f0;
+}
+
 .preview-modal__caption {
   font-weight: 600;
   color: #243a63;

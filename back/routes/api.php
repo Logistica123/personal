@@ -37,6 +37,8 @@ Route::middleware('auth.api')->group(function () {
     Route::post('/documentos/pagado', [PersonalDocumentController::class, 'updatePagadoBulk']);
     Route::put('/personal/{persona}/documentos/{documento}', [PersonalDocumentController::class, 'updateDocument']);
     Route::delete('/personal/{persona}/documentos/{documento}', [PersonalDocumentController::class, 'destroy']);
+    Route::get('/personal/{persona}/documentos/{documento}/preview', [PersonalDocumentController::class, 'preview'])
+        ->name('personal.documentos.preview');
     Route::get('/personal/{persona}/documentos/descargar-todos', [PersonalDocumentController::class, 'downloadAll'])
         ->name('personal.documentos.descargarTodos');
     Route::get('/personal/{persona}/documentos/{documento}/descargar', [PersonalDocumentController::class, 'download'])->name('personal.documentos.descargar');

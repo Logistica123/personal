@@ -27,6 +27,23 @@ const resolveApiUrl = (baseUrl: string, target?: string | null): string | null =
   }
 };
 
+const withAuthToken = (url: string | null): string | null => {
+  if (!url) {
+    return null;
+  }
+  const token = readAuthTokenFromStorage();
+  if (!token) {
+    return url;
+  }
+  try {
+    const parsed = new URL(url);
+    parsed.searchParams.set('api_token', token);
+    return parsed.toString();
+  } catch {
+    return url;
+  }
+};
+
 const parseJsonSafe = async (response: Response) => {
   const contentType = response.headers.get('content-type') || '';
   if (!contentType.toLowerCase().includes('application/json')) {
@@ -529,6 +546,7 @@ type PersonalDetail = {
   documents: Array<{
     id: number;
     nombre: string | null;
+    sourceDownloadUrl?: string | null;
     downloadUrl: string | null;
     absoluteDownloadUrl?: string | null;
     mime: string | null;
@@ -8803,6 +8821,15 @@ const ReclamosPage: React.FC = () => {
     [getTransportistaEntries, getTransportistaNames]
   );
 
+  const resolveReclamoDemora = useCallback((reclamo: ReclamoRecord) => {
+    const status = (reclamo.status ?? '').trim().toLowerCase();
+    const endIso =
+      status === 'finalizado'
+        ? reclamo.updatedAt ?? reclamo.createdAt ?? undefined
+        : undefined;
+    return formatElapsedTime(reclamo.createdAt, endIso);
+  }, []);
+
   useEffect(() => {
     const controller = new AbortController();
 
@@ -9105,14 +9132,14 @@ const ReclamosPage: React.FC = () => {
                   : '',
               ]
             : []),
-          formatElapsedTime(reclamo.createdAt),
+          resolveReclamoDemora(reclamo),
         ]);
       });
     }
 
     const today = new Date().toISOString().slice(0, 10);
     downloadCsv(`reclamos-${today}.csv`, rows);
-  }, [sortedReclamos, formatTransportistaDisplay]);
+  }, [sortedReclamos, formatTransportistaDisplay, resolveReclamoDemora]);
 
   const footerLabel = useMemo(() => {
     if (loading) {
@@ -9449,7 +9476,7 @@ const ReclamosPage: React.FC = () => {
                       </td>
                     </>
                   ) : null}
-                  <td>{formatElapsedTime(reclamo.createdAt)}</td>
+                  <td>{resolveReclamoDemora(reclamo)}</td>
                   <td>
                     <div className="action-buttons">
                       <button
@@ -15248,13 +15275,14 @@ const LiquidacionesPage: React.FC = () => {
 
     const fallbackPath = `/api/personal/${detail.id}/documentos/${documento.id}/descargar`;
     const resolvedUrl = resolveApiUrl(apiBaseUrl, documento.downloadUrl ?? fallbackPath);
+    const downloadUrl = withAuthToken(resolvedUrl);
 
-    if (!resolvedUrl) {
+    if (!downloadUrl) {
       window.alert('No se pudo determinar la URL de descarga para este documento.');
       return;
     }
 
-    window.open(resolvedUrl, '_blank', 'noopener');
+    window.open(downloadUrl, '_blank', 'noopener');
   };
 
   const handleDeleteDocumento = async (documento: PersonalDetail['documents'][number]) => {
@@ -25629,6 +25657,14 @@ const PersonalEditPage: React.FC = () => {
   const [documentFilter, setDocumentFilter] = useState<
     'todos' | 'vencido' | 'por_vencer' | 'vigente' | 'sin_vencimiento'
   >('todos');
+  const [documentPreview, setDocumentPreview] = useState<{
+    url: string;
+    label: string;
+    mime: string | null;
+    objectUrl?: boolean;
+  } | null>(null);
+  const [documentPreviewLoading, setDocumentPreviewLoading] = useState(false);
+  const [documentPreviewError, setDocumentPreviewError] = useState<string | null>(null);
   const [documentTypes, setDocumentTypes] = useState<PersonalDocumentType[]>([]);
   const [documentTypesLoading, setDocumentTypesLoading] = useState(true);
   const [documentTypesError, setDocumentTypesError] = useState<string | null>(null);
@@ -25715,6 +25751,108 @@ const PersonalEditPage: React.FC = () => {
     }
     return documentsWithStatus.filter((doc) => doc.status === documentFilter);
   }, [documentsWithStatus, documentFilter]);
+
+  const revokeDocumentPreviewUrl = useCallback((preview: typeof documentPreview) => {
+    if (preview?.objectUrl) {
+      revokeImagePreviewUrl(preview.url);
+    }
+  }, []);
+
+  const closeDocumentPreview = useCallback(() => {
+    setDocumentPreview((prev) => {
+      revokeDocumentPreviewUrl(prev);
+      return null;
+    });
+    setDocumentPreviewError(null);
+    setDocumentPreviewLoading(false);
+  }, [revokeDocumentPreviewUrl]);
+
+  const openDocumentPreview = useCallback(
+    async (resolvedUrl: string, label: string, mime: string | null) => {
+      setDocumentPreviewError(null);
+      setDocumentPreviewLoading(true);
+      setDocumentPreview((prev) => {
+        revokeDocumentPreviewUrl(prev);
+        return { url: '', label, mime, objectUrl: false };
+      });
+      const token = readAuthTokenFromStorage();
+      let requestUrl = resolvedUrl;
+      if (token) {
+        try {
+          const url = new URL(resolvedUrl, window.location.origin);
+          if (url.origin === window.location.origin) {
+            url.searchParams.set('api_token', token);
+            requestUrl = url.toString();
+          }
+        } catch {
+          requestUrl = resolvedUrl;
+        }
+      }
+      try {
+        const response = await fetch(requestUrl, { credentials: 'include' });
+        if (!response.ok) {
+          throw new Error(`Preview error ${response.status}`);
+        }
+        const blob = await response.blob();
+        const blobUrl = URL.createObjectURL(blob);
+        setDocumentPreview((prev) => {
+          revokeDocumentPreviewUrl(prev);
+          return { url: blobUrl, label, mime: blob.type || mime, objectUrl: true };
+        });
+      } catch (error) {
+        setDocumentPreviewError('No se pudo cargar la vista previa.');
+        setDocumentPreview((prev) => {
+          revokeDocumentPreviewUrl(prev);
+          return { url: '', label, mime, objectUrl: false };
+        });
+      } finally {
+        setDocumentPreviewLoading(false);
+      }
+    },
+    [revokeDocumentPreviewUrl]
+  );
+
+  const withAuthToken = useCallback((url: string | null): string | null => {
+    if (!url) {
+      return null;
+    }
+    const token = readAuthTokenFromStorage();
+    if (!token) {
+      return url;
+    }
+    try {
+      const parsed = new URL(url, window.location.origin);
+      const apiOrigin = new URL(apiBaseUrl).origin;
+      if (parsed.origin !== apiOrigin) {
+        return url;
+      }
+      parsed.searchParams.set('api_token', token);
+      return parsed.toString();
+    } catch {
+      return url;
+    }
+  }, [apiBaseUrl]);
+
+  useEffect(() => {
+    return () => {
+      setDocumentPreview((prev) => {
+        revokeDocumentPreviewUrl(prev);
+        return prev;
+      });
+    };
+  }, [revokeDocumentPreviewUrl]);
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        closeDocumentPreview();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [closeDocumentPreview]);
 
   const handleRemovePendingUpload = useCallback((id: string) => {
     setPendingUploads((prev) => prev.filter((item) => item.id !== id));
@@ -27163,10 +27301,11 @@ const PersonalEditPage: React.FC = () => {
                     ? `/api/personal/${detail.id}/documentos/descargar-todos`
                     : null)
               );
+              const downloadAllHref = withAuthToken(downloadAllUrl);
 
-              return downloadAllUrl ? (
+              return downloadAllHref ? (
                 <div className="personal-documents-actions">
-                  <a className="secondary-action" href={downloadAllUrl} download>
+                  <a className="secondary-action" href={downloadAllHref} download>
                     Descargar todos
                   </a>
                 </div>
@@ -27215,6 +27354,12 @@ const PersonalEditPage: React.FC = () => {
             {filteredDocuments.map((doc) => {
               const fallbackPath = `/api/personal/${detail.id}/documentos/${doc.id}/descargar`;
               const resolvedUrl = resolveApiUrl(apiBaseUrl, doc.absoluteDownloadUrl ?? doc.downloadUrl ?? fallbackPath);
+              const resolvedSourceUrl = doc.sourceDownloadUrl
+                ? resolveApiUrl(apiBaseUrl, doc.sourceDownloadUrl)
+                : null;
+              const previewPath = `/api/personal/${detail.id}/documentos/${doc.id}/preview`;
+              const previewUrl = resolvedSourceUrl ?? resolveApiUrl(apiBaseUrl, previewPath);
+              const downloadHref = withAuthToken(resolvedSourceUrl ?? resolvedUrl);
               const statusLabel = (() => {
                 switch (doc.status) {
                   case 'vencido':
@@ -27230,6 +27375,7 @@ const PersonalEditPage: React.FC = () => {
               const docLabel = doc.tipoNombre
                 ? `${doc.tipoNombre}${doc.nombre ? ` – ${doc.nombre}` : ''}`
                 : doc.nombre ?? `Documento #${doc.id}`;
+              const isPreviewable = Boolean(doc.mime && (doc.mime.startsWith('image/') || doc.mime.includes('pdf')));
               return (
                 <li key={doc.id} className="document-status-item">
                   <div className="document-status-info">
@@ -27243,7 +27389,24 @@ const PersonalEditPage: React.FC = () => {
                   <div className="document-status-actions">
                     <span className={statusLabel.className}>{statusLabel.label}</span>
                     {resolvedUrl ? (
-                      <a className="secondary-action" href={resolvedUrl} target="_blank" rel="noopener noreferrer">
+                      <button
+                        type="button"
+                        className="secondary-action secondary-action--ghost"
+                        onClick={() => {
+                          if (isPreviewable && previewUrl) {
+                            void openDocumentPreview(previewUrl, docLabel, doc.mime);
+                          } else {
+                            window.open(resolvedUrl, '_blank', 'noopener');
+                          }
+                        }}
+                        title={isPreviewable ? 'Ver documento' : 'Abrir documento'}
+                        disabled={documentPreviewLoading}
+                      >
+                        {documentPreviewLoading ? 'Cargando...' : 'Ver'}
+                      </button>
+                    ) : null}
+                    {downloadHref ? (
+                      <a className="secondary-action" href={downloadHref} target="_blank" rel="noopener noreferrer">
                         Descargar
                       </a>
                     ) : null}
@@ -27389,6 +27552,44 @@ const PersonalEditPage: React.FC = () => {
           {uploading ? 'Subiendo...' : 'Subir documentos'}
         </button>
       </section>
+      {documentPreview ? (
+        <div
+          className="preview-modal"
+          role="dialog"
+          aria-modal="true"
+          aria-label={`Vista previa de ${documentPreview.label}`}
+          onClick={closeDocumentPreview}
+        >
+          <div className="preview-modal__content" onClick={(event) => event.stopPropagation()}>
+            <button
+              type="button"
+              className="preview-modal__close"
+              aria-label="Cerrar vista previa"
+              onClick={closeDocumentPreview}
+            >
+              ×
+            </button>
+            {documentPreviewLoading ? (
+              <p className="form-info">Cargando vista previa...</p>
+            ) : documentPreviewError ? (
+              <p className="form-info form-info--error">{documentPreviewError}</p>
+            ) : documentPreview.mime?.includes('pdf') ? (
+              <iframe
+                title={`Vista previa de ${documentPreview.label}`}
+                src={documentPreview.url}
+                className="preview-modal__frame"
+              />
+            ) : (
+              <img
+                src={documentPreview.url}
+                alt={`Vista previa de ${documentPreview.label}`}
+                className="preview-modal__image"
+              />
+            )}
+            <p className="preview-modal__caption">{documentPreview.label}</p>
+          </div>
+        </div>
+      ) : null}
     </DashboardLayout>
   );
 };

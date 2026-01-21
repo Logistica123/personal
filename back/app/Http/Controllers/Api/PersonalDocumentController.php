@@ -729,8 +729,13 @@ class PersonalDocumentController extends Controller
         ]);
     }
 
-    public function download(Persona $persona, Archivo $documento)
+    public function preview($personaId, Archivo $documento)
     {
+        $persona = Persona::withTrashed()->find($personaId);
+        if (! $persona) {
+            abort(404);
+        }
+
         if ($documento->persona_id !== $persona->id) {
             abort(404);
         }
@@ -744,20 +749,63 @@ class PersonalDocumentController extends Controller
         $fileName = $this->buildDownloadFileName($documento, $downloadUrl);
 
         if (! $hasDisk) {
-            return $this->streamExternalFile($downloadUrl, $fileName, $documento->mime);
+            return $this->streamExternalFile($downloadUrl, $fileName, $documento->mime, true);
         }
 
-        $path = $documento->ruta;
+        $path = $this->normalizeStoragePath($documento->ruta);
 
         if (! $path || ! Storage::disk($disk)->exists($path)) {
-            return $this->streamExternalFile($downloadUrl, $fileName, $documento->mime);
+            return $this->streamExternalFile($downloadUrl, $fileName, $documento->mime, true);
+        }
+
+        $contentType = $documento->mime ?: Storage::disk($disk)->mimeType($path) ?: 'application/octet-stream';
+        $headers = [
+            'Content-Type' => $contentType,
+            'Content-Disposition' => 'inline; filename="'.$fileName.'"',
+        ];
+
+        return Storage::disk($disk)->response($path, $fileName, $headers);
+    }
+
+    public function download($personaId, Archivo $documento)
+    {
+        $persona = Persona::withTrashed()->find($personaId);
+        if (! $persona) {
+            abort(404);
+        }
+
+        if ($documento->persona_id !== $persona->id) {
+            abort(404);
+        }
+
+        $documento->loadMissing('tipo:id,nombre');
+
+        $disk = $documento->disk ?: config('filesystems.default', 'public');
+        $disks = config('filesystems.disks', []);
+        $hasDisk = $disk && array_key_exists($disk, $disks);
+        $downloadUrl = $documento->download_url;
+        $fileName = $this->buildDownloadFileName($documento, $downloadUrl);
+
+        if (! $hasDisk) {
+            return $this->streamExternalFile($downloadUrl, $fileName, $documento->mime, false);
+        }
+
+        $path = $this->normalizeStoragePath($documento->ruta);
+
+        if (! $path || ! Storage::disk($disk)->exists($path)) {
+            return $this->streamExternalFile($downloadUrl, $fileName, $documento->mime, false);
         }
 
         return Storage::disk($disk)->download($path, $fileName);
     }
 
-    public function downloadAll(Persona $persona)
+    public function downloadAll($personaId)
     {
+        $persona = Persona::withTrashed()->find($personaId);
+        if (! $persona) {
+            abort(404, 'No hay documentos disponibles para descargar.');
+        }
+
         if (! class_exists(ZipArchive::class)) {
             abort(500, 'La funcionalidad de compresión no está disponible en el servidor.');
         }
@@ -1192,14 +1240,39 @@ class PersonalDocumentController extends Controller
         return $this->parseFuelAmount($nombre);
     }
 
-    protected function streamExternalFile(?string $url, string $fileName, ?string $mime = null)
+    protected function streamExternalFile(?string $url, string $fileName, ?string $mime = null, bool $inline = false)
     {
+        $url = $this->normalizeUrl($url);
+        if ($url && $this->isRecursiveApiDocumentUrl($url)) {
+            $url = null;
+        }
+
         if (! $url || ! preg_match('/^https?:\/\//i', $url)) {
             abort(404, 'El archivo solicitado no está disponible.');
         }
 
+        $parsedUrl = parse_url($url);
+        $appHost = parse_url(request()->getSchemeAndHttpHost(), PHP_URL_HOST);
+        if ($appHost && ! empty($parsedUrl['host']) && strcasecmp($parsedUrl['host'], $appHost) === 0) {
+            $path = $parsedUrl['path'] ?? '';
+            if ($path && str_starts_with($path, '/storage/')) {
+                $relativePath = ltrim(substr($path, strlen('/storage/')), '/');
+                if (Storage::disk('public')->exists($relativePath)) {
+                    $contentType = $mime ?: Storage::disk('public')->mimeType($relativePath) ?: 'application/octet-stream';
+                    $headers = [
+                        'Content-Type' => $contentType,
+                    ];
+                    if ($inline) {
+                        $headers['Content-Disposition'] = 'inline; filename="'.$fileName.'"';
+                        return Storage::disk('public')->response($relativePath, $fileName, $headers);
+                    }
+                    return Storage::disk('public')->download($relativePath, $fileName, $headers);
+                }
+            }
+        }
+
         try {
-            $response = Http::withOptions(['stream' => true])->get($url);
+            $response = Http::withOptions(['stream' => true])->timeout(20)->get($url);
         } catch (\Throwable $exception) {
             report($exception);
             abort(404, 'No se pudo acceder al archivo solicitado.');
@@ -1213,15 +1286,63 @@ class PersonalDocumentController extends Controller
         $stream = $psrResponse->getBody();
 
         $contentType = $mime ?: $response->header('Content-Type') ?: 'application/octet-stream';
+        $headers = [
+            'Content-Type' => $contentType,
+        ];
+
+        if ($inline) {
+            $headers['Content-Disposition'] = 'inline; filename="'.$fileName.'"';
+            return response()->stream(function () use ($stream) {
+                while (! $stream->eof()) {
+                    echo $stream->read(8192);
+                }
+                $stream->close();
+            }, 200, $headers);
+        }
 
         return response()->streamDownload(function () use ($stream) {
             while (! $stream->eof()) {
                 echo $stream->read(8192);
             }
             $stream->close();
-        }, $fileName, [
-            'Content-Type' => $contentType,
-        ]);
+        }, $fileName, $headers);
+    }
+
+    protected function normalizeStoragePath(?string $path): ?string
+    {
+        if (! $path) {
+            return null;
+        }
+        $normalized = ltrim($path, '/');
+        if (str_starts_with($normalized, 'public/')) {
+            $normalized = substr($normalized, strlen('public/'));
+        }
+        if (str_starts_with($normalized, 'storage/')) {
+            $normalized = substr($normalized, strlen('storage/'));
+        }
+        return $normalized;
+    }
+
+    protected function normalizeUrl(?string $url): ?string
+    {
+        if (! $url) {
+            return null;
+        }
+        if (preg_match('/^https?:\/\//i', $url)) {
+            return $url;
+        }
+        return rtrim(request()->getSchemeAndHttpHost(), '/').'/'.ltrim($url, '/');
+    }
+
+    protected function isRecursiveApiDocumentUrl(string $url): bool
+    {
+        $path = parse_url($url, PHP_URL_PATH) ?? '';
+        if ($path === '') {
+            return false;
+        }
+        return str_contains($path, '/api/personal/')
+            && str_contains($path, '/documentos/')
+            && (str_ends_with($path, '/descargar') || str_ends_with($path, '/preview'));
     }
 
     protected function buildDownloadFileName(Archivo $documento, ?string $downloadUrl): string

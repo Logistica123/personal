@@ -1348,6 +1348,7 @@ class PersonalController extends Controller
                     'parentDocumentId' => $documento->parent_document_id,
                     'isAttachment' => $documento->parent_document_id !== null,
                     'nombre' => $nombre,
+                    'sourceDownloadUrl' => $documento->download_url,
                     'downloadUrl' => $relativeDownloadUrl,
                     'absoluteDownloadUrl' => $absoluteDownloadUrl,
                     'mime' => $documento->mime,

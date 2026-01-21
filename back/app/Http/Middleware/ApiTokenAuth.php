@@ -143,6 +143,11 @@ class ApiTokenAuth
             return $bearerToken;
         }
 
+        $queryToken = $request->query('api_token') ?: $request->query('token');
+        if ($queryToken) {
+            return $queryToken;
+        }
+
         $headerToken = $request->header('X-Api-Token');
         if ($headerToken) {
             return $headerToken;
