@@ -390,10 +390,13 @@ class PersonalDocumentController extends Controller
             $this->attachPendingFuelInvoices($persona, $documento, $request->boolean('marcarRecibido'));
         }
 
-        if ($parentDocumentId && ! $isLiquidacionDoc && $request->boolean('marcarRecibido')) {
-            $persona->documentos()
-                ->where('id', $parentDocumentId)
-                ->update(['recibido' => true]);
+        if ($parentDocumentId && ! $isLiquidacionDoc) {
+            $shouldMarkReceived = $request->boolean('marcarRecibido') || $request->boolean('esFacturaCombustible');
+            if ($shouldMarkReceived) {
+                $persona->documentos()
+                    ->where('id', $parentDocumentId)
+                    ->update(['recibido' => true]);
+            }
         }
 
         if (! $request->boolean('skipAutoValidacion')) {

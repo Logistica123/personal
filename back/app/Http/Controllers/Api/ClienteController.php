@@ -40,6 +40,7 @@ class ClienteController extends Controller
             'sucursales' => ['sometimes', 'array'],
             'sucursales.*.nombre' => ['nullable', 'string'],
             'sucursales.*.direccion' => ['nullable', 'string'],
+            'sucursales.*.encargado_deposito' => ['nullable', 'string'],
         ]);
 
         $cliente = DB::transaction(function () use ($validated) {
@@ -53,14 +54,16 @@ class ClienteController extends Controller
             foreach ($validated['sucursales'] ?? [] as $sucursalData) {
                 $nombre = $this->sanitizeString($sucursalData['nombre'] ?? null);
                 $direccion = $this->sanitizeString($sucursalData['direccion'] ?? null);
+                $encargado = $this->sanitizeString($sucursalData['encargado_deposito'] ?? null);
 
-                if ($nombre === null && $direccion === null) {
+                if ($nombre === null && $direccion === null && $encargado === null) {
                     continue;
                 }
 
                 $cliente->sucursales()->create([
                     'nombre' => $nombre,
                     'direccion' => $direccion,
+                    'encargado_deposito' => $encargado,
                 ]);
             }
 
@@ -88,6 +91,7 @@ class ClienteController extends Controller
             ],
             'sucursales.*.nombre' => ['nullable', 'string'],
             'sucursales.*.direccion' => ['nullable', 'string'],
+            'sucursales.*.encargado_deposito' => ['nullable', 'string'],
         ]);
 
         $cliente = DB::transaction(function () use ($cliente, $validated) {
@@ -107,23 +111,29 @@ class ClienteController extends Controller
                 $id = $sucursalData['id'] ?? null;
                 $nombre = $this->sanitizeString($sucursalData['nombre'] ?? null);
                 $direccion = $this->sanitizeString($sucursalData['direccion'] ?? null);
+                $encargado = $this->sanitizeString($sucursalData['encargado_deposito'] ?? null);
 
                 if ($id !== null && $existing->has($id)) {
                     $sucursal = $existing->get($id);
-                    $sucursal->fill(compact('nombre', 'direccion'));
+                    $sucursal->fill([
+                        'nombre' => $nombre,
+                        'direccion' => $direccion,
+                        'encargado_deposito' => $encargado,
+                    ]);
                     $sucursal->save();
 
                     $idsToKeep[] = $sucursal->id;
                     continue;
                 }
 
-                if ($nombre === null && $direccion === null) {
+                if ($nombre === null && $direccion === null && $encargado === null) {
                     continue;
                 }
 
                 $newSucursal = $cliente->sucursales()->create([
                     'nombre' => $nombre,
                     'direccion' => $direccion,
+                    'encargado_deposito' => $encargado,
                 ]);
 
                 $idsToKeep[] = $newSucursal->id;
@@ -181,6 +191,7 @@ class ClienteController extends Controller
                 'id' => $sucursal->id,
                 'nombre' => $sucursal->nombre,
                 'direccion' => $sucursal->direccion,
+                'encargado_deposito' => $sucursal->encargado_deposito,
             ])->values(),
         ];
     }

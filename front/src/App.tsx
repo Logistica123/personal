@@ -113,6 +113,7 @@ type Sucursal = {
   id: number | null;
   nombre: string | null;
   direccion: string | null;
+  encargado_deposito?: string | null;
 };
 
 type Cliente = {
@@ -1465,6 +1466,7 @@ type EditableSucursal = {
   id: number | null;
   nombre: string;
   direccion: string;
+  encargado_deposito?: string;
   key: string;
 };
 
@@ -3942,9 +3944,12 @@ const DashboardLayout: React.FC<{
           <NavLink to="/tarifas" className={({ isActive }) => `sidebar-link${isActive ? ' is-active' : ''}`}>
             Tarifas
           </NavLink>
-          <a className="sidebar-link" href="#bases" onClick={(event) => event.preventDefault()}>
+          <NavLink
+            to="/bases-distribucion"
+            className={({ isActive }) => `sidebar-link${isActive ? ' is-active' : ''}`}
+          >
             Bases de Distribución
-          </a>
+          </NavLink>
 
           <span className="sidebar-title">Sistema</span>
           <NavLink to="/documentos" className={({ isActive }) => `sidebar-link${isActive ? ' is-active' : ''}`}>
@@ -5621,7 +5626,7 @@ const DashboardPage: React.FC<{
   showPersonalPanel?: boolean;
   pageTitle?: string;
   pageSubtitle?: string;
-  viewMode?: 'clientes' | 'tarifas';
+  viewMode?: 'clientes' | 'tarifas' | 'bases';
 }> = ({ showPersonalPanel = false, pageTitle, pageSubtitle, viewMode = 'clientes' }) => {
   const navigate = useNavigate();
   const location = useLocation();
@@ -5726,6 +5731,7 @@ const DashboardPage: React.FC<{
   const [cycleCountdown, setCycleCountdown] = useState<number | null>(null);
   const apiBaseUrl = useMemo(() => resolveApiBaseUrl(), []);
   const isTarifasView = viewMode === 'tarifas';
+  const isBasesView = viewMode === 'bases';
   const canEditTarifas = useMemo(() => userRole !== 'operator', [userRole]);
   const [showRecentAltaPanel, setShowRecentAltaPanel] = useState(false);
   const [reclamoStats, setReclamoStats] = useState({ total: 0, resueltos: 0, rechazados: 0 });
@@ -6711,7 +6717,11 @@ const DashboardPage: React.FC<{
         cliente.nombre,
         cliente.documento_fiscal,
         cliente.direccion,
-        ...cliente.sucursales.flatMap((sucursal) => [sucursal.nombre, sucursal.direccion]),
+        ...cliente.sucursales.flatMap((sucursal) => [
+          sucursal.nombre,
+          sucursal.direccion,
+          sucursal.encargado_deposito ?? null,
+        ]),
       ];
 
       return fields.some((field) => field?.toLowerCase().includes(term));
@@ -6868,7 +6878,7 @@ const DashboardPage: React.FC<{
             />
           </div>
         ) : null}
-        {!isTarifasView ? (
+        {!isTarifasView && !isBasesView ? (
           <button
             className="primary-action"
             type="button"
@@ -6876,6 +6886,16 @@ const DashboardPage: React.FC<{
           >
             Registrar cliente
           </button>
+        ) : null}
+        {isBasesView ? (
+          <div className="card-header__buttons">
+            <button className="secondary-action" type="button" onClick={() => navigate('/clientes')}>
+              Ver listado
+            </button>
+            <button className="primary-action" type="button" onClick={() => navigate('/clientes/nuevo')}>
+              Registrar cliente
+            </button>
+          </div>
         ) : null}
         {isTarifasView && tarifaView === 'list' ? (
           <div className="filters-bar">
@@ -8376,7 +8396,45 @@ const DashboardPage: React.FC<{
         </>
       ) : null}
 
-      {!showPersonalPanel && !isTarifasView ? (
+      {!showPersonalPanel && isBasesView ? (
+        <>
+          {loading ? <p className="form-info">Cargando clientes...</p> : null}
+          {error ? <p className="form-info form-info--error">{error}</p> : null}
+          {!loading && !error && filteredClientes.length === 0 ? (
+            <p className="form-info">No hay clientes para mostrar.</p>
+          ) : null}
+          {!loading && !error && filteredClientes.length > 0 ? (
+            <div className="client-cards client-cards--bases">
+              {filteredClientes.map((cliente) => {
+                return (
+                  <button
+                    key={cliente.id}
+                    type="button"
+                    className="client-card client-card--base client-card--link"
+                    onClick={() => navigate(`/bases-distribucion/${cliente.id}`)}
+                    aria-label={`Ver sucursales de ${cliente.nombre ?? `Cliente ${cliente.id}`}`}
+                  >
+                    <h4>{cliente.nombre ?? `Cliente #${cliente.id}`}</h4>
+                  </button>
+                );
+              })}
+            </div>
+          ) : null}
+          <footer className="table-footer">
+            <span>{footerLabel}</span>
+            <div className="pagination">
+              <button disabled aria-label="Anterior">
+                ‹
+              </button>
+              <button disabled aria-label="Siguiente">
+                ›
+              </button>
+            </div>
+          </footer>
+        </>
+      ) : null}
+
+      {!showPersonalPanel && !isTarifasView && !isBasesView ? (
         <>
           <div className="table-wrapper">
             <table>
@@ -8446,20 +8504,18 @@ const DashboardPage: React.FC<{
                           <td>{cliente.documento_fiscal ?? '—'}</td>
                           <td>{cliente.direccion ?? '—'}</td>
                           <td>
-                            <div className="tag-list">
-                              {cliente.sucursales.map((sucursal) => {
-                                const labelParts = [
-                                  sucursal.nombre ?? undefined,
-                                  sucursal.direccion ?? undefined,
-                                ].filter(Boolean);
-
-                                return (
+                            {cliente.sucursales.length > 0 ? (
+                              <div className="tag-list">
+                                {cliente.sucursales.map((sucursal) => (
                                   <span key={`${cliente.id}-${sucursal.id ?? uniqueKey()}`} className="tag">
-                                    {labelParts.length > 0 ? labelParts.join(' - ') : 'Sin datos'}
+                                    {sucursal.nombre ?? 'Sucursal'} -{' '}
+                                    {sucursal.direccion ?? 'Sin direccion'}
                                   </span>
-                                );
-                              })}
-                            </div>
+                                ))}
+                              </div>
+                            ) : (
+                              '—'
+                            )}
                           </td>
                           <td>
                             <div className="action-buttons">
@@ -8516,6 +8572,7 @@ const adaptCliente = (cliente: Cliente) => ({
     id: sucursal.id ?? null,
     nombre: sucursal.nombre ?? '',
     direccion: sucursal.direccion ?? '',
+    encargado_deposito: sucursal.encargado_deposito ?? '',
     key: sucursal.id ? `existing-${sucursal.id}` : `new-${uniqueKey()}`,
   })),
 });
@@ -12966,6 +13023,122 @@ const LiquidacionesPage: React.FC = () => {
   const [showPasteModal, setShowPasteModal] = useState(false);
   const [pasteError, setPasteError] = useState<string | null>(null);
   const pasteTextareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const isPagosView = useMemo(() => location.pathname.startsWith('/pagos'), [location.pathname]);
+  const [showPagosColumnPicker, setShowPagosColumnPicker] = useState(false);
+  const [showLiquidacionesColumnPicker, setShowLiquidacionesColumnPicker] = useState(false);
+  const pagosColumnsStorageKey = 'pagos.visibleColumns';
+  const liquidacionesColumnsStorageKey = 'liquidaciones.visibleColumns';
+  const pagosColumnOptions = useMemo(
+    () => [
+      { key: 'id', label: 'ID' },
+      { key: 'nombre', label: 'Nombre' },
+      { key: 'cuil', label: 'CUIL' },
+      { key: 'telefono', label: 'Teléfono' },
+      { key: 'email', label: 'Email' },
+      { key: 'perfil', label: 'Perfil' },
+      { key: 'agente', label: 'Agente' },
+      { key: 'estado', label: 'Estado' },
+      { key: 'combustible', label: 'Combustible' },
+      { key: 'tarifaEspecial', label: 'Tarifa especial' },
+      { key: 'cliente', label: 'Cliente' },
+      { key: 'unidad', label: 'Unidad' },
+      { key: 'sucursal', label: 'Sucursal' },
+      { key: 'fechaAlta', label: 'Fecha alta' },
+      { key: 'importeFacturar', label: 'Importe a facturar' },
+      { key: 'enviada', label: 'Enviada' },
+      { key: 'facturado', label: 'Facturado' },
+      { key: 'pagado', label: 'Pagado' },
+      { key: 'acciones', label: 'Acciones', locked: true },
+    ],
+    []
+  );
+  const liquidacionesColumnOptions = useMemo(
+    () => [
+      { key: 'id', label: 'ID' },
+      { key: 'nombre', label: 'Nombre' },
+      { key: 'cuil', label: 'CUIL' },
+      { key: 'telefono', label: 'Teléfono' },
+      { key: 'email', label: 'Email' },
+      { key: 'perfil', label: 'Perfil' },
+      { key: 'agente', label: 'Agente' },
+      { key: 'estado', label: 'Estado' },
+      { key: 'combustible', label: 'Combustible' },
+      { key: 'tarifaEspecial', label: 'Tarifa especial' },
+      { key: 'cliente', label: 'Cliente' },
+      { key: 'unidad', label: 'Unidad' },
+      { key: 'sucursal', label: 'Sucursal' },
+      { key: 'fechaAlta', label: 'Fecha alta' },
+      { key: 'importeFacturar', label: 'Importe a facturar' },
+      { key: 'enviada', label: 'Enviada' },
+      { key: 'facturado', label: 'Facturado' },
+      { key: 'pagado', label: 'Pagado' },
+      { key: 'acciones', label: 'Acciones', locked: true },
+    ],
+    []
+  );
+  const [visiblePagosColumns, setVisiblePagosColumns] = useState<Record<string, boolean>>(() => {
+    const initial: Record<string, boolean> = {};
+    let stored: Record<string, boolean> | null = null;
+    try {
+      const raw = localStorage.getItem(pagosColumnsStorageKey);
+      stored = raw ? (JSON.parse(raw) as Record<string, boolean>) : null;
+    } catch (error) {
+      stored = null;
+    }
+    pagosColumnOptions.forEach((column) => {
+      initial[column.key] = stored?.[column.key] ?? true;
+    });
+    return initial;
+  });
+  const [visibleLiquidacionesColumns, setVisibleLiquidacionesColumns] = useState<Record<string, boolean>>(() => {
+    const initial: Record<string, boolean> = {};
+    let stored: Record<string, boolean> | null = null;
+    try {
+      const raw = localStorage.getItem(liquidacionesColumnsStorageKey);
+      stored = raw ? (JSON.parse(raw) as Record<string, boolean>) : null;
+    } catch (error) {
+      stored = null;
+    }
+    liquidacionesColumnOptions.forEach((column) => {
+      initial[column.key] = stored?.[column.key] ?? true;
+    });
+    return initial;
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem(pagosColumnsStorageKey, JSON.stringify(visiblePagosColumns));
+    } catch (error) {
+      // ignore storage failures (private mode, quota, etc)
+    }
+  }, [pagosColumnsStorageKey, visiblePagosColumns]);
+  useEffect(() => {
+    try {
+      localStorage.setItem(liquidacionesColumnsStorageKey, JSON.stringify(visibleLiquidacionesColumns));
+    } catch (error) {
+      // ignore storage failures (private mode, quota, etc)
+    }
+  }, [liquidacionesColumnsStorageKey, visibleLiquidacionesColumns]);
+  const isPagosColumnVisible = useCallback(
+    (key: string) => (isPagosView ? visiblePagosColumns[key] !== false : true),
+    [isPagosView, visiblePagosColumns]
+  );
+  const listVisibleColumnCount = useMemo(() => {
+    if (!isPagosView) {
+      return liquidacionesColumnOptions.filter((column) => visibleLiquidacionesColumns[column.key] !== false).length;
+    }
+    return pagosColumnOptions.filter((column) => visiblePagosColumns[column.key] !== false).length;
+  }, [
+    isPagosView,
+    liquidacionesColumnOptions,
+    visibleLiquidacionesColumns,
+    pagosColumnOptions,
+    visiblePagosColumns,
+  ]);
+  const isListColumnVisible = useCallback(
+    (key: string) =>
+      isPagosView ? visiblePagosColumns[key] !== false : visibleLiquidacionesColumns[key] !== false,
+    [isPagosView, visiblePagosColumns, visibleLiquidacionesColumns]
+  );
   useEffect(() => {
     setLiquidacionMonthFilter('');
     setLiquidacionFortnightFilter('');
@@ -13226,7 +13399,6 @@ const LiquidacionesPage: React.FC = () => {
     [apiBaseUrl, selectedPersonaId]
   );
 
-  const isPagosView = useMemo(() => location.pathname.startsWith('/pagos'), [location.pathname]);
   const listRecords = useMemo(() => {
     if (!isPagosView) {
       return personal;
@@ -13253,6 +13425,35 @@ const LiquidacionesPage: React.FC = () => {
       }));
     });
   }, [isPagosView, personal]);
+
+  const pagosMonthChips = useMemo(() => {
+    if (!isPagosView) {
+      return [] as Array<{ key: string; label: string; count: number }>;
+    }
+
+    const counts = new Map<string, number>();
+    listRecords.forEach((registro) => {
+      const periods = registro.liquidacionPeriods ?? [];
+      periods.forEach((period) => {
+        const monthKey = period.monthKey;
+        if (!monthKey || monthKey === 'unknown') {
+          return;
+        }
+        counts.set(monthKey, (counts.get(monthKey) ?? 0) + 1);
+      });
+    });
+
+    const formatter = new Intl.DateTimeFormat('es-AR', { month: 'long', year: 'numeric' });
+    const capitalize = (value: string) => value.charAt(0).toUpperCase() + value.slice(1);
+
+    return Array.from(counts.entries())
+      .sort((a, b) => b[0].localeCompare(a[0]))
+      .map(([key, count]) => {
+        const parsed = new Date(`${key}-01T00:00:00`);
+        const label = Number.isNaN(parsed.getTime()) ? key : capitalize(formatter.format(parsed));
+        return { key, label, count };
+      });
+  }, [isPagosView, listRecords]);
 
   const updateListPagadoStatus = useCallback(
     async (pagado: boolean) => {
@@ -13494,7 +13695,11 @@ const LiquidacionesPage: React.FC = () => {
     return listRecords.filter((registro) => {
       if (isPagosView) {
         const pagoValue = parsePagoFlag(registro.pago);
-        const pagoFlag = pagoValue === true || registro.liquidacionPagado === true;
+        const pagoFlag =
+          pagoValue === true ||
+          registro.liquidacionPagado === true ||
+          registro.liquidacionRecibido === true ||
+          registro.liquidacionEnviada === true;
         if (!pagoFlag) {
           return false;
         }
@@ -15482,6 +15687,68 @@ const LiquidacionesPage: React.FC = () => {
           Limpiar
         </button>
         {isPagosView ? (
+          <div className="column-picker">
+            <button
+              type="button"
+              className="secondary-action"
+              onClick={() => setShowPagosColumnPicker((prev) => !prev)}
+            >
+              Columnas
+            </button>
+            {showPagosColumnPicker ? (
+              <div className="column-picker__menu">
+                {pagosColumnOptions.map((column) => (
+                  <label key={column.key} className="column-picker__option">
+                    <input
+                      type="checkbox"
+                      checked={visiblePagosColumns[column.key] !== false}
+                      disabled={Boolean(column.locked)}
+                      onChange={() =>
+                        setVisiblePagosColumns((prev) => ({
+                          ...prev,
+                          [column.key]: column.locked ? true : !prev[column.key],
+                        }))
+                      }
+                    />
+                    <span>{column.label}</span>
+                  </label>
+                ))}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+        {!isPagosView ? (
+          <div className="column-picker">
+            <button
+              type="button"
+              className="secondary-action"
+              onClick={() => setShowLiquidacionesColumnPicker((prev) => !prev)}
+            >
+              Columnas
+            </button>
+            {showLiquidacionesColumnPicker ? (
+              <div className="column-picker__menu">
+                {liquidacionesColumnOptions.map((column) => (
+                  <label key={column.key} className="column-picker__option">
+                    <input
+                      type="checkbox"
+                      checked={visibleLiquidacionesColumns[column.key] !== false}
+                      disabled={Boolean(column.locked)}
+                      onChange={() =>
+                        setVisibleLiquidacionesColumns((prev) => ({
+                          ...prev,
+                          [column.key]: column.locked ? true : !prev[column.key],
+                        }))
+                      }
+                    />
+                    <span>{column.label}</span>
+                  </label>
+                ))}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+        {isPagosView ? (
           <button type="button" className="secondary-action" onClick={handleExportPagos}>
             Exportar Excel
           </button>
@@ -15509,6 +15776,28 @@ const LiquidacionesPage: React.FC = () => {
           <span className="form-info">{`${selectedListPagadoIds.size} seleccionada${selectedListPagadoIds.size === 1 ? '' : 's'}`}</span>
         ) : null}
       </div>
+      {isPagosView && pagosMonthChips.length > 0 ? (
+        <div className="filters-actions" style={{ gap: '0.5rem' }}>
+          <span className="form-info">Mes:</span>
+          <button
+            type="button"
+            className={liquidacionMonthFilter === '' ? 'primary-action' : 'secondary-action'}
+            onClick={() => setLiquidacionMonthFilter('')}
+          >
+            Todos
+          </button>
+          {pagosMonthChips.map((month) => (
+            <button
+              key={`pagos-month-${month.key}`}
+              type="button"
+              className={liquidacionMonthFilter === month.key ? 'primary-action' : 'secondary-action'}
+              onClick={() => setLiquidacionMonthFilter(month.key)}
+            >
+              {month.label} ({month.count})
+            </button>
+          ))}
+        </div>
+      ) : null}
     </div>
   );
 
@@ -15539,37 +15828,37 @@ const LiquidacionesPage: React.FC = () => {
         <table>
           <thead>
             <tr>
-              <th>ID</th>
-              <th>Nombre</th>
-              <th>CUIL</th>
-              <th>Teléfono</th>
-              <th>Email</th>
-              <th>Perfil</th>
-              <th>Agente</th>
-              <th>Estado</th>
-              <th>Combustible</th>
-              <th>Tarifa especial</th>
-              <th>Cliente</th>
-              <th>Unidad</th>
-              <th>Sucursal</th>
-              <th>Fecha alta</th>
-              <th>Importe a facturar</th>
-              <th>Enviada</th>
-              <th>Facturado</th>
-              <th>Pagado</th>
-              <th>Acciones</th>
+              {isListColumnVisible('id') ? <th>ID</th> : null}
+              {isListColumnVisible('nombre') ? <th>Nombre</th> : null}
+              {isListColumnVisible('cuil') ? <th>CUIL</th> : null}
+              {isListColumnVisible('telefono') ? <th>Teléfono</th> : null}
+              {isListColumnVisible('email') ? <th>Email</th> : null}
+              {isListColumnVisible('perfil') ? <th>Perfil</th> : null}
+              {isListColumnVisible('agente') ? <th>Agente</th> : null}
+              {isListColumnVisible('estado') ? <th>Estado</th> : null}
+              {isListColumnVisible('combustible') ? <th>Combustible</th> : null}
+              {isListColumnVisible('tarifaEspecial') ? <th>Tarifa especial</th> : null}
+              {isListColumnVisible('cliente') ? <th>Cliente</th> : null}
+              {isListColumnVisible('unidad') ? <th>Unidad</th> : null}
+              {isListColumnVisible('sucursal') ? <th>Sucursal</th> : null}
+              {isListColumnVisible('fechaAlta') ? <th>Fecha alta</th> : null}
+              {isListColumnVisible('importeFacturar') ? <th>Importe a facturar</th> : null}
+              {isListColumnVisible('enviada') ? <th>Enviada</th> : null}
+              {isListColumnVisible('facturado') ? <th>Facturado</th> : null}
+              {isListColumnVisible('pagado') ? <th>Pagado</th> : null}
+              {isListColumnVisible('acciones') ? <th>Acciones</th> : null}
             </tr>
           </thead>
           <tbody>
             {loading && (
               <tr>
-                <td colSpan={19}>Cargando personal...</td>
+                <td colSpan={listVisibleColumnCount}>Cargando personal...</td>
               </tr>
             )}
 
             {error && !loading && (
               <tr>
-                <td colSpan={19} className="error-cell">
+                <td colSpan={listVisibleColumnCount} className="error-cell">
                   {error}
                 </td>
               </tr>
@@ -15577,7 +15866,7 @@ const LiquidacionesPage: React.FC = () => {
 
             {!loading && !error && filteredPersonal.length === 0 && (
               <tr>
-                <td colSpan={19}>No hay registros para mostrar.</td>
+                <td colSpan={listVisibleColumnCount}>No hay registros para mostrar.</td>
               </tr>
             )}
 
@@ -15585,51 +15874,61 @@ const LiquidacionesPage: React.FC = () => {
               !error &&
               pageRecords.map((registro) => (
                 <tr key={registro.id}>
-                  <td>{registro.id}</td>
-                  <td>{registro.nombre ?? '—'}</td>
-                  <td>{registro.cuil ?? '—'}</td>
-                  <td>{registro.telefono ?? '—'}</td>
-                  <td>{registro.email ?? '—'}</td>
-                  <td>{registro.perfil ?? '—'}</td>
-                  <td>{registro.agente ?? '—'}</td>
-                  <td>{registro.estado ?? '—'}</td>
-                  <td>{registro.combustible ?? '—'}</td>
-                  <td>{registro.tarifaEspecial ?? '—'}</td>
-                  <td>{registro.cliente ?? '—'}</td>
-                  <td>{registro.unidad ?? '—'}</td>
-                  <td>{registro.sucursal ?? '—'}</td>
-                  <td>{registro.fechaAlta ?? '—'}</td>
-                  <td>
-                    {registro.liquidacionImporteFacturar != null
-                      ? formatCurrency(registro.liquidacionImporteFacturar)
-                      : '—'}
-                  </td>
-                  <td>{renderLiquidacionStatus(registro.liquidacionEnviada)}</td>
-                  <td>{renderLiquidacionStatus(registro.liquidacionRecibido)}</td>
-                  <td>
-                    {typeof registro.liquidacionIdLatest === 'number' ? (
-                      <div className="liquidaciones-pagado-cell">
-                        {renderLiquidacionStatus(registro.liquidacionPagado)}
-                        <input
-                          type="checkbox"
-                          aria-label={`Seleccionar pago de ${registro.nombre ?? `ID ${registro.id}`}`}
-                          checked={selectedListPagadoIds.has(registro.liquidacionIdLatest)}
-                          onChange={() => toggleListPagadoSelection(registro.liquidacionIdLatest!)}
-                        />
-                      </div>
-                    ) : (
-                      renderLiquidacionStatus(registro.liquidacionPagado)
-                    )}
-                  </td>
-                  <td>
-                    <button
-                      type="button"
-                      className="secondary-action"
-                      onClick={() => handleSelectPersona(registro)}
-                    >
-                      Gestionar
-                    </button>
-                  </td>
+                  {isListColumnVisible('id') ? <td>{registro.id}</td> : null}
+                  {isListColumnVisible('nombre') ? <td>{registro.nombre ?? '—'}</td> : null}
+                  {isListColumnVisible('cuil') ? <td>{registro.cuil ?? '—'}</td> : null}
+                  {isListColumnVisible('telefono') ? <td>{registro.telefono ?? '—'}</td> : null}
+                  {isListColumnVisible('email') ? <td>{registro.email ?? '—'}</td> : null}
+                  {isListColumnVisible('perfil') ? <td>{registro.perfil ?? '—'}</td> : null}
+                  {isListColumnVisible('agente') ? <td>{registro.agente ?? '—'}</td> : null}
+                  {isListColumnVisible('estado') ? <td>{registro.estado ?? '—'}</td> : null}
+                  {isListColumnVisible('combustible') ? <td>{registro.combustible ?? '—'}</td> : null}
+                  {isListColumnVisible('tarifaEspecial') ? <td>{registro.tarifaEspecial ?? '—'}</td> : null}
+                  {isListColumnVisible('cliente') ? <td>{registro.cliente ?? '—'}</td> : null}
+                  {isListColumnVisible('unidad') ? <td>{registro.unidad ?? '—'}</td> : null}
+                  {isListColumnVisible('sucursal') ? <td>{registro.sucursal ?? '—'}</td> : null}
+                  {isListColumnVisible('fechaAlta') ? <td>{registro.fechaAlta ?? '—'}</td> : null}
+                  {isListColumnVisible('importeFacturar') ? (
+                    <td>
+                      {registro.liquidacionImporteFacturar != null
+                        ? formatCurrency(registro.liquidacionImporteFacturar)
+                        : '—'}
+                    </td>
+                  ) : null}
+                  {isListColumnVisible('enviada') ? (
+                    <td>{renderLiquidacionStatus(registro.liquidacionEnviada)}</td>
+                  ) : null}
+                  {isListColumnVisible('facturado') ? (
+                    <td>{renderLiquidacionStatus(registro.liquidacionRecibido)}</td>
+                  ) : null}
+                  {isListColumnVisible('pagado') ? (
+                    <td>
+                      {typeof registro.liquidacionIdLatest === 'number' ? (
+                        <div className="liquidaciones-pagado-cell">
+                          {renderLiquidacionStatus(registro.liquidacionPagado)}
+                          <input
+                            type="checkbox"
+                            aria-label={`Seleccionar pago de ${registro.nombre ?? `ID ${registro.id}`}`}
+                            checked={selectedListPagadoIds.has(registro.liquidacionIdLatest)}
+                            onChange={() => toggleListPagadoSelection(registro.liquidacionIdLatest!)}
+                          />
+                        </div>
+                      ) : (
+                        renderLiquidacionStatus(registro.liquidacionPagado)
+                      )}
+                    </td>
+                  ) : null}
+                  {isListColumnVisible('acciones') ? (
+                    <td>
+                      <button
+                        type="button"
+                        className="secondary-action"
+                        onClick={() => handleSelectPersona(registro)}
+                      >
+                        Gestionar
+                      </button>
+                    </td>
+                  ) : null}
                 </tr>
               ))}
           </tbody>
@@ -29051,6 +29350,7 @@ const CreateClientPage: React.FC = () => {
   const [sucursales, setSucursales] = useState<EditableSucursal[]>([]);
   const [newSucursalNombre, setNewSucursalNombre] = useState('');
   const [newSucursalDireccion, setNewSucursalDireccion] = useState('');
+  const [newSucursalEncargado, setNewSucursalEncargado] = useState('');
   const [sucursalFormError, setSucursalFormError] = useState<string | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
@@ -29059,9 +29359,10 @@ const CreateClientPage: React.FC = () => {
   const handleAddSucursal = () => {
     const nombre = newSucursalNombre.trim();
     const direccion = newSucursalDireccion.trim();
+    const encargado = newSucursalEncargado.trim();
 
-    if (!nombre && !direccion) {
-      setSucursalFormError('Ingresa al menos el nombre o la dirección para agregar una sucursal.');
+    if (!nombre && !direccion && !encargado) {
+      setSucursalFormError('Ingresa al menos el nombre, la dirección o el encargado para agregar una sucursal.');
       return;
     }
 
@@ -29071,12 +29372,14 @@ const CreateClientPage: React.FC = () => {
         id: null,
         nombre,
         direccion,
+        encargado_deposito: encargado,
         key: `new-${uniqueKey()}`,
       },
     ]);
 
     setNewSucursalNombre('');
     setNewSucursalDireccion('');
+    setNewSucursalEncargado('');
     setSucursalFormError(null);
   };
 
@@ -29105,6 +29408,7 @@ const CreateClientPage: React.FC = () => {
           sucursales: sucursales.map((sucursal) => ({
             nombre: sucursal.nombre.trim() || null,
             direccion: sucursal.direccion.trim() || null,
+            encargado_deposito: sucursal.encargado_deposito?.trim() || null,
           })),
         }),
       });
@@ -29144,11 +29448,13 @@ const CreateClientPage: React.FC = () => {
           id: sucursal.id ?? null,
           nombre: sucursal.nombre ?? '',
           direccion: sucursal.direccion ?? '',
+          encargado_deposito: sucursal.encargado_deposito ?? '',
           key: sucursal.id ? `existing-${sucursal.id}` : `new-${uniqueKey()}`,
         }))
       );
       setNewSucursalNombre('');
       setNewSucursalDireccion('');
+      setNewSucursalEncargado('');
       setSucursalFormError(null);
     } catch (err) {
       setSubmitError((err as Error).message ?? 'No se pudo registrar el cliente.');
@@ -29228,6 +29534,15 @@ const CreateClientPage: React.FC = () => {
               placeholder="Ingresar"
             />
           </label>
+          <label className="input-control">
+            <span>Encargado del depósito</span>
+            <input
+              type="text"
+              value={newSucursalEncargado}
+              onChange={(event) => setNewSucursalEncargado(event.target.value)}
+              placeholder="Ingresar"
+            />
+          </label>
           <button
             type="button"
             className="secondary-action secondary-action--add"
@@ -29243,6 +29558,9 @@ const CreateClientPage: React.FC = () => {
           {sucursales.length === 0 ? <p className="form-empty">No hay sucursales registradas.</p> : null}
           {sucursales.map((sucursal) => {
             const labelParts = [sucursal.nombre, sucursal.direccion].filter(Boolean);
+            if (sucursal.encargado_deposito) {
+              labelParts.push(`Encargado: ${sucursal.encargado_deposito}`);
+            }
             const label = labelParts.length > 0 ? labelParts.join(' - ') : 'Sin datos';
 
             return (
@@ -29294,6 +29612,7 @@ const EditClientPage: React.FC = () => {
   const [sucursales, setSucursales] = useState<EditableSucursal[]>([]);
   const [newSucursalNombre, setNewSucursalNombre] = useState('');
   const [newSucursalDireccion, setNewSucursalDireccion] = useState('');
+  const [newSucursalEncargado, setNewSucursalEncargado] = useState('');
   const [sucursalFormError, setSucursalFormError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
@@ -29346,9 +29665,10 @@ const EditClientPage: React.FC = () => {
   const handleAddSucursal = () => {
     const nombre = newSucursalNombre.trim();
     const direccion = newSucursalDireccion.trim();
+    const encargado = newSucursalEncargado.trim();
 
-    if (!nombre && !direccion) {
-      setSucursalFormError('Ingresa al menos el nombre o la dirección para agregar una sucursal.');
+    if (!nombre && !direccion && !encargado) {
+      setSucursalFormError('Ingresa al menos el nombre, la dirección o el encargado para agregar una sucursal.');
       return;
     }
 
@@ -29358,12 +29678,14 @@ const EditClientPage: React.FC = () => {
         id: null,
         nombre,
         direccion,
+        encargado_deposito: encargado,
         key: `new-${uniqueKey()}`,
       },
     ]);
 
     setNewSucursalNombre('');
     setNewSucursalDireccion('');
+    setNewSucursalEncargado('');
     setSucursalFormError(null);
   };
 
@@ -29398,6 +29720,7 @@ const EditClientPage: React.FC = () => {
             id: sucursal.id,
             nombre: sucursal.nombre.trim() || null,
             direccion: sucursal.direccion.trim() || null,
+            encargado_deposito: sucursal.encargado_deposito?.trim() || null,
           })),
         }),
       });
@@ -29523,6 +29846,15 @@ const EditClientPage: React.FC = () => {
               placeholder="Ingresar"
             />
           </label>
+          <label className="input-control">
+            <span>Encargado del depósito</span>
+            <input
+              type="text"
+              value={newSucursalEncargado}
+              onChange={(event) => setNewSucursalEncargado(event.target.value)}
+              placeholder="Ingresar"
+            />
+          </label>
           <button
             type="button"
             className="secondary-action secondary-action--add"
@@ -29538,6 +29870,9 @@ const EditClientPage: React.FC = () => {
           {sucursales.length === 0 ? <p className="form-empty">No hay sucursales registradas.</p> : null}
           {sucursales.map((sucursal) => {
             const labelParts = [sucursal.nombre, sucursal.direccion].filter(Boolean);
+            if (sucursal.encargado_deposito) {
+              labelParts.push(`Encargado: ${sucursal.encargado_deposito}`);
+            }
             const label = labelParts.length > 0 ? labelParts.join(' - ') : 'Sin datos';
 
             return (
@@ -29567,6 +29902,212 @@ const EditClientPage: React.FC = () => {
           </button>
         </div>
       </form>
+    </DashboardLayout>
+  );
+};
+
+const BaseDistribucionDetailPage: React.FC = () => {
+  const { clienteId } = useParams<{ clienteId: string }>();
+  const navigate = useNavigate();
+  const apiBaseUrl = useMemo(() => resolveApiBaseUrl(), []);
+  const [cliente, setCliente] = useState<Cliente | null>(null);
+  const [sucursales, setSucursales] = useState<EditableSucursal[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!clienteId) {
+      setLoadError('Identificador de cliente inválido.');
+      setLoading(false);
+      return;
+    }
+
+    const controller = new AbortController();
+    const fetchCliente = async () => {
+      try {
+        setLoading(true);
+        setLoadError(null);
+
+        const response = await fetch(`${apiBaseUrl}/api/clientes/${clienteId}`, {
+          signal: controller.signal,
+        });
+
+        if (!response.ok) {
+          throw new Error(`Error ${response.status}: ${response.statusText}`);
+        }
+
+        const payload = (await response.json()) as { data: Cliente };
+        if (!payload?.data) {
+          throw new Error('Formato de respuesta inesperado');
+        }
+
+        const normalized = adaptCliente(payload.data);
+        setCliente(payload.data);
+        setSucursales(normalized.sucursales);
+      } catch (err) {
+        if ((err as Error).name === 'AbortError') {
+          return;
+        }
+        setLoadError((err as Error).message ?? 'No se pudo cargar el cliente.');
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchCliente();
+    return () => controller.abort();
+  }, [apiBaseUrl, clienteId]);
+
+  const handleEncargadoChange = (key: string, value: string) => {
+    setSucursales((prev) =>
+      prev.map((sucursal) =>
+        sucursal.key === key ? { ...sucursal, encargado_deposito: value } : sucursal
+      )
+    );
+  };
+
+  const handleSave = async () => {
+    if (!clienteId || !cliente) {
+      setSubmitError('Identificador de cliente inválido.');
+      return;
+    }
+
+    try {
+      setSaving(true);
+      setSubmitError(null);
+      setSuccessMessage(null);
+
+      const response = await fetch(`${apiBaseUrl}/api/clientes/${clienteId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          codigo: cliente.codigo ?? null,
+          nombre: cliente.nombre ?? null,
+          direccion: cliente.direccion ?? null,
+          documento_fiscal: cliente.documento_fiscal ?? null,
+          sucursales: sucursales.map((sucursal) => ({
+            id: sucursal.id,
+            nombre: sucursal.nombre.trim() || null,
+            direccion: sucursal.direccion.trim() || null,
+            encargado_deposito: sucursal.encargado_deposito?.trim() || null,
+          })),
+        }),
+      });
+
+      if (!response.ok) {
+        let message = `Error ${response.status}: ${response.statusText}`;
+        try {
+          const errorPayload = await response.json();
+          if (typeof errorPayload?.message === 'string') {
+            message = errorPayload.message;
+          } else if (errorPayload?.errors) {
+            const firstError = Object.values(errorPayload.errors)[0];
+            if (Array.isArray(firstError) && firstError[0]) {
+              message = firstError[0] as string;
+            }
+          }
+        } catch {
+          // ignore
+        }
+        throw new Error(message);
+      }
+
+      const payload = (await response.json()) as { message?: string; data: Cliente };
+      const normalized = adaptCliente(payload.data);
+      setCliente(payload.data);
+      setSucursales(normalized.sucursales);
+      setSuccessMessage(payload.message ?? 'Encargados guardados correctamente.');
+    } catch (err) {
+      setSubmitError((err as Error).message ?? 'No se pudieron guardar los cambios.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const headerContent = (
+    <div className="card-header card-header--compact">
+      <button type="button" className="secondary-action" onClick={() => navigate('/bases-distribucion')}>
+        ← Volver a bases
+      </button>
+    </div>
+  );
+
+  if (loading) {
+    return (
+      <DashboardLayout title="Bases de distribución" subtitle="Cargando cliente..." headerContent={headerContent}>
+        <p className="form-info">Cargando sucursales...</p>
+      </DashboardLayout>
+    );
+  }
+
+  if (loadError) {
+    return (
+      <DashboardLayout title="Bases de distribución" subtitle="Error" headerContent={headerContent}>
+        <p className="form-info form-info--error">{loadError}</p>
+      </DashboardLayout>
+    );
+  }
+
+  return (
+    <DashboardLayout
+      title="Bases de distribución"
+      subtitle={cliente?.nombre ?? `Cliente #${clienteId ?? ''}`}
+      headerContent={headerContent}
+    >
+      <div className="base-detail">
+        <div className="base-detail__header">
+          <div>
+            <h3>{cliente?.nombre ?? `Cliente #${clienteId ?? ''}`}</h3>
+            <p>Gestiona encargados de depósito por sucursal.</p>
+          </div>
+          <button type="button" className="primary-action" onClick={handleSave} disabled={saving}>
+            {saving ? 'Guardando...' : 'Guardar cambios'}
+          </button>
+        </div>
+
+        {sucursales.length === 0 ? <p className="form-info">No hay sucursales registradas.</p> : null}
+        {sucursales.length > 0 ? (
+          <div className="base-sucursal-list">
+            {sucursales.map((sucursal) => (
+              <div key={sucursal.key} className="base-sucursal-card">
+                <div className="base-sucursal-card__info">
+                  <h4>{sucursal.nombre || 'Sucursal'}</h4>
+                </div>
+                <label className="input-control">
+                  <span>Dirección</span>
+                  <input
+                    type="text"
+                    value={sucursal.direccion ?? ''}
+                    onChange={(event) =>
+                      setSucursales((prev) =>
+                        prev.map((item) =>
+                          item.key === sucursal.key ? { ...item, direccion: event.target.value } : item
+                        )
+                      )
+                    }
+                    placeholder="Ingresar"
+                  />
+                </label>
+                <label className="input-control">
+                  <span>Encargado del depósito</span>
+                  <input
+                    type="text"
+                    value={sucursal.encargado_deposito ?? ''}
+                    onChange={(event) => handleEncargadoChange(sucursal.key, event.target.value)}
+                    placeholder="Ingresar"
+                  />
+                </label>
+              </div>
+            ))}
+          </div>
+        ) : null}
+
+        {submitError ? <p className="form-info form-info--error">{submitError}</p> : null}
+        {successMessage ? <p className="form-info form-info--success">{successMessage}</p> : null}
+      </div>
     </DashboardLayout>
   );
 };
@@ -30057,6 +30598,26 @@ const AppRoutes: React.FC = () => (
         element={
           <RequireAccess section="tarifas">
             <DashboardPage pageTitle="Tarifas" pageSubtitle="Listado de clientes" viewMode="tarifas" />
+          </RequireAccess>
+        }
+      />
+      <Route
+        path="/bases-distribucion"
+        element={
+          <RequireAccess section="clientes">
+            <DashboardPage
+              pageTitle="Bases de distribución"
+              pageSubtitle="Clientes y sucursales"
+              viewMode="bases"
+            />
+          </RequireAccess>
+        }
+      />
+      <Route
+        path="/bases-distribucion/:clienteId"
+        element={
+          <RequireAccess section="clientes">
+            <BaseDistribucionDetailPage />
           </RequireAccess>
         }
       />

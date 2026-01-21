@@ -17,6 +17,7 @@ class Sucursal extends Model
         'cliente_id',
         'nombre',
         'direccion',
+        'encargado_deposito',
     ];
 
     public function cliente()

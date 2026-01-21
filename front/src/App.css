@@ -1684,6 +1684,12 @@ body {
   flex-wrap: wrap;
 }
 
+.card-header__buttons {
+  display: inline-flex;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+
 .search-wrapper {
   flex: 1;
   min-width: 240px;
@@ -2053,6 +2059,7 @@ tbody tr:nth-child(even) {
   color: #1d74f5;
   font-size: 0.8rem;
 }
+
 
 .action-buttons {
   display: inline-flex;
@@ -5684,6 +5691,10 @@ tbody tr:nth-child(even) {
   margin-top: 1rem;
 }
 
+.client-cards--bases {
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+}
+
 .client-card {
   background: rgba(255, 255, 255, 0.94);
   border: 1px solid #dfe6f4;
@@ -5692,6 +5703,36 @@ tbody tr:nth-child(even) {
   box-shadow: 0 16px 36px rgba(15, 31, 58, 0.14);
   position: relative;
   overflow: hidden;
+}
+
+.client-card--link {
+  cursor: pointer;
+  width: 100%;
+  text-align: left;
+  border: 1px solid #dfe6f4;
+  transition: transform 0.15s ease, box-shadow 0.2s ease;
+  appearance: none;
+  outline: none;
+  padding: 1.25rem 1.35rem;
+}
+
+.client-card--link:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 18px 42px rgba(15, 31, 58, 0.18);
+}
+
+.client-card--link:focus-visible {
+  outline: 2px solid #1d74f5;
+  outline-offset: 2px;
+}
+
+.client-card__cta {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin-top: 0.6rem;
+  font-size: 0.85rem;
+  color: #1d74f5;
 }
 
 .fidelizacion-clients-block {
@@ -5706,15 +5747,95 @@ tbody tr:nth-child(even) {
   margin-bottom: 0.75rem;
 }
 
+.client-card--base header {
+  align-items: flex-start;
+}
+
 .client-card h4 {
   margin: 0;
   color: #0f1f3a;
   font-size: 1.05rem;
 }
 
+.client-card--link h4 {
+  font-size: 1.15rem;
+}
+
 .client-card header span {
   color: #516277;
   font-size: 0.9rem;
+}
+
+.base-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.base-detail__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.base-detail__header h3 {
+  margin: 0 0 0.35rem;
+  color: #0f1f3a;
+}
+
+.base-detail__header p {
+  margin: 0;
+  color: #516277;
+}
+
+.base-sucursal-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 1rem;
+}
+
+.base-sucursal-card {
+  background: #ffffff;
+  border-radius: 14px;
+  border: 1px solid #e1e7f3;
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+  box-shadow: 0 12px 28px rgba(15, 31, 58, 0.1);
+}
+
+.base-sucursal-card__info h4 {
+  margin: 0 0 0.25rem;
+  font-size: 1rem;
+  color: #0f1f3a;
+}
+
+.base-sucursal-card__info p {
+  margin: 0;
+  color: #516277;
+  font-size: 0.85rem;
+}
+
+.client-card__address {
+  margin: 0 0 0.75rem;
+  color: #516277;
+  font-size: 0.9rem;
+}
+
+.client-card__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+
+.client-card__empty {
+  display: inline-block;
+  color: #64748b;
+  font-size: 0.85rem;
 }
 
 [data-theme='dark'] .client-card h4 {
@@ -5723,6 +5844,25 @@ tbody tr:nth-child(even) {
 
 [data-theme='dark'] .client-card header span {
   color: var(--muted);
+}
+
+[data-theme='dark'] .client-card--link {
+  border-color: #1c2740;
+}
+
+[data-theme='dark'] .base-detail__header h3,
+[data-theme='dark'] .base-sucursal-card__info h4 {
+  color: #e8ecf5;
+}
+
+[data-theme='dark'] .base-detail__header p,
+[data-theme='dark'] .base-sucursal-card__info p {
+  color: var(--muted);
+}
+
+[data-theme='dark'] .base-sucursal-card {
+  background: #0b1120;
+  border-color: #1c2740;
 }
 
 .client-card__stats {
@@ -5790,6 +5930,34 @@ tbody tr:nth-child(even) {
   color: #1d3565;
   font-size: 0.85rem;
   border: 1px solid rgba(29, 116, 245, 0.12);
+}
+
+.chip--neutral {
+  background: rgba(15, 23, 42, 0.08);
+  color: #1f2937;
+  border-color: rgba(15, 23, 42, 0.1);
+}
+
+.chip--ghost {
+  background: #f1f5f9;
+  color: #475569;
+  border-color: transparent;
+}
+
+[data-theme='dark'] .client-card__address,
+[data-theme='dark'] .client-card__empty {
+  color: var(--muted);
+}
+
+[data-theme='dark'] .chip--neutral {
+  background: rgba(148, 163, 184, 0.18);
+  color: #e2e8f0;
+  border-color: rgba(148, 163, 184, 0.24);
+}
+
+[data-theme='dark'] .chip--ghost {
+  background: rgba(148, 163, 184, 0.15);
+  color: #cbd5f5;
 }
 
 .chip--muted {
