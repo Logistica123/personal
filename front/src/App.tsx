@@ -15777,7 +15777,7 @@ const LiquidacionesPage: React.FC = () => {
         ) : null}
       </div>
       {isPagosView && pagosMonthChips.length > 0 ? (
-        <div className="filters-actions" style={{ gap: '0.5rem' }}>
+        <div className="filters-actions" style={{ gap: '0.5rem', flexWrap: 'wrap' }}>
           <span className="form-info">Mes:</span>
           <button
             type="button"
@@ -15796,6 +15796,30 @@ const LiquidacionesPage: React.FC = () => {
               {month.label} ({month.count})
             </button>
           ))}
+          <span className="form-info" style={{ marginLeft: '0.5rem' }}>
+            Quincena:
+          </span>
+          <button
+            type="button"
+            className={liquidacionFortnightFilter === '' ? 'primary-action' : 'secondary-action'}
+            onClick={() => setLiquidacionFortnightFilter('')}
+          >
+            Mes completo
+          </button>
+          <button
+            type="button"
+            className={liquidacionFortnightFilter === 'Q1' ? 'primary-action' : 'secondary-action'}
+            onClick={() => setLiquidacionFortnightFilter('Q1')}
+          >
+            Primera quincena
+          </button>
+          <button
+            type="button"
+            className={liquidacionFortnightFilter === 'Q2' ? 'primary-action' : 'secondary-action'}
+            onClick={() => setLiquidacionFortnightFilter('Q2')}
+          >
+            Segunda quincena
+          </button>
         </div>
       ) : null}
     </div>
