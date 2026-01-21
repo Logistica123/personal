@@ -3265,30 +3265,23 @@ const DashboardLayout: React.FC<{
       }),
     [currentTime]
   );
+  const formattedDate = useMemo(
+    () =>
+      currentTime.toLocaleDateString('es-AR', {
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+      }),
+    [currentTime]
+  );
 
   const formattedAttendance = useMemo(() => {
-    if (!attendanceRecord) {
-      return 'Fuera del horario laboral';
+    if (!attendanceRecord || attendanceRecord.status !== 'entrada') {
+      return '';
     }
 
-    if (attendanceRecord.status === 'entrada') {
-      const workedTime = formatElapsedTime(attendanceRecord.timestamp, currentTime.toISOString());
-      return `En horario laboral · ${workedTime}`;
-    }
-
-    const timestamp = new Date(attendanceRecord.timestamp);
-    const dateLabel = timestamp.toLocaleDateString('es-AR', {
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-    });
-    const timeLabel = timestamp.toLocaleTimeString('es-AR', {
-      hour: '2-digit',
-      minute: '2-digit',
-      second: '2-digit',
-      hour12: false,
-    });
-    return `Última salida registrada · ${dateLabel} ${timeLabel}`;
+    const workedTime = formatElapsedTime(attendanceRecord.timestamp, currentTime.toISOString());
+    return `En horario laboral · ${workedTime}`;
   }, [attendanceRecord, currentTime]);
 
   const isWorking = attendanceRecord?.status === 'entrada';
@@ -3824,13 +3817,13 @@ const DashboardLayout: React.FC<{
           >
             ×
           </button>
-          <div className="sidebar-logo">
+          <NavLink to="/dashboard" className="sidebar-logo" onClick={closeSidebar}>
             {brandLogoSrc ? (
               <img src={brandLogoSrc} alt="Logo de la empresa" className="brand-logo" />
             ) : (
               <div className="brand-placeholder">Tu marca</div>
             )}
-          </div>
+          </NavLink>
 
         <NavLink
           to="/informacion-general"
@@ -4027,8 +4020,13 @@ const DashboardLayout: React.FC<{
           <div className="topbar-actions">
             <div className="time-tracker">
               <div className="time-tracker__display">
-                <span className="time-tracker__clock">{formattedClock}</span>
-                <small className="time-tracker__last">{formattedAttendance}</small>
+                <div className="time-tracker__stamp">
+                  <span className="time-tracker__clock">{formattedClock}</span>
+                  <small className="time-tracker__date">{formattedDate}</small>
+                </div>
+                {formattedAttendance ? (
+                  <small className="time-tracker__last">{formattedAttendance}</small>
+                ) : null}
               </div>
               <div className="time-tracker__actions">
                 {attendanceRecord?.status === 'entrada' ? (
@@ -13035,6 +13033,9 @@ const LiquidacionesPage: React.FC = () => {
       { key: 'cuil', label: 'CUIL' },
       { key: 'telefono', label: 'Teléfono' },
       { key: 'email', label: 'Email' },
+      { key: 'cbuAlias', label: 'CBU' },
+      { key: 'cobradorCbuAlias', label: 'CBU cobrador' },
+      { key: 'cobradorCuil', label: 'CUIL cobrador' },
       { key: 'perfil', label: 'Perfil' },
       { key: 'agente', label: 'Agente' },
       { key: 'estado', label: 'Estado' },
@@ -13059,6 +13060,9 @@ const LiquidacionesPage: React.FC = () => {
       { key: 'cuil', label: 'CUIL' },
       { key: 'telefono', label: 'Teléfono' },
       { key: 'email', label: 'Email' },
+      { key: 'cbuAlias', label: 'CBU' },
+      { key: 'cobradorCbuAlias', label: 'CBU cobrador' },
+      { key: 'cobradorCuil', label: 'CUIL cobrador' },
       { key: 'perfil', label: 'Perfil' },
       { key: 'agente', label: 'Agente' },
       { key: 'estado', label: 'Estado' },
@@ -14369,7 +14373,7 @@ const LiquidacionesPage: React.FC = () => {
       return null;
     }
 
-    if (liquidacionYearFilter) {
+    if (year === null && liquidacionYearFilter) {
       if (liquidacionYearFilter === 'unknown') {
         return null;
       }
@@ -15857,6 +15861,9 @@ const LiquidacionesPage: React.FC = () => {
               {isListColumnVisible('cuil') ? <th>CUIL</th> : null}
               {isListColumnVisible('telefono') ? <th>Teléfono</th> : null}
               {isListColumnVisible('email') ? <th>Email</th> : null}
+              {isListColumnVisible('cbuAlias') ? <th>CBU</th> : null}
+              {isListColumnVisible('cobradorCbuAlias') ? <th>CBU cobrador</th> : null}
+              {isListColumnVisible('cobradorCuil') ? <th>CUIL cobrador</th> : null}
               {isListColumnVisible('perfil') ? <th>Perfil</th> : null}
               {isListColumnVisible('agente') ? <th>Agente</th> : null}
               {isListColumnVisible('estado') ? <th>Estado</th> : null}
@@ -15903,6 +15910,13 @@ const LiquidacionesPage: React.FC = () => {
                   {isListColumnVisible('cuil') ? <td>{registro.cuil ?? '—'}</td> : null}
                   {isListColumnVisible('telefono') ? <td>{registro.telefono ?? '—'}</td> : null}
                   {isListColumnVisible('email') ? <td>{registro.email ?? '—'}</td> : null}
+                  {isListColumnVisible('cbuAlias') ? <td>{registro.cbuAlias ?? '—'}</td> : null}
+                  {isListColumnVisible('cobradorCbuAlias') ? (
+                    <td>{registro.cobradorCbuAlias ?? '—'}</td>
+                  ) : null}
+                  {isListColumnVisible('cobradorCuil') ? (
+                    <td>{registro.cobradorCuil ?? '—'}</td>
+                  ) : null}
                   {isListColumnVisible('perfil') ? <td>{registro.perfil ?? '—'}</td> : null}
                   {isListColumnVisible('agente') ? <td>{registro.agente ?? '—'}</td> : null}
                   {isListColumnVisible('estado') ? <td>{registro.estado ?? '—'}</td> : null}
@@ -25975,11 +25989,13 @@ const PersonalEditPage: React.FC = () => {
   const [commentError, setCommentError] = useState<string | null>(null);
   const [commentInfo, setCommentInfo] = useState<string | null>(null);
   const [detailChatOpen, setDetailChatOpen] = useState(false);
+  const [showAllHistory, setShowAllHistory] = useState(false);
   const [disapproving, setDisapproving] = useState(false);
   const [disapproveError, setDisapproveError] = useState<string | null>(null);
   const [documentFilter, setDocumentFilter] = useState<
     'todos' | 'vencido' | 'por_vencer' | 'vigente' | 'sin_vencimiento'
   >('todos');
+  const [showAllDocuments, setShowAllDocuments] = useState(false);
   const [documentPreview, setDocumentPreview] = useState<{
     url: string;
     label: string;
@@ -26074,6 +26090,14 @@ const PersonalEditPage: React.FC = () => {
     }
     return documentsWithStatus.filter((doc) => doc.status === documentFilter);
   }, [documentsWithStatus, documentFilter]);
+
+  useEffect(() => {
+    setShowAllHistory(false);
+  }, [detail?.id]);
+
+  useEffect(() => {
+    setShowAllDocuments(false);
+  }, [documentFilter]);
 
   const revokeDocumentPreviewUrl = useCallback((preview: typeof documentPreview) => {
     if (preview?.objectUrl) {
@@ -27488,12 +27512,23 @@ const PersonalEditPage: React.FC = () => {
     </section>
       </fieldset>
       <section className="personal-edit-section">
-        <h2>Historial de cambios</h2>
+        <div className="review-comments__header">
+          <h2>Historial de cambios</h2>
+          {historyEntries.length > 3 ? (
+            <button
+              type="button"
+              className="secondary-action secondary-action--ghost"
+              onClick={() => setShowAllHistory((prev) => !prev)}
+            >
+              {showAllHistory ? 'Mostrar menos' : 'Mostrar mas'}
+            </button>
+          ) : null}
+        </div>
         <div className="history-list">
           {historyEntries.length === 0 ? (
             <p>No hay historial disponible para este registro.</p>
           ) : (
-            historyEntries.map((entry) => (
+            (showAllHistory ? historyEntries : historyEntries.slice(0, 3)).map((entry) => (
               <div key={entry.id} className="history-entry">
                 <div className="history-entry__header">
                   <span className="history-entry__author">{entry.authorName ?? 'Sistema'}</span>
@@ -27539,7 +27574,7 @@ const PersonalEditPage: React.FC = () => {
         {Array.isArray(detail.comments) && detail.comments.length > 0 ? (
           <div className={`review-comments__body${detailChatOpen ? ' is-open' : ''}`}>
             <ul className="review-comment-list">
-              {detail.comments.map((comment) => (
+              {(detailChatOpen ? detail.comments : detail.comments.slice(0, 3)).map((comment) => (
                 <li key={comment.id} className="review-comment-item">
                   <div className="review-comment-header">
                     <span>{comment.userName ?? 'Usuario'}</span>
@@ -27674,7 +27709,7 @@ const PersonalEditPage: React.FC = () => {
         </div>
         {filteredDocuments.length > 0 ? (
           <ul className="document-status-list">
-            {filteredDocuments.map((doc) => {
+            {(showAllDocuments ? filteredDocuments : filteredDocuments.slice(0, 6)).map((doc) => {
               const fallbackPath = `/api/personal/${detail.id}/documentos/${doc.id}/descargar`;
               const resolvedUrl = resolveApiUrl(apiBaseUrl, doc.absoluteDownloadUrl ?? doc.downloadUrl ?? fallbackPath);
               const resolvedSourceUrl = doc.sourceDownloadUrl
@@ -27741,6 +27776,15 @@ const PersonalEditPage: React.FC = () => {
         ) : (
           <p className="form-info">No hay documentos para este filtro.</p>
         )}
+        {filteredDocuments.length > 6 ? (
+          <button
+            type="button"
+            className="secondary-action secondary-action--ghost"
+            onClick={() => setShowAllDocuments((prev) => !prev)}
+          >
+            {showAllDocuments ? 'Mostrar menos' : 'Mostrar mas'}
+          </button>
+        ) : null}
         <div className="form-grid">
           <label className="input-control">
             <span>Documento</span>

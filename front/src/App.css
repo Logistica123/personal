@@ -1381,6 +1381,16 @@ body {
   flex-direction: column;
   align-items: flex-end;
   line-height: 1.1;
+  gap: 0.25rem;
+}
+
+.time-tracker__stamp {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.1rem;
+  padding-bottom: 0.25rem;
+  border-bottom: 1px solid rgba(29, 116, 245, 0.15);
 }
 
 .time-tracker__clock {
@@ -1393,13 +1403,27 @@ body {
   color: #4da3ff;
 }
 
-.time-tracker__last {
+.time-tracker__date {
   font-size: 0.75rem;
   color: #516277;
 }
 
+[data-theme='dark'] .time-tracker__date {
+  color: var(--muted);
+}
+
+.time-tracker__last {
+  font-size: 0.75rem;
+  color: #516277;
+  text-align: right;
+}
+
 [data-theme='dark'] .time-tracker__last {
   color: var(--muted);
+}
+
+[data-theme='dark'] .time-tracker__stamp {
+  border-bottom-color: rgba(77, 163, 255, 0.25);
 }
 
 .time-tracker__actions {
@@ -1774,6 +1798,10 @@ tbody tr:nth-child(even) {
   background-color: #f9fbff;
 }
 
+tbody tr:hover {
+  background-color: #eaf2ff;
+}
+
 .table-wrapper td[colspan] {
   text-align: center;
   color: #516277;
@@ -1795,6 +1823,10 @@ tbody tr:nth-child(even) {
 
 [data-theme='dark'] tbody tr:nth-child(even) {
   background-color: #0b1120;
+}
+
+[data-theme='dark'] tbody tr:hover {
+  background-color: #162038;
 }
 
 [data-theme='dark'] th,

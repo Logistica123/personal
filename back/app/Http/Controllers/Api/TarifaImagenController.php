@@ -316,7 +316,9 @@ class TarifaImagenController extends Controller
     {
         $role = strtolower(trim((string) $request->user()?->role));
 
-        if ($role === '' || ! Str::contains($role, 'admin')) {
+        $canWrite = $role !== '' && (Str::contains($role, 'admin') || Str::contains($role, 'encargado'));
+
+        if (! $canWrite) {
             return response()->json(['message' => 'No autorizado.'], 403);
         }
 
