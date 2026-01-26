@@ -37,6 +37,11 @@ Route::middleware('auth.api')->group(function () {
     Route::post('/documentos/pagado', [PersonalDocumentController::class, 'updatePagadoBulk']);
     Route::put('/personal/{persona}/documentos/{documento}', [PersonalDocumentController::class, 'updateDocument']);
     Route::delete('/personal/{persona}/documentos/{documento}', [PersonalDocumentController::class, 'destroy']);
+    Route::get('/personal/{persona}/combustible', [PersonalController::class, 'combustible']);
+    Route::get('/personal/{persona}/combustible-reportes', [PersonalController::class, 'combustibleReports']);
+    Route::get('/personal/{persona}/combustible-proyeccion', [PersonalController::class, 'combustibleProjection']);
+    Route::get('/personal/{persona}/notificaciones', [PersonalController::class, 'personalNotifications']);
+    Route::post('/personal/{persona}/notificaciones/{notification}/read', [PersonalController::class, 'markPersonalNotificationRead']);
     Route::get('/personal/{persona}/documentos/{documento}/preview', [PersonalDocumentController::class, 'preview'])
         ->name('personal.documentos.preview');
     Route::get('/personal/{persona}/documentos/descargar-todos', [PersonalDocumentController::class, 'downloadAll'])
@@ -128,6 +133,29 @@ Route::middleware('auth.api')->group(function () {
     Route::delete('/tarifas/imagen/{tarifaImagen}', [TarifaImagenController::class, 'destroy']);
 
     Route::post('/facturas/validar', [\App\Http\Controllers\Api\FacturaAiController::class, 'validar']);
+    Route::post('/combustible/extractos/preview', [\App\Http\Controllers\Api\FuelExtractController::class, 'preview']);
+    Route::post('/combustible/extractos/process', [\App\Http\Controllers\Api\FuelExtractController::class, 'process']);
+    Route::get('/combustible/distribuidores', [\App\Http\Controllers\Api\FuelModuleController::class, 'distributors']);
+    Route::post('/combustible/distribuidores', [\App\Http\Controllers\Api\FuelModuleController::class, 'createDistributor']);
+    Route::get('/combustible/liquidaciones', [\App\Http\Controllers\Api\FuelModuleController::class, 'liquidaciones']);
+    Route::get('/combustible/pendientes', [\App\Http\Controllers\Api\FuelModuleController::class, 'pendientes']);
+    Route::get('/combustible/pendientes-distribuidor', [\App\Http\Controllers\Api\FuelModuleController::class, 'pendientesPorDistribuidor']);
+    Route::get('/combustible/tardias', [\App\Http\Controllers\Api\FuelModuleController::class, 'tardias']);
+    Route::post('/combustible/tardias/{movement}/requiere-ajuste', [\App\Http\Controllers\Api\FuelModuleController::class, 'requiereAjuste']);
+    Route::post('/combustible/pendientes/vincular', [\App\Http\Controllers\Api\FuelModuleController::class, 'vincularPendiente']);
+    Route::post('/combustible/pendientes/invalidar', [\App\Http\Controllers\Api\FuelModuleController::class, 'invalidarPendiente']);
+    Route::post('/combustible/pendientes/vincular-masivo', [\App\Http\Controllers\Api\FuelModuleController::class, 'vincularPendientesMasivo']);
+    Route::post('/combustible/pendientes/invalidar-masivo', [\App\Http\Controllers\Api\FuelModuleController::class, 'invalidarPendientesMasivo']);
+    Route::get('/combustible/consumos', [\App\Http\Controllers\Api\FuelModuleController::class, 'consumos']);
+    Route::delete('/combustible/movimientos', [\App\Http\Controllers\Api\FuelModuleController::class, 'deleteMovimientos']);
+    Route::post('/combustible/reportes/draft', [\App\Http\Controllers\Api\FuelReportController::class, 'draft']);
+    Route::get('/combustible/reportes/{report}', [\App\Http\Controllers\Api\FuelReportController::class, 'show']);
+    Route::post('/combustible/reportes/{report}/ajustes', [\App\Http\Controllers\Api\FuelReportController::class, 'addAdjustment']);
+    Route::post('/combustible/reportes/{report}/guardar', [\App\Http\Controllers\Api\FuelReportController::class, 'saveDraft']);
+    Route::post('/combustible/reportes/{report}/listo', [\App\Http\Controllers\Api\FuelReportController::class, 'markReady']);
+    Route::post('/combustible/reportes/{report}/aplicar', [\App\Http\Controllers\Api\FuelReportController::class, 'apply']);
+    Route::post('/combustible/cierre', [\App\Http\Controllers\Api\FuelReportController::class, 'closePeriod']);
+    Route::get('/combustible/reportes-globales', [\App\Http\Controllers\Api\FuelReportController::class, 'globalReports']);
 });
 
 Route::options('/{any}', fn () => response()->noContent())->where('any', '.*');

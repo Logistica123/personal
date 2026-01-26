@@ -51,7 +51,13 @@ class ApiTokenAuth
             return true;
         }
 
-        if (! $request->is('api/personal/*/liquidaciones')) {
+        if (! $request->is('api/personal/*/liquidaciones')
+            && ! $request->is('api/personal/*/combustible')
+            && ! $request->is('api/personal/*/combustible-reportes')
+            && ! $request->is('api/personal/*/combustible-proyeccion')
+            && ! $request->is('api/personal/*/notificaciones')
+            && ! $request->is('api/personal/*/documentos/*/descargar')
+            && ! $request->is('api/personal/*/documentos/*/preview')) {
             return false;
         }
 
@@ -71,7 +77,9 @@ class ApiTokenAuth
         }
 
         if (! $request->is('api/personal/*/documentos')) {
-            return false;
+            if (! $request->is('api/personal/*/notificaciones/*/read')) {
+                return false;
+            }
         }
 
         $email = $this->resolveRequestEmail($request);

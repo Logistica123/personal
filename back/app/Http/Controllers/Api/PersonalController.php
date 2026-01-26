@@ -16,6 +16,9 @@ use App\Models\PersonaComment;
 use App\Models\PersonaHistory;
 use App\Models\Archivo;
 use App\Models\Factura;
+use App\Models\FuelMovement;
+use App\Models\FuelReport;
+use App\Models\PersonalNotification;
 use App\Models\ContactReveal;
 use App\Services\AuditLogger;
 use Illuminate\Http\JsonResponse;
@@ -91,6 +94,238 @@ class PersonalController extends Controller
         ], 403));
     }
 
+    protected function normalizeDomain(?string $domain): ?string
+    {
+        if (! is_string($domain)) {
+            return null;
+        }
+
+        $normalized = strtoupper(trim($domain));
+        $normalized = preg_replace('/[\s\.\-]+/', '', $normalized);
+
+        return $normalized !== '' ? $normalized : null;
+    }
+
+    public function combustible(Request $request, Persona $persona): JsonResponse
+    {
+        $domain = $this->normalizeDomain($persona->patente);
+
+        if (! $domain) {
+            return response()->json([
+                'data' => [],
+                'totals' => [
+                    'movements' => 0,
+                    'liters' => 0,
+                    'amount' => 0,
+                ],
+                'domain' => null,
+                'message' => 'No hay patente asociada al distribuidor.',
+            ]);
+        }
+
+        $dateFrom = $request->query('date_from');
+        $dateTo = $request->query('date_to');
+        $product = $request->query('product');
+        $station = $request->query('station');
+        $onlyPending = $request->boolean('only_pending');
+        $onlyImputed = $request->boolean('only_imputed');
+
+        $query = FuelMovement::query()
+            ->where('domain_norm', $domain)
+            ->whereNotIn('status', ['DUPLICATE'])
+            ->orderByDesc('occurred_at');
+
+        if ($onlyPending) {
+            $query->where('discounted', false);
+        }
+
+        if ($onlyImputed) {
+            $query->whereIn('status', ['IMPUTED']);
+        }
+
+        if (is_string($dateFrom) && trim($dateFrom) !== '') {
+            $query->whereDate('occurred_at', '>=', trim($dateFrom));
+        }
+
+        if (is_string($dateTo) && trim($dateTo) !== '') {
+            $query->whereDate('occurred_at', '<=', trim($dateTo));
+        }
+
+        if (is_string($product) && trim($product) !== '') {
+            $query->where('product', 'like', '%' . trim($product) . '%');
+        }
+
+        if (is_string($station) && trim($station) !== '') {
+            $query->where('station', 'like', '%' . trim($station) . '%');
+        }
+
+        $rows = $query->limit(500)->get()->map(fn (FuelMovement $movement) => [
+            'id' => $movement->id,
+            'occurred_at' => $movement->occurred_at
+                ? $movement->occurred_at->timezone(config('app.timezone', 'America/Argentina/Buenos_Aires'))->toIso8601String()
+                : null,
+            'station' => $movement->station,
+            'locality' => $movement->locality,
+            'domain_norm' => $movement->domain_norm,
+            'product' => $movement->product,
+            'liters' => $movement->liters,
+            'amount' => $movement->amount,
+            'price_per_liter' => $movement->price_per_liter,
+            'status' => $movement->status,
+            'discounted' => (bool) $movement->discounted,
+        ]);
+
+        $totals = [
+            'movements' => $rows->count(),
+            'liters' => $rows->sum('liters'),
+            'amount' => $rows->sum('amount'),
+        ];
+
+        return response()->json([
+            'data' => $rows,
+            'totals' => $totals,
+            'domain' => $domain,
+        ]);
+    }
+
+    public function combustibleReports(Request $request, Persona $persona): JsonResponse
+    {
+        $domain = $this->normalizeDomain($persona->patente);
+
+        if (! $domain) {
+            return response()->json([
+                'data' => [],
+                'domain' => null,
+                'message' => 'No hay patente asociada al distribuidor.',
+            ]);
+        }
+
+        $dateFrom = $request->query('date_from');
+        $dateTo = $request->query('date_to');
+
+        $query = FuelReport::query()
+            ->where('status', 'APPLIED')
+            ->whereHas('items.movement', function ($movementQuery) use ($domain) {
+                $movementQuery->where('domain_norm', $domain);
+            })
+            ->orderByDesc('applied_at')
+            ->orderByDesc('id');
+
+        if (is_string($dateFrom) && trim($dateFrom) !== '') {
+            $query->whereDate('period_from', '>=', trim($dateFrom));
+        }
+
+        if (is_string($dateTo) && trim($dateTo) !== '') {
+            $query->whereDate('period_to', '<=', trim($dateTo));
+        }
+
+        $reports = $query->limit(200)->get()->map(fn (FuelReport $report) => [
+            'id' => $report->id,
+            'period_from' => $report->period_from,
+            'period_to' => $report->period_to,
+            'total_amount' => $report->total_amount,
+            'adjustments_total' => $report->adjustments_total,
+            'total_to_bill' => $report->total_to_bill,
+            'status' => $report->status,
+            'applied_at' => $report->applied_at
+                ? $report->applied_at->timezone(config('app.timezone', 'America/Argentina/Buenos_Aires'))->toIso8601String()
+                : null,
+            'liquidacion_id' => $report->liquidacion_id,
+        ]);
+
+        return response()->json([
+            'data' => $reports,
+            'domain' => $domain,
+        ]);
+    }
+
+    public function combustibleProjection(Request $request, Persona $persona): JsonResponse
+    {
+        $domain = $this->normalizeDomain($persona->patente);
+
+        if (! $domain) {
+            return response()->json([
+                'totals' => [
+                    'movements' => 0,
+                    'liters' => 0,
+                    'amount' => 0,
+                ],
+                'domain' => null,
+                'message' => 'No hay patente asociada al distribuidor.',
+            ]);
+        }
+
+        $dateFrom = $request->query('date_from');
+        $dateTo = $request->query('date_to');
+
+        $query = FuelMovement::query()
+            ->where('domain_norm', $domain)
+            ->where('discounted', false)
+            ->whereNotIn('status', ['DUPLICATE'])
+            ->orderByDesc('occurred_at');
+
+        if (is_string($dateFrom) && trim($dateFrom) !== '') {
+            $query->whereDate('occurred_at', '>=', trim($dateFrom));
+        }
+
+        if (is_string($dateTo) && trim($dateTo) !== '') {
+            $query->whereDate('occurred_at', '<=', trim($dateTo));
+        }
+
+        $rows = $query->limit(500)->get(['liters', 'amount']);
+        $totals = [
+            'movements' => $rows->count(),
+            'liters' => $rows->sum('liters'),
+            'amount' => $rows->sum('amount'),
+        ];
+
+        return response()->json([
+            'totals' => $totals,
+            'domain' => $domain,
+        ]);
+    }
+
+    public function personalNotifications(Request $request, Persona $persona): JsonResponse
+    {
+        $query = PersonalNotification::query()
+            ->where('persona_id', $persona->id)
+            ->orderByDesc('created_at');
+
+        $limit = (int) $request->query('limit', 50);
+        if ($limit <= 0 || $limit > 200) {
+            $limit = 50;
+        }
+
+        $notifications = $query->limit($limit)->get()->map(fn (PersonalNotification $notification) => [
+            'id' => $notification->id,
+            'type' => $notification->type,
+            'title' => $notification->title,
+            'message' => $notification->message,
+            'metadata' => $notification->metadata,
+            'readAt' => $notification->read_at?->toIso8601String(),
+            'createdAt' => $notification->created_at?->toIso8601String(),
+        ]);
+
+        return response()->json(['data' => $notifications]);
+    }
+
+    public function markPersonalNotificationRead(Request $request, Persona $persona, PersonalNotification $notification): JsonResponse
+    {
+        if ($notification->persona_id !== $persona->id) {
+            return response()->json(['message' => 'No autorizado.'], 403);
+        }
+
+        if (! $notification->read_at) {
+            $notification->read_at = Carbon::now();
+            $notification->save();
+        }
+
+        return response()->json([
+            'id' => $notification->id,
+            'readAt' => $notification->read_at?->toIso8601String(),
+        ]);
+    }
+
     public function index(Request $request): JsonResponse
     {
         $includePending = $request->boolean('includePending');
@@ -130,6 +365,7 @@ class PersonalController extends Controller
                             'nombre_original',
                             'tipo_archivo_id',
                             'fecha_vencimiento',
+                            'fortnight_key',
                             'created_at',
                             'importe_facturar',
                             'enviada',
@@ -191,9 +427,46 @@ class PersonalController extends Controller
             });
         }
 
-        $personas = $query
-            ->get()
-            ->map(fn (Persona $persona) => $this->transformPersonaListItem($persona))
+        $personas = $query->get();
+
+        $latestLiquidacionIds = $personas
+            ->map(fn (Persona $persona) => $persona->documentos?->first()?->id)
+            ->filter()
+            ->unique()
+            ->values();
+
+        $reportsByLiquidacion = collect();
+        if ($latestLiquidacionIds->isNotEmpty()) {
+            $reports = FuelReport::query()
+                ->whereIn('liquidacion_id', $latestLiquidacionIds)
+                ->orderByDesc('applied_at')
+                ->orderByDesc('id')
+                ->get();
+
+            $reportsByLiquidacion = $reports
+                ->groupBy('liquidacion_id')
+                ->map(fn ($group) => $group->first());
+        }
+
+        $personas = $personas
+            ->map(function (Persona $persona) use ($reportsByLiquidacion) {
+                $item = $this->transformPersonaListItem($persona);
+                $latestLiquidacionId = $persona->documentos?->first()?->id;
+                if ($latestLiquidacionId && $reportsByLiquidacion->has($latestLiquidacionId)) {
+                    $report = $reportsByLiquidacion->get($latestLiquidacionId);
+                    $item['combustibleResumen'] = [
+                        'reportId' => $report->id,
+                        'status' => $report->status,
+                        'totalAmount' => (float) $report->total_amount,
+                        'adjustmentsTotal' => (float) $report->adjustments_total,
+                        'totalToBill' => (float) $report->total_to_bill,
+                    ];
+                } else {
+                    $item['combustibleResumen'] = null;
+                }
+
+                return $item;
+            })
             ->values();
 
         return response()->json(['data' => $personas]);
@@ -1730,6 +2003,10 @@ class PersonalController extends Controller
 
     protected function determineFortnightKey(Archivo $document, Carbon $date): string
     {
+        if (in_array($document->fortnight_key ?? null, ['Q1', 'Q2'], true)) {
+            return $document->fortnight_key;
+        }
+
         if ($this->isMonthlyDocument($document)) {
             return 'MONTHLY';
         }

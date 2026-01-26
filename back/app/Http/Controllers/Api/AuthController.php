@@ -169,6 +169,7 @@ class AuthController extends Controller
                 'name' => $user->name,
                 'email' => $user->email,
                 'role' => $user->role,
+                'permissions' => $user->permissions ?? [],
                 'token' => $plainToken,
                 'totpEnabled' => (bool) $user->totp_secret,
             ],

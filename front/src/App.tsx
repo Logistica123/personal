@@ -141,6 +141,7 @@ type Usuario = {
   created_at: string | null;
   status?: string | null;
   role?: string | null;
+  permissions?: string[] | null;
 };
 type TarifaImagenItem = {
   id: number;
@@ -208,12 +209,19 @@ type AccessSection =
   | 'usuarios'
   | 'personal'
   | 'reclamos'
+  | 'ticketera'
+  | 'notificaciones'
   | 'control-horario'
   | 'liquidaciones'
   | 'pagos'
+  | 'combustible'
   | 'auditoria'
   | 'tarifas'
-  | 'ticketera';
+  | 'flujo-trabajo'
+  | 'aprobaciones'
+  | 'bases'
+  | 'documentos'
+  | 'configuracion';
 
 type TicketStatus =
   | 'pendiente_responsable'
@@ -479,6 +487,13 @@ type PersonalRecord = {
   liquidacionIdLatest?: number | null;
   liquidacionImporteFacturar?: number | null;
   liquidaciones?: LiquidacionSummary[] | null;
+  combustibleResumen?: {
+    reportId: number;
+    status: string;
+    totalAmount: number;
+    adjustmentsTotal: number;
+    totalToBill: number;
+  } | null;
   documentacionStatus?: 'sin_documentos' | 'vigente' | 'por_vencer' | 'vencido' | null;
   documentacionVencidos?: number | null;
   documentacionPorVencer?: number | null;
@@ -964,26 +979,64 @@ const USER_ROLE_OPTIONS: Array<{ value: UserRole; label: string }> = [
   { value: 'admin', label: 'Administrador' },
 ];
 
-const canAccessSection = (role: UserRole, section: AccessSection): boolean => {
+const USER_PERMISSION_OPTIONS: Array<{ value: AccessSection; label: string }> = [
+  { value: 'clientes', label: 'Gestión de clientes' },
+  { value: 'unidades', label: 'Gestión de unidades' },
+  { value: 'usuarios', label: 'Gestión de usuarios' },
+  { value: 'personal', label: 'Proveedores' },
+  { value: 'reclamos', label: 'Reclamos' },
+  { value: 'ticketera', label: 'Ticketera' },
+  { value: 'notificaciones', label: 'Notificaciones' },
+  { value: 'control-horario', label: 'Control horario' },
+  { value: 'auditoria', label: 'Auditoría' },
+  { value: 'flujo-trabajo', label: 'Flujo de trabajo' },
+  { value: 'aprobaciones', label: 'Aprobaciones/solicitudes' },
+  { value: 'liquidaciones', label: 'Liquidaciones' },
+  { value: 'pagos', label: 'Pago' },
+  { value: 'combustible', label: 'Combustible' },
+  { value: 'tarifas', label: 'Tarifas' },
+  { value: 'bases', label: 'Bases de distribución' },
+  { value: 'documentos', label: 'Documentos' },
+  { value: 'configuracion', label: 'Configuración' },
+];
+
+const canAccessSection = (
+  role: UserRole,
+  section: AccessSection,
+  permissions?: string[] | null
+): boolean => {
+  if (role === 'admin' || role === 'admin2') {
+    return true;
+  }
+
+  if (Array.isArray(permissions)) {
+    return permissions.includes(section);
+  }
+
   switch (section) {
     case 'usuarios':
-      return role === 'admin';
     case 'control-horario':
-      return role === 'admin';
     case 'liquidaciones':
-      return role === 'admin' || role === 'admin2';
     case 'pagos':
-      return role === 'admin' || role === 'admin2';
+    case 'combustible':
     case 'auditoria':
-      return role === 'admin';
+    case 'configuracion':
+      return false;
     case 'clientes':
     case 'unidades':
       return role !== 'operator' && role !== 'asesor';
     case 'reclamos':
       return true; // Todos los roles pueden crear/ver reclamos (incluido asesor)
     case 'personal':
-      return role === 'asesor' || role === 'encargado' || role === 'admin' || role === 'admin2';
+      return role === 'asesor' || role === 'encargado';
     case 'tarifas':
+      return true;
+    case 'ticketera':
+    case 'notificaciones':
+    case 'flujo-trabajo':
+    case 'aprobaciones':
+    case 'bases':
+    case 'documentos':
       return true;
     default:
       return true;
@@ -1143,6 +1196,7 @@ type AuthUser = {
   email: string | null;
   role?: string | null;
   token?: string | null;
+  permissions?: string[] | null;
 };
 
 const PERSONAL_EDITOR_EMAILS = [
@@ -2408,6 +2462,38 @@ const formatCurrency = (value: string | number | null | undefined): string => {
   return currencyFormatter.format(numeric);
 };
 
+const numberFormatter = new Intl.NumberFormat('es-AR', {
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+});
+
+const formatNumber = (value: string | number | null | undefined): string => {
+  if (value === null || value === undefined || value === '') {
+    return '—';
+  }
+  const numeric = typeof value === 'number' ? value : Number(String(value).replace(',', '.'));
+  if (Number.isNaN(numeric)) {
+    return '—';
+  }
+  return numberFormatter.format(numeric);
+};
+
+const formatDateTime = (value: string | null | undefined): string => {
+  if (!value) {
+    return '—';
+  }
+  const normalized = value.replace(' ', 'T');
+  const parsed = new Date(normalized);
+  if (Number.isNaN(parsed.getTime())) {
+    return value;
+  }
+  return parsed.toLocaleDateString('es-AR', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+  }) + ' ' + parsed.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+};
+
 const CELEBRATION_DISMISSED_STORAGE_KEY = 'celebrations:dismissed';
 let cachedDismissedCelebrations: number[] | null = null;
 
@@ -2606,6 +2692,7 @@ const LoginPage: React.FC = () => {
           name: string | null;
           email: string | null;
           role?: string | null;
+          permissions?: string[] | null;
           token?: string | null;
           totpEnabled?: boolean;
         };
@@ -2618,6 +2705,7 @@ const LoginPage: React.FC = () => {
         name: payload.data.name ?? null,
         email: payload.data.email ?? null,
         role: payload.data.role ?? null,
+        permissions: payload.data.permissions ?? null,
         token: payload.data.token ?? null,
       };
       storage.setItem(AUTH_STORAGE_KEY, JSON.stringify(authPayload));
@@ -2792,7 +2880,15 @@ const DashboardLayout: React.FC<{
   const location = useLocation();
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [personalSubmenuOpen, setPersonalSubmenuOpen] = useState(false);
+  const [liquidacionesSubmenuOpen, setLiquidacionesSubmenuOpen] = useState(false);
   const isPersonalListRoute = location.pathname === '/personal';
+  const isLiquidacionesGroupRoute =
+    location.pathname.startsWith('/liquidaciones') ||
+    location.pathname.startsWith('/pagos') ||
+    location.pathname.startsWith('/combustible');
+  const isLiquidacionesRoute = location.pathname.startsWith('/liquidaciones');
+  const isPagosRoute = location.pathname.startsWith('/pagos');
+  const isCombustibleRoute = location.pathname.startsWith('/combustible');
   const personalEstadoParam = useMemo(() => {
     if (!isPersonalListRoute) {
       return 'todos';
@@ -2800,6 +2896,13 @@ const DashboardLayout: React.FC<{
     const params = new URLSearchParams(location.search);
     return (params.get('estado') ?? 'todos').toLowerCase();
   }, [isPersonalListRoute, location.search]);
+  const canAccessLiquidacionesGroup = useMemo(
+    () =>
+      canAccessSection(userRole, 'liquidaciones', authUser?.permissions) ||
+      canAccessSection(userRole, 'pagos', authUser?.permissions) ||
+      canAccessSection(userRole, 'combustible', authUser?.permissions),
+    [userRole, authUser?.permissions]
+  );
   const toggleSidebarVisibility = useCallback(() => {
     setIsSidebarOpen((prev) => !prev);
   }, []);
@@ -2814,6 +2917,11 @@ const DashboardLayout: React.FC<{
       setPersonalSubmenuOpen(false);
     }
   }, [location.pathname]);
+  useEffect(() => {
+    if (!isLiquidacionesGroupRoute) {
+      setLiquidacionesSubmenuOpen(false);
+    }
+  }, [isLiquidacionesGroupRoute]);
   useEffect(() => {
     setAuthUser(readAuthUserFromStorage());
   }, []);
@@ -3528,7 +3636,7 @@ const DashboardLayout: React.FC<{
   }, [currentUserKey]);
 
   useEffect(() => {
-    if (!authUser?.id || authUser?.role) {
+    if (!authUser?.id || (authUser?.role && authUser.permissions !== undefined)) {
       return;
     }
 
@@ -3543,14 +3651,20 @@ const DashboardLayout: React.FC<{
           return;
         }
         const payload = (await response.json()) as {
-          data?: { role?: string | null; name?: string | null; email?: string | null };
+          data?: {
+            role?: string | null;
+            name?: string | null;
+            email?: string | null;
+            permissions?: string[] | null;
+          };
         };
-        if (payload?.data?.role) {
+        if (payload?.data?.role || payload?.data?.permissions) {
           const updated: AuthUser = {
             id: authUser.id,
             name: payload.data.name ?? authUser.name ?? null,
             email: payload.data.email ?? authUser.email ?? null,
             role: payload.data.role,
+            permissions: payload.data.permissions ?? authUser.permissions ?? null,
             token: authUser.token ?? null,
           };
           setAuthUser(updated);
@@ -3840,22 +3954,22 @@ const DashboardLayout: React.FC<{
 
         <nav className="sidebar-nav" onClick={closeSidebar}>
           <span className="sidebar-title">Acciones</span>
-          {canAccessSection(userRole, 'clientes') ? (
+          {canAccessSection(userRole, 'clientes', authUser?.permissions) ? (
             <NavLink to="/clientes" className={({ isActive }) => `sidebar-link${isActive ? ' is-active' : ''}`}>
               Gestión de clientes
             </NavLink>
           ) : null}
-          {canAccessSection(userRole, 'unidades') ? (
+          {canAccessSection(userRole, 'unidades', authUser?.permissions) ? (
             <NavLink to="/unidades" className={({ isActive }) => `sidebar-link${isActive ? ' is-active' : ''}`}>
               Gestión de unidades
             </NavLink>
           ) : null}
-          {canAccessSection(userRole, 'usuarios') ? (
+          {canAccessSection(userRole, 'usuarios', authUser?.permissions) ? (
             <NavLink to="/usuarios" className={({ isActive }) => `sidebar-link${isActive ? ' is-active' : ''}`}>
               Gestión de usuarios
             </NavLink>
           ) : null}
-          {canAccessSection(userRole, 'personal') ? (
+          {canAccessSection(userRole, 'personal', authUser?.permissions) ? (
             <>
               <NavLink
                 to="/personal"
@@ -3897,58 +4011,109 @@ const DashboardLayout: React.FC<{
               ) : null}
             </>
           ) : null}
-          {canAccessSection(userRole, 'reclamos') ? (
+          {canAccessSection(userRole, 'reclamos', authUser?.permissions) ? (
             <NavLink to="/reclamos" className={({ isActive }) => `sidebar-link${isActive ? ' is-active' : ''}`}>
               Reclamos
             </NavLink>
           ) : null}
-          <NavLink to="/ticketera" className={({ isActive }) => `sidebar-link${isActive ? ' is-active' : ''}`}>
-            Ticketera
-          </NavLink>
-          <NavLink to="/notificaciones" className={({ isActive }) => `sidebar-link${isActive ? ' is-active' : ''}`}>
-            Notificaciones
-          </NavLink>
-          {canAccessSection(userRole, 'control-horario') ? (
+          {canAccessSection(userRole, 'ticketera', authUser?.permissions) ? (
+            <NavLink to="/ticketera" className={({ isActive }) => `sidebar-link${isActive ? ' is-active' : ''}`}>
+              Ticketera
+            </NavLink>
+          ) : null}
+          {canAccessSection(userRole, 'notificaciones', authUser?.permissions) ? (
+            <NavLink to="/notificaciones" className={({ isActive }) => `sidebar-link${isActive ? ' is-active' : ''}`}>
+              Notificaciones
+            </NavLink>
+          ) : null}
+          {canAccessSection(userRole, 'control-horario', authUser?.permissions) ? (
             <NavLink to="/control-horario" className={({ isActive }) => `sidebar-link${isActive ? ' is-active' : ''}`}>
               Control horario
             </NavLink>
           ) : null}
-          {canAccessSection(userRole, 'auditoria') ? (
+          {canAccessSection(userRole, 'auditoria', authUser?.permissions) ? (
             <NavLink to="/auditoria" className={({ isActive }) => `sidebar-link${isActive ? ' is-active' : ''}`}>
               Auditoría
             </NavLink>
           ) : null}
-          <NavLink to="/flujo-trabajo" className={({ isActive }) => `sidebar-link${isActive ? ' is-active' : ''}`}>
-            Flujo de trabajo
-          </NavLink>
-          <NavLink to="/aprobaciones" className={({ isActive }) => `sidebar-link${isActive ? ' is-active' : ''}`}>
-            Aprobaciones/solicitudes
-          </NavLink>
-          {canAccessSection(userRole, 'liquidaciones') ? (
-            <NavLink to="/liquidaciones" className={({ isActive }) => `sidebar-link${isActive ? ' is-active' : ''}`}>
-              Liquidaciones
+          {canAccessSection(userRole, 'flujo-trabajo', authUser?.permissions) ? (
+            <NavLink to="/flujo-trabajo" className={({ isActive }) => `sidebar-link${isActive ? ' is-active' : ''}`}>
+              Flujo de trabajo
             </NavLink>
           ) : null}
-          {canAccessSection(userRole, 'pagos') ? (
-            <NavLink to="/pagos" className={({ isActive }) => `sidebar-link${isActive ? ' is-active' : ''}`}>
-              Pago
+          {canAccessSection(userRole, 'aprobaciones', authUser?.permissions) ? (
+            <NavLink to="/aprobaciones" className={({ isActive }) => `sidebar-link${isActive ? ' is-active' : ''}`}>
+              Aprobaciones/solicitudes
             </NavLink>
           ) : null}
-          <NavLink to="/tarifas" className={({ isActive }) => `sidebar-link${isActive ? ' is-active' : ''}`}>
-            Tarifas
-          </NavLink>
-          <NavLink
-            to="/bases-distribucion"
-            className={({ isActive }) => `sidebar-link${isActive ? ' is-active' : ''}`}
-          >
-            Bases de Distribución
-          </NavLink>
+          {canAccessLiquidacionesGroup ? (
+            <>
+              <button
+                type="button"
+                className={`sidebar-link${isLiquidacionesGroupRoute ? ' is-active' : ''}`}
+                onClick={() => {
+                  setLiquidacionesSubmenuOpen((prev) => !prev);
+                  if (!isLiquidacionesGroupRoute) {
+                    navigate('/liquidaciones');
+                  }
+                }}
+              >
+                Liquidaciones/Pagos
+              </button>
+              {liquidacionesSubmenuOpen ? (
+                <div className="sidebar-submenu">
+                  {canAccessSection(userRole, 'liquidaciones', authUser?.permissions) ? (
+                    <button
+                      type="button"
+                      className={`sidebar-sublink${isLiquidacionesRoute ? ' is-active' : ''}`}
+                      onClick={() => navigate('/liquidaciones')}
+                    >
+                      Liquidaciones
+                    </button>
+                  ) : null}
+                  {canAccessSection(userRole, 'pagos', authUser?.permissions) ? (
+                    <button
+                      type="button"
+                      className={`sidebar-sublink${isPagosRoute ? ' is-active' : ''}`}
+                      onClick={() => navigate('/pagos')}
+                    >
+                      Pagos
+                    </button>
+                  ) : null}
+                  {canAccessSection(userRole, 'combustible', authUser?.permissions) ? (
+                    <button
+                      type="button"
+                      className={`sidebar-sublink${isCombustibleRoute ? ' is-active' : ''}`}
+                      onClick={() => navigate('/combustible')}
+                    >
+                      Combustible
+                    </button>
+                  ) : null}
+                </div>
+              ) : null}
+            </>
+          ) : null}
+          {canAccessSection(userRole, 'tarifas', authUser?.permissions) ? (
+            <NavLink to="/tarifas" className={({ isActive }) => `sidebar-link${isActive ? ' is-active' : ''}`}>
+              Tarifas
+            </NavLink>
+          ) : null}
+          {canAccessSection(userRole, 'bases', authUser?.permissions) ? (
+            <NavLink
+              to="/bases-distribucion"
+              className={({ isActive }) => `sidebar-link${isActive ? ' is-active' : ''}`}
+            >
+              Bases de Distribución
+            </NavLink>
+          ) : null}
 
           <span className="sidebar-title">Sistema</span>
-          <NavLink to="/documentos" className={({ isActive }) => `sidebar-link${isActive ? ' is-active' : ''}`}>
-            Documentos
-          </NavLink>
-          {userRole === 'admin' ? (
+          {canAccessSection(userRole, 'documentos', authUser?.permissions) ? (
+            <NavLink to="/documentos" className={({ isActive }) => `sidebar-link${isActive ? ' is-active' : ''}`}>
+              Documentos
+            </NavLink>
+          ) : null}
+          {canAccessSection(userRole, 'configuracion', authUser?.permissions) ? (
             <NavLink to="/configuracion" className={({ isActive }) => `sidebar-link${isActive ? ' is-active' : ''}`}>
               Configuración
             </NavLink>
@@ -12900,6 +13065,3076 @@ const PersonalPage: React.FC = () => {
   );
 };
 
+const CombustibleTabs: React.FC = () => (
+  <div className="card-header">
+    <div className="approvals-tabs">
+      <NavLink to="/combustible" end className={({ isActive }) => `approvals-tab${isActive ? ' is-active' : ''}`}>
+        Carga de extracto
+      </NavLink>
+      <NavLink
+        to="/combustible/pendientes"
+        className={({ isActive }) => `approvals-tab${isActive ? ' is-active' : ''}`}
+      >
+        Pendientes
+      </NavLink>
+      <NavLink
+        to="/combustible/distribuidor"
+        className={({ isActive }) => `approvals-tab${isActive ? ' is-active' : ''}`}
+      >
+        Distribuidor
+      </NavLink>
+      <NavLink
+        to="/combustible/informe"
+        className={({ isActive }) => `approvals-tab${isActive ? ' is-active' : ''}`}
+      >
+        Informe
+      </NavLink>
+      <NavLink
+        to="/combustible/tardias"
+        className={({ isActive }) => `approvals-tab${isActive ? ' is-active' : ''}`}
+      >
+        Tardías
+      </NavLink>
+      <NavLink
+        to="/combustible/reportes"
+        className={({ isActive }) => `approvals-tab${isActive ? ' is-active' : ''}`}
+      >
+        Reportes
+      </NavLink>
+    </div>
+  </div>
+);
+
+const CombustibleCargaPage: React.FC = () => {
+  const apiBaseUrl = useMemo(() => resolveApiBaseUrl(), []);
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [previewColumns, setPreviewColumns] = useState<string[]>([]);
+  const [previewRows, setPreviewRows] = useState<Array<string[]>>([]);
+  const [previewMeta, setPreviewMeta] = useState<{ rowCount: number; previewCount: number } | null>(null);
+  const [previewUnmappedColumns, setPreviewUnmappedColumns] = useState<string[]>([]);
+  const [previewMapped, setPreviewMapped] = useState(false);
+  const [previewStats, setPreviewStats] = useState<{
+    previewTotal: number;
+    valid: number;
+    observed: number;
+    duplicates: number;
+  } | null>(null);
+  const [previewError, setPreviewError] = useState<string | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [processLoading, setProcessLoading] = useState(false);
+  const [processMessage, setProcessMessage] = useState<string | null>(null);
+  const [closeYear, setCloseYear] = useState(() => new Date().getFullYear());
+  const [closeMonth, setCloseMonth] = useState(() => new Date().getMonth() + 1);
+  const [closePeriod, setClosePeriod] = useState<'Q1' | 'Q2' | 'MONTH'>('Q1');
+  const [closeLoading, setCloseLoading] = useState(false);
+  const [closeMessage, setCloseMessage] = useState<string | null>(null);
+  const [processError, setProcessError] = useState<string | null>(null);
+  const [deleteLoading, setDeleteLoading] = useState(false);
+  const [provider, setProvider] = useState('');
+  const [format, setFormat] = useState('');
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
+  const [autoAssignConductor, setAutoAssignConductor] = useState(true);
+
+  const handleFilePicker = () => {
+    fileInputRef.current?.click();
+  };
+
+  const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0] ?? null;
+    setSelectedFile(file);
+    setPreviewColumns([]);
+    setPreviewRows([]);
+    setPreviewMeta(null);
+    setPreviewUnmappedColumns([]);
+    setPreviewMapped(false);
+    setPreviewStats(null);
+    setPreviewError(null);
+    setProcessMessage(null);
+    setProcessError(null);
+  };
+
+  const handleClearFile = () => {
+    setSelectedFile(null);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+    setPreviewColumns([]);
+    setPreviewRows([]);
+    setPreviewMeta(null);
+    setPreviewUnmappedColumns([]);
+    setPreviewMapped(false);
+    setPreviewStats(null);
+    setPreviewError(null);
+    setProcessMessage(null);
+    setProcessError(null);
+  };
+
+  const handlePreview = async () => {
+    if (!selectedFile) {
+      setPreviewError('Selecciona un archivo para validar.');
+      return;
+    }
+
+    const endpoint = withAuthToken(`${apiBaseUrl}/api/combustible/extractos/preview?debug=1`);
+    if (!endpoint) {
+      setPreviewError('No se pudo resolver el endpoint.');
+      return;
+    }
+
+    setPreviewLoading(true);
+    setPreviewError(null);
+    setPreviewColumns([]);
+    setPreviewRows([]);
+    setPreviewMeta(null);
+    setPreviewUnmappedColumns([]);
+    setPreviewMapped(false);
+    setPreviewStats(null);
+
+    try {
+      const formData = new FormData();
+      formData.append('file', selectedFile);
+      formData.append('provider', provider);
+      formData.append('format', format);
+      formData.append('date_from', dateFrom);
+      formData.append('date_to', dateTo);
+      formData.append('auto_assign_conductor', autoAssignConductor ? '1' : '0');
+
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        body: formData,
+        credentials: 'include',
+      });
+
+      if (!response.ok) {
+        const payload = await parseJsonSafe(response).catch(() => null);
+        const message =
+          (payload && typeof payload.message === 'string' && payload.message) ||
+          `Error al validar (${response.status}).`;
+        throw new Error(message);
+      }
+
+      const payload = await parseJsonSafe(response);
+      setPreviewColumns(Array.isArray(payload.columns) ? payload.columns : []);
+      setPreviewRows(Array.isArray(payload.rows) ? payload.rows : []);
+      if (typeof payload.rowCount === 'number' && typeof payload.previewCount === 'number') {
+        setPreviewMeta({ rowCount: payload.rowCount, previewCount: payload.previewCount });
+      }
+      setPreviewUnmappedColumns(Array.isArray(payload.unmappedColumns) ? payload.unmappedColumns : []);
+      setPreviewMapped(Boolean(payload.mapped));
+      if (payload.stats && typeof payload.stats === 'object') {
+        setPreviewStats({
+          previewTotal: Number(payload.stats.previewTotal) || 0,
+          valid: Number(payload.stats.valid) || 0,
+          observed: Number(payload.stats.observed) || 0,
+          duplicates: Number(payload.stats.duplicates) || 0,
+        });
+      }
+      if (payload.mapped === false) {
+        const headerRow = Array.isArray(payload?.debug?.headerRow) ? payload.debug.headerRow : null;
+        const sample = Array.isArray(payload?.debug?.sampleRows) ? payload.debug.sampleRows[0] : null;
+        const sheetInfo = Array.isArray(payload?.debug?.sheets) ? payload.debug.sheets : null;
+        const sheetHint = sheetInfo
+          ? `Sheets: ${sheetInfo
+              .map((sheet: { sheet: string; name?: string; headerScore: number; maxColumns: number }) =>
+                `${sheet.name ?? sheet.sheet} (${sheet.sheet}, score ${sheet.headerScore}, cols ${sheet.maxColumns})`
+              )
+              .join(' | ')}`
+          : '';
+        const hint = headerRow
+          ? `Encabezados detectados: ${headerRow.filter(Boolean).slice(0, 8).join(' | ')}`
+          : sample
+            ? `Primera fila detectada: ${sample.filter(Boolean).slice(0, 8).join(' | ')}`
+            : '';
+        setPreviewError(['No se pudieron mapear columnas al formato general.', hint, sheetHint].filter(Boolean).join(' '));
+      }
+    } catch (error) {
+      setPreviewError(error instanceof Error ? error.message : 'No se pudo validar el archivo.');
+    } finally {
+      setPreviewLoading(false);
+    }
+  };
+
+  const handleProcess = async () => {
+    if (!selectedFile) {
+      setProcessError('Selecciona un archivo para procesar.');
+      return;
+    }
+
+    const endpoint = withAuthToken(`${apiBaseUrl}/api/combustible/extractos/process`);
+    if (!endpoint) {
+      setProcessError('No se pudo resolver el endpoint.');
+      return;
+    }
+
+    setProcessLoading(true);
+    setProcessError(null);
+    setProcessMessage(null);
+
+    try {
+      const formData = new FormData();
+      formData.append('file', selectedFile);
+      formData.append('provider', provider);
+      formData.append('format', format);
+      formData.append('date_from', dateFrom);
+      formData.append('date_to', dateTo);
+
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        body: formData,
+        credentials: 'include',
+      });
+
+      if (!response.ok) {
+        const payload = await parseJsonSafe(response).catch(() => null);
+        const message =
+          (payload && typeof payload.message === 'string' && payload.message) ||
+          `Error al procesar (${response.status}).`;
+        throw new Error(message);
+      }
+
+      const payload = await parseJsonSafe(response);
+      const summary = [
+        typeof payload.inserted === 'number' ? `Insertadas: ${payload.inserted}` : null,
+        typeof payload.observed === 'number' ? `Observadas: ${payload.observed}` : null,
+        typeof payload.duplicates === 'number' ? `Duplicadas: ${payload.duplicates}` : null,
+      ]
+        .filter(Boolean)
+        .join(' · ');
+      setProcessMessage(summary || 'Extracto procesado.');
+    } catch (error) {
+      setProcessError(error instanceof Error ? error.message : 'No se pudo procesar el archivo.');
+    } finally {
+      setProcessLoading(false);
+    }
+  };
+
+  const handleDeleteSourceFile = async () => {
+    if (!selectedFile) {
+      setProcessError('Selecciona un archivo para limpiar.');
+      return;
+    }
+
+    const endpoint = withAuthToken(`${apiBaseUrl}/api/combustible/movimientos`);
+    if (!endpoint) {
+      setProcessError('No se pudo resolver el endpoint.');
+      return;
+    }
+
+    setDeleteLoading(true);
+    setProcessError(null);
+    setProcessMessage(null);
+
+    try {
+      const response = await fetch(endpoint, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ source_file: selectedFile.name }),
+      });
+      if (!response.ok) {
+        const payload = await parseJsonSafe(response).catch(() => null);
+        throw new Error(payload?.message ?? 'No se pudo limpiar el archivo.');
+      }
+      const payload = await parseJsonSafe(response);
+      setProcessMessage(`Movimientos eliminados: ${payload.deleted ?? 0}.`);
+    } catch (error) {
+      setProcessError(error instanceof Error ? error.message : 'No se pudo limpiar el archivo.');
+    } finally {
+      setDeleteLoading(false);
+    }
+  };
+
+  const handleClosePeriod = async () => {
+    setCloseLoading(true);
+    setCloseMessage(null);
+    try {
+      const response = await fetch(`${apiBaseUrl}/api/combustible/cierre`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({
+          year: Number(closeYear),
+          month: Number(closeMonth),
+          period: closePeriod,
+        }),
+      });
+      if (!response.ok) {
+        const payload = await parseJsonSafe(response).catch(() => null);
+        throw new Error(payload?.message ?? 'No se pudo cerrar el período.');
+      }
+      const payload = await parseJsonSafe(response);
+      setCloseMessage(
+        `Generados: ${payload?.created?.length ?? 0} · Omitidos: ${payload?.skipped?.length ?? 0}`
+      );
+    } catch (error) {
+      setCloseMessage(error instanceof Error ? error.message : 'No se pudo cerrar el período.');
+    } finally {
+      setCloseLoading(false);
+    }
+  };
+
+  return (
+    <DashboardLayout title="Combustible" subtitle="Carga de extracto" headerContent={<CombustibleTabs />}>
+      <section className="dashboard-card">
+        <header className="card-header">
+          <div>
+            <h3>Carga de extracto (Excel)</h3>
+            <p className="section-helper">Importa el archivo, valida los datos y genera el log de resultados.</p>
+          </div>
+        </header>
+        <div className="card-body">
+          <div className="form-grid">
+            <label className="input-control">
+              <span>Proveedor / Red</span>
+              <select value={provider} onChange={(event) => setProvider(event.target.value)}>
+                <option value="">Seleccionar</option>
+                <option value="ypf">YPF</option>
+                <option value="axion">Axion</option>
+                <option value="shell">Shell</option>
+                <option value="puma">Puma</option>
+              </select>
+            </label>
+            <label className="input-control">
+              <span>Formato de archivo</span>
+              <select value={format} onChange={(event) => setFormat(event.target.value)}>
+                <option value="">Seleccionar</option>
+                <option value="default">Formato general</option>
+                <option value="custom">Formato personalizado</option>
+              </select>
+            </label>
+            <label className="input-control">
+              <span>Período desde</span>
+              <input type="date" value={dateFrom} onChange={(event) => setDateFrom(event.target.value)} />
+            </label>
+            <label className="input-control">
+              <span>Período hasta</span>
+              <input type="date" value={dateTo} onChange={(event) => setDateTo(event.target.value)} />
+            </label>
+          </div>
+          <label className="checkbox-control">
+            <input
+              type="checkbox"
+              checked={autoAssignConductor}
+              onChange={(event) => setAutoAssignConductor(event.target.checked)}
+            />
+            Auto-asignar por conductor
+          </label>
+
+          <div className="file-dropzone">
+            <span className="file-dropzone__icon" aria-hidden="true">
+              ⛽
+            </span>
+            <p className="file-dropzone__text">Arrastra y suelta el Excel aquí o selecciona desde tu equipo.</p>
+            {selectedFile ? (
+              <span className="file-dropzone__filename">{selectedFile.name}</span>
+            ) : (
+              <span className="file-dropzone__hint">Formatos soportados: .xlsx, .csv</span>
+            )}
+            <div className="file-dropzone__actions">
+              <button type="button" className="primary-action" onClick={handleFilePicker}>
+                Seleccionar archivo
+              </button>
+              {selectedFile ? (
+                <button type="button" className="secondary-action secondary-action--ghost" onClick={handleClearFile}>
+                  Quitar archivo
+                </button>
+              ) : null}
+            </div>
+            <input ref={fileInputRef} type="file" accept=".xlsx,.csv" onChange={handleFileChange} hidden />
+          </div>
+
+          <div className="transportista-actions">
+            <button type="button" className="secondary-action" onClick={handlePreview} disabled={previewLoading}>
+              {previewLoading ? 'Validando...' : 'Validar'}
+            </button>
+            <button
+              type="button"
+              className="primary-action"
+              disabled={!previewRows.length || processLoading}
+              onClick={handleProcess}
+            >
+              {processLoading ? 'Procesando...' : 'Procesar'}
+            </button>
+            <button
+              type="button"
+              className="secondary-action secondary-action--ghost"
+              onClick={handleDeleteSourceFile}
+              disabled={deleteLoading}
+            >
+              {deleteLoading ? 'Limpiando...' : 'Limpiar archivo'}
+            </button>
+            <button type="button" className="secondary-action secondary-action--ghost">
+              Descargar log
+            </button>
+            <small>Vista previa: se mostrarán hasta 20 filas.</small>
+          </div>
+          {previewError ? <p className="form-info form-info--error">{previewError}</p> : null}
+          {processError ? <p className="form-info form-info--error">{processError}</p> : null}
+          {processMessage ? <p className="form-info form-info--success">{processMessage}</p> : null}
+        </div>
+      </section>
+
+      <section className="dashboard-card">
+        <header className="card-header">
+          <div>
+            <h3>Cierre de período</h3>
+            <p className="section-helper">Genera informes sugeridos para la quincena o mes.</p>
+          </div>
+        </header>
+        <div className="card-body">
+          <div className="form-grid">
+            <label className="input-control">
+              <span>Año</span>
+              <input
+                type="number"
+                value={closeYear}
+                onChange={(event) => setCloseYear(Number(event.target.value))}
+              />
+            </label>
+            <label className="input-control">
+              <span>Mes</span>
+              <input
+                type="number"
+                min={1}
+                max={12}
+                value={closeMonth}
+                onChange={(event) => setCloseMonth(Number(event.target.value))}
+              />
+            </label>
+            <label className="input-control">
+              <span>Período</span>
+              <select value={closePeriod} onChange={(event) => setClosePeriod(event.target.value as 'Q1' | 'Q2' | 'MONTH')}>
+                <option value="Q1">Primera quincena</option>
+                <option value="Q2">Segunda quincena</option>
+                <option value="MONTH">Mes completo</option>
+              </select>
+            </label>
+          </div>
+          <div className="filters-actions">
+            <button type="button" className="secondary-action" onClick={handleClosePeriod} disabled={closeLoading}>
+              {closeLoading ? 'Procesando…' : 'Cerrar período'}
+            </button>
+            {closeMessage ? <span className="helper-text">{closeMessage}</span> : null}
+          </div>
+        </div>
+      </section>
+
+      <section className="dashboard-card">
+        <header className="card-header">
+          <div>
+            <h3>Preview del extracto</h3>
+            {previewMeta ? (
+              <p className="section-helper">
+                Filas detectadas: {previewMeta.rowCount} · Mostradas: {previewMeta.previewCount}
+              </p>
+            ) : null}
+            {previewStats ? (
+              <p className="section-helper">
+                Válidas: {previewStats.valid} · Observadas: {previewStats.observed} · Duplicadas: {previewStats.duplicates}
+              </p>
+            ) : null}
+            {previewMapped && previewUnmappedColumns.length > 0 ? (
+              <p className="section-helper">Columnas sin mapear: {previewUnmappedColumns.join(', ')}</p>
+            ) : null}
+          </div>
+        </header>
+        <div className="table-wrapper">
+          <table>
+            <thead>
+              <tr>
+                {previewColumns.length > 0 ? (
+                  previewColumns.map((column, index) => <th key={`${column}-${index}`}>{column || `Columna ${index + 1}`}</th>)
+                ) : (
+                  <>
+                    <th>Fecha</th>
+                    <th>Estación</th>
+                    <th>Dominio</th>
+                    <th>Producto</th>
+                    <th>Litros</th>
+                    <th>Importe</th>
+                    <th>Estado</th>
+                  </>
+                )}
+              </tr>
+            </thead>
+            <tbody>
+              {previewRows.length > 0 ? (
+                previewRows.map((row, rowIndex) => (
+                  <tr key={`preview-row-${rowIndex}`}>
+                    {row.map((value, cellIndex) => (
+                      <td key={`preview-cell-${rowIndex}-${cellIndex}`}>{value || '—'}</td>
+                    ))}
+                  </tr>
+                ))
+              ) : (
+                <tr>
+                  <td colSpan={previewColumns.length > 0 ? previewColumns.length : 7}>Sin datos para mostrar.</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </DashboardLayout>
+  );
+};
+
+const CombustiblePendientesPage: React.FC = () => {
+  const apiBaseUrl = useMemo(() => resolveApiBaseUrl(), []);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [rows, setRows] = useState<
+    Array<{
+      domain_norm: string;
+      movements: number;
+      amount: number;
+      first_date: string | null;
+      last_date: string | null;
+      days_pending: number | null;
+    }>
+  >([]);
+  const [totals, setTotals] = useState<{ domains: number; movements: number; amount: number } | null>(null);
+  const [rowsByDistributor, setRowsByDistributor] = useState<
+    Array<{
+      distributor_id: number;
+      distributor_name: string | null;
+      distributor_code: string | null;
+      movements: number;
+      amount: number;
+      last_date: string | null;
+    }>
+  >([]);
+  const [totalsByDistributor, setTotalsByDistributor] = useState<{
+    distributors: number;
+    movements: number;
+    amount: number;
+  } | null>(null);
+  const [distributors, setDistributors] = useState<Array<{ id: number; name: string; code?: string | null }>>([]);
+  const [selectedDistributor, setSelectedDistributor] = useState<Record<string, string>>({});
+  const [bulkDistributorId, setBulkDistributorId] = useState('');
+  const [selectedDomains, setSelectedDomains] = useState<Set<string>>(new Set());
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [actionMessage, setActionMessage] = useState<string | null>(null);
+  const [newDistributorName, setNewDistributorName] = useState('');
+  const [newDistributorCode, setNewDistributorCode] = useState('');
+
+  const fetchPendientes = useCallback(
+    async (query?: string) => {
+      setLoading(true);
+      setError(null);
+      try {
+        const url = new URL(`${apiBaseUrl}/api/combustible/pendientes`);
+        if (query) {
+          url.searchParams.set('search', query);
+        }
+        const response = await fetch(url.toString(), { credentials: 'include' });
+        if (!response.ok) {
+          throw new Error(`No se pudieron cargar los pendientes (${response.status}).`);
+        }
+        const payload = await parseJsonSafe(response);
+        setRows(Array.isArray(payload.data) ? payload.data : []);
+        if (payload.totals && typeof payload.totals === 'object') {
+          setTotals({
+            domains: Number(payload.totals.domains) || 0,
+            movements: Number(payload.totals.movements) || 0,
+            amount: Number(payload.totals.amount) || 0,
+          });
+        } else {
+          setTotals(null);
+        }
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'No se pudieron cargar los pendientes.');
+        setRows([]);
+        setTotals(null);
+        setSelectedDomains(new Set());
+      } finally {
+        setLoading(false);
+      }
+    },
+    [apiBaseUrl]
+  );
+
+  const fetchPendientesDistribuidor = useCallback(
+    async (query?: string) => {
+      try {
+        const url = new URL(`${apiBaseUrl}/api/combustible/pendientes-distribuidor`);
+        if (query) {
+          url.searchParams.set('search', query);
+        }
+        const response = await fetch(url.toString(), { credentials: 'include' });
+        if (!response.ok) {
+          throw new Error(`No se pudieron cargar pendientes por distribuidor (${response.status}).`);
+        }
+        const payload = await parseJsonSafe(response);
+        setRowsByDistributor(Array.isArray(payload.data) ? payload.data : []);
+        if (payload.totals && typeof payload.totals === 'object') {
+          setTotalsByDistributor({
+            distributors: Number(payload.totals.distributors) || 0,
+            movements: Number(payload.totals.movements) || 0,
+            amount: Number(payload.totals.amount) || 0,
+          });
+        } else {
+          setTotalsByDistributor(null);
+        }
+      } catch {
+        setRowsByDistributor([]);
+        setTotalsByDistributor(null);
+      }
+    },
+    [apiBaseUrl]
+  );
+
+  useEffect(() => {
+    fetchPendientes('');
+    fetchPendientesDistribuidor('');
+  }, [fetchPendientes, fetchPendientesDistribuidor]);
+
+  useEffect(() => {
+    const loadDistributors = async () => {
+      try {
+        const response = await fetch(`${apiBaseUrl}/api/combustible/distribuidores`, { credentials: 'include' });
+        if (!response.ok) {
+          throw new Error('No se pudieron cargar los distribuidores.');
+        }
+        const payload = await parseJsonSafe(response);
+        setDistributors(Array.isArray(payload.data) ? payload.data : []);
+      } catch {
+        setDistributors([]);
+      }
+    };
+    loadDistributors();
+  }, [apiBaseUrl]);
+
+  const handleCreateDistributor = async () => {
+    if (!newDistributorName.trim()) {
+      setError('Ingresa el nombre del distribuidor.');
+      return;
+    }
+    setError(null);
+    setActionMessage(null);
+    try {
+      const response = await fetch(`${apiBaseUrl}/api/combustible/distribuidores`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({
+          name: newDistributorName.trim(),
+          code: newDistributorCode.trim() || null,
+        }),
+      });
+      if (!response.ok) {
+        const payload = await parseJsonSafe(response).catch(() => null);
+        throw new Error(payload?.message ?? 'No se pudo crear el distribuidor.');
+      }
+      setNewDistributorName('');
+      setNewDistributorCode('');
+      const payload = await parseJsonSafe(response);
+      setDistributors((prev) => [...prev, payload.data].filter(Boolean));
+      setActionMessage('Distribuidor creado.');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No se pudo crear el distribuidor.');
+    }
+  };
+
+  const handleLink = async (domainNorm: string) => {
+    const distributorId = selectedDistributor[domainNorm];
+    if (!distributorId) {
+      setError('Selecciona un distribuidor para vincular.');
+      return;
+    }
+    setError(null);
+    setActionMessage(null);
+    try {
+      const response = await fetch(`${apiBaseUrl}/api/combustible/pendientes/vincular`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ domain_norm: domainNorm, distributor_id: Number(distributorId) }),
+      });
+      if (!response.ok) {
+        const payload = await parseJsonSafe(response).catch(() => null);
+        throw new Error(payload?.message ?? 'No se pudo vincular la patente.');
+      }
+      setActionMessage(`Dominio ${domainNorm} vinculado.`);
+      fetchPendientes(searchTerm);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No se pudo vincular la patente.');
+    }
+  };
+
+  const handleInvalidate = async (domainNorm: string) => {
+    setError(null);
+    setActionMessage(null);
+    try {
+      const response = await fetch(`${apiBaseUrl}/api/combustible/pendientes/invalidar`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ domain_norm: domainNorm, reason: 'Patente inválida' }),
+      });
+      if (!response.ok) {
+        const payload = await parseJsonSafe(response).catch(() => null);
+        throw new Error(payload?.message ?? 'No se pudo invalidar la patente.');
+      }
+      setActionMessage(`Dominio ${domainNorm} marcado como inválido.`);
+      fetchPendientes(searchTerm);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No se pudo invalidar la patente.');
+    }
+  };
+
+  const toggleDomainSelection = (domainNorm: string) => {
+    setSelectedDomains((prev) => {
+      const next = new Set(prev);
+      if (next.has(domainNorm)) {
+        next.delete(domainNorm);
+      } else {
+        next.add(domainNorm);
+      }
+      return next;
+    });
+  };
+
+  const toggleSelectAll = () => {
+    setSelectedDomains((prev) => {
+      const visible = rows.map((row) => row.domain_norm);
+      const allSelected = visible.length > 0 && visible.every((domain) => prev.has(domain));
+      if (allSelected) {
+        const next = new Set(prev);
+        visible.forEach((domain) => next.delete(domain));
+        return next;
+      }
+      return new Set([...Array.from(prev), ...visible]);
+    });
+  };
+
+  const handleBulkLink = async () => {
+    if (!bulkDistributorId) {
+      setError('Selecciona un distribuidor para la vinculación masiva.');
+      return;
+    }
+    if (selectedDomains.size === 0) {
+      setError('Selecciona al menos un dominio.');
+      return;
+    }
+    setError(null);
+    setActionMessage(null);
+    try {
+      const response = await fetch(`${apiBaseUrl}/api/combustible/pendientes/vincular-masivo`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({
+          domains: Array.from(selectedDomains),
+          distributor_id: Number(bulkDistributorId),
+        }),
+      });
+      if (!response.ok) {
+        const payload = await parseJsonSafe(response).catch(() => null);
+        throw new Error(payload?.message ?? 'No se pudo vincular de forma masiva.');
+      }
+      setActionMessage('Dominios vinculados.');
+      setSelectedDomains(new Set());
+      fetchPendientes(searchTerm);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No se pudo vincular de forma masiva.');
+    }
+  };
+
+  const handleBulkInvalidate = async () => {
+    if (selectedDomains.size === 0) {
+      setError('Selecciona al menos un dominio.');
+      return;
+    }
+    setError(null);
+    setActionMessage(null);
+    try {
+      const response = await fetch(`${apiBaseUrl}/api/combustible/pendientes/invalidar-masivo`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({
+          domains: Array.from(selectedDomains),
+          reason: 'Patente inválida',
+        }),
+      });
+      if (!response.ok) {
+        const payload = await parseJsonSafe(response).catch(() => null);
+        throw new Error(payload?.message ?? 'No se pudo invalidar en forma masiva.');
+      }
+      setActionMessage('Dominios invalidados.');
+      setSelectedDomains(new Set());
+      fetchPendientes(searchTerm);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No se pudo invalidar en forma masiva.');
+    }
+  };
+
+  return (
+    <DashboardLayout title="Combustible" subtitle="Bandeja de pendientes" headerContent={<CombustibleTabs />}>
+      <section className="dashboard-card">
+        <header className="card-header">
+          <h3>Crear distribuidor</h3>
+        </header>
+        <div className="card-body">
+          <div className="form-grid">
+            <label className="input-control">
+              <span>Nombre</span>
+              <input
+                value={newDistributorName}
+                onChange={(event) => setNewDistributorName(event.target.value)}
+                placeholder="Distribuidor Norte"
+              />
+            </label>
+            <label className="input-control">
+              <span>Código (opcional)</span>
+              <input
+                value={newDistributorCode}
+                onChange={(event) => setNewDistributorCode(event.target.value)}
+                placeholder="DN-001"
+              />
+            </label>
+          </div>
+          <div className="filters-actions">
+            <button type="button" className="secondary-action" onClick={handleCreateDistributor}>
+              Crear distribuidor
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <div className="filters-actions" style={{ gap: '1rem' }}>
+        <div className="search-wrapper">
+          <input
+            type="search"
+            placeholder="Buscar dominio"
+            value={searchTerm}
+            onChange={(event) => setSearchTerm(event.target.value)}
+          />
+        </div>
+        <button type="button" className="secondary-action" onClick={() => fetchPendientes(searchTerm)}>
+          Buscar
+        </button>
+      </div>
+
+      <div className="filters-actions" style={{ gap: '1rem' }}>
+        <label className="input-control" style={{ maxWidth: '280px' }}>
+          <span>Distribuidor (masivo)</span>
+          <select value={bulkDistributorId} onChange={(event) => setBulkDistributorId(event.target.value)}>
+            <option value="">Seleccionar</option>
+            {distributors.map((distributor) => (
+              <option key={`bulk-dist-${distributor.id}`} value={distributor.id}>
+                {distributor.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <button type="button" className="secondary-action" onClick={handleBulkLink}>
+          Vincular seleccionados
+        </button>
+        <button type="button" className="secondary-action secondary-action--ghost" onClick={handleBulkInvalidate}>
+          Invalidar seleccionados
+        </button>
+        <small>Seleccionados: {selectedDomains.size}</small>
+      </div>
+
+      <div className="summary-cards">
+        <div className="summary-card">
+          <span className="summary-card__label">Dominios pendientes</span>
+          <strong className="summary-card__value">{totals?.domains ?? 0}</strong>
+        </div>
+        <div className="summary-card">
+          <span className="summary-card__label">Movimientos</span>
+          <strong className="summary-card__value">{totals?.movements ?? 0}</strong>
+        </div>
+        <div className="summary-card">
+          <span className="summary-card__label">Importe total</span>
+          <strong className="summary-card__value">{formatCurrency(totals?.amount ?? 0)}</strong>
+        </div>
+      </div>
+
+      <section className="dashboard-card" style={{ marginTop: '1rem' }}>
+        <header className="card-header">
+          <h3>Pendientes por distribuidor</h3>
+        </header>
+        <div className="card-body">
+          <div className="summary-cards">
+            <div className="summary-card">
+              <span className="summary-card__label">Distribuidores</span>
+              <strong className="summary-card__value">{totalsByDistributor?.distributors ?? 0}</strong>
+            </div>
+            <div className="summary-card">
+              <span className="summary-card__label">Movimientos</span>
+              <strong className="summary-card__value">{totalsByDistributor?.movements ?? 0}</strong>
+            </div>
+            <div className="summary-card">
+              <span className="summary-card__label">Importe total</span>
+              <strong className="summary-card__value">{formatCurrency(totalsByDistributor?.amount ?? 0)}</strong>
+            </div>
+          </div>
+        </div>
+        <div className="table-wrapper">
+          <table>
+            <thead>
+              <tr>
+                <th>Distribuidor</th>
+                <th>Movimientos</th>
+                <th>Importe</th>
+                <th>Última fecha</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rowsByDistributor.length === 0 ? (
+                <tr>
+                  <td colSpan={4}>No hay pendientes imputados.</td>
+                </tr>
+              ) : (
+                rowsByDistributor.map((row) => (
+                  <tr key={`dist-pend-${row.distributor_id}`}>
+                    <td>
+                      {row.distributor_name ?? '—'}{' '}
+                      {row.distributor_code ? <span className="muted">({row.distributor_code})</span> : null}
+                    </td>
+                    <td>{row.movements}</td>
+                    <td>{formatCurrency(row.amount)}</td>
+                    <td>{row.last_date ?? '—'}</td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <div className="table-wrapper">
+        <table>
+          <thead>
+            <tr>
+              <th>
+                <input
+                  type="checkbox"
+                  checked={rows.length > 0 && rows.every((row) => selectedDomains.has(row.domain_norm))}
+                  onChange={toggleSelectAll}
+                  aria-label="Seleccionar todos"
+                />
+              </th>
+              <th>Dominio</th>
+              <th>Movimientos</th>
+              <th>Importe</th>
+              <th>Desde</th>
+              <th>Última fecha</th>
+              <th>Días pendientes</th>
+              <th>Acciones</th>
+            </tr>
+          </thead>
+          <tbody>
+            {loading && (
+              <tr>
+                <td colSpan={8}>Cargando pendientes...</td>
+              </tr>
+            )}
+            {error && !loading && (
+              <tr>
+                <td colSpan={8} className="error-cell">
+                  {error}
+                </td>
+              </tr>
+            )}
+            {!loading && !error && rows.length === 0 && (
+              <tr>
+                <td colSpan={8}>No hay pendientes.</td>
+              </tr>
+            )}
+            {!loading &&
+              !error &&
+              rows.map((row) => (
+                <tr key={row.domain_norm}>
+                  <td>
+                    <input
+                      type="checkbox"
+                      checked={selectedDomains.has(row.domain_norm)}
+                      onChange={() => toggleDomainSelection(row.domain_norm)}
+                      aria-label={`Seleccionar ${row.domain_norm}`}
+                    />
+                  </td>
+                  <td>{row.domain_norm || '—'}</td>
+                  <td>{row.movements}</td>
+                  <td>{formatCurrency(row.amount)}</td>
+                  <td>{row.first_date ?? '—'}</td>
+                  <td>{row.last_date ?? '—'}</td>
+                  <td>{row.days_pending != null ? row.days_pending : '—'}</td>
+                  <td>
+                    <div className="action-buttons">
+                      <select
+                        value={selectedDistributor[row.domain_norm] ?? ''}
+                        onChange={(event) =>
+                          setSelectedDistributor((prev) => ({ ...prev, [row.domain_norm]: event.target.value }))
+                        }
+                      >
+                        <option value="">Distribuidor</option>
+                        {distributors.map((distributor) => (
+                          <option key={`dist-${distributor.id}`} value={distributor.id}>
+                            {distributor.name}
+                          </option>
+                        ))}
+                      </select>
+                      <button type="button" className="secondary-action" onClick={() => handleLink(row.domain_norm)}>
+                        Vincular
+                      </button>
+                      <button
+                        type="button"
+                        className="secondary-action secondary-action--ghost"
+                        onClick={() => handleInvalidate(row.domain_norm)}
+                      >
+                        Marcar inválida
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+          </tbody>
+        </table>
+      </div>
+      {actionMessage ? <p className="form-info form-info--success">{actionMessage}</p> : null}
+      {error ? <p className="form-info form-info--error">{error}</p> : null}
+    </DashboardLayout>
+  );
+};
+
+const CombustibleDistribuidorPage: React.FC = () => {
+  const apiBaseUrl = useMemo(() => resolveApiBaseUrl(), []);
+  const [distributors, setDistributors] = useState<Array<{ id: number; name: string; code?: string | null }>>([]);
+  const [distributorId, setDistributorId] = useState('');
+  const [newDistributorName, setNewDistributorName] = useState('');
+  const [newDistributorCode, setNewDistributorCode] = useState('');
+  const [domain, setDomain] = useState('');
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
+  const [periodPreset, setPeriodPreset] = useState<'Q1' | 'Q2' | 'MONTH' | ''>('');
+  const [rows, setRows] = useState<
+    Array<{
+      id: number;
+      occurred_at: string | null;
+      station: string | null;
+      domain_norm: string | null;
+      product: string | null;
+      liters: number | null;
+      amount: number | null;
+      price_per_liter: number | null;
+      status: string | null;
+    }>
+  >([]);
+  const [totals, setTotals] = useState<{ movements: number; liters: number; amount: number } | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const applyPeriodPreset = useCallback(
+    (preset: 'Q1' | 'Q2' | 'MONTH', baseDate?: string) => {
+      const normalizedBase = baseDate && baseDate.trim() !== '' ? baseDate : new Date().toISOString().slice(0, 10);
+      const parsed = new Date(`${normalizedBase}T00:00:00`);
+      if (Number.isNaN(parsed.getTime())) {
+        return;
+      }
+      const year = parsed.getFullYear();
+      const month = parsed.getMonth();
+      const firstDay = new Date(year, month, 1);
+      const lastDay = new Date(year, month + 1, 0);
+      const toIso = (date: Date) => date.toISOString().slice(0, 10);
+      if (preset === 'Q1') {
+        setDateFrom(toIso(firstDay));
+        setDateTo(toIso(new Date(year, month, 15)));
+      } else if (preset === 'Q2') {
+        setDateFrom(toIso(new Date(year, month, 16)));
+        setDateTo(toIso(lastDay));
+      } else {
+        setDateFrom(toIso(firstDay));
+        setDateTo(toIso(lastDay));
+      }
+    },
+    []
+  );
+
+  useEffect(() => {
+    const loadDistributors = async () => {
+      try {
+        const response = await fetch(`${apiBaseUrl}/api/combustible/distribuidores`, { credentials: 'include' });
+        if (!response.ok) {
+          throw new Error('No se pudieron cargar los distribuidores.');
+        }
+        const payload = await parseJsonSafe(response);
+        setDistributors(Array.isArray(payload.data) ? payload.data : []);
+      } catch {
+        setDistributors([]);
+      }
+    };
+    loadDistributors();
+  }, [apiBaseUrl]);
+
+  const handleCreateDistributor = async () => {
+    if (!newDistributorName.trim()) {
+      setError('Ingresa el nombre del distribuidor.');
+      return;
+    }
+    setError(null);
+    try {
+      const response = await fetch(`${apiBaseUrl}/api/combustible/distribuidores`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({
+          name: newDistributorName.trim(),
+          code: newDistributorCode.trim() || null,
+        }),
+      });
+      if (!response.ok) {
+        const payload = await parseJsonSafe(response).catch(() => null);
+        throw new Error(payload?.message ?? 'No se pudo crear el distribuidor.');
+      }
+      const payload = await parseJsonSafe(response);
+      setDistributors((prev) => [...prev, payload.data].filter(Boolean));
+      setNewDistributorName('');
+      setNewDistributorCode('');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No se pudo crear el distribuidor.');
+    }
+  };
+
+  const fetchConsumos = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const url = new URL(`${apiBaseUrl}/api/combustible/consumos`);
+      if (distributorId) {
+        url.searchParams.set('distributor_id', distributorId);
+      }
+      if (domain.trim()) {
+        url.searchParams.set('domain', domain.trim());
+      }
+      if (dateFrom) {
+        url.searchParams.set('date_from', dateFrom);
+      }
+      if (dateTo) {
+        url.searchParams.set('date_to', dateTo);
+      }
+      url.searchParams.set('only_pending', '1');
+      url.searchParams.set('only_imputed', '1');
+      const response = await fetch(url.toString(), { credentials: 'include' });
+      if (!response.ok) {
+        throw new Error(`No se pudieron cargar los consumos (${response.status}).`);
+      }
+      const payload = await parseJsonSafe(response);
+      setRows(Array.isArray(payload.data) ? payload.data : []);
+      if (payload.totals && typeof payload.totals === 'object') {
+        setTotals({
+          movements: Number(payload.totals.movements) || 0,
+          liters: Number(payload.totals.liters) || 0,
+          amount: Number(payload.totals.amount) || 0,
+        });
+      } else {
+        setTotals(null);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No se pudieron cargar los consumos.');
+      setRows([]);
+      setTotals(null);
+    } finally {
+      setLoading(false);
+    }
+  }, [apiBaseUrl, distributorId, domain, dateFrom, dateTo]);
+
+  const selectedDistributor = distributors.find((item) => String(item.id) === distributorId);
+  const periodLabel = `${dateFrom || '—'} - ${dateTo || '—'}`;
+
+  const exportConsumosExcel = () => {
+    if (rows.length === 0) {
+      window.alert('No hay datos para exportar.');
+      return;
+    }
+
+    const sanitizeCell = (raw: string): string => {
+      const cleaned = raw.replace(/[\t\r\n]+/g, ' ').trim();
+      if (/^\d+$/.test(cleaned) && (cleaned.length >= 10 || cleaned.startsWith('0'))) {
+        return `\u2060${cleaned}`;
+      }
+      return cleaned;
+    };
+
+    const summaryRows = [
+      ['Distribuidor', selectedDistributor?.name ?? '—'],
+      ['Dominio', domain.trim() || '—'],
+      ['Período', periodLabel],
+      [],
+      ['Movimientos', String(totals?.movements ?? 0)],
+      ['Litros', formatNumber(totals?.liters ?? 0)],
+      ['Importe', formatCurrency(totals?.amount ?? 0)],
+      [],
+    ];
+
+    const headerRow = ['Fecha', 'Estación', 'Dominio', 'Producto', 'Litros', 'Precio/Litro', 'Importe', 'Estado'];
+    const dataRows = rows.map((row) => [
+      formatDateTime(row.occurred_at),
+      row.station ?? '',
+      row.domain_norm ?? '',
+      row.product ?? '',
+      formatNumber(row.liters),
+      formatNumber(row.price_per_liter),
+      formatCurrency(row.amount ?? 0),
+      row.status ?? '',
+    ]);
+
+    const tsv = [...summaryRows, headerRow, ...dataRows]
+      .map((row) => row.map((value) => sanitizeCell(String(value ?? ''))).join('\t'))
+      .join('\n');
+
+    const BOM = '\ufeff';
+    const blob = new Blob([BOM + tsv], { type: 'application/vnd.ms-excel' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `combustible-distribuidor-${Date.now()}.xls`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
+  const exportConsumosPdf = () => {
+    if (rows.length === 0) {
+      window.alert('No hay datos para exportar.');
+      return;
+    }
+
+    const html = `
+      <!doctype html>
+      <html lang="es">
+      <head>
+        <meta charset="utf-8" />
+        <title>Combustible por distribuidor</title>
+        <style>
+          body { font-family: Arial, sans-serif; color: #1f2a44; margin: 24px; }
+          h1 { font-size: 20px; margin: 0 0 4px; }
+          .meta { font-size: 12px; color: #55627a; margin-bottom: 12px; }
+          .summary { margin-bottom: 12px; font-size: 12px; }
+          .summary span { display: inline-block; margin-right: 16px; }
+          table.data { width: 100%; border-collapse: collapse; font-size: 12px; }
+          table.data th { text-align: left; background: #eef3fb; padding: 8px; border: 1px solid #e1e8f5; }
+          table.data td { padding: 8px; border: 1px solid #e1e8f5; }
+        </style>
+      </head>
+      <body>
+        <h1>Consumo de combustible</h1>
+        <div class="meta">
+          Distribuidor: ${selectedDistributor?.name ?? '—'} · Dominio: ${domain.trim() || '—'} · Período: ${periodLabel}
+        </div>
+        <div class="summary">
+          <span>Movimientos: ${totals?.movements ?? 0}</span>
+          <span>Litros: ${formatNumber(totals?.liters ?? 0)}</span>
+          <span>Importe: ${formatCurrency(totals?.amount ?? 0)}</span>
+        </div>
+        <table class="data">
+          <thead>
+            <tr>
+              <th>Fecha</th>
+              <th>Estación</th>
+              <th>Dominio</th>
+              <th>Producto</th>
+              <th>Litros</th>
+              <th>Precio/Litro</th>
+              <th>Importe</th>
+              <th>Estado</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${rows
+              .map(
+                (row) => `
+              <tr>
+                <td>${formatDateTime(row.occurred_at)}</td>
+                <td>${row.station ?? ''}</td>
+                <td>${row.domain_norm ?? ''}</td>
+                <td>${row.product ?? ''}</td>
+                <td>${formatNumber(row.liters)}</td>
+                <td>${formatNumber(row.price_per_liter)}</td>
+                <td>${formatCurrency(row.amount ?? 0)}</td>
+                <td>${row.status ?? ''}</td>
+              </tr>
+            `
+              )
+              .join('')}
+          </tbody>
+        </table>
+      </body>
+      </html>
+    `;
+
+    const win = window.open('', '_blank');
+    if (!win) {
+      window.alert('No se pudo abrir la vista de impresión.');
+      return;
+    }
+    win.document.write(html);
+    win.document.close();
+    win.focus();
+    win.print();
+  };
+
+  return (
+    <DashboardLayout title="Combustible" subtitle="Vista por distribuidor" headerContent={<CombustibleTabs />}>
+      <section className="dashboard-card">
+        <header className="card-header">
+          <h3>Crear distribuidor</h3>
+        </header>
+        <div className="card-body">
+          <div className="form-grid">
+            <label className="input-control">
+              <span>Nombre</span>
+              <input
+                value={newDistributorName}
+                onChange={(event) => setNewDistributorName(event.target.value)}
+                placeholder="Distribuidor Norte"
+              />
+            </label>
+            <label className="input-control">
+              <span>Código (opcional)</span>
+              <input
+                value={newDistributorCode}
+                onChange={(event) => setNewDistributorCode(event.target.value)}
+                placeholder="DN-001"
+              />
+            </label>
+          </div>
+          <div className="filters-actions">
+            <button type="button" className="secondary-action" onClick={handleCreateDistributor}>
+              Crear distribuidor
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <div className="form-grid">
+        <label className="input-control">
+          <span>Distribuidor</span>
+          <select value={distributorId} onChange={(event) => setDistributorId(event.target.value)}>
+            <option value="">Seleccionar</option>
+            {distributors.map((distributor) => (
+              <option key={`dist-${distributor.id}`} value={distributor.id}>
+                {distributor.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="input-control">
+          <span>Dominio</span>
+          <input value={domain} onChange={(event) => setDomain(event.target.value)} placeholder="ABC123" />
+        </label>
+        <label className="input-control">
+          <span>Período</span>
+          <select
+            value={periodPreset}
+            onChange={(event) => {
+              const value = event.target.value as 'Q1' | 'Q2' | 'MONTH' | '';
+              setPeriodPreset(value);
+              if (value) {
+                const baseDate = dateFrom || dateTo || new Date().toISOString().slice(0, 10);
+                applyPeriodPreset(value, baseDate);
+              }
+            }}
+          >
+            <option value="">Personalizado</option>
+            <option value="Q1">Primera quincena</option>
+            <option value="Q2">Segunda quincena</option>
+            <option value="MONTH">Mes completo</option>
+          </select>
+        </label>
+        <label className="input-control">
+          <span>Desde</span>
+          <input
+            type="date"
+            value={dateFrom}
+            onChange={(event) => {
+              setDateFrom(event.target.value);
+              setPeriodPreset('');
+            }}
+          />
+        </label>
+        <label className="input-control">
+          <span>Hasta</span>
+          <input
+            type="date"
+            value={dateTo}
+            onChange={(event) => {
+              setDateTo(event.target.value);
+              setPeriodPreset('');
+            }}
+          />
+        </label>
+      </div>
+      <div className="filters-actions">
+        <button type="button" className="primary-action" onClick={fetchConsumos}>
+          Buscar
+        </button>
+        <button type="button" className="secondary-action secondary-action--ghost" onClick={exportConsumosExcel} disabled={!rows.length}>
+          Exportar Excel
+        </button>
+        <button type="button" className="secondary-action secondary-action--ghost" onClick={exportConsumosPdf} disabled={!rows.length}>
+          Exportar PDF
+        </button>
+      </div>
+
+      <div className="summary-cards">
+        <div className="summary-card">
+          <span className="summary-card__label">Movimientos</span>
+          <strong className="summary-card__value">{totals?.movements ?? 0}</strong>
+        </div>
+        <div className="summary-card">
+          <span className="summary-card__label">Litros</span>
+          <strong className="summary-card__value">{formatNumber(totals?.liters ?? 0)}</strong>
+        </div>
+        <div className="summary-card">
+          <span className="summary-card__label">Importe</span>
+          <strong className="summary-card__value">{formatCurrency(totals?.amount ?? 0)}</strong>
+        </div>
+      </div>
+
+      <div className="table-wrapper">
+        <table>
+          <thead>
+            <tr>
+              <th>Fecha</th>
+              <th>Estación</th>
+              <th>Dominio</th>
+              <th>Producto</th>
+              <th>Litros</th>
+              <th>Precio/Litro</th>
+              <th>Importe</th>
+              <th>Estado</th>
+            </tr>
+          </thead>
+          <tbody>
+            {loading && (
+              <tr>
+                <td colSpan={8}>Cargando consumos...</td>
+              </tr>
+            )}
+            {error && !loading && (
+              <tr>
+                <td colSpan={8} className="error-cell">
+                  {error}
+                </td>
+              </tr>
+            )}
+            {!loading && !error && rows.length === 0 && (
+              <tr>
+                <td colSpan={8}>No hay consumos para mostrar.</td>
+              </tr>
+            )}
+            {!loading &&
+              !error &&
+              rows.map((row) => (
+                <tr key={row.id}>
+                  <td>{formatDateTime(row.occurred_at)}</td>
+                  <td>{row.station ?? '—'}</td>
+                  <td>{row.domain_norm ?? '—'}</td>
+                  <td>{row.product ?? '—'}</td>
+                  <td>{formatNumber(row.liters)}</td>
+                  <td>{formatNumber(row.price_per_liter)}</td>
+                  <td>{formatCurrency(row.amount ?? 0)}</td>
+                  <td>{row.status ?? '—'}</td>
+                </tr>
+              ))}
+          </tbody>
+        </table>
+      </div>
+    </DashboardLayout>
+  );
+};
+
+const CombustibleInformePage: React.FC = () => {
+  const apiBaseUrl = useMemo(() => resolveApiBaseUrl(), []);
+  const [distributors, setDistributors] = useState<Array<{ id: number; name: string; code?: string | null }>>([]);
+  const [distributorId, setDistributorId] = useState('');
+  const [liquidaciones, setLiquidaciones] = useState<
+    Array<{
+      id: number;
+      persona_id: number | null;
+      persona_nombre?: string | null;
+      persona_legajo?: string | null;
+      nombre_original: string | null;
+      importe_facturar: number | null;
+      created_at: string | null;
+    }>
+  >([]);
+  const [liquidacionId, setLiquidacionId] = useState('');
+  const [newDistributorName, setNewDistributorName] = useState('');
+  const [newDistributorCode, setNewDistributorCode] = useState('');
+  const [domain, setDomain] = useState('');
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
+  const [periodPreset, setPeriodPreset] = useState<'Q1' | 'Q2' | 'MONTH' | ''>('');
+  const [reportId, setReportId] = useState<number | null>(null);
+  const [reportTotals, setReportTotals] = useState<{ total: number; ajustes: number; totalFacturar: number } | null>(
+    null
+  );
+  const [reportStatus, setReportStatus] = useState<'DRAFT' | 'READY' | 'APPLIED' | null>(null);
+  const [suggestedDistributors, setSuggestedDistributors] = useState<Array<{ id: number; name: string; code?: string | null }>>([]);
+  const [closeYear, setCloseYear] = useState(() => new Date().getFullYear());
+  const [closeMonth, setCloseMonth] = useState(() => new Date().getMonth() + 1);
+  const [closePeriod, setClosePeriod] = useState<'Q1' | 'Q2' | 'MONTH'>('Q1');
+  const [closeDistributorId, setCloseDistributorId] = useState('');
+  const [closeLoading, setCloseLoading] = useState(false);
+  const [closeMessage, setCloseMessage] = useState<string | null>(null);
+  const [rows, setRows] = useState<
+    Array<{
+      id: number;
+      occurred_at: string | null;
+      station: string | null;
+      domain_norm: string | null;
+      product: string | null;
+      liters: number | null;
+      price_per_liter: number | null;
+      amount: number | null;
+      status?: string | null;
+    }>
+  >([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [adjustments, setAdjustments] = useState<
+    Array<{
+      id: number;
+      type:
+        | 'ajuste_favor'
+        | 'cuota_combustible'
+        | 'pendiente'
+        | 'adelantos_prestamos'
+        | 'credito'
+        | 'debito';
+      amount: string;
+      note: string;
+    }>
+  >([]);
+  const [adjustmentType, setAdjustmentType] = useState<
+    'ajuste_favor' | 'cuota_combustible' | 'pendiente' | 'adelantos_prestamos' | 'credito' | 'debito'
+  >('ajuste_favor');
+  const [adjustmentAmount, setAdjustmentAmount] = useState('');
+  const [adjustmentNote, setAdjustmentNote] = useState('');
+  const adjustmentTypeLabels: Record<string, string> = {
+    ajuste_favor: 'Ajuste a favor',
+    cuota_combustible: 'Cuota combustible',
+    pendiente: 'Pendiente',
+    adelantos_prestamos: 'Adelantos/Préstamos',
+    credito: 'Crédito',
+    debito: 'Débito',
+  };
+
+  const adjustmentsByType = useMemo(() => {
+    if (!adjustments.length) {
+      return [];
+    }
+    const signedValueForType = (type: string, value: number) => {
+      if (type === 'debito') {
+        return -value;
+      }
+      return value;
+    };
+    const totals = new Map<string, number>();
+    adjustments.forEach((adj) => {
+      const parsed = Number(String(adj.amount).replace(',', '.'));
+      const value = Number.isFinite(parsed) ? parsed : 0;
+      totals.set(adj.type, (totals.get(adj.type) ?? 0) + signedValueForType(adj.type, value));
+    });
+    return Array.from(totals.entries()).map(([type, total]) => ({
+      type,
+      label: adjustmentTypeLabels[type] ?? type,
+      total,
+    }));
+  }, [adjustments, adjustmentTypeLabels]);
+  const normalizeMatchValue = useCallback((value?: string | null) => {
+    if (!value) {
+      return '';
+    }
+    return value
+      .toUpperCase()
+      .replace(/[\s\.\-_,]+/g, '')
+      .trim();
+  }, []);
+
+  const applyPeriodPreset = useCallback(
+    (preset: 'Q1' | 'Q2' | 'MONTH', baseDate?: string) => {
+      const normalizedBase = baseDate && baseDate.trim() !== '' ? baseDate : new Date().toISOString().slice(0, 10);
+      const parsed = new Date(`${normalizedBase}T00:00:00`);
+      if (Number.isNaN(parsed.getTime())) {
+        return;
+      }
+      const year = parsed.getFullYear();
+      const month = parsed.getMonth();
+      const firstDay = new Date(year, month, 1);
+      const lastDay = new Date(year, month + 1, 0);
+      const toIso = (date: Date) => date.toISOString().slice(0, 10);
+      if (preset === 'Q1') {
+        setDateFrom(toIso(firstDay));
+        setDateTo(toIso(new Date(year, month, 15)));
+      } else if (preset === 'Q2') {
+        setDateFrom(toIso(new Date(year, month, 16)));
+        setDateTo(toIso(lastDay));
+      } else {
+        setDateFrom(toIso(firstDay));
+        setDateTo(toIso(lastDay));
+      }
+    },
+    []
+  );
+
+  useEffect(() => {
+    const loadDistributors = async () => {
+      try {
+        const response = await fetch(`${apiBaseUrl}/api/combustible/distribuidores`, { credentials: 'include' });
+        if (!response.ok) {
+          throw new Error('No se pudieron cargar los distribuidores.');
+        }
+        const payload = await parseJsonSafe(response);
+        setDistributors(Array.isArray(payload.data) ? payload.data : []);
+      } catch {
+        setDistributors([]);
+      }
+    };
+    loadDistributors();
+  }, [apiBaseUrl]);
+
+  useEffect(() => {
+    const loadLiquidaciones = async () => {
+      try {
+        const response = await fetch(`${apiBaseUrl}/api/combustible/liquidaciones`, { credentials: 'include' });
+        if (!response.ok) {
+          throw new Error('No se pudieron cargar las liquidaciones.');
+        }
+        const payload = await parseJsonSafe(response);
+        setLiquidaciones(Array.isArray(payload.data) ? payload.data : []);
+      } catch {
+        setLiquidaciones([]);
+      }
+    };
+    loadLiquidaciones();
+  }, [apiBaseUrl]);
+
+
+  const handleCreateDistributor = async () => {
+    if (!newDistributorName.trim()) {
+      setError('Ingresa el nombre del distribuidor.');
+      return;
+    }
+    setError(null);
+    try {
+      const response = await fetch(`${apiBaseUrl}/api/combustible/distribuidores`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({
+          name: newDistributorName.trim(),
+          code: newDistributorCode.trim() || null,
+        }),
+      });
+      if (!response.ok) {
+        const payload = await parseJsonSafe(response).catch(() => null);
+        throw new Error(payload?.message ?? 'No se pudo crear el distribuidor.');
+      }
+      const payload = await parseJsonSafe(response);
+      setDistributors((prev) => [...prev, payload.data].filter(Boolean));
+      setNewDistributorName('');
+      setNewDistributorCode('');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No se pudo crear el distribuidor.');
+    }
+  };
+
+  const fetchMovements = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      if (!distributorId && !domain.trim()) {
+        throw new Error('Ingresá un dominio o seleccioná un distribuidor.');
+      }
+
+      const response = await fetch(`${apiBaseUrl}/api/combustible/reportes/draft`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({
+          distributor_id: distributorId ? Number(distributorId) : null,
+          domain_norm: domain.trim() || null,
+          date_from: dateFrom || null,
+          date_to: dateTo || null,
+        }),
+      });
+      if (response.status === 409) {
+        const payload = await parseJsonSafe(response).catch(() => null);
+        setDistributorId('');
+        setSuggestedDistributors(Array.isArray(payload?.options) ? payload.options : []);
+        throw new Error(payload?.message ?? 'Seleccioná un distribuidor para continuar.');
+      }
+      if (!response.ok) {
+        const payload = await parseJsonSafe(response).catch(() => null);
+        throw new Error(payload?.message ?? `No se pudo generar el informe (${response.status}).`);
+      }
+      const payload = await parseJsonSafe(response);
+      setSuggestedDistributors([]);
+      const baseItems = Array.isArray(payload.items) ? payload.items : [];
+      const extraItems = Array.isArray(payload.extras) ? payload.extras : [];
+      const mergedItems = [...baseItems, ...extraItems].sort((a, b) => {
+        const dateA = a?.occurred_at ? new Date(a.occurred_at).getTime() : 0;
+        const dateB = b?.occurred_at ? new Date(b.occurred_at).getTime() : 0;
+        return dateA - dateB;
+      });
+      setRows(mergedItems);
+      const selectedDistributor = distributors.find((item) => String(item.id) === distributorId);
+      if (selectedDistributor) {
+        const distributorCode = normalizeMatchValue(selectedDistributor.code ?? null);
+        const distributorName = normalizeMatchValue(selectedDistributor.name ?? null);
+        const matchedLiquidacion = liquidaciones.find((liquidacion) => {
+          const personaLegajo = normalizeMatchValue(liquidacion.persona_legajo ?? null);
+          const personaNombre = normalizeMatchValue(liquidacion.persona_nombre ?? null);
+          const nombreOriginal = normalizeMatchValue(liquidacion.nombre_original ?? null);
+          if (distributorCode && personaLegajo && distributorCode === personaLegajo) {
+            return true;
+          }
+          if (distributorName && personaNombre && distributorName === personaNombre) {
+            return true;
+          }
+          if (distributorName && nombreOriginal && nombreOriginal.includes(distributorName)) {
+            return true;
+          }
+          return false;
+        });
+        if (matchedLiquidacion) {
+          setLiquidacionId(String(matchedLiquidacion.id));
+        }
+      }
+      setAdjustments(
+        Array.isArray(payload.adjustments)
+          ? payload.adjustments.map((adjustment: { id: number; type: string; amount: number; note: string }) => ({
+              id: adjustment.id,
+              type: adjustment.type || 'ajuste_favor',
+              amount: String(adjustment.amount ?? ''),
+              note: adjustment.note ?? '',
+            }))
+          : []
+      );
+      if (payload.report) {
+        setReportId(payload.report.id);
+        setReportStatus(payload.report.status ?? null);
+        setReportTotals({
+          total: Number(payload.report.total_amount) || 0,
+          ajustes: Number(payload.report.adjustments_total) || 0,
+          totalFacturar: Number(payload.report.total_to_bill) || 0,
+        });
+      } else {
+        setReportId(null);
+        setReportStatus(null);
+        setReportTotals(null);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No se pudieron cargar los movimientos.');
+      setRows([]);
+      setReportId(null);
+      setReportTotals(null);
+    } finally {
+      setLoading(false);
+    }
+  }, [
+    apiBaseUrl,
+    distributorId,
+    domain,
+    dateFrom,
+    dateTo,
+    distributors,
+    liquidaciones,
+    normalizeMatchValue,
+  ]);
+
+  useEffect(() => {
+    if (!distributorId) {
+      return;
+    }
+    fetchMovements();
+  }, [distributorId, fetchMovements]);
+
+  const handleAddAdjustment = async () => {
+    const amountValue = Number(adjustmentAmount.replace(',', '.'));
+    if (!Number.isFinite(amountValue) || amountValue === 0) {
+      setError('El ajuste debe tener un importe válido.');
+      return;
+    }
+
+    if (!reportId) {
+      setError('Primero generá el borrador del informe.');
+      return;
+    }
+
+    setError(null);
+    try {
+      const response = await fetch(`${apiBaseUrl}/api/combustible/reportes/${reportId}/ajustes`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({
+          type: adjustmentType,
+          amount: amountValue,
+          note: adjustmentNote,
+        }),
+      });
+      if (!response.ok) {
+        const payload = await parseJsonSafe(response).catch(() => null);
+        throw new Error(payload?.message ?? 'No se pudo agregar el ajuste.');
+      }
+      const payload = await parseJsonSafe(response);
+      setAdjustments((prev) => [
+        ...prev,
+        {
+          id: payload.data?.id ?? Date.now(),
+          type: adjustmentType,
+          amount: adjustmentAmount,
+          note: adjustmentNote,
+        },
+      ]);
+      if (payload.report) {
+        setReportTotals({
+          total: Number(payload.report.total_amount) || 0,
+          ajustes: Number(payload.report.adjustments_total) || 0,
+          totalFacturar: Number(payload.report.total_to_bill) || 0,
+        });
+        setReportStatus(payload.report.status ?? reportStatus);
+      }
+      setAdjustmentAmount('');
+      setAdjustmentNote('');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No se pudo agregar el ajuste.');
+    }
+  };
+
+  const handleApplyReport = async () => {
+    if (!reportId) {
+      setError('Primero generá el borrador del informe.');
+      return;
+    }
+    if (totalFacturar <= 0) {
+      setError('El total a facturar debe ser mayor a cero.');
+      return;
+    }
+    setError(null);
+    try {
+      const response = await fetch(`${apiBaseUrl}/api/combustible/reportes/${reportId}/aplicar`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({
+          liquidacion_id: liquidacionId ? Number(liquidacionId) : null,
+        }),
+      });
+      if (!response.ok) {
+        const payload = await parseJsonSafe(response).catch(() => null);
+        throw new Error(payload?.message ?? 'No se pudo aplicar el informe.');
+      }
+      const payload = await parseJsonSafe(response);
+      setReportStatus(payload.data?.status ?? 'APPLIED');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No se pudo aplicar el informe.');
+    }
+  };
+
+  const handleSaveDraft = async () => {
+    if (!reportId) {
+      setError('Primero generá el borrador del informe.');
+      return;
+    }
+    setError(null);
+    try {
+      const response = await fetch(`${apiBaseUrl}/api/combustible/reportes/${reportId}/guardar`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+      });
+      if (!response.ok) {
+        const payload = await parseJsonSafe(response).catch(() => null);
+        throw new Error(payload?.message ?? 'No se pudo guardar el borrador.');
+      }
+      const payload = await parseJsonSafe(response);
+      setReportStatus(payload.data?.status ?? 'DRAFT');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No se pudo guardar el borrador.');
+    }
+  };
+
+  const handleMarkReady = async () => {
+    if (!reportId) {
+      setError('Primero generá el borrador del informe.');
+      return;
+    }
+    setError(null);
+    try {
+      const response = await fetch(`${apiBaseUrl}/api/combustible/reportes/${reportId}/listo`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+      });
+      if (!response.ok) {
+        const payload = await parseJsonSafe(response).catch(() => null);
+        throw new Error(payload?.message ?? 'No se pudo marcar listo.');
+      }
+      const payload = await parseJsonSafe(response);
+      setReportStatus(payload.data?.status ?? 'READY');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No se pudo marcar listo.');
+    }
+  };
+
+  const handleClosePeriod = async () => {
+    setCloseLoading(true);
+    setCloseMessage(null);
+    try {
+      const response = await fetch(`${apiBaseUrl}/api/combustible/cierre`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({
+          year: Number(closeYear),
+          month: Number(closeMonth),
+          period: closePeriod,
+          distributor_id: closeDistributorId ? Number(closeDistributorId) : null,
+        }),
+      });
+      if (!response.ok) {
+        const payload = await parseJsonSafe(response).catch(() => null);
+        throw new Error(payload?.message ?? 'No se pudo cerrar el período.');
+      }
+      const payload = await parseJsonSafe(response);
+      setCloseMessage(
+        `Generados: ${payload?.created?.length ?? 0} · Omitidos: ${payload?.skipped?.length ?? 0}`
+      );
+    } catch (err) {
+      setCloseMessage(err instanceof Error ? err.message : 'No se pudo cerrar el período.');
+    } finally {
+      setCloseLoading(false);
+    }
+  };
+
+  const totalCombustible = reportTotals?.total ?? rows.reduce((sum, row) => sum + (row.amount ?? 0), 0);
+  const totalAjustes = reportTotals?.ajustes ?? 0;
+  const descuentoCombustible = reportTotals?.totalFacturar ?? totalCombustible + totalAjustes;
+  const selectedLiquidacion = liquidaciones.find((liquidacion) => String(liquidacion.id) === liquidacionId);
+  const importeDetalle = selectedLiquidacion?.importe_facturar ?? 0;
+  const totalFacturar = importeDetalle - descuentoCombustible;
+  const selectedDistributor = distributors.find((item) => String(item.id) === distributorId);
+
+  const exportReportExcel = () => {
+    if (rows.length === 0) {
+      window.alert('No hay datos para exportar.');
+      return;
+    }
+
+    const sanitizeCell = (raw: string): string => {
+      const cleaned = raw.replace(/[\t\r\n]+/g, ' ').trim();
+      if (/^\d+$/.test(cleaned) && (cleaned.length >= 10 || cleaned.startsWith('0'))) {
+        return `\u2060${cleaned}`;
+      }
+      return cleaned;
+    };
+
+    const summaryRows = [
+      ['Distribuidor', selectedDistributor?.name ?? '—'],
+      ['Dominio', domain.trim() || '—'],
+      ['Período', `${dateFrom || '—'} - ${dateTo || '—'}`],
+      [],
+      ['Importe detalle', formatCurrency(importeDetalle)],
+      ['Total combustible', formatCurrency(totalCombustible)],
+      ['Ajustes', formatCurrency(totalAjustes)],
+      ['Total a facturar', formatCurrency(totalFacturar)],
+      [],
+    ];
+
+    const headerRow = ['Fecha', 'Estación', 'Dominio', 'Producto', 'Litros', 'Precio/Litro', 'Importe', 'Estado'];
+    const dataRows = rows.map((row) => [
+      formatDateTime(row.occurred_at),
+      row.station ?? '',
+      row.domain_norm ?? '',
+      row.product ?? '',
+      formatNumber(row.liters),
+      formatNumber(row.price_per_liter),
+      formatCurrency(row.amount ?? 0),
+      row.status ?? '',
+    ]);
+
+    const tsv = [...summaryRows, headerRow, ...dataRows]
+      .map((row) => row.map((value) => sanitizeCell(String(value ?? ''))).join('\t'))
+      .join('\n');
+
+    const BOM = '\ufeff';
+    const blob = new Blob([BOM + tsv], { type: 'application/vnd.ms-excel' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `informe-combustible-${reportId ?? Date.now()}.xls`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
+  const exportReportPdf = () => {
+    if (rows.length === 0) {
+      window.alert('No hay datos para exportar.');
+      return;
+    }
+
+    const html = `
+      <!doctype html>
+      <html lang="es">
+      <head>
+        <meta charset="utf-8" />
+        <title>Informe combustible</title>
+        <style>
+          body { font-family: Arial, sans-serif; color: #1f2a44; margin: 24px; }
+          h1 { font-size: 20px; margin: 0 0 4px; }
+          .meta { font-size: 12px; color: #55627a; margin-bottom: 12px; }
+          .layout { display: flex; gap: 24px; align-items: flex-start; }
+          .summary { min-width: 240px; border: 1px solid #d9e2f2; border-radius: 8px; padding: 12px; }
+          .summary table { width: 100%; border-collapse: collapse; font-size: 12px; }
+          .summary td { padding: 6px 0; border-bottom: 1px solid #eef2f8; }
+          .summary td:last-child { text-align: right; font-weight: 600; }
+          table.data { width: 100%; border-collapse: collapse; font-size: 12px; }
+          table.data th { text-align: left; background: #eef3fb; padding: 8px; border: 1px solid #e1e8f5; }
+          table.data td { padding: 8px; border: 1px solid #e1e8f5; }
+        </style>
+      </head>
+      <body>
+        <h1>Informe de consumo de combustible</h1>
+        <div class="meta">
+          Distribuidor: ${selectedDistributor?.name ?? '—'} · Dominio: ${domain.trim() || '—'} · Período: ${
+      dateFrom || '—'
+    } - ${dateTo || '—'}
+        </div>
+        <div class="layout">
+          <div style="flex:1">
+            <table class="data">
+              <thead>
+                <tr>
+                  <th>Fecha</th>
+                  <th>Estación</th>
+                  <th>Dominio</th>
+                  <th>Producto</th>
+                  <th>Litros</th>
+                  <th>Precio/Litro</th>
+                  <th>Importe</th>
+                  <th>Estado</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${rows
+                  .map(
+                    (row) => `
+                  <tr>
+                    <td>${formatDateTime(row.occurred_at)}</td>
+                    <td>${row.station ?? ''}</td>
+                    <td>${row.domain_norm ?? ''}</td>
+                    <td>${row.product ?? ''}</td>
+                    <td>${formatNumber(row.liters)}</td>
+                    <td>${formatNumber(row.price_per_liter)}</td>
+                    <td>${formatCurrency(row.amount ?? 0)}</td>
+                    <td>${row.status ?? ''}</td>
+                  </tr>
+                `
+                  )
+                  .join('')}
+              </tbody>
+            </table>
+          </div>
+          <div class="summary">
+            <table>
+              <tr><td>Importe detalle</td><td>${formatCurrency(importeDetalle)}</td></tr>
+              <tr><td>Total combustible</td><td>${formatCurrency(totalCombustible)}</td></tr>
+              <tr><td>Ajustes</td><td>${formatCurrency(totalAjustes)}</td></tr>
+              <tr><td>Total a facturar</td><td>${formatCurrency(totalFacturar)}</td></tr>
+            </table>
+          </div>
+        </div>
+      </body>
+      </html>
+    `;
+
+    const win = window.open('', '_blank');
+    if (!win) {
+      window.alert('No se pudo abrir la vista de impresión.');
+      return;
+    }
+    win.document.write(html);
+    win.document.close();
+    win.focus();
+    win.print();
+  };
+
+  return (
+    <DashboardLayout title="Combustible" subtitle="Informe" headerContent={<CombustibleTabs />}>
+      <section className="dashboard-card">
+        <header className="card-header">
+          <h3>Crear distribuidor</h3>
+        </header>
+        <div className="card-body">
+          <div className="form-grid">
+            <label className="input-control">
+              <span>Nombre</span>
+              <input
+                value={newDistributorName}
+                onChange={(event) => setNewDistributorName(event.target.value)}
+                placeholder="Distribuidor Norte"
+              />
+            </label>
+            <label className="input-control">
+              <span>Código (opcional)</span>
+              <input
+                value={newDistributorCode}
+                onChange={(event) => setNewDistributorCode(event.target.value)}
+                placeholder="DN-001"
+              />
+            </label>
+          </div>
+          <div className="filters-actions">
+            <button type="button" className="secondary-action" onClick={handleCreateDistributor}>
+              Crear distribuidor
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <section className="dashboard-card">
+        <header className="card-header">
+          <h3>Cerrar período</h3>
+          <p>Genera informes sugeridos por distribuidor para el período seleccionado.</p>
+        </header>
+        <div className="card-body">
+          <div className="form-grid">
+            <label className="input-control">
+              <span>Año</span>
+              <input
+                type="number"
+                value={closeYear}
+                onChange={(event) => setCloseYear(Number(event.target.value))}
+              />
+            </label>
+            <label className="input-control">
+              <span>Mes</span>
+              <input
+                type="number"
+                min={1}
+                max={12}
+                value={closeMonth}
+                onChange={(event) => setCloseMonth(Number(event.target.value))}
+              />
+            </label>
+            <label className="input-control">
+              <span>Período</span>
+              <select value={closePeriod} onChange={(event) => setClosePeriod(event.target.value as 'Q1' | 'Q2' | 'MONTH')}>
+                <option value="Q1">Primera quincena</option>
+                <option value="Q2">Segunda quincena</option>
+                <option value="MONTH">Mes completo</option>
+              </select>
+            </label>
+            <label className="input-control">
+              <span>Distribuidor (opcional)</span>
+              <select value={closeDistributorId} onChange={(event) => setCloseDistributorId(event.target.value)}>
+                <option value="">Todos</option>
+                {distributors.map((dist) => (
+                  <option key={`close-${dist.id}`} value={dist.id}>
+                    {dist.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+          <div className="filters-actions">
+            <button type="button" className="secondary-action" onClick={handleClosePeriod} disabled={closeLoading}>
+              {closeLoading ? 'Procesando…' : 'Cerrar período'}
+            </button>
+            {closeMessage ? <span className="helper-text">{closeMessage}</span> : null}
+          </div>
+        </div>
+      </section>
+
+      <section className="dashboard-card informe-card">
+        <header className="card-header informe-header">
+          <div>
+            <h3>Descontar Consumo de Combustible</h3>
+            <p>Seleccioná el distribuidor y el rango para generar el informe.</p>
+          </div>
+          <div className="informe-header__actions">
+            <button type="button" className="secondary-action secondary-action--ghost" onClick={exportReportExcel} disabled={!rows.length}>
+              Exportar Excel
+            </button>
+            <button type="button" className="secondary-action secondary-action--ghost" onClick={exportReportPdf} disabled={!rows.length}>
+              Exportar PDF
+            </button>
+            <button type="button" className="primary-action" onClick={fetchMovements}>
+              Generar informe
+            </button>
+          </div>
+        </header>
+        <div className="card-body">
+          <div className="form-grid">
+            {suggestedDistributors.length > 0 ? (
+              <label className="input-control">
+                <span>Distribuidor</span>
+                <select value={distributorId} onChange={(event) => setDistributorId(event.target.value)}>
+                  <option value="">Seleccionar</option>
+                  {suggestedDistributors.map((distributor) => (
+                    <option key={`dist-${distributor.id}`} value={distributor.id}>
+                      {distributor.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : null}
+            <label className="input-control">
+              <span>Dominio</span>
+              <input value={domain} onChange={(event) => setDomain(event.target.value)} placeholder="ABC123" />
+            </label>
+            <label className="input-control">
+              <span>Período</span>
+              <select
+                value={periodPreset}
+                onChange={(event) => {
+                  const value = event.target.value as 'Q1' | 'Q2' | 'MONTH' | '';
+                  setPeriodPreset(value);
+                  if (value) {
+                    const baseDate = dateFrom || dateTo || new Date().toISOString().slice(0, 10);
+                    applyPeriodPreset(value, baseDate);
+                  }
+                }}
+              >
+                <option value="">Personalizado</option>
+                <option value="Q1">Primera quincena</option>
+                <option value="Q2">Segunda quincena</option>
+                <option value="MONTH">Mes completo</option>
+              </select>
+            </label>
+            <label className="input-control">
+              <span>Desde</span>
+              <input
+                type="date"
+                value={dateFrom}
+                onChange={(event) => {
+                  setDateFrom(event.target.value);
+                  setPeriodPreset('');
+                }}
+              />
+            </label>
+            <label className="input-control">
+              <span>Hasta</span>
+              <input
+                type="date"
+                value={dateTo}
+                onChange={(event) => {
+                  setDateTo(event.target.value);
+                  setPeriodPreset('');
+                }}
+              />
+            </label>
+          </div>
+        </div>
+      </section>
+
+      <div className="informe-layout">
+        <div className="informe-main">
+          <section className="dashboard-card">
+            <header className="card-header">
+              <h3>Detalle de movimientos</h3>
+            </header>
+            <div className="table-wrapper">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Fecha</th>
+                    <th>Estación</th>
+                    <th>Dominio</th>
+                    <th>Producto</th>
+                    <th>Litros</th>
+                    <th>Precio/Litro</th>
+                    <th>Importe</th>
+                    <th>Estado</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {loading && (
+                    <tr>
+                      <td colSpan={8}>Cargando movimientos...</td>
+                    </tr>
+                  )}
+                  {!loading && !error && rows.length === 0 && (
+                    <tr>
+                      <td colSpan={8}>No hay movimientos.</td>
+                    </tr>
+                  )}
+                  {!loading &&
+                    !error &&
+                    rows.map((row) => (
+                      <tr key={row.id}>
+                        <td>{formatDateTime(row.occurred_at)}</td>
+                        <td>{row.station ?? '—'}</td>
+                        <td>{row.domain_norm ?? '—'}</td>
+                        <td>{row.product ?? '—'}</td>
+                        <td>{formatNumber(row.liters)}</td>
+                        <td>{formatNumber(row.price_per_liter)}</td>
+                        <td>{formatCurrency(row.amount ?? 0)}</td>
+                        <td>{row.status ?? '—'}</td>
+                      </tr>
+                    ))}
+                </tbody>
+              </table>
+            </div>
+          </section>
+
+          <section className="dashboard-card">
+            <header className="card-header">
+              <h3>Ajustes manuales</h3>
+            </header>
+            <div className="card-body">
+              <div className="form-grid">
+                <label className="input-control">
+                  <span>Tipo</span>
+                  <select
+                    value={adjustmentType}
+                    onChange={(event) =>
+                      setAdjustmentType(
+                        event.target.value as
+                          | 'ajuste_favor'
+                          | 'cuota_combustible'
+                          | 'pendiente'
+                          | 'adelantos_prestamos'
+                          | 'credito'
+                          | 'debito'
+                      )
+                    }
+                  >
+                    <option value="ajuste_favor">Ajuste a favor</option>
+                    <option value="cuota_combustible">Cuota combustible</option>
+                    <option value="pendiente">Pendiente</option>
+                    <option value="adelantos_prestamos">Adelantos/Préstamos</option>
+                  </select>
+                </label>
+                <label className="input-control">
+                  <span>Importe</span>
+                  <input value={adjustmentAmount} onChange={(event) => setAdjustmentAmount(event.target.value)} />
+                </label>
+                <label className="input-control">
+                  <span>Nota</span>
+                  <input value={adjustmentNote} onChange={(event) => setAdjustmentNote(event.target.value)} />
+                </label>
+              </div>
+              <div className="filters-actions">
+                <button type="button" className="secondary-action" onClick={handleAddAdjustment}>
+                  Agregar ajuste
+                </button>
+              </div>
+              {adjustments.length === 0 ? (
+                <p className="form-info">No hay ajustes cargados.</p>
+              ) : (
+                <div className="table-wrapper">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Tipo</th>
+                        <th>Importe</th>
+                        <th>Nota</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {adjustments.map((adj) => (
+                        <tr key={adj.id}>
+                          <td>{adjustmentTypeLabels[adj.type] ?? adj.type}</td>
+                          <td>{formatCurrency(adj.amount)}</td>
+                          <td>{adj.note || '—'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </section>
+        </div>
+
+        <aside className="summary-panel informe-summary">
+          <div className="summary-panel__header">
+            <div>
+              <h3>Resumen del informe</h3>
+              <p>Totales calculados para el período.</p>
+            </div>
+            <span className="summary-panel__status">{reportStatus ?? '—'}</span>
+          </div>
+          <div className="summary-panel__grid">
+            <div className="summary-panel__row">
+              <span>Importe detalle</span>
+              <strong>{formatCurrency(importeDetalle)}</strong>
+            </div>
+            <div className="summary-panel__row">
+              <span>Total combustible</span>
+              <strong>{formatCurrency(totalCombustible)}</strong>
+            </div>
+            <div className="summary-panel__row">
+              <span>Ajustes</span>
+              <strong>{formatCurrency(totalAjustes)}</strong>
+            </div>
+            {adjustmentsByType.length > 0 ? (
+              <div className="summary-panel__breakdown">
+                {adjustmentsByType.map((item) => (
+                  <div key={`adj-${item.type}`} className="summary-panel__breakdown-row">
+                    <span>{item.label}</span>
+                    <strong>{formatCurrency(item.total)}</strong>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+            <div className="summary-panel__row summary-panel__row--total">
+              <span>Total a facturar</span>
+              <strong>{formatCurrency(totalFacturar)}</strong>
+            </div>
+          </div>
+          <div className="summary-panel__divider" />
+          <label className="input-control summary-panel__input">
+            <span>Liquidación</span>
+            <select value={liquidacionId} onChange={(event) => setLiquidacionId(event.target.value)}>
+              <option value="">Seleccionar</option>
+              {liquidaciones.map((liquidacion) => (
+                <option key={`liq-${liquidacion.id}`} value={liquidacion.id}>
+                  #{liquidacion.id} {liquidacion.persona_nombre ?? ''}{' '}
+                  {liquidacion.persona_legajo ? `(${liquidacion.persona_legajo})` : ''} {liquidacion.nombre_original ?? ''}{' '}
+                  {liquidacion.created_at ?? ''}
+                </option>
+              ))}
+            </select>
+          </label>
+          <div className="summary-panel__actions">
+            <button type="button" className="secondary-action" onClick={handleSaveDraft} disabled={!reportId}>
+              Guardar borrador
+            </button>
+            <button type="button" className="secondary-action secondary-action--ghost" onClick={handleMarkReady} disabled={!reportId}>
+              Marcar listo
+            </button>
+            <button
+              type="button"
+              className="secondary-action secondary-action--ghost"
+              onClick={handleApplyReport}
+              disabled={!reportId || totalFacturar <= 0 || reportStatus === 'APPLIED'}
+            >
+              Aplicar descuento
+            </button>
+          </div>
+          {error ? <p className="form-info form-info--error">{error}</p> : null}
+        </aside>
+      </div>
+    </DashboardLayout>
+  );
+};
+
+const CombustibleTardiasPage: React.FC = () => {
+  const apiBaseUrl = useMemo(() => resolveApiBaseUrl(), []);
+  const [search, setSearch] = useState('');
+  const [rows, setRows] = useState<
+    Array<{
+      id: number;
+      occurred_at: string | null;
+      station: string | null;
+      domain_norm: string | null;
+      product: string | null;
+      liters: number | null;
+      price_per_liter: number | null;
+      amount: number | null;
+      late_report_id: number | null;
+      manual_adjustment_required: boolean;
+      manual_adjustment_amount?: number | null;
+      manual_adjustment_note?: string | null;
+      observations: string | null;
+    }>
+  >([]);
+  const [totals, setTotals] = useState<{ movements: number; liters: number; amount: number } | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [adjustModalRow, setAdjustModalRow] = useState<{
+    id: number;
+    domain_norm: string | null;
+    amount: number | null;
+    note: string;
+  } | null>(null);
+  const [adjustModalSaving, setAdjustModalSaving] = useState(false);
+
+  const loadTardias = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const url = new URL(`${apiBaseUrl}/api/combustible/tardias`);
+      if (search.trim()) {
+        url.searchParams.set('search', search.trim());
+      }
+      const response = await fetch(url.toString(), { credentials: 'include' });
+      if (!response.ok) {
+        const payload = await parseJsonSafe(response).catch(() => null);
+        throw new Error(payload?.message ?? 'No se pudieron cargar las cargas tardías.');
+      }
+      const payload = await parseJsonSafe(response);
+      setRows(Array.isArray(payload.data) ? payload.data : []);
+      setTotals(payload.totals ?? null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No se pudieron cargar las cargas tardías.');
+      setRows([]);
+      setTotals(null);
+    } finally {
+      setLoading(false);
+    }
+  }, [apiBaseUrl, search]);
+
+  useEffect(() => {
+    loadTardias();
+  }, [loadTardias]);
+
+  return (
+    <DashboardLayout title="Combustible" subtitle="Cargas tardías" headerContent={<CombustibleTabs />}>
+      <section className="dashboard-card">
+        <header className="card-header">
+          <h3>Cargas tardías</h3>
+        </header>
+        <div className="card-body">
+          <div className="filters-actions">
+            <input
+              className="input-control"
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder="Buscar dominio"
+            />
+            <button type="button" className="secondary-action" onClick={loadTardias} disabled={loading}>
+              Buscar
+            </button>
+          </div>
+          <div className="summary-cards">
+            <div className="summary-card">
+              <span className="summary-card__label">Movimientos</span>
+              <strong className="summary-card__value">{totals?.movements ?? 0}</strong>
+            </div>
+            <div className="summary-card">
+              <span className="summary-card__label">Litros</span>
+              <strong className="summary-card__value">{formatNumber(totals?.liters ?? 0)}</strong>
+            </div>
+            <div className="summary-card">
+              <span className="summary-card__label">Importe</span>
+              <strong className="summary-card__value">{formatCurrency(totals?.amount ?? 0)}</strong>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section className="dashboard-card">
+        <header className="card-header">
+          <h3>Detalle</h3>
+        </header>
+        <div className="table-wrapper">
+          <table>
+            <thead>
+              <tr>
+                <th>Fecha</th>
+                <th>Estación</th>
+                <th>Dominio</th>
+                <th>Producto</th>
+                <th>Litros</th>
+                <th>Precio/Litro</th>
+                <th>Importe</th>
+                <th>Informe</th>
+                <th>Observaciones</th>
+                <th>Acciones</th>
+              </tr>
+            </thead>
+            <tbody>
+              {loading && (
+                <tr>
+                  <td colSpan={10}>Cargando...</td>
+                </tr>
+              )}
+              {!loading && error && (
+                <tr>
+                  <td colSpan={10} className="error-cell">
+                    {error}
+                  </td>
+                </tr>
+              )}
+              {!loading && !error && rows.length === 0 && (
+                <tr>
+                  <td colSpan={10}>No hay cargas tardías.</td>
+                </tr>
+              )}
+              {!loading &&
+                !error &&
+                rows.map((row) => (
+                  <tr key={row.id}>
+                    <td>{formatDateTime(row.occurred_at)}</td>
+                    <td>{row.station ?? '—'}</td>
+                    <td>{row.domain_norm ?? '—'}</td>
+                    <td>{row.product ?? '—'}</td>
+                    <td>{formatNumber(row.liters)}</td>
+                    <td>{formatNumber(row.price_per_liter)}</td>
+                    <td>{formatCurrency(row.amount ?? 0)}</td>
+                    <td>{row.late_report_id ?? '—'}</td>
+                    <td>{row.observations ?? '—'}</td>
+                    <td>
+                      {row.manual_adjustment_required ? (
+                        <span className="status-badge status-badge--liquidacion is-no">Requiere ajuste</span>
+                      ) : (
+                        <button
+                          type="button"
+                          className="secondary-action secondary-action--ghost"
+                          onClick={async () => {
+                            setAdjustModalRow({
+                              id: row.id,
+                              domain_norm: row.domain_norm,
+                              amount: row.manual_adjustment_amount ?? null,
+                              note: row.manual_adjustment_note ?? '',
+                            });
+                          }}
+                        >
+                          Requiere ajuste manual
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
+      {adjustModalRow ? (
+        <div className="paste-overlay" role="dialog" aria-modal="true">
+          <div className="paste-modal">
+            <h3>Requiere ajuste manual</h3>
+            <p className="paste-modal__hint">
+              Dominio: <strong>{adjustModalRow.domain_norm ?? '—'}</strong>
+            </p>
+            <div className="form-grid">
+              <label className="input-control">
+                <span>Importe</span>
+                <input
+                  type="number"
+                  inputMode="decimal"
+                  step="0.01"
+                  value={adjustModalRow.amount ?? ''}
+                  onChange={(event) =>
+                    setAdjustModalRow((prev) =>
+                      prev ? { ...prev, amount: event.target.value === '' ? null : Number(event.target.value) } : prev
+                    )
+                  }
+                />
+              </label>
+              <label className="input-control">
+                <span>Nota</span>
+                <input
+                  value={adjustModalRow.note}
+                  onChange={(event) =>
+                    setAdjustModalRow((prev) => (prev ? { ...prev, note: event.target.value } : prev))
+                  }
+                />
+              </label>
+            </div>
+            <div className="paste-modal__actions">
+              <button
+                type="button"
+                className="secondary-action"
+                onClick={() => setAdjustModalRow(null)}
+                disabled={adjustModalSaving}
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                className="primary-action"
+                disabled={adjustModalSaving}
+                onClick={async () => {
+                  if (!adjustModalRow) {
+                    return;
+                  }
+                  try {
+                    setAdjustModalSaving(true);
+                    const response = await fetch(
+                      `${apiBaseUrl}/api/combustible/tardias/${adjustModalRow.id}/requiere-ajuste`,
+                      {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        credentials: 'include',
+                        body: JSON.stringify({
+                          amount: adjustModalRow.amount,
+                          note: adjustModalRow.note,
+                        }),
+                      }
+                    );
+                    if (!response.ok) {
+                      const payload = await parseJsonSafe(response).catch(() => null);
+                      throw new Error(payload?.message ?? 'No se pudo marcar el ajuste.');
+                    }
+                    const payload = await parseJsonSafe(response);
+                    setRows((prev) =>
+                      prev.map((item) =>
+                        item.id === adjustModalRow.id
+                          ? {
+                              ...item,
+                              manual_adjustment_required: true,
+                              manual_adjustment_amount: payload?.data?.manual_adjustment_amount ?? item.manual_adjustment_amount,
+                              manual_adjustment_note: payload?.data?.manual_adjustment_note ?? item.manual_adjustment_note,
+                              observations: payload?.data?.observations ?? item.observations,
+                            }
+                          : item
+                      )
+                    );
+                    setAdjustModalRow(null);
+                  } catch (err) {
+                    window.alert(err instanceof Error ? err.message : 'No se pudo marcar el ajuste.');
+                  } finally {
+                    setAdjustModalSaving(false);
+                  }
+                }}
+              >
+                Guardar
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+    </DashboardLayout>
+  );
+};
+
+const CombustibleReportesPage: React.FC = () => {
+  const apiBaseUrl = useMemo(() => resolveApiBaseUrl(), []);
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [data, setData] = useState<{
+    by_distributor: Array<{
+      distributor_id: number;
+      distributor_name: string | null;
+      period: string;
+      total_amount: number;
+      total_liters: number;
+      movements: number;
+    }>;
+    top_stations: Array<{ station: string | null; total_amount: number; movements: number }>;
+    by_product: Array<{ product: string | null; total_amount: number; total_liters: number; movements: number }>;
+    pending_match: number;
+    observed: number;
+  }>({
+    by_distributor: [],
+    top_stations: [],
+    by_product: [],
+    pending_match: 0,
+    observed: 0,
+  });
+
+  const loadReports = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const params = new URLSearchParams();
+      if (dateFrom) params.set('date_from', dateFrom);
+      if (dateTo) params.set('date_to', dateTo);
+      const response = await fetch(`${apiBaseUrl}/api/combustible/reportes-globales?${params.toString()}`, {
+        credentials: 'include',
+      });
+      if (!response.ok) {
+        throw new Error('No se pudieron cargar los reportes globales.');
+      }
+      const payload = await parseJsonSafe(response);
+      setData({
+        by_distributor: Array.isArray(payload.by_distributor) ? payload.by_distributor : [],
+        top_stations: Array.isArray(payload.top_stations) ? payload.top_stations : [],
+        by_product: Array.isArray(payload.by_product) ? payload.by_product : [],
+        pending_match: Number(payload.pending_match) || 0,
+        observed: Number(payload.observed) || 0,
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No se pudieron cargar los reportes.');
+    } finally {
+      setLoading(false);
+    }
+  }, [apiBaseUrl, dateFrom, dateTo]);
+
+  useEffect(() => {
+    loadReports();
+  }, [loadReports]);
+
+  const exportGlobalExcel = () => {
+    const summaryRows = [
+      ['Pendientes sin vinculación', String(data.pending_match)],
+      ['Movimientos observados', String(data.observed)],
+      [],
+    ];
+
+    const distributorHeader = ['Periodo', 'Distribuidor', 'Movimientos', 'Litros', 'Importe'];
+    const distributorRows = data.by_distributor.map((row) => [
+      row.period,
+      row.distributor_name ?? String(row.distributor_id),
+      String(row.movements),
+      formatNumber(row.total_liters),
+      formatCurrency(row.total_amount),
+    ]);
+
+    const stationHeader = ['Estación', 'Movimientos', 'Importe'];
+    const stationRows = data.top_stations.map((row) => [
+      row.station ?? '—',
+      String(row.movements),
+      formatCurrency(row.total_amount),
+    ]);
+
+    const productHeader = ['Producto', 'Movimientos', 'Litros', 'Importe'];
+    const productRows = data.by_product.map((row) => [
+      row.product ?? '—',
+      String(row.movements),
+      formatNumber(row.total_liters),
+      formatCurrency(row.total_amount),
+    ]);
+
+    const sections = [
+      ['RESUMEN', ...summaryRows],
+      [],
+      ['CONSUMO POR DISTRIBUIDOR', distributorHeader, ...distributorRows],
+      [],
+      ['TOP ESTACIONES', stationHeader, ...stationRows],
+      [],
+      ['CONSUMO POR PRODUCTO', productHeader, ...productRows],
+    ];
+
+    const tsv = sections
+      .map((section) => (Array.isArray(section[0]) ? section : [section]))
+      .flat()
+      .map((row) => (Array.isArray(row) ? row : [row]).join('\t'))
+      .join('\n');
+
+    const BOM = '\ufeff';
+    const blob = new Blob([BOM + tsv], { type: 'application/vnd.ms-excel' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `reportes-combustible-${Date.now()}.xls`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
+  const exportGlobalPdf = () => {
+    const html = `
+      <!doctype html>
+      <html lang="es">
+      <head>
+        <meta charset="utf-8" />
+        <title>Reportes globales combustible</title>
+        <style>
+          body { font-family: Arial, sans-serif; color: #1f2a44; margin: 24px; }
+          h1 { font-size: 20px; margin-bottom: 8px; }
+          h2 { font-size: 14px; margin-top: 18px; }
+          table { width: 100%; border-collapse: collapse; font-size: 11px; margin-top: 8px; }
+          th { text-align: left; background: #eef3fb; padding: 6px; border: 1px solid #e1e8f5; }
+          td { padding: 6px; border: 1px solid #e1e8f5; }
+        </style>
+      </head>
+      <body>
+        <h1>Reportes globales de combustible</h1>
+        <p>Pendientes sin vinculación: ${data.pending_match} · Observados: ${data.observed}</p>
+        <h2>Consumo por distribuidor</h2>
+        <table>
+          <thead><tr><th>Periodo</th><th>Distribuidor</th><th>Movimientos</th><th>Litros</th><th>Importe</th></tr></thead>
+          <tbody>
+            ${data.by_distributor.map((row) => `
+              <tr>
+                <td>${row.period}</td>
+                <td>${row.distributor_name ?? row.distributor_id}</td>
+                <td>${row.movements}</td>
+                <td>${formatNumber(row.total_liters)}</td>
+                <td>${formatCurrency(row.total_amount)}</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+        <h2>Top estaciones</h2>
+        <table>
+          <thead><tr><th>Estación</th><th>Movimientos</th><th>Importe</th></tr></thead>
+          <tbody>
+            ${data.top_stations.map((row) => `
+              <tr>
+                <td>${row.station ?? '—'}</td>
+                <td>${row.movements}</td>
+                <td>${formatCurrency(row.total_amount)}</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+        <h2>Consumo por producto</h2>
+        <table>
+          <thead><tr><th>Producto</th><th>Movimientos</th><th>Litros</th><th>Importe</th></tr></thead>
+          <tbody>
+            ${data.by_product.map((row) => `
+              <tr>
+                <td>${row.product ?? '—'}</td>
+                <td>${row.movements}</td>
+                <td>${formatNumber(row.total_liters)}</td>
+                <td>${formatCurrency(row.total_amount)}</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </body>
+      </html>
+    `;
+    const win = window.open('', '_blank');
+    if (!win) {
+      window.alert('No se pudo abrir la vista de impresión.');
+      return;
+    }
+    win.document.write(html);
+    win.document.close();
+    win.focus();
+    win.print();
+  };
+
+  return (
+    <DashboardLayout title="Combustible" subtitle="Reportes globales" headerContent={<CombustibleTabs />}>
+      <section className="dashboard-card">
+        <header className="card-header">
+          <h3>Filtros</h3>
+        </header>
+        <div className="card-body">
+          <div className="form-grid">
+            <label className="input-control">
+              <span>Desde</span>
+              <input type="date" value={dateFrom} onChange={(event) => setDateFrom(event.target.value)} />
+            </label>
+            <label className="input-control">
+              <span>Hasta</span>
+              <input type="date" value={dateTo} onChange={(event) => setDateTo(event.target.value)} />
+            </label>
+          </div>
+          <div className="filters-actions">
+            <button type="button" className="secondary-action" onClick={loadReports} disabled={loading}>
+              {loading ? 'Cargando…' : 'Actualizar'}
+            </button>
+            <button type="button" className="secondary-action secondary-action--ghost" onClick={exportGlobalExcel}>
+              Exportar Excel
+            </button>
+            <button type="button" className="secondary-action secondary-action--ghost" onClick={exportGlobalPdf}>
+              Exportar PDF
+            </button>
+            {error ? <span className="helper-text">{error}</span> : null}
+          </div>
+        </div>
+      </section>
+
+      <section className="dashboard-card">
+        <header className="card-header">
+          <h3>Alertas</h3>
+        </header>
+        <div className="card-body">
+          <div className="summary-cards">
+            <div className="summary-card">
+              <span>Pendientes sin vinculación</span>
+              <strong>{data.pending_match}</strong>
+            </div>
+            <div className="summary-card">
+              <span>Movimientos observados</span>
+              <strong>{data.observed}</strong>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section className="dashboard-card">
+        <header className="card-header">
+          <h3>Consumo mensual por distribuidor</h3>
+        </header>
+        <div className="card-body">
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>Periodo</th>
+                <th>Distribuidor</th>
+                <th>Movimientos</th>
+                <th>Litros</th>
+                <th>Importe</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.by_distributor.map((row) => (
+                <tr key={`${row.distributor_id}-${row.period}`}>
+                  <td>{row.period}</td>
+                  <td>{row.distributor_name ?? row.distributor_id}</td>
+                  <td>{row.movements}</td>
+                  <td>{formatNumber(row.total_liters)}</td>
+                  <td>{formatCurrency(row.total_amount)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section className="dashboard-card">
+        <header className="card-header">
+          <h3>Top estaciones</h3>
+        </header>
+        <div className="card-body">
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>Estación</th>
+                <th>Movimientos</th>
+                <th>Importe</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.top_stations.map((row, index) => (
+                <tr key={`${row.station ?? 'station'}-${index}`}>
+                  <td>{row.station ?? '—'}</td>
+                  <td>{row.movements}</td>
+                  <td>{formatCurrency(row.total_amount)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section className="dashboard-card">
+        <header className="card-header">
+          <h3>Consumo por producto</h3>
+        </header>
+        <div className="card-body">
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>Producto</th>
+                <th>Movimientos</th>
+                <th>Litros</th>
+                <th>Importe</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.by_product.map((row, index) => (
+                <tr key={`${row.product ?? 'producto'}-${index}`}>
+                  <td>{row.product ?? '—'}</td>
+                  <td>{row.movements}</td>
+                  <td>{formatNumber(row.total_liters)}</td>
+                  <td>{formatCurrency(row.total_amount)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </DashboardLayout>
+  );
+};
+
 const LiquidacionesPage: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
@@ -12932,6 +16167,7 @@ const LiquidacionesPage: React.FC = () => {
   const [liquidacionFortnightFilter, setLiquidacionFortnightFilter] = useState('');
   const [liquidacionYearFilter, setLiquidacionYearFilter] = useState('');
   const [liquidacionImporteManual, setLiquidacionImporteManual] = useState('');
+  const [liquidacionFortnightSelection, setLiquidacionFortnightSelection] = useState('');
   const [selectedPagadoIds, setSelectedPagadoIds] = useState<Set<number>>(() => new Set());
   const [selectedListPagadoIds, setSelectedListPagadoIds] = useState<Set<number>>(() => new Set());
   const [selectedPersonaId, setSelectedPersonaId] = useState<number | null>(personaIdFromRoute);
@@ -13073,6 +16309,8 @@ const LiquidacionesPage: React.FC = () => {
       { key: 'sucursal', label: 'Sucursal' },
       { key: 'fechaAlta', label: 'Fecha alta' },
       { key: 'importeFacturar', label: 'Importe a facturar' },
+      { key: 'importeFacturarConDescuento', label: 'Importe a facturar con descuento' },
+      { key: 'combustibleResumen', label: 'Resumen combustible' },
       { key: 'enviada', label: 'Enviada' },
       { key: 'facturado', label: 'Facturado' },
       { key: 'pagado', label: 'Pagado' },
@@ -13429,6 +16667,41 @@ const LiquidacionesPage: React.FC = () => {
       }));
     });
   }, [isPagosView, personal]);
+
+  const selectedPersonalRecord = useMemo(
+    () => personal.find((registro) => registro.id === selectedPersonaId) ?? null,
+    [personal, selectedPersonaId]
+  );
+
+  const importeFacturarBase = useMemo(() => {
+    if (liquidacionImporteManual.trim() !== '') {
+      const parsed = Number(liquidacionImporteManual.replace(',', '.'));
+      return Number.isFinite(parsed) ? parsed : null;
+    }
+    return selectedPersonalRecord?.liquidacionImporteFacturar ?? null;
+  }, [liquidacionImporteManual, selectedPersonalRecord]);
+
+  const importeFacturarConDescuento = useMemo(() => {
+    if (importeFacturarBase == null) {
+      return null;
+    }
+    const descuento = selectedPersonalRecord?.combustibleResumen?.totalToBill ?? null;
+    if (descuento == null) {
+      return null;
+    }
+    return importeFacturarBase - descuento;
+  }, [importeFacturarBase, selectedPersonalRecord]);
+
+  const importeFacturarFinal = useMemo(() => {
+    if (importeFacturarConDescuento != null) {
+      return importeFacturarConDescuento;
+    }
+    if (liquidacionImporteManual.trim() !== '') {
+      const parsed = Number(liquidacionImporteManual.replace(',', '.'));
+      return Number.isFinite(parsed) ? parsed : null;
+    }
+    return null;
+  }, [importeFacturarConDescuento, liquidacionImporteManual]);
 
   const pagosMonthChips = useMemo(() => {
     if (!isPagosView) {
@@ -14612,6 +17885,7 @@ const LiquidacionesPage: React.FC = () => {
       }
       return null;
     });
+    setLiquidacionFortnightSelection('');
     pendingPreviewUrlsRef.current = [];
     closePreviewModal();
   }, [closePreviewModal]);
@@ -15072,6 +18346,9 @@ const LiquidacionesPage: React.FC = () => {
     }
 
     const formData = new FormData();
+    if (importeFacturarFinal != null) {
+      formData.append('importeFacturar', String(importeFacturarFinal));
+    }
 
     const response = await fetch(`${apiBaseUrl}/api/personal/${selectedPersonaId}/documentos/publicar`, {
       method: 'POST',
@@ -15093,7 +18370,7 @@ const LiquidacionesPage: React.FC = () => {
     }
 
     return true;
-  }, [apiBaseUrl, selectedPersonaId]);
+  }, [apiBaseUrl, selectedPersonaId, importeFacturarFinal]);
 
   const handleUploadDocumentos = async () => {
     if (!selectedPersonaId) {
@@ -15146,6 +18423,11 @@ const LiquidacionesPage: React.FC = () => {
       return;
     }
 
+    if (pendingUploads.length > 0 && !liquidacionFortnightSelection) {
+      setUploadStatus({ type: 'error', message: 'Seleccioná si es primera o segunda quincena.' });
+      return;
+    }
+
     // Si tenemos factura de combustible seleccionada, la subimos primero.
     if (needsFuelInvoice && fuelInvoiceUpload && fuelParentDocumentId.trim() !== '') {
       const uploaded = await uploadFuelInvoiceOnly({ silent: true });
@@ -15172,8 +18454,11 @@ const LiquidacionesPage: React.FC = () => {
         if (item.fechaVencimiento) {
           formData.append('fechaVencimiento', item.fechaVencimiento);
         }
-        if (liquidacionImporteManual.trim() !== '') {
-          formData.append('importeFacturar', liquidacionImporteManual.replace(',', '.'));
+        if (liquidacionFortnightSelection) {
+          formData.append('fortnightKey', liquidacionFortnightSelection);
+        }
+        if (importeFacturarFinal != null) {
+          formData.append('importeFacturar', String(importeFacturarFinal));
         }
         formData.append('esLiquidacion', '1');
         formData.append('skipAutoValidacion', '1');
@@ -15327,6 +18612,7 @@ const LiquidacionesPage: React.FC = () => {
       setUploadStatus(validationStatus ?? { type: 'success', message: 'Liquidaciones cargadas correctamente.' });
       clearPendingUploads();
       setDocumentExpiry('');
+      setLiquidacionFortnightSelection('');
       refreshPersonaDetail();
     } catch (err) {
       setUploadStatus({ type: 'error', message: (err as Error).message ?? 'No se pudieron subir los archivos.' });
@@ -15338,6 +18624,11 @@ const LiquidacionesPage: React.FC = () => {
   const handleSaveLiquidacionesSolo = async () => {
     if (!selectedPersonaId || pendingUploads.length === 0) {
       setUploadStatus({ type: 'error', message: 'Agregá al menos una liquidación antes de guardar.' });
+      return;
+    }
+
+    if (!liquidacionFortnightSelection) {
+      setUploadStatus({ type: 'error', message: 'Seleccioná si es primera o segunda quincena.' });
       return;
     }
 
@@ -15359,8 +18650,11 @@ const LiquidacionesPage: React.FC = () => {
         if (item.fechaVencimiento) {
           formData.append('fechaVencimiento', item.fechaVencimiento);
         }
-        if (liquidacionImporteManual.trim() !== '') {
-          formData.append('importeFacturar', liquidacionImporteManual.replace(',', '.'));
+        if (liquidacionFortnightSelection) {
+          formData.append('fortnightKey', liquidacionFortnightSelection);
+        }
+        if (importeFacturarFinal != null) {
+          formData.append('importeFacturar', String(importeFacturarFinal));
         }
         formData.append('esLiquidacion', '1');
         formData.append('pendiente', '1');
@@ -15469,6 +18763,7 @@ const LiquidacionesPage: React.FC = () => {
       }
       clearPendingUploads();
       setDocumentExpiry('');
+      setLiquidacionFortnightSelection('');
       refreshPersonaDetail();
     } catch (err) {
       setUploadStatus({ type: 'error', message: (err as Error).message ?? 'No se pudieron guardar las liquidaciones.' });
@@ -15874,6 +19169,8 @@ const LiquidacionesPage: React.FC = () => {
               {isListColumnVisible('sucursal') ? <th>Sucursal</th> : null}
               {isListColumnVisible('fechaAlta') ? <th>Fecha alta</th> : null}
               {isListColumnVisible('importeFacturar') ? <th>Importe a facturar</th> : null}
+              {isListColumnVisible('importeFacturarConDescuento') ? <th>Importe a facturar con descuento</th> : null}
+              {isListColumnVisible('combustibleResumen') ? <th>Resumen combustible</th> : null}
               {isListColumnVisible('enviada') ? <th>Enviada</th> : null}
               {isListColumnVisible('facturado') ? <th>Facturado</th> : null}
               {isListColumnVisible('pagado') ? <th>Pagado</th> : null}
@@ -15931,6 +19228,31 @@ const LiquidacionesPage: React.FC = () => {
                       {registro.liquidacionImporteFacturar != null
                         ? formatCurrency(registro.liquidacionImporteFacturar)
                         : '—'}
+                    </td>
+                  ) : null}
+                  {isListColumnVisible('importeFacturarConDescuento') ? (
+                    <td>
+                      {registro.liquidacionImporteFacturar != null && registro.combustibleResumen
+                        ? formatCurrency(registro.liquidacionImporteFacturar - registro.combustibleResumen.totalToBill)
+                        : '—'}
+                    </td>
+                  ) : null}
+                  {isListColumnVisible('combustibleResumen') ? (
+                    <td>
+                      {registro.combustibleResumen ? (
+                        <div className="liquidacion-resumen">
+                          <span>Combustible: {formatCurrency(registro.combustibleResumen.totalAmount)}</span>
+                          <span>Ajustes: {formatCurrency(registro.combustibleResumen.adjustmentsTotal)}</span>
+                          <strong>
+                            Total a facturar:{' '}
+                            {formatCurrency(
+                              (registro.liquidacionImporteFacturar ?? 0) - registro.combustibleResumen.totalToBill
+                            )}
+                          </strong>
+                        </div>
+                      ) : (
+                        '—'
+                      )}
                     </td>
                   ) : null}
                   {isListColumnVisible('enviada') ? (
@@ -16300,6 +19622,29 @@ const LiquidacionesPage: React.FC = () => {
               onChange={(event) => setLiquidacionImporteManual(event.target.value)}
             />
           </label>
+          <label className="input-control">
+            <span>Importe a facturar con descuento</span>
+            <input
+              type="text"
+              readOnly
+              value={
+                importeFacturarConDescuento != null
+                  ? formatCurrency(importeFacturarConDescuento)
+                  : '—'
+              }
+            />
+          </label>
+          <label className="input-control">
+            <span>Quincena</span>
+            <select
+              value={liquidacionFortnightSelection}
+              onChange={(event) => setLiquidacionFortnightSelection(event.target.value)}
+            >
+              <option value="">Seleccionar</option>
+              <option value="Q1">Primera quincena</option>
+              <option value="Q2">Segunda quincena</option>
+            </select>
+          </label>
           {selectedDocumentType?.vence ? (
             <label className="input-control">
               <span>Fecha de vencimiento</span>
@@ -16601,7 +19946,12 @@ const UsersPage: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
+  const [roleFilter, setRoleFilter] = useState('');
   const [deletingUsuarioId, setDeletingUsuarioId] = useState<number | null>(null);
+  const [roleUpdatingIds, setRoleUpdatingIds] = useState<Set<number>>(() => new Set());
+  const [permissionsModalUser, setPermissionsModalUser] = useState<Usuario | null>(null);
+  const [permissionsDraft, setPermissionsDraft] = useState<Set<string>>(new Set());
+  const [permissionsSaving, setPermissionsSaving] = useState(false);
   const authUser = useStoredAuthUser();
   const isAdmin = useMemo(() => {
     const normalized = authUser?.role?.toLowerCase() ?? '';
@@ -16651,12 +20001,16 @@ const UsersPage: React.FC = () => {
   }, [apiBaseUrl, isAdmin]);
 
   const filteredUsuarios = useMemo(() => {
+    const roleTarget = roleFilter ? normalizeUserRole(roleFilter) : null;
     const term = searchTerm.trim().toLowerCase();
-    if (term.length === 0) {
+    if (term.length === 0 && !roleTarget) {
       return usuarios;
     }
 
     return usuarios.filter((usuario) => {
+      if (roleTarget && normalizeUserRole(usuario.role) !== roleTarget) {
+        return false;
+      }
       const fields = [
         usuario.name,
         usuario.email,
@@ -16666,7 +20020,7 @@ const UsersPage: React.FC = () => {
       ];
       return fields.some((field) => field?.toLowerCase().includes(term));
     });
-  }, [usuarios, searchTerm]);
+  }, [usuarios, searchTerm, roleFilter]);
 
   const footerLabel = useMemo(() => {
     if (loading) {
@@ -16721,15 +20075,164 @@ const UsersPage: React.FC = () => {
     }
   };
 
+  const handleRoleChange = async (usuario: Usuario, nextRole: string) => {
+    const normalizedRole = normalizeUserRole(nextRole);
+    const currentRole = normalizeUserRole(usuario.role);
+    if (normalizedRole === currentRole) {
+      return;
+    }
+
+    try {
+      setRoleUpdatingIds((prev) => new Set(prev).add(usuario.id));
+      const response = await fetch(`${apiBaseUrl}/api/usuarios/${usuario.id}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ role: normalizedRole }),
+      });
+
+      if (!response.ok) {
+        let message = `Error ${response.status}: ${response.statusText}`;
+        try {
+          const payload = await response.json();
+          if (typeof payload?.message === 'string') {
+            message = payload.message;
+          }
+        } catch {
+          // ignore
+        }
+        throw new Error(message);
+      }
+
+      const payload = (await response.json()) as { data?: Usuario };
+      const updatedRole = payload?.data?.role ?? normalizedRole;
+      setUsuarios((prev) =>
+        prev.map((item) => (item.id === usuario.id ? { ...item, role: updatedRole } : item))
+      );
+    } catch (err) {
+      window.alert((err as Error).message ?? 'No se pudo actualizar el rol.');
+    } finally {
+      setRoleUpdatingIds((prev) => {
+        const next = new Set(prev);
+        next.delete(usuario.id);
+        return next;
+      });
+    }
+  };
+
+  const openPermissionsModal = (usuario: Usuario) => {
+    const initial = Array.isArray(usuario.permissions) ? usuario.permissions : [];
+    setPermissionsDraft(new Set(initial));
+    setPermissionsModalUser(usuario);
+  };
+
+  const closePermissionsModal = () => {
+    setPermissionsModalUser(null);
+    setPermissionsDraft(new Set());
+    setPermissionsSaving(false);
+  };
+
+  const togglePermission = (value: string) => {
+    setPermissionsDraft((prev) => {
+      const next = new Set(prev);
+      if (next.has(value)) {
+        next.delete(value);
+      } else {
+        next.add(value);
+      }
+      return next;
+    });
+  };
+
+  const savePermissions = async () => {
+    if (!permissionsModalUser) {
+      return;
+    }
+
+    try {
+      setPermissionsSaving(true);
+      const response = await fetch(`${apiBaseUrl}/api/usuarios/${permissionsModalUser.id}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ permissions: Array.from(permissionsDraft) }),
+      });
+
+      if (!response.ok) {
+        let message = `Error ${response.status}: ${response.statusText}`;
+        try {
+          const payload = await response.json();
+          if (typeof payload?.message === 'string') {
+            message = payload.message;
+          }
+        } catch {
+          // ignore
+        }
+        throw new Error(message);
+      }
+
+      const payload = (await response.json()) as { data?: Usuario };
+      const updatedPermissions = payload?.data?.permissions ?? Array.from(permissionsDraft);
+      setUsuarios((prev) =>
+        prev.map((item) =>
+          item.id === permissionsModalUser.id ? { ...item, permissions: updatedPermissions } : item
+        )
+      );
+      if (authUser?.id === permissionsModalUser.id) {
+        const updatedAuth: AuthUser = {
+          id: authUser.id,
+          name: authUser.name ?? null,
+          email: authUser.email ?? null,
+          role: authUser.role ?? null,
+          token: authUser.token ?? null,
+          permissions: updatedPermissions,
+        };
+        try {
+          const serialized = JSON.stringify(updatedAuth);
+          const hasLocal = Boolean(window.localStorage.getItem(AUTH_STORAGE_KEY));
+          const hasSession = Boolean(window.sessionStorage.getItem(AUTH_STORAGE_KEY));
+          if (hasLocal) {
+            window.localStorage.setItem(AUTH_STORAGE_KEY, serialized);
+          }
+          if (hasSession || (!hasLocal && !hasSession)) {
+            window.sessionStorage.setItem(AUTH_STORAGE_KEY, serialized);
+          }
+          window.dispatchEvent(new CustomEvent('auth:updated'));
+        } catch {
+          // ignore
+        }
+      }
+      closePermissionsModal();
+    } catch (err) {
+      window.alert((err as Error).message ?? 'No se pudieron guardar los permisos.');
+      setPermissionsSaving(false);
+    }
+  };
+
   const headerContent = (
     <div className="card-header">
-      <div className="search-wrapper">
-        <input
-          type="search"
-          placeholder="Buscar"
-          value={searchTerm}
-          onChange={(event) => setSearchTerm(event.target.value)}
-        />
+      <div className="filters-actions" style={{ flex: 1 }}>
+        <div className="search-wrapper">
+          <input
+            type="search"
+            placeholder="Buscar"
+            value={searchTerm}
+            onChange={(event) => setSearchTerm(event.target.value)}
+          />
+        </div>
+        <label className="filter-field" style={{ minWidth: '200px' }}>
+          <span>Rol</span>
+          <select value={roleFilter} onChange={(event) => setRoleFilter(event.target.value)}>
+            <option value="">Todos los roles</option>
+            {USER_ROLE_OPTIONS.map((option) => (
+              <option key={`role-filter-${option.value}`} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </label>
       </div>
       <button className="primary-action" type="button" onClick={() => navigate('/usuarios/nuevo')}>
         Registrar usuario
@@ -16790,7 +20293,7 @@ const UsersPage: React.FC = () => {
               filteredUsuarios.map((usuario) => {
                 const statusValue = (usuario.status ?? 'activo').toLowerCase();
                 const statusLabel = statusValue === 'inactivo' ? 'Inactivo' : 'Activo';
-                const userRoleLabel = formatRoleLabel(usuario.role);
+                const normalizedRole = normalizeUserRole(usuario.role);
 
                 return (
                   <tr key={usuario.id}>
@@ -16798,7 +20301,19 @@ const UsersPage: React.FC = () => {
                     <td>{usuario.name ?? '—'}</td>
                     <td>{usuario.email ?? '—'}</td>
                     <td>{usuario.created_at ?? '—'}</td>
-                    <td>{userRoleLabel}</td>
+                    <td>
+                      <select
+                        value={normalizedRole}
+                        onChange={(event) => handleRoleChange(usuario, event.target.value)}
+                        disabled={roleUpdatingIds.has(usuario.id)}
+                      >
+                        {USER_ROLE_OPTIONS.map((option) => (
+                          <option key={`user-role-${usuario.id}-${option.value}`} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
+                    </td>
                     <td>
                       <span className={`status-badge${statusValue === 'inactivo' ? ' is-inactive' : ''}`}>
                         {statusLabel}
@@ -16806,6 +20321,13 @@ const UsersPage: React.FC = () => {
                     </td>
                     <td>
                       <div className="action-buttons">
+                        <button
+                          type="button"
+                          aria-label={`Permisos de ${usuario.name ?? usuario.email ?? ''}`}
+                          onClick={() => openPermissionsModal(usuario)}
+                        >
+                          🔑
+                        </button>
                         <button
                           type="button"
                           aria-label={`Editar usuario ${usuario.name ?? ''}`}
@@ -16841,6 +20363,44 @@ const UsersPage: React.FC = () => {
           </button>
         </div>
       </footer>
+      {permissionsModalUser ? (
+        <div className="permissions-modal" role="dialog" aria-modal="true">
+          <div className="permissions-modal__backdrop" onClick={closePermissionsModal} />
+          <div className="permissions-modal__content">
+            <div className="permissions-modal__header">
+              <div>
+                <h3>Permisos de usuario</h3>
+                <p>{permissionsModalUser.name ?? permissionsModalUser.email ?? `Usuario #${permissionsModalUser.id}`}</p>
+              </div>
+              <button type="button" onClick={closePermissionsModal} aria-label="Cerrar">
+                ×
+              </button>
+            </div>
+            <div className="permissions-modal__body">
+              <div className="permissions-grid">
+                {USER_PERMISSION_OPTIONS.map((option) => (
+                  <label key={`perm-${permissionsModalUser.id}-${option.value}`} className="permissions-option">
+                    <input
+                      type="checkbox"
+                      checked={permissionsDraft.has(option.value)}
+                      onChange={() => togglePermission(option.value)}
+                    />
+                    <span>{option.label}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
+            <div className="permissions-modal__actions">
+              <button type="button" className="secondary-action" onClick={closePermissionsModal}>
+                Cancelar
+              </button>
+              <button type="button" className="primary-action" onClick={savePermissions} disabled={permissionsSaving}>
+                {permissionsSaving ? 'Guardando...' : 'Guardar permisos'}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </DashboardLayout>
   );
 };
@@ -30498,7 +34058,7 @@ const AuditPage: React.FC = () => {
     actorQuery.trim().length > 0 ||
     emailQuery.trim().length > 0;
 
-  if (!canAccessSection(userRole, 'auditoria')) {
+  if (!canAccessSection(userRole, 'auditoria', authUser?.permissions)) {
     return (
       <DashboardLayout title="Auditoría" subtitle="Acceso restringido">
         <p className="form-info form-info--error">Solo los administradores pueden acceder a Auditoría.</p>
@@ -30617,11 +34177,7 @@ const RequireAccess: React.FC<{ section: AccessSection; children: React.ReactEle
     return <Navigate to="/" replace />;
   }
 
-  if (section === 'reclamos') {
-    return children;
-  }
-
-  if (!canAccessSection(userRole, section)) {
+  if (!canAccessSection(userRole, section, authUser?.permissions)) {
     return <Navigate to="/informacion-general" replace />;
   }
 
@@ -30672,7 +34228,7 @@ const AppRoutes: React.FC = () => (
       <Route
         path="/bases-distribucion"
         element={
-          <RequireAccess section="clientes">
+          <RequireAccess section="bases">
             <DashboardPage
               pageTitle="Bases de distribución"
               pageSubtitle="Clientes y sucursales"
@@ -30684,7 +34240,7 @@ const AppRoutes: React.FC = () => (
       <Route
         path="/bases-distribucion/:clienteId"
         element={
-          <RequireAccess section="clientes">
+          <RequireAccess section="bases">
             <BaseDistribucionDetailPage />
           </RequireAccess>
         }
@@ -30713,7 +34269,14 @@ const AppRoutes: React.FC = () => (
           </RequireAccess>
         }
       />
-      <Route path="/notificaciones" element={<NotificationsPage />} />
+      <Route
+        path="/notificaciones"
+        element={
+          <RequireAccess section="notificaciones">
+            <NotificationsPage />
+          </RequireAccess>
+        }
+      />
       <Route
         path="/ticketera"
         element={
@@ -30802,9 +34365,78 @@ const AppRoutes: React.FC = () => (
           </RequireAccess>
         }
       />
-      <Route path="/documentos" element={<DocumentTypesPage />} />
-      <Route path="/documentos/nuevo" element={<DocumentTypeCreatePage />} />
-      <Route path="/documentos/:tipoId/editar" element={<DocumentTypeEditPage />} />
+      <Route
+        path="/combustible"
+        element={
+          <RequireAccess section="combustible">
+            <CombustibleCargaPage />
+          </RequireAccess>
+        }
+      />
+      <Route
+        path="/combustible/pendientes"
+        element={
+          <RequireAccess section="combustible">
+            <CombustiblePendientesPage />
+          </RequireAccess>
+        }
+      />
+      <Route
+        path="/combustible/distribuidor"
+        element={
+          <RequireAccess section="combustible">
+            <CombustibleDistribuidorPage />
+          </RequireAccess>
+        }
+      />
+      <Route
+        path="/combustible/informe"
+        element={
+          <RequireAccess section="combustible">
+            <CombustibleInformePage />
+          </RequireAccess>
+        }
+      />
+      <Route
+        path="/combustible/tardias"
+        element={
+          <RequireAccess section="combustible">
+            <CombustibleTardiasPage />
+          </RequireAccess>
+        }
+      />
+      <Route
+        path="/combustible/reportes"
+        element={
+          <RequireAccess section="combustible">
+            <CombustibleReportesPage />
+          </RequireAccess>
+        }
+      />
+      <Route
+        path="/documentos"
+        element={
+          <RequireAccess section="documentos">
+            <DocumentTypesPage />
+          </RequireAccess>
+        }
+      />
+      <Route
+        path="/documentos/nuevo"
+        element={
+          <RequireAccess section="documentos">
+            <DocumentTypeCreatePage />
+          </RequireAccess>
+        }
+      />
+      <Route
+        path="/documentos/:tipoId/editar"
+        element={
+          <RequireAccess section="documentos">
+            <DocumentTypeEditPage />
+          </RequireAccess>
+        }
+      />
       <Route
         path="/usuarios"
         element={
@@ -30845,8 +34477,22 @@ const AppRoutes: React.FC = () => (
           </RequireAccess>
         }
       />
-      <Route path="/flujo-trabajo" element={<WorkflowPage />} />
-      <Route path="/aprobaciones" element={<ApprovalsRequestsPage />} />
+      <Route
+        path="/flujo-trabajo"
+        element={
+          <RequireAccess section="flujo-trabajo">
+            <WorkflowPage />
+          </RequireAccess>
+        }
+      />
+      <Route
+        path="/aprobaciones"
+        element={
+          <RequireAccess section="aprobaciones">
+            <ApprovalsRequestsPage />
+          </RequireAccess>
+        }
+      />
       <Route
         path="/clientes/nuevo"
         element={
@@ -30871,7 +34517,14 @@ const AppRoutes: React.FC = () => (
           </RequireAccess>
         }
       />
-      <Route path="/configuracion" element={<ConfigurationPage />} />
+      <Route
+        path="/configuracion"
+        element={
+          <RequireAccess section="configuracion">
+            <ConfigurationPage />
+          </RequireAccess>
+        }
+      />
     </Route>
     <Route path="*" element={<Navigate to="/" replace />} />
   </Routes>

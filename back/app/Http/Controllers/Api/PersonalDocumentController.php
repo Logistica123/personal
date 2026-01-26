@@ -167,6 +167,24 @@ class PersonalDocumentController extends Controller
                 $importeCombustible = $this->resolveFuelAmountForDocument($documento, $nombre);
                 $hasAttachments = $documento->parent_document_id === null
                     && ($documento->children?->isNotEmpty() ?? false);
+                $importeFacturarBase = $documento->importe_facturar;
+                $fuelDiscountTotal = 0.0;
+                if ($documento->parent_document_id === null && $documento->children) {
+                    $fuelDiscountTotal = $documento->children
+                        ->filter(function (Archivo $child) {
+                            $typeName = Str::lower($child->tipo?->nombre ?? '');
+                            $name = Str::lower($child->nombre_original ?? '');
+                            return Str::contains($typeName, 'combust')
+                                || Str::contains($name, 'combust');
+                        })
+                        ->map(function (Archivo $child) {
+                            return $child->importe_facturar ?? 0;
+                        })
+                        ->sum();
+                }
+                $importeFacturarConDescuento = $importeFacturarBase !== null
+                    ? $importeFacturarBase + $fuelDiscountTotal
+                    : null;
 
                 return [
                     'id' => $documento->id,
@@ -185,7 +203,9 @@ class PersonalDocumentController extends Controller
                     'tipoNombre' => $documento->tipo?->nombre,
                     'requiereVencimiento' => (bool) $documento->tipo?->vence,
                     'importeCombustible' => $importeCombustible,
-                    'importeFacturar' => $documento->importe_facturar,
+                    'importeFacturar' => $importeFacturarConDescuento ?? $importeFacturarBase,
+                    'importeFacturarBase' => $importeFacturarBase,
+                    'importeFacturarConDescuento' => $importeFacturarConDescuento,
                     'pendiente' => (bool) $documento->es_pendiente,
                     'liquidacionId' => $documento->liquidacion_id,
                     'enviada' => (bool) $documento->enviada,
@@ -262,6 +282,7 @@ class PersonalDocumentController extends Controller
             'nombre' => ['nullable', 'string'],
             'tipoArchivoId' => ['required', 'integer', 'exists:fyle_types,id'],
             'fechaVencimiento' => ['nullable', 'date'],
+            'fortnightKey' => ['nullable', 'in:Q1,Q2'],
             'importeCombustible' => ['nullable', 'numeric', 'min:0'],
             'importeFacturar' => ['nullable', 'numeric', 'min:0'],
             'attachFuelInvoices' => ['nullable', 'boolean'],
@@ -339,6 +360,7 @@ class PersonalDocumentController extends Controller
             'size' => $file->getSize(),
             'tipo_archivo_id' => $validated['tipoArchivoId'],
             'fecha_vencimiento' => $parsedFecha,
+            'fortnight_key' => $validated['fortnightKey'] ?? null,
             'importe_facturar' => $validated['importeFacturar'] ?? null,
             'enviada' => $isLiquidacion && ! $isPending,
             'recibido' => false,
@@ -511,7 +533,7 @@ class PersonalDocumentController extends Controller
             $importeQuery = $persona->documentos()
                 ->where('es_pendiente', false)
                 ->whereNull('parent_document_id')
-                ->whereNull('importe_facturar');
+                ;
 
             if ($liquidacionTypeIds->isNotEmpty()) {
                 $importeQuery->whereIn('tipo_archivo_id', $liquidacionTypeIds);

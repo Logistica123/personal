@@ -23,6 +23,7 @@ class User extends Authenticatable
         'email',
         'password',
         'role',
+        'permissions',
         'totp_secret',
         'totp_enabled_at',
     ];
@@ -49,6 +50,7 @@ class User extends Authenticatable
             'email_verified_at' => 'datetime',
             'password' => 'hashed',
             'totp_enabled_at' => 'datetime',
+            'permissions' => 'array',
         ];
     }
 

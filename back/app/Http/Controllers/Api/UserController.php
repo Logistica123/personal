@@ -15,6 +15,29 @@ class UserController extends Controller
      * @var string[]
      */
     private array $allowedRoles = ['admin', 'admin2', 'encargado', 'operator', 'asesor'];
+    /**
+     * @var string[]
+     */
+    private array $allowedPermissions = [
+        'clientes',
+        'unidades',
+        'usuarios',
+        'proveedores',
+        'personal',
+        'reclamos',
+        'ticketera',
+        'notificaciones',
+        'control-horario',
+        'auditoria',
+        'flujo-trabajo',
+        'aprobaciones',
+        'liquidaciones',
+        'pagos',
+        'tarifas',
+        'bases',
+        'documentos',
+        'configuracion',
+    ];
 
     public function index(): JsonResponse
     {
@@ -28,6 +51,7 @@ class UserController extends Controller
                 'created_at' => optional($user->created_at)->format('Y-m-d'),
                 'status' => $user->status ?? 'activo',
                 'role' => $user->role ?? null,
+                'permissions' => $user->permissions ?? [],
             ])
             ->values();
 
@@ -41,16 +65,24 @@ class UserController extends Controller
             'email' => ['required', 'string', 'email', 'max:255', 'unique:users,email'],
             'password' => ['required', 'string', 'min:6', 'confirmed'],
             'role' => ['nullable', 'in:' . implode(',', $this->allowedRoles)],
+            'permissions' => ['nullable', 'array'],
+            'permissions.*' => ['string', 'in:' . implode(',', $this->allowedPermissions)],
         ]);
 
         $role = $validated['role'] ?? 'operator';
+        $permissions = $validated['permissions'] ?? null;
+        if ($role === 'encargado' && $permissions === null) {
+            $permissions = [];
+        }
         unset($validated['role']);
+        unset($validated['permissions']);
 
         $user = User::create([
             'name' => $validated['name'],
             'email' => $validated['email'],
             'password' => Hash::make($validated['password']),
             'role' => $role,
+            'permissions' => $permissions,
         ]);
 
         return response()->json([
@@ -62,6 +94,7 @@ class UserController extends Controller
                 'created_at' => optional($user->created_at)->format('Y-m-d'),
                 'status' => $user->status ?? 'activo',
                 'role' => $user->role ?? null,
+                'permissions' => $user->permissions ?? [],
             ],
         ], 201);
     }
@@ -76,6 +109,7 @@ class UserController extends Controller
                 'created_at' => optional($usuario->created_at)->format('Y-m-d'),
                 'status' => $usuario->status ?? 'activo',
                 'role' => $usuario->role ?? null,
+                'permissions' => $usuario->permissions ?? [],
             ],
         ]);
     }
@@ -87,6 +121,8 @@ class UserController extends Controller
             'email' => ['sometimes', 'nullable', 'string', 'email', 'max:255', 'unique:users,email,' . $usuario->id],
             'password' => ['nullable', 'string', 'min:6', 'confirmed'],
             'role' => ['nullable', 'in:' . implode(',', $this->allowedRoles)],
+            'permissions' => ['nullable', 'array'],
+            'permissions.*' => ['string', 'in:' . implode(',', $this->allowedPermissions)],
         ]);
 
         $updated = false;
@@ -106,6 +142,11 @@ class UserController extends Controller
             $updated = true;
         }
 
+        if (array_key_exists('permissions', $validated)) {
+            $usuario->permissions = $validated['permissions'] ?? [];
+            $updated = true;
+        }
+
         $passwordChanged = false;
         if (!empty($validated['password'])) {
             $usuario->password = Hash::make($validated['password']);
@@ -120,6 +161,7 @@ class UserController extends Controller
                 'name' => $validated['name'] ?? null,
                 'email' => $validated['email'] ?? null,
                 'role' => $validated['role'] ?? null,
+                'permissions' => $validated['permissions'] ?? null,
                 'password_changed' => $passwordChanged,
             ]);
         }
@@ -133,6 +175,7 @@ class UserController extends Controller
                 'created_at' => optional($usuario->created_at)->format('Y-m-d'),
                 'status' => $usuario->status ?? 'activo',
                 'role' => $usuario->role ?? null,
+                'permissions' => $usuario->permissions ?? [],
             ],
         ]);
     }

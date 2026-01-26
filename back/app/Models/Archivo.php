@@ -28,6 +28,7 @@ class Archivo extends Model
         'mime',
         'size',
         'fecha_vencimiento',
+        'fortnight_key',
         'importe_facturar',
         'enviada',
         'recibido',
