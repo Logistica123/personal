@@ -969,7 +969,7 @@ const normalizeUserRole = (role: string | null | undefined): UserRole => {
 
 const getUserRole = (authUser: AuthUser | null | undefined): UserRole => normalizeUserRole(authUser?.role);
 
-const isElevatedRole = (role: UserRole): boolean => role === 'admin' || role === 'admin2';
+const isElevatedRole = (role: UserRole): boolean => role === 'admin' || role === 'admin2' || role === 'asesor';
 
 const USER_ROLE_OPTIONS: Array<{ value: UserRole; label: string }> = [
   { value: 'operator', label: 'Operador' },

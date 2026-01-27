@@ -72,7 +72,6 @@ class FuelReportController extends Controller
 
             $baseQuery = FuelMovement::query()
                 ->where('distributor_id', $validated['distributor_id'])
-                ->where('discounted', false)
                 ->whereNotIn('status', ['DUPLICATE']);
 
             if (!empty($validated['domain_norm'])) {
@@ -90,6 +89,7 @@ class FuelReportController extends Controller
             }
 
             $discountableQuery = (clone $baseQuery)
+                ->where('discounted', false)
                 ->where(function ($inner) {
                     $inner->whereNull('late_charge')->orWhere('late_charge', false);
                 })
@@ -102,7 +102,8 @@ class FuelReportController extends Controller
 
             $extras = (clone $baseQuery)
                 ->where(function ($inner) {
-                    $inner->whereNotIn('status', ['IMPUTED'])
+                    $inner->where('discounted', true)
+                        ->orWhereNotIn('status', ['IMPUTED'])
                         ->orWhere(function ($late) {
                             $late->whereNotNull('late_charge')->where('late_charge', true);
                         });
