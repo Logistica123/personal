@@ -264,7 +264,11 @@ class WorkflowTaskController extends Controller
             abort(403, 'Usuario no autorizado.');
         }
 
-        if (str_contains(strtolower((string) $user->role), 'admin')) {
+        $role = strtolower(trim((string) $user->role));
+        $permissions = $user->permissions ?? null;
+        $canByPermission = is_array($permissions) && in_array('flujo-trabajo', $permissions, true);
+
+        if (str_contains($role, 'admin') || $role === 'encargado' || $canByPermission) {
             return;
         }
 

@@ -82,7 +82,32 @@ class PersonalController extends Controller
     protected function ensureCanManagePersonal(Request $request, ?Persona $persona = null): void
     {
         $actorEmail = $this->resolveActorEmail($request);
-        $isAllowed = $actorEmail && in_array($actorEmail, $this->personalEditorEmails, true);
+        $actorUser = $request->user();
+
+        if (! $actorUser) {
+            $actorId = $request->input('actorId')
+                ?? $request->input('userId')
+                ?? $request->input('autoApproveUserId');
+
+            if ($actorId) {
+                $actorUser = User::query()->find((int) $actorId);
+            }
+        }
+
+        if (! $actorUser && $actorEmail) {
+            $actorUser = User::query()->where('email', $actorEmail)->first();
+        }
+
+        $role = strtolower(trim((string) ($actorUser?->role ?? '')));
+        $permissions = $actorUser?->permissions ?? null;
+        $hasPersonalPermission = is_array($permissions)
+            && (in_array('personal', $permissions, true) || in_array('proveedores', $permissions, true));
+        $roleCanManage = ($role !== '' && Str::contains($role, 'admin'))
+            || in_array($role, ['asesor', 'encargado'], true);
+
+        $isAllowed = ($actorEmail && in_array($actorEmail, $this->personalEditorEmails, true))
+            || $roleCanManage
+            || $hasPersonalPermission;
         $isPendingSolicitud = $persona && (! $persona->aprobado) && ($persona->es_solicitud ?? false);
 
         if ($isAllowed || $isPendingSolicitud) {
@@ -104,6 +129,31 @@ class PersonalController extends Controller
         $normalized = preg_replace('/[\s\.\-]+/', '', $normalized);
 
         return $normalized !== '' ? $normalized : null;
+    }
+
+    protected function matchesPersonaEmail(Persona $persona, ?string $email): bool
+    {
+        if (! is_string($email) || trim($email) === '') {
+            return false;
+        }
+
+        $normalized = strtolower(trim($email));
+        $candidates = [
+            $persona->email,
+            $persona->dueno?->email,
+            $persona->cobrador_email,
+        ];
+
+        foreach ($candidates as $candidate) {
+            if (! is_string($candidate)) {
+                continue;
+            }
+            if (strtolower(trim($candidate)) === $normalized) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     public function combustible(Request $request, Persona $persona): JsonResponse
@@ -287,6 +337,11 @@ class PersonalController extends Controller
 
     public function personalNotifications(Request $request, Persona $persona): JsonResponse
     {
+        $email = $request->query('email');
+        if (! $this->matchesPersonaEmail($persona, $email)) {
+            return response()->json(['message' => 'No autorizado.'], 403);
+        }
+
         $query = PersonalNotification::query()
             ->where('persona_id', $persona->id)
             ->orderByDesc('created_at');
@@ -311,6 +366,11 @@ class PersonalController extends Controller
 
     public function markPersonalNotificationRead(Request $request, Persona $persona, PersonalNotification $notification): JsonResponse
     {
+        $email = $request->query('email');
+        if (! $this->matchesPersonaEmail($persona, $email)) {
+            return response()->json(['message' => 'No autorizado.'], 403);
+        }
+
         if ($notification->persona_id !== $persona->id) {
             return response()->json(['message' => 'No autorizado.'], 403);
         }

@@ -1524,4 +1524,94 @@ class PersonalDocumentController extends Controller
             'message' => 'Liquidación eliminada correctamente.',
         ]);
     }
+
+    public function addLiquidacionAdjustment(Request $request, Persona $persona, Archivo $documento): JsonResponse
+    {
+        if ($documento->persona_id !== $persona->id) {
+            return response()->json(['message' => 'No tenés permisos para modificar esta liquidación.'], 403);
+        }
+
+        $isLiquidacion = Str::contains(Str::lower($documento->tipo?->nombre ?? ''), 'liquid');
+        if (! $isLiquidacion) {
+            return response()->json(['message' => 'El documento no es una liquidación válida.'], 422);
+        }
+
+        $validated = $request->validate([
+            'adjustments' => ['required', 'array', 'min:1'],
+            'adjustments.*.type' => ['required', 'in:credito,debito,ajuste_favor,cuota_combustible,pendiente,adelantos_prestamos'],
+            'adjustments.*.amount' => ['required', 'numeric', 'min:0.01'],
+            'adjustments.*.note' => ['nullable', 'string', 'max:500'],
+        ]);
+
+        $tipo = FileType::query()->firstOrCreate(
+            ['nombre' => 'AJUSTE_LIQUIDACION'],
+            ['categoria' => 'liquidaciones']
+        );
+
+        $created = [];
+        $directory = $documento->carpeta ?: ('personal/' . $persona->id);
+        $disk = $documento->disk ?: 'public';
+        $negativeTypes = ['debito', 'pendiente', 'cuota_combustible', 'adelantos_prestamos'];
+
+        foreach ($validated['adjustments'] as $adjustment) {
+            $amount = (float) $adjustment['amount'];
+            if ($amount <= 0) {
+                continue;
+            }
+            $type = (string) $adjustment['type'];
+            $label = match ($type) {
+                'cuota_combustible' => 'Cuota combustible',
+                'pendiente' => 'Pendiente',
+                'adelantos_prestamos' => 'Adelantos/Préstamos',
+                'debito' => 'Débito',
+                default => 'Ajuste a favor',
+            };
+            $note = trim((string) ($adjustment['note'] ?? ''));
+            $fileName = sprintf('ajuste-liquidacion-%d-%s.txt', $documento->id, Str::uuid());
+            $ruta = rtrim($directory, '/') . '/' . $fileName;
+            $signedAmount = in_array($type, $negativeTypes, true) ? ($amount * -1) : $amount;
+            $nombre = sprintf('Ajuste liquidación (%s)%s', $label, $note !== '' ? ' - ' . $note : '');
+
+            $createdDoc = Archivo::query()->create([
+                'persona_id' => $persona->id,
+                'parent_document_id' => $documento->id,
+                'liquidacion_id' => $documento->id,
+                'tipo_archivo_id' => $tipo->id,
+                'carpeta' => $directory,
+                'ruta' => $ruta,
+                'disk' => $disk,
+                'nombre_original' => $nombre,
+                'importe_facturar' => $signedAmount,
+                'enviada' => false,
+                'recibido' => false,
+                'pagado' => false,
+            ]);
+
+            $created[] = $createdDoc;
+        }
+
+        if (empty($created)) {
+            return response()->json(['message' => 'No se pudo generar el ajuste.'], 422);
+        }
+
+        foreach ($created as $createdDoc) {
+            AuditLogger::log($request, 'liquidacion.adjustment.add', 'documento', $createdDoc->id, [
+                'liquidacion_id' => $documento->id,
+                'importe_facturar' => $createdDoc->importe_facturar,
+                'nombre' => $createdDoc->nombre_original,
+            ]);
+        }
+
+        return response()->json([
+            'message' => 'Ajustes aplicados correctamente.',
+            'data' => collect($created)->map(function (Archivo $doc) {
+                return [
+                    'id' => $doc->id,
+                    'parentDocumentId' => $doc->parent_document_id,
+                    'nombre' => $doc->nombre_original,
+                    'importeFacturar' => $doc->importe_facturar,
+                ];
+            }),
+        ]);
+    }
 }

@@ -250,6 +250,107 @@ class FuelReportController extends Controller
         });
     }
 
+    public function applySelection(Request $request)
+    {
+        $validated = $request->validate([
+            'movement_ids' => ['required', 'array', 'min:1'],
+            'movement_ids.*' => ['integer'],
+            'liquidacion_id' => ['nullable', 'integer'],
+            'adjustments' => ['nullable', 'array'],
+            'adjustments.*.type' => ['required', 'in:credito,debito,ajuste_favor,cuota_combustible,pendiente,adelantos_prestamos'],
+            'adjustments.*.amount' => ['required', 'numeric'],
+            'adjustments.*.note' => ['nullable', 'string', 'max:500'],
+        ]);
+
+        $movementIds = collect($validated['movement_ids'])->unique()->values();
+
+        $movements = FuelMovement::query()
+            ->whereIn('id', $movementIds)
+            ->where('discounted', false)
+            ->get();
+
+        if ($movements->isEmpty()) {
+            return response()->json([
+                'message' => 'No hay movimientos disponibles para descontar.',
+            ], Response::HTTP_UNPROCESSABLE_ENTITY);
+        }
+
+        $liquidacionId = $validated['liquidacion_id'] ?? null;
+        $distributorId = $movements->first()?->distributor_id;
+        $periodFrom = $movements->min('occurred_at');
+        $periodTo = $movements->max('occurred_at');
+
+        $adjustments = collect($validated['adjustments'] ?? [])
+            ->filter(fn ($adj) => is_array($adj))
+            ->values();
+
+        return DB::transaction(function () use ($request, $movements, $liquidacionId, $distributorId, $periodFrom, $periodTo, $adjustments) {
+            $report = FuelReport::query()->create([
+                'distributor_id' => $distributorId,
+                'period_from' => $periodFrom,
+                'period_to' => $periodTo,
+                'status' => 'APPLIED',
+                'created_by' => $request->user()?->id,
+                'applied_by' => $request->user()?->id,
+                'applied_at' => now(),
+                'liquidacion_id' => $liquidacionId,
+            ]);
+
+            $itemsPayload = [];
+            foreach ($movements as $movement) {
+                $itemsPayload[] = [
+                    'fuel_report_id' => $report->id,
+                    'fuel_movement_id' => $movement->id,
+                    'liters' => $movement->liters,
+                    'amount' => $movement->amount,
+                    'created_at' => now(),
+                    'updated_at' => now(),
+                ];
+            }
+            FuelReportItem::query()->insert($itemsPayload);
+
+            if ($adjustments->isNotEmpty()) {
+                foreach ($adjustments as $adjustment) {
+                    $amount = (float) ($adjustment['amount'] ?? 0);
+                    if ($amount <= 0) {
+                        continue;
+                    }
+                    FuelAdjustment::query()->create([
+                        'fuel_report_id' => $report->id,
+                        'type' => $adjustment['type'],
+                        'amount' => $amount,
+                        'note' => $adjustment['note'] ?? null,
+                        'created_by' => $request->user()?->id,
+                    ]);
+                }
+            }
+
+            FuelMovement::query()
+                ->whereIn('id', $movements->pluck('id'))
+                ->update([
+                    'discounted' => true,
+                    'status' => 'DISCOUNTED',
+                    'fuel_report_id' => $report->id,
+                ]);
+
+            $this->recalculateTotals($report);
+
+            if ($liquidacionId) {
+                $this->attachFuelDiscountToLiquidacion($liquidacionId, $report);
+            }
+
+            AuditLogger::log($request, 'fuel.report.apply.selection', 'fuel_report', $report->id, [
+                'liquidacion_id' => $liquidacionId,
+                'movements' => $movements->count(),
+                'total_amount' => (float) $report->total_amount,
+            ]);
+
+            return response()->json([
+                'data' => $report->fresh(),
+            ]);
+        });
+    }
+
     public function markReady(FuelReport $report)
     {
         if ($report->status === 'APPLIED') {
@@ -457,7 +558,7 @@ class FuelReportController extends Controller
         foreach ($adjustments as $adjustment) {
             $value = (float) $adjustment->amount;
             $type = (string) $adjustment->type;
-            if (in_array($type, ['debito'], true)) {
+            if (in_array($type, ['debito', 'pendiente', 'cuota_combustible', 'adelantos_prestamos'], true)) {
                 $adjustmentsTotal -= $value;
             } else {
                 $adjustmentsTotal += $value;

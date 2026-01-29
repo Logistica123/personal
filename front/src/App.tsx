@@ -578,6 +578,8 @@ type PersonalDetail = {
     isAttachment: boolean;
     importeCombustible?: number | null;
     importeFacturar?: number | null;
+    monthKey?: string | null;
+    fortnightKey?: string | null;
     pendiente?: boolean;
     liquidacionId?: number | null;
     enviada?: boolean;
@@ -13065,6 +13067,61 @@ const PersonalPage: React.FC = () => {
   );
 };
 
+const FUEL_STATUS_LABELS: Record<string, string> = {
+  IMPORTED: 'Importado',
+  VALIDATED: 'Validado',
+  IMPUTED: 'Imputado',
+  PENDING_MATCH: 'Pendiente',
+  OBSERVED: 'Observado',
+  DISCOUNTED: 'Descontado',
+  CANCELED: 'Cancelado',
+  DUPLICATE: 'Duplicado',
+};
+
+const FUEL_STATUS_VARIANTS: Record<string, string> = {
+  IMPORTED: 'neutral',
+  VALIDATED: 'info',
+  IMPUTED: 'info',
+  PENDING_MATCH: 'warning',
+  OBSERVED: 'danger',
+  DISCOUNTED: 'success',
+  CANCELED: 'muted',
+  DUPLICATE: 'muted',
+};
+
+const getFuelStatusLabel = (status?: string | null, discounted?: boolean | null): string => {
+  if (discounted) {
+    return 'Pagado';
+  }
+  if (!status) {
+    return '—';
+  }
+  if (status === 'OBSERVED') {
+    return 'Observado';
+  }
+  // Para el flujo de descuento, todo lo no descontado se considera por pagar
+  return 'Por pagar';
+};
+
+const getFuelStatusVariant = (status?: string | null, discounted?: boolean | null): string => {
+  if (discounted || status === 'DISCOUNTED') {
+    return 'success';
+  }
+  if (!status) {
+    return 'neutral';
+  }
+  if (status === 'OBSERVED') {
+    return 'warning';
+  }
+  return 'neutral';
+};
+
+const renderFuelStatusBadge = (status?: string | null, discounted?: boolean | null) => {
+  const label = getFuelStatusLabel(status, discounted);
+  const variant = getFuelStatusVariant(status, discounted);
+  return <span className={`fuel-badge fuel-badge--${variant}`}>{label}</span>;
+};
+
 const CombustibleTabs: React.FC = () => (
   <div className="card-header">
     <div className="approvals-tabs">
@@ -13094,6 +13151,12 @@ const CombustibleTabs: React.FC = () => (
         className={({ isActive }) => `approvals-tab${isActive ? ' is-active' : ''}`}
       >
         Tardías
+      </NavLink>
+      <NavLink
+        to="/combustible/consumos"
+        className={({ isActive }) => `approvals-tab${isActive ? ' is-active' : ''}`}
+      >
+        Consumos
       </NavLink>
       <NavLink
         to="/combustible/reportes"
@@ -14124,9 +14187,16 @@ const CombustibleDistribuidorPage: React.FC = () => {
       amount: number | null;
       price_per_liter: number | null;
       status: string | null;
+      discounted?: boolean | null;
     }>
   >([]);
-  const [totals, setTotals] = useState<{ movements: number; liters: number; amount: number } | null>(null);
+  const [totals, setTotals] = useState<{
+    movements: number;
+    liters: number;
+    amount: number;
+    discount_counts?: { taken: number; not_taken: number };
+    status_counts?: Record<string, number>;
+  } | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -14231,6 +14301,8 @@ const CombustibleDistribuidorPage: React.FC = () => {
           movements: Number(payload.totals.movements) || 0,
           liters: Number(payload.totals.liters) || 0,
           amount: Number(payload.totals.amount) || 0,
+          discount_counts: payload.totals.discount_counts ?? undefined,
+          status_counts: payload.totals.status_counts ?? undefined,
         });
       } else {
         setTotals(null);
@@ -14281,7 +14353,7 @@ const CombustibleDistribuidorPage: React.FC = () => {
       formatNumber(row.liters),
       formatNumber(row.price_per_liter),
       formatCurrency(row.amount ?? 0),
-      row.status ?? '',
+      getFuelStatusLabel(row.status, row.discounted),
     ]);
 
     const tsv = [...summaryRows, headerRow, ...dataRows]
@@ -14358,7 +14430,7 @@ const CombustibleDistribuidorPage: React.FC = () => {
                 <td>${formatNumber(row.liters)}</td>
                 <td>${formatNumber(row.price_per_liter)}</td>
                 <td>${formatCurrency(row.amount ?? 0)}</td>
-                <td>${row.status ?? ''}</td>
+                <td>${getFuelStatusLabel(row.status, row.discounted)}</td>
               </tr>
             `
               )
@@ -14496,6 +14568,19 @@ const CombustibleDistribuidorPage: React.FC = () => {
           <span className="summary-card__label">Importe</span>
           <strong className="summary-card__value">{formatCurrency(totals?.amount ?? 0)}</strong>
         </div>
+        <div className="summary-card">
+          <span className="summary-card__label">Tomados</span>
+          <strong className="summary-card__value">
+            {totals?.discount_counts?.taken ?? rows.filter((row) => Boolean(row.discounted)).length}
+          </strong>
+        </div>
+        <div className="summary-card">
+          <span className="summary-card__label">No tomados</span>
+          <strong className="summary-card__value">
+            {totals?.discount_counts?.not_taken ??
+              rows.filter((row) => !row.discounted && row.status !== 'DISCOUNTED').length}
+          </strong>
+        </div>
       </div>
 
       <div className="table-wrapper">
@@ -14541,7 +14626,7 @@ const CombustibleDistribuidorPage: React.FC = () => {
                   <td>{formatNumber(row.liters)}</td>
                   <td>{formatNumber(row.price_per_liter)}</td>
                   <td>{formatCurrency(row.amount ?? 0)}</td>
-                  <td>{row.status ?? '—'}</td>
+                  <td>{renderFuelStatusBadge(row.status, row.discounted)}</td>
                 </tr>
               ))}
           </tbody>
@@ -14553,6 +14638,7 @@ const CombustibleDistribuidorPage: React.FC = () => {
 
 const CombustibleInformePage: React.FC = () => {
   const apiBaseUrl = useMemo(() => resolveApiBaseUrl(), []);
+  const location = useLocation();
   const [distributors, setDistributors] = useState<Array<{ id: number; name: string; code?: string | null }>>([]);
   const [distributorId, setDistributorId] = useState('');
   const [liquidaciones, setLiquidaciones] = useState<
@@ -14596,6 +14682,7 @@ const CombustibleInformePage: React.FC = () => {
       price_per_liter: number | null;
       amount: number | null;
       status?: string | null;
+      discounted?: boolean | null;
     }>
   >([]);
   const [loading, setLoading] = useState(false);
@@ -14619,6 +14706,9 @@ const CombustibleInformePage: React.FC = () => {
   >('ajuste_favor');
   const [adjustmentAmount, setAdjustmentAmount] = useState('');
   const [adjustmentNote, setAdjustmentNote] = useState('');
+  const autoGenerateRef = useRef(false);
+  const autoApplyRef = useRef(false);
+  const prefillRef = useRef(false);
   const adjustmentTypeLabels: Record<string, string> = {
     ajuste_favor: 'Ajuste a favor',
     cuota_combustible: 'Cuota combustible',
@@ -14685,6 +14775,41 @@ const CombustibleInformePage: React.FC = () => {
     },
     []
   );
+
+  const autoApplyEnabled = useMemo(() => {
+    const params = new URLSearchParams(location.search);
+    return params.get('auto_apply') === '1';
+  }, [location.search]);
+
+  useEffect(() => {
+    if (prefillRef.current) {
+      return;
+    }
+    const params = new URLSearchParams(location.search);
+    const liquidacionParam = params.get('liquidacion_id');
+    const domainParam = params.get('domain');
+    const dateFromParam = params.get('date_from');
+    const dateToParam = params.get('date_to');
+    const distributorParam = params.get('distributor_id');
+    if (liquidacionParam) {
+      setLiquidacionId(liquidacionParam);
+    }
+    if (domainParam) {
+      setDomain(domainParam);
+    }
+    if (dateFromParam) {
+      setDateFrom(dateFromParam);
+    }
+    if (dateToParam) {
+      setDateTo(dateToParam);
+    }
+    if (distributorParam) {
+      setDistributorId(distributorParam);
+    }
+    if (domainParam || dateFromParam || dateToParam || liquidacionParam || distributorParam) {
+      prefillRef.current = true;
+    }
+  }, [location.search]);
 
   useEffect(() => {
     const loadDistributors = async () => {
@@ -14942,6 +15067,8 @@ const CombustibleInformePage: React.FC = () => {
     }
   };
 
+  // auto-generate + auto-apply are defined after totals are available
+
   const handleSaveDraft = async () => {
     if (!reportId) {
       setError('Primero generá el borrador del informe.');
@@ -15026,6 +15153,37 @@ const CombustibleInformePage: React.FC = () => {
   const totalFacturar = importeDetalle - descuentoCombustible;
   const selectedDistributor = distributors.find((item) => String(item.id) === distributorId);
 
+  useEffect(() => {
+    if (!autoApplyEnabled || autoGenerateRef.current) {
+      return;
+    }
+    if (!domain.trim() && !distributorId) {
+      return;
+    }
+    if (!dateFrom || !dateTo) {
+      return;
+    }
+    autoGenerateRef.current = true;
+    fetchMovements();
+  }, [autoApplyEnabled, domain, distributorId, dateFrom, dateTo, fetchMovements]);
+
+  useEffect(() => {
+    if (!autoApplyEnabled || autoApplyRef.current) {
+      return;
+    }
+    if (!reportId || !liquidacionId) {
+      return;
+    }
+    if (reportStatus === 'APPLIED') {
+      return;
+    }
+    if (totalFacturar <= 0) {
+      return;
+    }
+    autoApplyRef.current = true;
+    handleApplyReport();
+  }, [autoApplyEnabled, reportId, liquidacionId, reportStatus, totalFacturar]);
+
   const exportReportExcel = () => {
     if (rows.length === 0) {
       window.alert('No hay datos para exportar.');
@@ -15061,7 +15219,7 @@ const CombustibleInformePage: React.FC = () => {
       formatNumber(row.liters),
       formatNumber(row.price_per_liter),
       formatCurrency(row.amount ?? 0),
-      row.status ?? '',
+      getFuelStatusLabel(row.status, row.discounted),
     ]);
 
     const tsv = [...summaryRows, headerRow, ...dataRows]
@@ -15140,7 +15298,7 @@ const CombustibleInformePage: React.FC = () => {
                     <td>${formatNumber(row.liters)}</td>
                     <td>${formatNumber(row.price_per_liter)}</td>
                     <td>${formatCurrency(row.amount ?? 0)}</td>
-                    <td>${row.status ?? ''}</td>
+                    <td>${getFuelStatusLabel(row.status, row.discounted)}</td>
                   </tr>
                 `
                   )
@@ -15349,45 +15507,45 @@ const CombustibleInformePage: React.FC = () => {
             </header>
             <div className="table-wrapper">
               <table>
-                <thead>
-                  <tr>
-                    <th>Fecha</th>
-                    <th>Estación</th>
-                    <th>Dominio</th>
-                    <th>Producto</th>
-                    <th>Litros</th>
-                    <th>Precio/Litro</th>
-                    <th>Importe</th>
-                    <th>Estado</th>
+            <thead>
+              <tr>
+                <th>Fecha</th>
+                <th>Estación</th>
+                <th>Dominio</th>
+                <th>Producto</th>
+                <th>Litros</th>
+                <th>Precio/Litro</th>
+                <th>Importe</th>
+                <th>Estado</th>
+              </tr>
+            </thead>
+            <tbody>
+              {loading && (
+                <tr>
+                  <td colSpan={8}>Cargando movimientos...</td>
+                </tr>
+              )}
+              {!loading && !error && rows.length === 0 && (
+                <tr>
+                  <td colSpan={8}>No hay movimientos.</td>
+                </tr>
+              )}
+              {!loading &&
+                !error &&
+                rows.map((row) => (
+                  <tr key={row.id}>
+                    <td>{formatDateTime(row.occurred_at)}</td>
+                    <td>{row.station ?? '—'}</td>
+                    <td>{row.domain_norm ?? '—'}</td>
+                    <td>{row.product ?? '—'}</td>
+                    <td>{formatNumber(row.liters)}</td>
+                    <td>{formatNumber(row.price_per_liter)}</td>
+                    <td>{formatCurrency(row.amount ?? 0)}</td>
+                    <td>{renderFuelStatusBadge(row.status, row.discounted)}</td>
                   </tr>
-                </thead>
-                <tbody>
-                  {loading && (
-                    <tr>
-                      <td colSpan={8}>Cargando movimientos...</td>
-                    </tr>
-                  )}
-                  {!loading && !error && rows.length === 0 && (
-                    <tr>
-                      <td colSpan={8}>No hay movimientos.</td>
-                    </tr>
-                  )}
-                  {!loading &&
-                    !error &&
-                    rows.map((row) => (
-                      <tr key={row.id}>
-                        <td>{formatDateTime(row.occurred_at)}</td>
-                        <td>{row.station ?? '—'}</td>
-                        <td>{row.domain_norm ?? '—'}</td>
-                        <td>{row.product ?? '—'}</td>
-                        <td>{formatNumber(row.liters)}</td>
-                        <td>{formatNumber(row.price_per_liter)}</td>
-                        <td>{formatCurrency(row.amount ?? 0)}</td>
-                        <td>{row.status ?? '—'}</td>
-                      </tr>
-                    ))}
-                </tbody>
-              </table>
+                ))}
+            </tbody>
+          </table>
             </div>
           </section>
 
@@ -15801,6 +15959,338 @@ const CombustibleTardiasPage: React.FC = () => {
           </div>
         </div>
       ) : null}
+    </DashboardLayout>
+  );
+};
+
+const CombustibleConsumosPage: React.FC = () => {
+  const apiBaseUrl = useMemo(() => resolveApiBaseUrl(), []);
+  const [distributors, setDistributors] = useState<Array<{ id: number; name: string; code?: string | null }>>([]);
+  const [distributorId, setDistributorId] = useState('');
+  const [domain, setDomain] = useState('');
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
+  const [periodPreset, setPeriodPreset] = useState<'Q1' | 'Q2' | 'MONTH' | ''>('');
+  const [onlyPending, setOnlyPending] = useState(false);
+  const [onlyImputed, setOnlyImputed] = useState(false);
+  const [rows, setRows] = useState<
+    Array<{
+      id: number;
+      occurred_at: string | null;
+      station: string | null;
+      domain_norm: string | null;
+      product: string | null;
+      liters: number | null;
+      amount: number | null;
+      price_per_liter: number | null;
+      status: string | null;
+      discounted?: boolean | null;
+    }>
+  >([]);
+  const [totals, setTotals] = useState<{
+    movements: number;
+    liters: number;
+    amount: number;
+    discount_counts?: { taken: number; not_taken: number };
+    status_counts?: Record<string, number>;
+  } | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const applyPeriodPreset = useCallback(
+    (preset: 'Q1' | 'Q2' | 'MONTH', baseDate?: string) => {
+      const normalizedBase = baseDate && baseDate.trim() !== '' ? baseDate : new Date().toISOString().slice(0, 10);
+      const parsed = new Date(`${normalizedBase}T00:00:00`);
+      if (Number.isNaN(parsed.getTime())) {
+        return;
+      }
+      const year = parsed.getFullYear();
+      const month = parsed.getMonth();
+      const firstDay = new Date(year, month, 1);
+      const lastDay = new Date(year, month + 1, 0);
+      const toIso = (date: Date) => date.toISOString().slice(0, 10);
+      if (preset === 'Q1') {
+        setDateFrom(toIso(firstDay));
+        setDateTo(toIso(new Date(year, month, 15)));
+      } else if (preset === 'Q2') {
+        setDateFrom(toIso(new Date(year, month, 16)));
+        setDateTo(toIso(lastDay));
+      } else {
+        setDateFrom(toIso(firstDay));
+        setDateTo(toIso(lastDay));
+      }
+    },
+    []
+  );
+
+  useEffect(() => {
+    const loadDistributors = async () => {
+      try {
+        const response = await fetch(`${apiBaseUrl}/api/combustible/distribuidores`, { credentials: 'include' });
+        if (!response.ok) {
+          return;
+        }
+        const payload = await parseJsonSafe(response);
+        setDistributors(Array.isArray(payload.data) ? payload.data : []);
+      } catch {
+        // noop
+      }
+    };
+    loadDistributors();
+  }, [apiBaseUrl]);
+
+  const fetchConsumos = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const url = new URL(`${apiBaseUrl}/api/combustible/consumos`);
+      if (distributorId) {
+        url.searchParams.set('distributor_id', distributorId);
+      }
+      if (domain.trim()) {
+        url.searchParams.set('domain', domain.trim());
+      }
+      if (dateFrom) {
+        url.searchParams.set('date_from', dateFrom);
+      }
+      if (dateTo) {
+        url.searchParams.set('date_to', dateTo);
+      }
+      if (onlyPending) {
+        url.searchParams.set('only_pending', '1');
+      }
+      if (onlyImputed) {
+        url.searchParams.set('only_imputed', '1');
+      }
+      const response = await fetch(url.toString(), { credentials: 'include' });
+      if (!response.ok) {
+        throw new Error(`No se pudieron cargar los consumos (${response.status}).`);
+      }
+      const payload = await parseJsonSafe(response);
+      setRows(Array.isArray(payload.data) ? payload.data : []);
+      if (payload.totals && typeof payload.totals === 'object') {
+        setTotals({
+          movements: Number(payload.totals.movements) || 0,
+          liters: Number(payload.totals.liters) || 0,
+          amount: Number(payload.totals.amount) || 0,
+          discount_counts: payload.totals.discount_counts ?? undefined,
+          status_counts: payload.totals.status_counts ?? undefined,
+        });
+      } else {
+        setTotals(null);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No se pudieron cargar los consumos.');
+      setRows([]);
+      setTotals(null);
+    } finally {
+      setLoading(false);
+    }
+  }, [apiBaseUrl, distributorId, domain, dateFrom, dateTo, onlyPending, onlyImputed]);
+
+  useEffect(() => {
+    fetchConsumos();
+  }, [fetchConsumos]);
+
+  const selectedDistributor = distributors.find((item) => String(item.id) === distributorId);
+  const takenCount = totals?.discount_counts?.taken ?? rows.filter((row) => Boolean(row.discounted)).length;
+  const notTakenCount =
+    totals?.discount_counts?.not_taken ?? rows.filter((row) => !row.discounted && row.status !== 'DISCOUNTED').length;
+  const statusEntries = Object.entries(totals?.status_counts ?? {}).sort((a, b) => b[1] - a[1]);
+
+  return (
+    <DashboardLayout title="Combustible" subtitle="Consumos registrados" headerContent={<CombustibleTabs />}>
+      <section className="dashboard-card">
+        <header className="card-header">
+          <h3>Filtros</h3>
+        </header>
+        <div className="card-body">
+          <div className="form-grid">
+            <label className="input-control">
+              <span>Distribuidor</span>
+              <select value={distributorId} onChange={(event) => setDistributorId(event.target.value)}>
+                <option value="">Todos</option>
+                {distributors.map((distributor) => (
+                  <option key={`consumos-dist-${distributor.id}`} value={distributor.id}>
+                    {distributor.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="input-control">
+              <span>Dominio</span>
+              <input value={domain} onChange={(event) => setDomain(event.target.value)} placeholder="ABC123" />
+            </label>
+            <label className="input-control">
+              <span>Período</span>
+              <select
+                value={periodPreset}
+                onChange={(event) => {
+                  const value = event.target.value as 'Q1' | 'Q2' | 'MONTH' | '';
+                  setPeriodPreset(value);
+                  if (value) {
+                    const baseDate = dateFrom || dateTo || new Date().toISOString().slice(0, 10);
+                    applyPeriodPreset(value, baseDate);
+                  }
+                }}
+              >
+                <option value="">Personalizado</option>
+                <option value="Q1">Primera quincena</option>
+                <option value="Q2">Segunda quincena</option>
+                <option value="MONTH">Mes completo</option>
+              </select>
+            </label>
+            <label className="input-control">
+              <span>Desde</span>
+              <input
+                type="date"
+                value={dateFrom}
+                onChange={(event) => {
+                  setDateFrom(event.target.value);
+                  setPeriodPreset('');
+                }}
+              />
+            </label>
+            <label className="input-control">
+              <span>Hasta</span>
+              <input
+                type="date"
+                value={dateTo}
+                onChange={(event) => {
+                  setDateTo(event.target.value);
+                  setPeriodPreset('');
+                }}
+              />
+            </label>
+          </div>
+          <div className="filters-actions">
+            <label className="checkbox-control">
+              <input type="checkbox" checked={onlyPending} onChange={(event) => setOnlyPending(event.target.checked)} />
+              <span>Solo no descontados</span>
+            </label>
+            <label className="checkbox-control">
+              <input type="checkbox" checked={onlyImputed} onChange={(event) => setOnlyImputed(event.target.checked)} />
+              <span>Solo imputados</span>
+            </label>
+            <button type="button" className="primary-action" onClick={fetchConsumos} disabled={loading}>
+              {loading ? 'Cargando…' : 'Buscar'}
+            </button>
+            {error ? <span className="helper-text">{error}</span> : null}
+          </div>
+        </div>
+      </section>
+
+      <section className="dashboard-card">
+        <header className="card-header">
+          <h3>Tomados vs. no tomados</h3>
+        </header>
+        <div className="card-body">
+          <div className="summary-cards">
+            <div className="summary-card">
+              <span>Tomados</span>
+              <strong>{takenCount}</strong>
+            </div>
+            <div className="summary-card">
+              <span>No tomados</span>
+              <strong>{notTakenCount}</strong>
+            </div>
+            <div className="summary-card">
+              <span>Movimientos</span>
+              <strong>{totals?.movements ?? rows.length}</strong>
+            </div>
+            <div className="summary-card">
+              <span>Litros</span>
+              <strong>{formatNumber(totals?.liters ?? rows.reduce((sum, row) => sum + (row.liters ?? 0), 0))}</strong>
+            </div>
+            <div className="summary-card">
+              <span>Importe</span>
+              <strong>
+                {formatCurrency(totals?.amount ?? rows.reduce((sum, row) => sum + (row.amount ?? 0), 0))}
+              </strong>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section className="dashboard-card">
+        <header className="card-header">
+          <h3>Estados</h3>
+        </header>
+        <div className="card-body">
+          {statusEntries.length === 0 ? (
+            <p className="helper-text">No hay estados para el filtro actual.</p>
+          ) : (
+            <div className="table-wrapper">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Estado</th>
+                    <th>Cantidad</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {statusEntries.map(([status, count]) => (
+                    <tr key={`status-${status}`}>
+                      <td>{renderFuelStatusBadge(status, status === 'DISCOUNTED')}</td>
+                      <td>{count}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      </section>
+
+      <section className="dashboard-card">
+        <header className="card-header">
+          <h3>Detalle</h3>
+          <p className="helper-text">
+            Distribuidor: {selectedDistributor?.name ?? 'Todos'} · Dominio: {domain.trim() || '—'}
+          </p>
+        </header>
+        <div className="table-wrapper">
+          <table>
+            <thead>
+              <tr>
+                <th>Fecha</th>
+                <th>Estación</th>
+                <th>Dominio</th>
+                <th>Producto</th>
+                <th>Litros</th>
+                <th>Precio/Litro</th>
+                <th>Importe</th>
+                <th>Estado</th>
+              </tr>
+            </thead>
+            <tbody>
+              {loading && (
+                <tr>
+                  <td colSpan={8}>Cargando movimientos...</td>
+                </tr>
+              )}
+              {!loading && rows.length === 0 && (
+                <tr>
+                  <td colSpan={8}>No hay movimientos para el filtro actual.</td>
+                </tr>
+              )}
+              {!loading &&
+                rows.map((row) => (
+                  <tr key={`consumo-${row.id}`}>
+                    <td>{formatDateTime(row.occurred_at)}</td>
+                    <td>{row.station ?? '—'}</td>
+                    <td>{row.domain_norm ?? '—'}</td>
+                    <td>{row.product ?? '—'}</td>
+                    <td>{formatNumber(row.liters)}</td>
+                    <td>{formatNumber(row.price_per_liter)}</td>
+                    <td>{formatCurrency(row.amount ?? 0)}</td>
+                    <td>{renderFuelStatusBadge(row.status, row.discounted)}</td>
+                  </tr>
+                ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
     </DashboardLayout>
   );
 };
@@ -16247,6 +16737,77 @@ const LiquidacionesPage: React.FC = () => {
   const [validationStatus, setValidationStatus] = useState<{ type: 'success' | 'error'; message: string } | null>(
     null
   );
+  const [fuelPreviewLoading, setFuelPreviewLoading] = useState(false);
+  const [fuelPreviewError, setFuelPreviewError] = useState<string | null>(null);
+  const [fuelPreviewApplying, setFuelPreviewApplying] = useState(false);
+  const [fuelPreviewMessage, setFuelPreviewMessage] = useState<string | null>(null);
+  const [fuelAdjustmentsApplying, setFuelAdjustmentsApplying] = useState(false);
+  const [fuelAdjustmentsMessage, setFuelAdjustmentsMessage] = useState<string | null>(null);
+  const [fuelPreview, setFuelPreview] = useState<{
+    domain: string;
+    dateFrom: string;
+    dateTo: string;
+    totalAmount: number;
+    totalToBill: number;
+    reportId: number | null;
+    items: Array<{
+      id: number;
+      occurred_at: string | null;
+      station: string | null;
+      domain_norm: string | null;
+      product: string | null;
+      liters: number | null;
+      price_per_liter: number | null;
+      amount: number | null;
+      status?: string | null;
+      discounted?: boolean | null;
+    }>;
+  } | null>(null);
+  const [fuelSelection, setFuelSelection] = useState<Set<number>>(() => new Set());
+  const [fuelAdjustmentType, setFuelAdjustmentType] = useState<
+    'ajuste_favor' | 'cuota_combustible' | 'pendiente' | 'adelantos_prestamos' | 'credito' | 'debito'
+  >('ajuste_favor');
+  const [fuelAdjustmentAmount, setFuelAdjustmentAmount] = useState('');
+  const [fuelAdjustmentNote, setFuelAdjustmentNote] = useState('');
+  const [fuelSelectionAdjustments, setFuelSelectionAdjustments] = useState<
+    Array<{ id: string; type: string; amount: number; note: string }>
+  >([]);
+  const [fuelAdjustmentError, setFuelAdjustmentError] = useState<string | null>(null);
+  const fuelAdjustmentTypeLabels: Record<string, string> = {
+    ajuste_favor: 'Ajuste a favor',
+    cuota_combustible: 'Cuota combustible',
+    pendiente: 'Pendiente',
+    adelantos_prestamos: 'Adelantos/Préstamos',
+    credito: 'Crédito',
+    debito: 'Débito',
+  };
+  const fuelSelectedItems = useMemo(() => {
+    if (!fuelPreview) {
+      return [];
+    }
+    return fuelPreview.items.filter((item) => fuelSelection.has(item.id));
+  }, [fuelPreview, fuelSelection]);
+  const fuelSelectedTotal = useMemo(
+    () => fuelSelectedItems.reduce((sum, item) => sum + (item.amount ?? 0), 0),
+    [fuelSelectedItems]
+  );
+  const fuelSelectionAdjustmentsTotal = useMemo(() => {
+    if (!fuelSelectionAdjustments.length) {
+      return 0;
+    }
+    const negativeTypes = new Set(['pendiente', 'cuota_combustible', 'adelantos_prestamos', 'debito']);
+    return fuelSelectionAdjustments.reduce((sum, adj) => {
+      if (!Number.isFinite(adj.amount)) {
+        return sum;
+      }
+      return sum + (negativeTypes.has(adj.type) ? -adj.amount : adj.amount);
+    }, 0);
+  }, [fuelSelectionAdjustments]);
+  const fuelSelectedTotalWithAdjustments = useMemo(
+    () => fuelSelectedTotal + fuelSelectionAdjustmentsTotal,
+    [fuelSelectedTotal, fuelSelectionAdjustmentsTotal]
+  );
+  const fuelSelectedCount = fuelSelectedItems.length;
   const [deletingDocumentIds, setDeletingDocumentIds] = useState<Set<number>>(() => new Set());
   const [documentTypes, setDocumentTypes] = useState<PersonalDocumentType[]>([]);
   const [documentTypesLoading, setDocumentTypesLoading] = useState(true);
@@ -16257,6 +16818,7 @@ const LiquidacionesPage: React.FC = () => {
   const [showPasteModal, setShowPasteModal] = useState(false);
   const [pasteError, setPasteError] = useState<string | null>(null);
   const pasteTextareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const fuelPreviewDocIdRef = useRef<string | null>(null);
   const isPagosView = useMemo(() => location.pathname.startsWith('/pagos'), [location.pathname]);
   const [showPagosColumnPicker, setShowPagosColumnPicker] = useState(false);
   const [showLiquidacionesColumnPicker, setShowLiquidacionesColumnPicker] = useState(false);
@@ -16526,6 +17088,179 @@ const LiquidacionesPage: React.FC = () => {
     return `${(size / (1024 * 1024)).toFixed(1)} MB`;
   };
 
+  const normalizeDomainValue = useCallback((value?: string | null): string => {
+    if (!value) {
+      return '';
+    }
+    return value
+      .toUpperCase()
+      .replace(/[\s\.\-]+/g, '')
+      .trim();
+  }, []);
+
+  const getLiquidacionNetTotal = useCallback((group: LiquidacionGroup) => {
+    const rawBase = group.main.importeFacturar ?? null;
+    if (rawBase == null) {
+      return null;
+    }
+    const parseAmount = (value: string | number | null | undefined) => {
+      if (value === null || value === undefined || value === '') {
+        return null;
+      }
+      if (typeof value === 'number') {
+        return Number.isFinite(value) ? value : null;
+      }
+      const cleaned = String(value)
+        .replace(/[^0-9,\-\.]/g, '')
+        .replace(/\.(?=\d{3}\b)/g, '')
+        .replace(',', '.');
+      const parsed = Number(cleaned);
+      return Number.isFinite(parsed) ? parsed : null;
+    };
+    const base = parseAmount(rawBase);
+    if (Number.isNaN(base)) {
+      return null;
+    }
+    if (base == null) {
+      return null;
+    }
+    const adjustmentTotal = group.attachments.reduce((sum, doc) => {
+      const parsed = parseAmount(doc.importeFacturar);
+      return sum + (parsed ?? 0);
+    }, 0);
+    return base + adjustmentTotal;
+  }, []);
+
+  const resolveFuelRange = useCallback(
+    (monthKey?: string | null, fortnightKey?: string | null) => {
+      if (!monthKey || monthKey === 'unknown') {
+        return null;
+      }
+      const [yearPart, monthPart] = monthKey.split('-');
+      const year = Number(yearPart);
+      const monthIndex = Number(monthPart) - 1;
+      if (!Number.isFinite(year) || !Number.isFinite(monthIndex)) {
+        return null;
+      }
+      const firstDay = new Date(year, monthIndex, 1);
+      const lastDay = new Date(year, monthIndex + 1, 0);
+      const toIso = (date: Date) => date.toISOString().slice(0, 10);
+      const key = fortnightKey ?? '';
+      if (key === 'Q1') {
+        return { from: toIso(firstDay), to: toIso(new Date(year, monthIndex, 15)) };
+      }
+      if (key === 'Q2') {
+        return { from: toIso(new Date(year, monthIndex, 16)), to: toIso(lastDay) };
+      }
+      return { from: toIso(firstDay), to: toIso(lastDay) };
+    },
+    []
+  );
+
+  const handlePreviewFuelDiscount = useCallback(
+    (doc: LiquidacionDocument) => {
+      const domain = normalizeDomainValue(detail?.patente ?? null);
+      if (!domain) {
+        window.alert('Este personal no tiene patente asociada.');
+        return;
+      }
+      setFuelPreviewLoading(true);
+      setFuelPreviewError(null);
+      setFuelPreviewMessage(null);
+      setFuelPreview(null);
+      setFuelSelectionAdjustments([]);
+      setFuelAdjustmentError(null);
+      fetch(`${apiBaseUrl}/api/combustible/consumos?domain=${encodeURIComponent(domain)}`, {
+        credentials: 'include',
+      })
+        .then(async (response) => {
+          if (!response.ok) {
+            const payload = await parseJsonSafe(response).catch(() => null);
+            throw new Error(payload?.message ?? `No se pudo cargar el consumo (${response.status}).`);
+          }
+          return parseJsonSafe(response);
+        })
+        .then((payload) => {
+          const mergedItems = Array.isArray(payload.data)
+            ? (payload.data as Array<{
+                id: number;
+                occurred_at: string | null;
+                station: string | null;
+                domain_norm: string | null;
+                product: string | null;
+                liters: number | null;
+                price_per_liter: number | null;
+                amount: number | null;
+                status?: string | null;
+                discounted?: boolean | null;
+              }>)
+            : [];
+          const totalAmount = mergedItems.reduce(
+            (sum: number, item) => sum + (item.amount ?? 0),
+            0
+          );
+          const selectableIds = mergedItems
+            .filter((item) => item.status !== 'OBSERVED')
+            .map((item) => item.id);
+          setFuelSelection(new Set(selectableIds));
+          const dateValues = mergedItems
+            .map((item) => item.occurred_at)
+            .filter((value): value is string => Boolean(value))
+            .map((value) => value.slice(0, 10))
+            .sort();
+          const dateFrom = dateValues[0] ?? '—';
+          const dateTo = dateValues[dateValues.length - 1] ?? '—';
+          setFuelPreview({
+            domain,
+            dateFrom,
+            dateTo,
+            totalAmount,
+            totalToBill: totalAmount,
+            reportId: null,
+            items: mergedItems,
+          });
+        })
+        .catch((err) => {
+          setFuelPreviewError(err instanceof Error ? err.message : 'No se pudo calcular el descuento.');
+          setFuelPreview(null);
+        })
+        .finally(() => {
+          setFuelPreviewLoading(false);
+        });
+    },
+    [detail?.patente, apiBaseUrl, normalizeDomainValue]
+  );
+
+  const handleAddFuelSelectionAdjustment = useCallback(() => {
+    setFuelAdjustmentError(null);
+    const parsed = Number(
+      fuelAdjustmentAmount
+        .toString()
+        .replace(/[^0-9,\-\.]/g, '')
+        .replace(/\.(?=\d{3}\b)/g, '')
+        .replace(',', '.')
+    );
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+      setFuelAdjustmentError('Ingresá un importe válido.');
+      return;
+    }
+    setFuelSelectionAdjustments((prev) => [
+      ...prev,
+      {
+        id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+        type: fuelAdjustmentType,
+        amount: parsed,
+        note: fuelAdjustmentNote.trim(),
+      },
+    ]);
+    setFuelAdjustmentAmount('');
+    setFuelAdjustmentNote('');
+  }, [fuelAdjustmentAmount, fuelAdjustmentNote, fuelAdjustmentType]);
+
+  const handleRemoveFuelSelectionAdjustment = useCallback((id: string) => {
+    setFuelSelectionAdjustments((prev) => prev.filter((adj) => adj.id !== id));
+  }, []);
+
   const renderLiquidacionStatus = (value?: boolean | null) => {
     if (value === null || value === undefined) {
       return <span className="status-badge status-badge--liquidacion is-unknown">—</span>;
@@ -16641,6 +17376,134 @@ const LiquidacionesPage: React.FC = () => {
     [apiBaseUrl, selectedPersonaId]
   );
 
+  const handleApplyFuelSelectionAdjustments = useCallback(async () => {
+    setFuelAdjustmentError(null);
+    setFuelAdjustmentsMessage(null);
+    if (!fuelParentDocumentId) {
+      setFuelAdjustmentError('Seleccioná la liquidación destino.');
+      return;
+    }
+    if (fuelSelectionAdjustments.length === 0) {
+      setFuelAdjustmentError('Agregá al menos un ajuste.');
+      return;
+    }
+    const personaId = selectedPersonaId ? Number(selectedPersonaId) : null;
+    if (!personaId) {
+      setFuelAdjustmentError('No se pudo determinar el personal.');
+      return;
+    }
+    setFuelAdjustmentsApplying(true);
+    try {
+      const response = await fetch(
+        `${apiBaseUrl}/api/personal/${personaId}/liquidaciones/${fuelParentDocumentId}/ajustes`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({
+            adjustments: fuelSelectionAdjustments.map((adj) => ({
+              type: adj.type,
+              amount: adj.amount,
+              note: adj.note || null,
+            })),
+          }),
+        }
+      );
+      if (!response.ok) {
+        const payload = await parseJsonSafe(response).catch(() => null);
+        throw new Error(payload?.message ?? 'No se pudieron guardar los ajustes.');
+      }
+      setFuelAdjustmentsMessage('Ajustes guardados correctamente.');
+      setFuelSelectionAdjustments([]);
+      setFuelAdjustmentAmount('');
+      setFuelAdjustmentNote('');
+      refreshPersonaDetail({ silent: true });
+    } catch (err) {
+      setFuelAdjustmentError(err instanceof Error ? err.message : 'No se pudieron guardar los ajustes.');
+    } finally {
+      setFuelAdjustmentsApplying(false);
+    }
+  }, [
+    apiBaseUrl,
+    fuelParentDocumentId,
+    fuelSelectionAdjustments,
+    refreshPersonaDetail,
+    selectedPersonaId,
+  ]);
+
+  const handleApplyFuelPreview = useCallback(async () => {
+    if (!fuelPreview) {
+      setFuelPreviewError('Primero calculá el descuento de combustible.');
+      return;
+    }
+    if (fuelSelection.size === 0) {
+      setFuelPreviewError('Seleccioná al menos un consumo para descontar.');
+      return;
+    }
+    if (!fuelParentDocumentId) {
+      setFuelPreviewError('Seleccioná la liquidación destino.');
+      return;
+    }
+    if (fuelSelectedTotalWithAdjustments <= 0) {
+      setFuelPreviewError('El total a facturar debe ser mayor a cero.');
+      return;
+    }
+    setFuelPreviewApplying(true);
+    setFuelPreviewError(null);
+    setFuelPreviewMessage(null);
+    try {
+      const response = await fetch(`${apiBaseUrl}/api/combustible/reportes/seleccion`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+      body: JSON.stringify({
+        movement_ids: Array.from(fuelSelection),
+        liquidacion_id: Number(fuelParentDocumentId),
+      }),
+    });
+      if (!response.ok) {
+        const payload = await parseJsonSafe(response).catch(() => null);
+        throw new Error(payload?.message ?? 'No se pudo aplicar el descuento.');
+      }
+      setFuelPreviewMessage('Descuento aplicado correctamente.');
+      setFuelPreview((prev) => {
+        if (!prev) {
+          return prev;
+        }
+        const selectedIds = new Set(fuelSelection);
+        return {
+          ...prev,
+          items: prev.items.map((item) =>
+            selectedIds.has(item.id)
+              ? {
+                  ...item,
+                  status: 'DISCOUNTED',
+                  discounted: true,
+                }
+              : item
+          ),
+        };
+      });
+      setFuelSelection(new Set());
+      setFuelSelectionAdjustments([]);
+      setFuelAdjustmentNote('');
+      setFuelAdjustmentAmount('');
+      refreshPersonaDetail({ silent: true });
+    } catch (err) {
+      setFuelPreviewError(err instanceof Error ? err.message : 'No se pudo aplicar el descuento.');
+    } finally {
+      setFuelPreviewApplying(false);
+    }
+  }, [
+    apiBaseUrl,
+    fuelPreview,
+    fuelSelection,
+    fuelParentDocumentId,
+    fuelSelectedTotalWithAdjustments,
+    fuelSelectionAdjustments,
+    refreshPersonaDetail,
+  ]);
+
   const listRecords = useMemo(() => {
     if (!isPagosView) {
       return personal;
@@ -16680,28 +17543,6 @@ const LiquidacionesPage: React.FC = () => {
     }
     return selectedPersonalRecord?.liquidacionImporteFacturar ?? null;
   }, [liquidacionImporteManual, selectedPersonalRecord]);
-
-  const importeFacturarConDescuento = useMemo(() => {
-    if (importeFacturarBase == null) {
-      return null;
-    }
-    const descuento = selectedPersonalRecord?.combustibleResumen?.totalToBill ?? null;
-    if (descuento == null) {
-      return null;
-    }
-    return importeFacturarBase - descuento;
-  }, [importeFacturarBase, selectedPersonalRecord]);
-
-  const importeFacturarFinal = useMemo(() => {
-    if (importeFacturarConDescuento != null) {
-      return importeFacturarConDescuento;
-    }
-    if (liquidacionImporteManual.trim() !== '') {
-      const parsed = Number(liquidacionImporteManual.replace(',', '.'));
-      return Number.isFinite(parsed) ? parsed : null;
-    }
-    return null;
-  }, [importeFacturarConDescuento, liquidacionImporteManual]);
 
   const pagosMonthChips = useMemo(() => {
     if (!isPagosView) {
@@ -16891,9 +17732,11 @@ const LiquidacionesPage: React.FC = () => {
       clearInterval(autoRefreshRef.current);
     }
 
-    autoRefreshRef.current = setInterval(() => {
-      refreshPersonaDetail({ silent: true });
-    }, 15000);
+    if (!fuelPreview) {
+      autoRefreshRef.current = setInterval(() => {
+        refreshPersonaDetail({ silent: true });
+      }, 15000);
+    }
 
     return () => {
       controller.abort();
@@ -16902,7 +17745,7 @@ const LiquidacionesPage: React.FC = () => {
         autoRefreshRef.current = null;
       }
     };
-  }, [refreshPersonaDetail, selectedPersonaId]);
+  }, [refreshPersonaDetail, selectedPersonaId, fuelPreview]);
 
   useEffect(() => {
     if (documentTypes.length === 0) {
@@ -17433,6 +18276,44 @@ const LiquidacionesPage: React.FC = () => {
     [buildLiquidacionGroups, allLiquidacionDocuments]
   );
 
+  const getDefaultLiquidacionGroup = useCallback((groups: LiquidacionGroup[]) => {
+    if (groups.length === 0) {
+      return null;
+    }
+    const liquidacion = groups.find((group) =>
+      (group.main.tipoNombre ?? '').toLowerCase().includes('liquidación')
+    );
+    return liquidacion ?? groups.find((group) => !group.main.isAttachment) ?? groups[0];
+  }, []);
+
+  const selectedLiquidacionGroup = useMemo(() => {
+    if (fuelParentDocumentId) {
+      return (
+        liquidacionGroupsForSelect.find(
+          (group) => String(group.main.id ?? '') === String(fuelParentDocumentId)
+        ) ?? null
+      );
+    }
+    return getDefaultLiquidacionGroup(liquidacionGroupsForSelect);
+  }, [fuelParentDocumentId, getDefaultLiquidacionGroup, liquidacionGroupsForSelect]);
+
+  const importeFacturarConDescuento = useMemo(() => {
+    if (selectedLiquidacionGroup) {
+      const netTotal = getLiquidacionNetTotal(selectedLiquidacionGroup);
+      if (netTotal != null) {
+        return netTotal;
+      }
+    }
+    if (importeFacturarBase == null) {
+      return null;
+    }
+    const descuento = selectedPersonalRecord?.combustibleResumen?.totalToBill ?? null;
+    if (descuento == null) {
+      return null;
+    }
+    return importeFacturarBase - descuento;
+  }, [getLiquidacionNetTotal, importeFacturarBase, selectedLiquidacionGroup, selectedPersonalRecord]);
+
   const liquidacionFortnightSections = useMemo(() => {
     if (liquidacionGroups.length === 0) {
       return [] as LiquidacionFortnightSection[];
@@ -17574,11 +18455,40 @@ const LiquidacionesPage: React.FC = () => {
   }, [liquidacionFortnightSections]);
 
   useEffect(() => {
-    const firstMain = liquidacionGroupsForSelect[0]?.main?.id;
-    if (firstMain && (!fuelParentDocumentId || fuelParentDocumentId === '')) {
+    if (fuelParentDocumentId && fuelParentDocumentId !== '') {
+      return;
+    }
+    const defaultGroup = getDefaultLiquidacionGroup(liquidacionGroupsForSelect);
+    const firstMain = defaultGroup?.main?.id ?? null;
+    if (firstMain) {
       setFuelParentDocumentId(String(firstMain));
     }
-  }, [liquidacionGroupsForSelect, fuelParentDocumentId]);
+  }, [fuelParentDocumentId, getDefaultLiquidacionGroup, liquidacionGroupsForSelect]);
+
+  const selectedFuelDocument = useMemo(() => {
+    if (fuelParentDocumentId) {
+      return (
+        liquidacionGroupsForSelect.find(
+          (group) => String(group.main.id ?? '') === String(fuelParentDocumentId)
+        )?.main ?? null
+      );
+    }
+    return getDefaultLiquidacionGroup(liquidacionGroupsForSelect)?.main ?? null;
+  }, [fuelParentDocumentId, getDefaultLiquidacionGroup, liquidacionGroupsForSelect]);
+
+  useEffect(() => {
+    if (!selectedFuelDocument) {
+      setFuelPreview(null);
+      fuelPreviewDocIdRef.current = null;
+      return;
+    }
+    const nextDocId = String(selectedFuelDocument.id ?? '');
+    if (fuelPreview && fuelPreviewDocIdRef.current === nextDocId) {
+      return;
+    }
+    fuelPreviewDocIdRef.current = nextDocId;
+    handlePreviewFuelDiscount(selectedFuelDocument);
+  }, [selectedFuelDocument, handlePreviewFuelDiscount, fuelPreview]);
 
   const liquidacionYearOptions = useMemo(() => {
     const years = new Set<string>();
@@ -17626,6 +18536,17 @@ const LiquidacionesPage: React.FC = () => {
       return true;
     });
   }, [liquidacionFortnightSections]);
+
+  const importeFacturarFinal = useMemo(() => {
+    if (importeFacturarConDescuento != null) {
+      return importeFacturarConDescuento;
+    }
+    if (liquidacionImporteManual.trim() !== '') {
+      const parsed = Number(liquidacionImporteManual.replace(',', '.'));
+      return Number.isFinite(parsed) ? parsed : null;
+    }
+    return null;
+  }, [importeFacturarConDescuento, liquidacionImporteManual]);
 
   const resolveFilteredTargetDate = useCallback((): string | null => {
     if (!liquidacionMonthFilter || liquidacionMonthFilter === 'unknown') {
@@ -18383,30 +19304,8 @@ const LiquidacionesPage: React.FC = () => {
       return;
     }
 
-    const needsFuelInvoice = requiresFuelInvoice;
-    const hasFuelData =
-      hasStoredFuelInvoice ||
-      (fuelInvoiceUpload && (fuelParentDocumentId.trim() !== '' || hasLocalUploads));
-    const shouldAttachFuelInvoices = needsFuelInvoice && hasUnlinkedFuelInvoice && !fuelInvoiceUpload;
-
-    if (needsFuelInvoice) {
-      if (!hasFuelData) {
-        setUploadStatus({
-          type: 'error',
-          message:
-            'Necesitás tener guardada la factura de combustible y la liquidación destino antes de subir las liquidaciones.',
-        });
-        return;
-      }
-
-      if (fuelInvoiceUpload && fuelParentDocumentId.trim() === '' && !hasLocalUploads) {
-        setUploadStatus({
-          type: 'error',
-          message: 'Seleccioná la liquidación destino para la factura de combustible.',
-        });
-        return;
-      }
-    }
+    const needsFuelInvoice = false;
+    const shouldAttachFuelInvoices = false;
 
     if (!hasLocalUploads && hasPublishablePending) {
       try {
@@ -19494,6 +20393,14 @@ const LiquidacionesPage: React.FC = () => {
                                   >
                                     Descargar
                                   </button>
+                                  <button
+                                    type="button"
+                                    className="secondary-action secondary-action--ghost"
+                                    onClick={() => handlePreviewFuelDiscount(group.main)}
+                                    title="Muestra el descuento de combustible para la quincena o mes seleccionado."
+                                  >
+                                    Descontar combustible
+                                  </button>
                                   {group.main.mime?.startsWith('image/') ? (
                                     <button
                                       type="button"
@@ -19574,6 +20481,22 @@ const LiquidacionesPage: React.FC = () => {
                                   </tr>
                                 );
                               })}
+                              {(() => {
+                                const netTotal = getLiquidacionNetTotal(group);
+                                if (netTotal == null) {
+                                  return null;
+                                }
+                                return (
+                                  <tr className="attachment-row">
+                                    <td colSpan={listVisibleColumnCount}>
+                                      <div className="liquidacion-net-total">
+                                        <span>Importe a facturar (con descuento)</span>
+                                        <strong>{formatCurrency(netTotal)}</strong>
+                                      </div>
+                                    </td>
+                                  </tr>
+                                );
+                              })()}
                             </React.Fragment>
                           );
                         })}
@@ -19721,93 +20644,218 @@ const LiquidacionesPage: React.FC = () => {
           ) : null}
         </div>
 
-        {requiresFuelInvoice ? (
-          <div className="card" style={{ marginTop: '1rem' }}>
-            <h4 style={{ marginTop: 0 }}>Factura de combustible</h4>
-            <p className="form-info form-info--warning">
-              Este personal tiene combustible. Subí la factura de combustible. Luego podrás enviar la liquidación.
+        <section className="dashboard-card" style={{ marginTop: '1.5rem' }}>
+          <header className="card-header">
+            <h3>Ajustes manuales</h3>
+          </header>
+          <div className="card-body">
+            <p className="form-info">
+              Sumá o restá importes antes de aplicar el descuento. Pendiente, Cuota combustible y Adelantos/Préstamos restan.
             </p>
-            {hasUnlinkedFuelInvoice ? (
-              <p className="form-info form-info--success">
-                Ya hay una factura de combustible cargada. Puedes subir la liquidación directamente.
-              </p>
-            ) : null}
             <div className="form-grid">
               <label className="input-control">
-                <span>Liquidación destino</span>
-                <select
-                  value={fuelParentDocumentId}
-                  onChange={(event) => setFuelParentDocumentId(event.target.value)}
-                >
-                  <option value="">Seleccioná la liquidación</option>
-                  {liquidacionGroupsForSelect.map((group) => {
-                    const isPending = group.main.pendiente ?? false;
-                    const baseLabel = group.main.nombre ?? `Liquidación #${group.main.id ?? ''}`;
-                    const dateLabel = group.main.fechaCarga ? ` - ${group.main.fechaCarga}` : '';
-                    const pendingLabel = isPending ? ' (Pendiente)' : '';
-                    return (
-                      <option key={group.main.id ?? `main-${group.main.nombre}`} value={group.main.id ?? ''}>
-                        {`${baseLabel}${dateLabel}${pendingLabel}`}
-                      </option>
-                    );
-                  })}
+                <span>Tipo</span>
+                <select value={fuelAdjustmentType} onChange={(event) => setFuelAdjustmentType(event.target.value as typeof fuelAdjustmentType)}>
+                  {Object.entries(fuelAdjustmentTypeLabels).map(([key, label]) => (
+                    <option key={key} value={key}>
+                      {label}
+                    </option>
+                  ))}
                 </select>
               </label>
+              <label className="input-control">
+                <span>Importe</span>
+                <input
+                  type="text"
+                  inputMode="decimal"
+                  placeholder="0,00"
+                  value={fuelAdjustmentAmount}
+                  onChange={(event) => setFuelAdjustmentAmount(event.target.value)}
+                />
+              </label>
+              <label className="input-control">
+                <span>Nota</span>
+                <input value={fuelAdjustmentNote} onChange={(event) => setFuelAdjustmentNote(event.target.value)} />
+              </label>
             </div>
-            <div className="upload-dropzone upload-dropzone--compact" role="presentation">
-              <div className="upload-dropzone__icon">🧾</div>
-              <p>Arrastra y suelta la factura de combustible aquí</p>
-              <label className="secondary-action" style={{ cursor: 'pointer' }}>
-            Seleccionar factura
-            <input
-              type="file"
-              onChange={handleFuelFileSelect}
-              style={{ display: 'none' }}
-            />
-          </label>
-          <button
-            type="button"
-            className="secondary-action secondary-action--ghost"
-            onClick={handleOpenFuelPasteModal}
-          >
-            Pegar captura (Ctrl+V)
-          </button>
-            {fuelInvoiceUpload ? (
-            <div className="pending-upload-list" style={{ marginTop: '0.75rem' }}>
-              <div className="pending-upload-item">
-                <div>
-                  <strong>{fuelInvoiceUpload.file.name}</strong>
-                      <span>{fuelInvoiceUpload.typeName ?? 'Factura combustible'}</span>
-                    </div>
-                    <button
-                      type="button"
-                      className="pending-upload-remove"
-                      onClick={() => {
-                        if (fuelInvoiceUpload?.previewUrl) {
-                          revokeImagePreviewUrl(fuelInvoiceUpload.previewUrl);
-                        }
-                        setFuelInvoiceUpload(null);
-                      }}
-                      aria-label="Quitar factura de combustible"
-                    >
-                      ×
-                    </button>
-                  </div>
-                </div>
-              ) : null}
-            </div>
-            <div className="form-actions" style={{ marginTop: '0.75rem' }}>
+            <div className="liquidaciones-actions" style={{ marginTop: '0.75rem' }}>
+              <button type="button" className="secondary-action" onClick={handleAddFuelSelectionAdjustment}>
+                Agregar ajuste
+              </button>
               <button
                 type="button"
-                className="secondary-action"
-                onClick={() => uploadFuelInvoiceOnly({ pending: true })}
-                disabled={!fuelInvoiceUpload || !fuelParentDocumentId || fuelUploading}
+                className="secondary-action secondary-action--ghost"
+                onClick={handleApplyFuelSelectionAdjustments}
+                disabled={fuelSelectionAdjustments.length === 0 || fuelAdjustmentsApplying}
               >
-                {fuelUploading ? 'Guardando...' : 'Guardar factura de combustible'}
+                {fuelAdjustmentsApplying ? 'Aplicando...' : 'Aplicar ajustes'}
+              </button>
+              {fuelAdjustmentsMessage ? <span className="form-info form-info--success">{fuelAdjustmentsMessage}</span> : null}
+            </div>
+            {fuelAdjustmentError ? <p className="form-info form-info--error">{fuelAdjustmentError}</p> : null}
+            {fuelSelectionAdjustments.length > 0 ? (
+              <div className="table-wrapper" style={{ marginTop: '0.75rem' }}>
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Tipo</th>
+                      <th>Importe</th>
+                      <th>Nota</th>
+                      <th></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {fuelSelectionAdjustments.map((adj) => (
+                      <tr key={adj.id}>
+                        <td>{fuelAdjustmentTypeLabels[adj.type] ?? adj.type}</td>
+                        <td>{formatCurrency(adj.amount)}</td>
+                        <td>{adj.note || '—'}</td>
+                        <td>
+                          <button
+                            type="button"
+                            className="secondary-action secondary-action--ghost"
+                            onClick={() => handleRemoveFuelSelectionAdjustment(adj.id)}
+                          >
+                            Quitar
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : null}
+          </div>
+        </section>
+
+        <section className="dashboard-card" style={{ marginTop: '1.5rem' }}>
+          <header className="card-header">
+            <h3>Descontar combustible</h3>
+          </header>
+          <div className="card-body">
+            <p className="form-info">Seleccioná la liquidación destino. Se muestran todos los consumos para que elijas qué descontar.</p>
+            <label className="input-control">
+              <span>Liquidación destino</span>
+              <select value={fuelParentDocumentId} onChange={(event) => setFuelParentDocumentId(event.target.value)}>
+                <option value="">Seleccioná la liquidación</option>
+                {liquidacionGroupsForSelect.map((group) => (
+                  <option key={`fuel-liq-${group.main.id}`} value={group.main.id}>
+                    {group.main.nombre ?? `Liquidación #${group.main.id}`} {group.main.fechaCarga ?? ''}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <div className="summary-cards" style={{ marginTop: '0.75rem' }}>
+              <div className="summary-card">
+                <span className="summary-card__label">Dominio</span>
+                <strong className="summary-card__value">{fuelPreview?.domain ?? '—'}</strong>
+              </div>
+              <div className="summary-card">
+                <span className="summary-card__label">Período</span>
+                <strong className="summary-card__value">
+                  {fuelPreview?.dateFrom && fuelPreview?.dateTo ? `${fuelPreview.dateFrom} → ${fuelPreview.dateTo}` : '—'}
+                </strong>
+              </div>
+              <div className="summary-card">
+                <span className="summary-card__label">Movimientos seleccionados</span>
+                <strong className="summary-card__value">{fuelSelectedCount}</strong>
+              </div>
+              <div className="summary-card">
+                <span className="summary-card__label">Total combustible (selección)</span>
+                <strong className="summary-card__value">{formatCurrency(fuelSelectedTotal)}</strong>
+              </div>
+              <div className="summary-card">
+                <span className="summary-card__label">Ajustes</span>
+                <strong className="summary-card__value">{formatCurrency(fuelSelectionAdjustmentsTotal)}</strong>
+              </div>
+              <div className="summary-card">
+                <span className="summary-card__label">Total a facturar</span>
+                <strong className="summary-card__value">{formatCurrency(fuelSelectedTotalWithAdjustments)}</strong>
+              </div>
+            </div>
+            <div className="table-wrapper" style={{ marginTop: '0.75rem' }}>
+              <table>
+                <thead>
+                  <tr>
+                    <th></th>
+                    <th>Fecha</th>
+                    <th>Estación</th>
+                    <th>Producto</th>
+                    <th>Litros</th>
+                    <th>Importe</th>
+                    <th>Estado</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {fuelPreviewLoading ? (
+                    <tr>
+                      <td colSpan={7}>Cargando consumos...</td>
+                    </tr>
+                  ) : null}
+                  {!fuelPreviewLoading && fuelPreviewError ? (
+                    <tr>
+                      <td colSpan={7} className="error-cell">
+                        {fuelPreviewError}
+                      </td>
+                    </tr>
+                  ) : null}
+                  {!fuelPreviewLoading && !fuelPreviewError && (!fuelPreview || fuelPreview.items.length === 0) ? (
+                    <tr>
+                      <td colSpan={7}>No hay consumos para mostrar.</td>
+                    </tr>
+                  ) : null}
+                  {!fuelPreviewLoading &&
+                    !fuelPreviewError &&
+                    fuelPreview?.items.map((row) => {
+                      const isObserved = (row.status ?? '').toLowerCase().includes('observ');
+                      const isDiscounted = Boolean(row.discounted) || row.status === 'DISCOUNTED';
+                      return (
+                        <tr key={row.id}>
+                          <td>
+                            <input
+                              type="checkbox"
+                              checked={fuelSelection.has(row.id)}
+                              disabled={isObserved || isDiscounted}
+                              onChange={() =>
+                                setFuelSelection((prev) => {
+                                  const next = new Set(prev);
+                                  if (next.has(row.id)) {
+                                    next.delete(row.id);
+                                  } else {
+                                    next.add(row.id);
+                                  }
+                                  return next;
+                                })
+                              }
+                            />
+                          </td>
+                          <td>{formatDateTime(row.occurred_at)}</td>
+                          <td>{row.station ?? '—'}</td>
+                          <td>{row.product ?? '—'}</td>
+                          <td>{formatNumber(row.liters)}</td>
+                          <td>{formatCurrency(row.amount ?? 0)}</td>
+                          <td>{renderFuelStatusBadge(row.status, row.discounted)}</td>
+                        </tr>
+                      );
+                    })}
+                </tbody>
+              </table>
+            </div>
+            <div className="liquidaciones-actions" style={{ marginTop: '0.75rem', justifyContent: 'flex-end' }}>
+              <button
+                type="button"
+                className="primary-action"
+                onClick={handleApplyFuelPreview}
+                disabled={fuelPreviewApplying || fuelSelection.size === 0 || !fuelPreview || !fuelParentDocumentId}
+              >
+                {fuelPreviewApplying ? 'Aplicando...' : 'Aplicar descuento'}
               </button>
             </div>
+            {fuelPreviewMessage ? <p className="form-info form-info--success">{fuelPreviewMessage}</p> : null}
           </div>
-        ) : null}
+        </section>
+
+        {/* Factura de combustible removida: se gestiona desde Descontar combustible */}
 
         {uploadStatus ? (
           <p
@@ -19904,8 +20952,7 @@ const LiquidacionesPage: React.FC = () => {
               documentTypesLoading ||
               !selectedPersonaId ||
               !hasAnyUploadTarget ||
-              (canSubmitUploads && !selectedDocumentTypeId) ||
-            (requiresFuelInvoice && !hasFuelDataForSubmit)
+              (canSubmitUploads && !selectedDocumentTypeId)
             }
           >
             {uploading ? 'Subiendo...' : 'Subir liquidaciones'}
@@ -23531,14 +24578,27 @@ const sucursalOptions = useMemo(() => {
     };
   };
 
-  const validateAltaRequiredFields = (form: AltaRequestForm) => {
-    const trimmedEmail = form.email.trim();
+  const hasAltaRequiredFields = (form: AltaRequestForm) => {
+    const trimmedCuil = form.cuil.trim();
     const trimmedPatente = form.patente.trim();
+    const clienteId = Number(form.clienteId);
+    const sucursalId = Number(form.sucursalId);
 
-    if (!trimmedEmail || !trimmedPatente) {
+    return (
+      trimmedCuil.length > 0
+      && trimmedPatente.length > 0
+      && Number.isFinite(clienteId)
+      && clienteId > 0
+      && Number.isFinite(sucursalId)
+      && sucursalId > 0
+    );
+  };
+
+  const validateAltaRequiredFields = (form: AltaRequestForm) => {
+    if (!hasAltaRequiredFields(form)) {
       setFlash({
         type: 'error',
-        message: 'Completá Correo electrónico y Patente antes de enviar la solicitud.',
+        message: 'Completá CUIL, Patente, Cliente y Sucursal antes de enviar la solicitud.',
       });
       return false;
     }
@@ -26704,10 +27764,13 @@ const handleAdelantoFieldChange =
           <button type="button" className="secondary-action" onClick={() => navigate('/personal')} disabled={altaSubmitting}>
             Cancelar
           </button>
-          <button type="submit" className="primary-action" disabled={altaSubmitting}>
+          <button type="submit" className="primary-action" disabled={altaSubmitting || !hasAltaRequiredFields(altaForm)}>
             {altaSubmitting ? 'Enviando...' : 'Enviar solicitud'}
           </button>
         </div>
+        {!hasAltaRequiredFields(altaForm) ? (
+          <p className="form-info form-info--error">Requerido para enviar: CUIL, Patente, Cliente y Sucursal.</p>
+        ) : null}
       </form>
     );
   };
@@ -34402,6 +35465,14 @@ const AppRoutes: React.FC = () => (
         element={
           <RequireAccess section="combustible">
             <CombustibleTardiasPage />
+          </RequireAccess>
+        }
+      />
+      <Route
+        path="/combustible/consumos"
+        element={
+          <RequireAccess section="combustible">
+            <CombustibleConsumosPage />
           </RequireAccess>
         }
       />

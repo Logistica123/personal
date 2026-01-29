@@ -336,38 +336,50 @@ class FuelModuleController extends Controller
         $onlyImputed = $request->boolean('only_imputed');
         $onlyPending = $request->boolean('only_pending');
 
-        $query = FuelMovement::query()
-            ->whereNotIn('status', ['DUPLICATE'])
-            ->orderByDesc('occurred_at')
-            ->limit(500);
+        $baseQuery = FuelMovement::query()
+            ->whereNotIn('status', ['DUPLICATE']);
 
         if (is_string($distributorId) && trim($distributorId) !== '') {
-            $query->where('distributor_id', (int) $distributorId);
+            $baseQuery->where('distributor_id', (int) $distributorId);
         }
 
         if (is_string($domain) && trim($domain) !== '') {
             $normalized = strtoupper(trim($domain));
             $normalized = preg_replace('/[\s\.\-]+/', '', $normalized);
-            $query->where('domain_norm', $normalized);
+            $baseQuery->where('domain_norm', $normalized);
         }
 
         if (is_string($dateFrom) && trim($dateFrom) !== '') {
-            $query->whereDate('occurred_at', '>=', trim($dateFrom));
+            $baseQuery->whereDate('occurred_at', '>=', trim($dateFrom));
         }
 
         if (is_string($dateTo) && trim($dateTo) !== '') {
-            $query->whereDate('occurred_at', '<=', trim($dateTo));
+            $baseQuery->whereDate('occurred_at', '<=', trim($dateTo));
         }
 
         if ($onlyPending) {
-            $query->where('discounted', false);
+            $baseQuery->where('discounted', false);
         }
 
         if ($onlyImputed) {
-            $query->whereIn('status', ['IMPUTED']);
+            $baseQuery->whereIn('status', ['IMPUTED']);
         }
 
-        $rows = $query->get()->map(fn (FuelMovement $movement) => [
+        $statusCounts = (clone $baseQuery)
+            ->selectRaw('status, count(*) as total')
+            ->groupBy('status')
+            ->pluck('total', 'status');
+
+        $discountCounts = [
+            'taken' => (int) (clone $baseQuery)->where('discounted', true)->count(),
+            'not_taken' => (int) (clone $baseQuery)->where('discounted', false)->count(),
+        ];
+
+        $rows = (clone $baseQuery)
+            ->orderByDesc('occurred_at')
+            ->limit(500)
+            ->get()
+            ->map(fn (FuelMovement $movement) => [
             'id' => $movement->id,
             'occurred_at' => $movement->occurred_at
                 ? $movement->occurred_at->timezone(config('app.timezone', 'America/Argentina/Buenos_Aires'))->toIso8601String()
@@ -379,12 +391,15 @@ class FuelModuleController extends Controller
             'amount' => $movement->amount,
             'price_per_liter' => $movement->price_per_liter,
             'status' => $movement->status,
+            'discounted' => (bool) $movement->discounted,
         ]);
 
         $totals = [
             'movements' => $rows->count(),
             'liters' => $rows->sum('liters'),
             'amount' => $rows->sum('amount'),
+            'discount_counts' => $discountCounts,
+            'status_counts' => $statusCounts,
         ];
 
         return response()->json([

@@ -154,8 +154,10 @@ Route::middleware('auth.api')->group(function () {
     Route::post('/combustible/reportes/{report}/guardar', [\App\Http\Controllers\Api\FuelReportController::class, 'saveDraft']);
     Route::post('/combustible/reportes/{report}/listo', [\App\Http\Controllers\Api\FuelReportController::class, 'markReady']);
     Route::post('/combustible/reportes/{report}/aplicar', [\App\Http\Controllers\Api\FuelReportController::class, 'apply']);
+    Route::post('/combustible/reportes/seleccion', [\App\Http\Controllers\Api\FuelReportController::class, 'applySelection']);
     Route::post('/combustible/cierre', [\App\Http\Controllers\Api\FuelReportController::class, 'closePeriod']);
     Route::get('/combustible/reportes-globales', [\App\Http\Controllers\Api\FuelReportController::class, 'globalReports']);
+    Route::post('/personal/{persona}/liquidaciones/{documento}/ajustes', [\App\Http\Controllers\Api\PersonalDocumentController::class, 'addLiquidacionAdjustment']);
 });
 
 Route::options('/{any}', fn () => response()->noContent())->where('any', '.*');

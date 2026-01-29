@@ -307,11 +307,30 @@ class FuelExtractController extends Controller
                 continue;
             }
 
+            $nombrePersona = trim(collect([
+                $persona->nombres ?? null,
+                $persona->apellidos ?? null,
+            ])->filter()->implode(' '));
+            if ($nombrePersona === '') {
+                $nombrePersona = $persona->email ?? $domain;
+            }
+
             $message = sprintf(
-                'Se cargaron %d movimientos de combustible. Total: $%s.',
+                'Nuevo consumo de combustible de %s. Se cargaron %d movimientos. Total: $%s.',
+                $nombrePersona,
                 (int) ($stats['movements'] ?? 0),
                 number_format((float) ($stats['amount'] ?? 0), 2, ',', '.')
             );
+
+            $recentExists = PersonalNotification::query()
+                ->where('persona_id', $persona->id)
+                ->where('type', 'fuel_extract_loaded')
+                ->where('message', $message)
+                ->where('created_at', '>=', Carbon::now()->subHours(24))
+                ->exists();
+            if ($recentExists) {
+                continue;
+            }
 
             PersonalNotification::query()->create([
                 'persona_id' => $persona->id,
