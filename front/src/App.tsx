@@ -205,6 +205,7 @@ const normalizeTarifaTemplate = (template: TarifaTemplate): TarifaTemplate => {
 type UserRole = 'admin' | 'admin2' | 'encargado' | 'operator' | 'asesor';
 type AccessSection =
   | 'clientes'
+  | 'panel-general'
   | 'unidades'
   | 'usuarios'
   | 'personal'
@@ -219,6 +220,7 @@ type AccessSection =
   | 'tarifas'
   | 'flujo-trabajo'
   | 'aprobaciones'
+  | 'solicitud-personal'
   | 'bases'
   | 'documentos'
   | 'configuracion';
@@ -470,7 +472,7 @@ type PersonalRecord = {
   createdAt?: string | null;
   createdAtLabel?: string | null;
   esSolicitud: boolean;
-  solicitudTipo?: 'alta' | 'combustible' | 'aumento_combustible' | 'adelanto' | 'poliza';
+  solicitudTipo?: 'alta' | 'combustible' | 'aumento_combustible' | 'adelanto' | 'poliza' | 'prestamo' | 'vacaciones';
   solicitudData?: unknown;
   duenoNombre?: string | null;
   duenoFechaNacimiento?: string | null;
@@ -864,6 +866,30 @@ type AdelantoRequestForm = {
   motivo: string;
   observaciones: string;
   agenteId: string;
+  estado: string;
+};
+
+type PrestamoRequestForm = {
+  solicitanteNombre: string;
+  numeroOrden: string;
+  montoSolicitado: string;
+  cantidadCuotas: string;
+  cuotasPagadas: string;
+  fechaNecesaria: string;
+  destinatarioId: string;
+  observaciones: string;
+  estado: string;
+};
+
+type VacacionesRequestForm = {
+  empleadoId: string;
+  empleadoNombre: string;
+  fechaDesde: string;
+  fechaHasta: string;
+  diasHabiles: string;
+  motivo: string;
+  estado: string;
+  destinatarioId: string;
 };
 
 type AumentoCombustibleForm = {
@@ -982,6 +1008,7 @@ const USER_ROLE_OPTIONS: Array<{ value: UserRole; label: string }> = [
 ];
 
 const USER_PERMISSION_OPTIONS: Array<{ value: AccessSection; label: string }> = [
+  { value: 'panel-general', label: 'Panel general' },
   { value: 'clientes', label: 'Gestión de clientes' },
   { value: 'unidades', label: 'Gestión de unidades' },
   { value: 'usuarios', label: 'Gestión de usuarios' },
@@ -993,6 +1020,7 @@ const USER_PERMISSION_OPTIONS: Array<{ value: AccessSection; label: string }> = 
   { value: 'auditoria', label: 'Auditoría' },
   { value: 'flujo-trabajo', label: 'Flujo de trabajo' },
   { value: 'aprobaciones', label: 'Aprobaciones/solicitudes' },
+  { value: 'solicitud-personal', label: 'Solicitud personal' },
   { value: 'liquidaciones', label: 'Liquidaciones' },
   { value: 'pagos', label: 'Pago' },
   { value: 'combustible', label: 'Combustible' },
@@ -1025,6 +1053,7 @@ const canAccessSection = (
     case 'configuracion':
       return false;
     case 'clientes':
+    case 'panel-general':
     case 'unidades':
       return role !== 'operator' && role !== 'asesor';
     case 'reclamos':
@@ -1037,6 +1066,7 @@ const canAccessSection = (
     case 'notificaciones':
     case 'flujo-trabajo':
     case 'aprobaciones':
+    case 'solicitud-personal':
     case 'bases':
     case 'documentos':
       return true;
@@ -3947,12 +3977,14 @@ const DashboardLayout: React.FC<{
         >
           <span className="sidebar-info-card__title">Información general</span>
         </NavLink>
-        <NavLink
-          to="/dashboard"
-          className={({ isActive }) => `sidebar-info-card${isActive ? ' is-active' : ''}`}
-        >
-          <span className="sidebar-info-card__title">Panel general</span>
-        </NavLink>
+        {canAccessSection(userRole, 'panel-general', authUser?.permissions) ? (
+          <NavLink
+            to="/dashboard"
+            className={({ isActive }) => `sidebar-info-card${isActive ? ' is-active' : ''}`}
+          >
+            <span className="sidebar-info-card__title">Panel general</span>
+          </NavLink>
+        ) : null}
 
         <nav className="sidebar-nav" onClick={closeSidebar}>
           <span className="sidebar-title">Acciones</span>
@@ -4094,6 +4126,14 @@ const DashboardLayout: React.FC<{
                 </div>
               ) : null}
             </>
+          ) : null}
+          {canAccessSection(userRole, 'solicitud-personal', authUser?.permissions) ? (
+            <NavLink
+              to="/solicitud-personal"
+              className={({ isActive }) => `sidebar-link${isActive ? ' is-active' : ''}`}
+            >
+              Solicitud personal
+            </NavLink>
           ) : null}
           {canAccessSection(userRole, 'tarifas', authUser?.permissions) ? (
             <NavLink to="/tarifas" className={({ isActive }) => `sidebar-link${isActive ? ' is-active' : ''}`}>
@@ -22998,9 +23038,14 @@ const ApprovalsRequestsPage: React.FC = () => {
   const location = useLocation();
   const apiBaseUrl = useMemo(() => resolveApiBaseUrl(), []);
   const authUser = useStoredAuthUser();
+  const userRole = useMemo(() => getUserRole(authUser), [authUser]);
+  const isAdmin = userRole === 'admin' || userRole === 'admin2';
   const canManagePersonal = useMemo(() => isPersonalEditor(authUser), [authUser]);
   const actorHeaders = useMemo(() => buildActorHeaders(authUser), [authUser]);
-  const [activeTab, setActiveTab] = useState<'list' | 'altas' | 'combustible' | 'aumento_combustible' | 'adelanto' | 'poliza'>('list');
+  const isSolicitudPersonalView = location.pathname === '/solicitud-personal';
+  const [activeTab, setActiveTab] = useState<
+    'list' | 'altas' | 'combustible' | 'aumento_combustible' | 'adelanto' | 'poliza' | 'prestamo' | 'vacaciones'
+  >('list');
   const splitRazonSocial = useCallback((razonSocial: string | null | undefined) => {
     if (!razonSocial) {
       return null;
@@ -23162,21 +23207,25 @@ const ApprovalsRequestsPage: React.FC = () => {
     },
     [meta?.estados]
   );
-  const resolveEstadoNombre = (estadoId?: number | null, estado?: string | null) => {
-    const normalized = (estado ?? '').trim();
-    if (normalized) {
-      return normalized;
-    }
-    if (!meta?.estados || estadoId == null) {
-      return normalized || null;
-    }
-    const match = meta.estados.find((item) => Number(item.id) === Number(estadoId));
-    const matchNombre = (match?.nombre ?? '').trim();
-    return matchNombre || null;
-  };
+  const resolveEstadoNombre = useCallback(
+    (estadoId?: number | null, estado?: string | null) => {
+      const normalized = (estado ?? '').trim();
+      if (normalized) {
+        return normalized;
+      }
+      if (!meta?.estados || estadoId == null) {
+        return normalized || null;
+      }
+      const match = meta.estados.find((item) => Number(item.id) === Number(estadoId));
+      const matchNombre = (match?.nombre ?? '').trim();
+      return matchNombre || null;
+    },
+    [meta?.estados]
+  );
   const [loadingMeta, setLoadingMeta] = useState(true);
   const [metaError, setMetaError] = useState<string | null>(null);
   const [backendSolicitudes, setBackendSolicitudes] = useState<PersonalRecord[]>([]);
+  const [personalSolicitudes, setPersonalSolicitudes] = useState<PersonalRecord[]>([]);
   const estadoOptionsWithRechazo = useMemo(() => {
     const estados = meta?.estados ?? [];
     const hasRechazo = estados.some((estado) => (estado.nombre ?? '').toLowerCase().includes('rechaz'));
@@ -23303,6 +23352,70 @@ const ApprovalsRequestsPage: React.FC = () => {
       createdAtLabel,
     };
   };
+
+  const mapSolicitudPersonalToRecord = (item: {
+    id: number;
+    tipo: string;
+    estado?: string | null;
+    form?: any;
+    solicitanteId?: number | null;
+    solicitanteNombre?: string | null;
+    destinatarioId?: number | null;
+    destinatarioNombre?: string | null;
+    createdAt?: string | null;
+  }): PersonalRecord => {
+    const tipo = item.tipo as PersonalRecord['solicitudTipo'];
+    const perfilLabel =
+      tipo === 'prestamo'
+        ? 'Solicitud de préstamo'
+        : tipo === 'adelanto'
+        ? 'Adelanto de pago'
+        : tipo === 'vacaciones'
+        ? 'Solicitud de vacaciones'
+        : 'Solicitud personal';
+    const createdAt = item.createdAt ?? null;
+    const createdAtLabel = createdAt
+      ? new Date(createdAt).toLocaleString('es-AR', { dateStyle: 'short', timeStyle: 'short' })
+      : null;
+    const base: PersonalRecord = {
+      id: item.id,
+      nombre: item.solicitanteNombre ?? null,
+      cuil: null,
+      telefono: null,
+      email: null,
+      cliente: null,
+      unidad: null,
+      unidadDetalle: null,
+      sucursal: null,
+      fechaAlta: null,
+      perfil: perfilLabel,
+      perfilValue: null,
+      agente: item.destinatarioNombre ?? null,
+      estado: item.estado ?? 'Pendiente',
+      combustible: null,
+      combustibleValue: false,
+      tarifaEspecial: null,
+      tarifaEspecialValue: false,
+      aprobado: false,
+      aprobadoAt: null,
+      aprobadoPor: null,
+      esSolicitud: true,
+      solicitudTipo: tipo,
+      solicitudData: {
+        form: {
+          ...(item.form ?? {}),
+          solicitanteId: item.solicitanteId ?? (item.form?.solicitanteId ?? null),
+          destinatarioId: item.destinatarioId ?? (item.form?.destinatarioId ?? null),
+          solicitanteNombre: item.solicitanteNombre ?? item.form?.solicitanteNombre ?? null,
+          empleadoNombre: item.form?.empleadoNombre ?? null,
+        },
+        origin: 'solicitud-personal',
+      },
+      createdAt,
+      createdAtLabel,
+    };
+    return base;
+  };
   const [localSolicitudes, setLocalSolicitudes] = useState<PersonalRecord[]>(() => {
     if (typeof window === 'undefined') {
       return [];
@@ -23380,6 +23493,84 @@ const ApprovalsRequestsPage: React.FC = () => {
     return agentesPorId.get(numeric) ?? null;
   };
 
+  const APPROVER_IDS = [22, 15, 41];
+  const approverOptions = useMemo(
+    () =>
+      APPROVER_IDS.map((id) => {
+        const match = (meta?.agentes ?? []).find((agente) => Number(agente.id) === id);
+        const fallbackName =
+          id === 22 ? 'David Gimenez' : id === 15 ? 'Sebastian Cabrera' : id === 41 ? 'Matias Sanches' : null;
+        return { id: String(id), label: match?.name ?? fallbackName ?? `Usuario #${id}` };
+      }),
+    [meta?.agentes]
+  );
+  const resolveApproverName = (value: string | null | undefined) => {
+    if (!value) {
+      return null;
+    }
+    const match = approverOptions.find((option) => option.id === String(value));
+    return match?.label ?? null;
+  };
+
+  const canEditEstadoPersonal = APPROVER_IDS.includes(authUser?.id ?? -1);
+
+  const getSolicitudById = (id: number | null) => {
+    if (id == null) {
+      return null;
+    }
+    const source = isSolicitudPersonalView ? personalSolicitudes : [...localSolicitudes, ...backendSolicitudes];
+    return source.find((registro) => registro.id === id) ?? null;
+  };
+
+  const getPrestamoOrden = (record: PersonalRecord): number | null => {
+    const data = record.solicitudData as { form?: { numeroOrden?: string | number | null } } | null | undefined;
+    const raw = data?.form?.numeroOrden ?? (record as any)?.numeroOrden ?? null;
+    if (raw == null) {
+      return null;
+    }
+    const numeric = Number(raw);
+    return Number.isFinite(numeric) && numeric > 0 ? Math.floor(numeric) : null;
+  };
+
+  const resolveNextPrestamoOrden = (excludeId?: number | null): number => {
+    const registros = isSolicitudPersonalView ? personalSolicitudes : [...localSolicitudes, ...backendSolicitudes];
+    let max = 0;
+    registros.forEach((registro) => {
+      if (registro.solicitudTipo !== 'prestamo') {
+        return;
+      }
+      if (excludeId != null && registro.id === excludeId) {
+        return;
+      }
+      const current = getPrestamoOrden(registro);
+      if (current && current > max) {
+        max = current;
+      }
+    });
+    return max + 1;
+  };
+
+  const parseMonto = (raw: string): number | null => {
+    const cleaned = raw.replace(/\s+/g, '').replace(/\./g, '').replace(/,/g, '.');
+    if (!cleaned) {
+      return null;
+    }
+    const numeric = Number(cleaned);
+    if (Number.isNaN(numeric)) {
+      return null;
+    }
+    return Number(numeric.toFixed(2));
+  };
+
+  const updateLocalSolicitud = (id: number, updater: (prev: PersonalRecord) => PersonalRecord) => {
+    setLocalSolicitudes((prev) =>
+      prev.map((item) => (item.id === id ? normalizeSolicitudRecord(updater(item)) : item))
+    );
+  };
+
+  const SOLICITUD_ESTADO_OPTIONS = ['Pendiente', 'Aprobado', 'Pagado', 'Rechazado'];
+  const VACACIONES_ESTADO_OPTIONS = ['Pendiente', 'Aprobado', 'Rechazado'];
+
   useEffect(() => {
     if (typeof window === 'undefined') {
       return;
@@ -23414,6 +23605,8 @@ const ApprovalsRequestsPage: React.FC = () => {
   const [combustibleSubmitting, setCombustibleSubmitting] = useState(false);
   const [aumentoSubmitting, setAumentoSubmitting] = useState(false);
   const [adelantoSubmitting, setAdelantoSubmitting] = useState(false);
+  const [prestamoSubmitting, setPrestamoSubmitting] = useState(false);
+  const [vacacionesSubmitting, setVacacionesSubmitting] = useState(false);
   const [polizaSubmitting, setPolizaSubmitting] = useState(false);
   const [altaAttachments, setAltaAttachments] = useState<AltaAttachmentItem[]>([]);
   const [altaFilesVersion, setAltaFilesVersion] = useState(0);
@@ -23624,12 +23817,84 @@ const ApprovalsRequestsPage: React.FC = () => {
     motivo: '',
     observaciones: '',
     agenteId: '',
+    estado: 'Pendiente',
   }));
+  const [prestamoForm, setPrestamoForm] = useState<PrestamoRequestForm>(() => ({
+    solicitanteNombre: authUser?.name ?? '',
+    numeroOrden: '',
+    montoSolicitado: '',
+    cantidadCuotas: '',
+    cuotasPagadas: '0',
+    fechaNecesaria: '',
+    destinatarioId: '',
+    observaciones: '',
+    estado: 'Pendiente',
+  }));
+  const canEditPrestamoEstado = useMemo(() => {
+    if (!canEditEstadoPersonal) {
+      return false;
+    }
+    if (!prestamoForm.destinatarioId) {
+      return false;
+    }
+    return String(authUser?.id ?? '') === String(prestamoForm.destinatarioId);
+  }, [authUser?.id, canEditEstadoPersonal, prestamoForm.destinatarioId]);
+  const [vacacionesForm, setVacacionesForm] = useState<VacacionesRequestForm>(() => ({
+    empleadoId: '',
+    empleadoNombre: authUser?.name ?? '',
+    fechaDesde: '',
+    fechaHasta: '',
+    diasHabiles: '',
+    motivo: '',
+    estado: 'Pendiente',
+    destinatarioId: '',
+  }));
+  const [vacacionesDiasDisponibles, setVacacionesDiasDisponibles] = useState<Record<string, number>>({});
+  const [vacacionesConfigForm, setVacacionesConfigForm] = useState<{ empleadoId: string; dias: string }>({
+    empleadoId: '',
+    dias: '',
+  });
+  const [editingSolicitudId, setEditingSolicitudId] = useState<number | null>(null);
+  const [editingSolicitudTipo, setEditingSolicitudTipo] = useState<PersonalRecord['solicitudTipo'] | null>(null);
   const [altaFormDirty, setAltaFormDirty] = useState(false);
   const [personalLookup, setPersonalLookup] = useState<PersonalRecord[]>([]);
   const [personalLookupLoading, setPersonalLookupLoading] = useState(false);
   const [personalLookupError, setPersonalLookupError] = useState<string | null>(null);
   const [altaLookupTerm, setAltaLookupTerm] = useState('');
+
+  useEffect(() => {
+    if (!authUser?.name) {
+      return;
+    }
+    setPrestamoForm((prev) =>
+      prev.solicitanteNombre.trim().length > 0 ? prev : { ...prev, solicitanteNombre: authUser.name ?? '' }
+    );
+    setVacacionesForm((prev) =>
+      prev.empleadoNombre.trim().length > 0 ? prev : { ...prev, empleadoNombre: authUser.name ?? '' }
+    );
+  }, [authUser?.name]);
+
+  useEffect(() => {
+    if (!authUser?.id || vacacionesForm.empleadoId) {
+      return;
+    }
+    const match = (meta?.agentes ?? []).find((agente) => Number(agente.id) === Number(authUser.id));
+    if (!match) {
+      return;
+    }
+    setVacacionesForm((prev) => ({
+      ...prev,
+      empleadoId: String(authUser.id),
+      empleadoNombre: match.name ?? prev.empleadoNombre ?? authUser.name ?? '',
+    }));
+  }, [authUser?.id, authUser?.name, meta?.agentes, vacacionesForm.empleadoId]);
+
+  useEffect(() => {
+    if (!isSolicitudPersonalView) {
+      return;
+    }
+    setActiveTab((prev) => (prev === 'list' || prev === 'adelanto' || prev === 'prestamo' || prev === 'vacaciones' ? prev : 'list'));
+  }, [isSolicitudPersonalView]);
 
   useEffect(() => {
     if (activeTab !== 'altas') {
@@ -23981,6 +24246,24 @@ const ApprovalsRequestsPage: React.FC = () => {
         setSolicitudesLoading(true);
         setSolicitudesError(null);
 
+        if (isSolicitudPersonalView) {
+          const response = await fetch(`${apiBaseUrl}/api/solicitud-personal`, {
+            signal: options?.signal,
+          });
+
+          if (!response.ok) {
+            throw new Error(`Error ${response.status}: ${response.statusText}`);
+          }
+
+          const payload = (await response.json()) as { data: any[] };
+          if (!payload || !Array.isArray(payload.data)) {
+            throw new Error('Formato de respuesta inesperado');
+          }
+
+          setPersonalSolicitudes(payload.data.map((item) => mapSolicitudPersonalToRecord(item)));
+          return;
+        }
+
         const response = await fetch(`${apiBaseUrl}/api/personal?esSolicitud=1`, {
           signal: options?.signal,
         });
@@ -24004,14 +24287,69 @@ const ApprovalsRequestsPage: React.FC = () => {
         setSolicitudesLoading(false);
       }
     },
-    [apiBaseUrl]
+    [apiBaseUrl, isSolicitudPersonalView]
+  );
+
+  const fetchVacacionesDias = useCallback(
+    async (options?: { signal?: AbortSignal }) => {
+      try {
+        if (!isSolicitudPersonalView) {
+          return;
+        }
+        const response = await fetch(`${apiBaseUrl}/api/vacaciones-dias`, {
+          signal: options?.signal,
+          headers: {
+            Accept: 'application/json',
+            ...actorHeaders,
+          },
+        });
+
+        if (!response.ok) {
+          throw new Error(`Error ${response.status}: ${response.statusText}`);
+        }
+
+        const payload = (await response.json()) as { data: Array<{ userId?: number | string; dias?: number }> };
+        if (!payload || !Array.isArray(payload.data)) {
+          throw new Error('Formato de respuesta inesperado');
+        }
+
+        const next: Record<string, number> = {};
+        payload.data.forEach((item) => {
+          const userId = item?.userId;
+          if (userId == null) {
+            return;
+          }
+          const dias = Number(item?.dias);
+          next[String(userId)] = Number.isFinite(dias) ? dias : 0;
+        });
+        setVacacionesDiasDisponibles(next);
+      } catch (err) {
+        if ((err as Error).name === 'AbortError') {
+          return;
+        }
+        setFlash({ type: 'error', message: (err as Error).message ?? 'No se pudieron cargar los días hábiles.' });
+      }
+    },
+    [apiBaseUrl, actorHeaders, isSolicitudPersonalView]
   );
 
   useEffect(() => {
+    if (isSolicitudPersonalView && !authUser?.id) {
+      return;
+    }
     const controller = new AbortController();
     fetchSolicitudes({ signal: controller.signal });
     return () => controller.abort();
-  }, [fetchSolicitudes]);
+  }, [fetchSolicitudes, isSolicitudPersonalView, authUser?.id]);
+
+  useEffect(() => {
+    if (!isSolicitudPersonalView) {
+      return;
+    }
+    const controller = new AbortController();
+    fetchVacacionesDias({ signal: controller.signal });
+    return () => controller.abort();
+  }, [fetchVacacionesDias, isSolicitudPersonalView]);
 
   useEffect(() => {
     setReviewDeletingDocumentIds(new Set());
@@ -25855,7 +26193,11 @@ const handleAdelantoFieldChange =
       setAdelantoSubmitting(true);
       setFlash(null);
 
-      const formSnapshot = { ...adelantoForm };
+      const formSnapshot = { ...adelantoForm, solicitanteId: authUser?.id ?? null };
+      if (!canEditEstadoPersonal) {
+        const existing = getSolicitudById(editingSolicitudId);
+        formSnapshot.estado = existing?.estado ?? 'Pendiente';
+      }
       const attachmentNames = adelantoAttachments.map((file) => file.name);
       const clienteNombre =
         formSnapshot.empresaId && meta?.clientes
@@ -25881,7 +26223,7 @@ const handleAdelantoFieldChange =
         perfil: 'Adelanto de pago',
         perfilValue: null,
         agente: agenteNombre,
-        estado: 'Pendiente',
+        estado: formSnapshot.estado || 'Pendiente',
         combustible: null,
         combustibleValue: false,
         tarifaEspecial: null,
@@ -25893,16 +26235,46 @@ const handleAdelantoFieldChange =
         solicitudTipo: 'adelanto',
         solicitudData: {
           form: formSnapshot,
+          origin: isSolicitudPersonalView ? 'solicitud-personal' : 'aprobaciones',
           adjuntos: attachmentNames,
         },
       };
 
-      appendLocalSolicitud(newRecord);
-
-      setFlash({
-        type: 'success',
-        message: 'Solicitud de adelanto registrada (modo demostración).',
-      });
+      if (isSolicitudPersonalView) {
+        await persistSolicitudPersonal(
+          {
+            tipo: 'adelanto',
+            estado: formSnapshot.estado,
+            destinatarioId: formSnapshot.agenteId,
+            form: formSnapshot,
+          },
+          editingSolicitudId
+        );
+        setFlash({
+          type: 'success',
+          message: editingSolicitudId ? 'Solicitud de adelanto actualizada.' : 'Solicitud de adelanto registrada.',
+        });
+      } else if (editingSolicitudId && editingSolicitudTipo === 'adelanto') {
+        if (editingSolicitudId > 0) {
+          throw new Error('No se puede actualizar una solicitud ya registrada en el servidor.');
+        }
+        updateLocalSolicitud(editingSolicitudId, (prev) => ({
+          ...prev,
+          ...newRecord,
+          id: prev.id,
+          createdAt: prev.createdAt ?? new Date().toISOString(),
+        }));
+        setFlash({
+          type: 'success',
+          message: 'Solicitud de adelanto actualizada.',
+        });
+      } else {
+        appendLocalSolicitud(newRecord);
+        setFlash({
+          type: 'success',
+          message: 'Solicitud de adelanto registrada (modo demostración).',
+        });
+      }
 
       setAdelantoForm({
         empresaId: '',
@@ -25913,9 +26285,12 @@ const handleAdelantoFieldChange =
         motivo: '',
         observaciones: '',
         agenteId: '',
+        estado: 'Pendiente',
       });
       setAdelantoAttachments([]);
       setAdelantoFilesVersion((value) => value + 1);
+      setEditingSolicitudId(null);
+      setEditingSolicitudTipo(null);
       handleGoToList();
     } catch (err) {
       setFlash({
@@ -25924,6 +26299,400 @@ const handleAdelantoFieldChange =
       });
     } finally {
       setAdelantoSubmitting(false);
+    }
+  };
+
+  const handlePrestamoFieldChange =
+    (field: keyof PrestamoRequestForm) =>
+    (event: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
+      const { value } = event.target;
+      setPrestamoForm((prev) => ({
+        ...prev,
+        [field]: value,
+      }));
+    };
+
+  const persistSolicitudPersonal = async (
+    payload: {
+      tipo: 'prestamo' | 'adelanto' | 'vacaciones';
+      estado?: string | null;
+      destinatarioId?: string | number | null;
+      form?: Record<string, any>;
+    },
+    id?: number | null
+  ) => {
+    const method = id && id > 0 ? 'PUT' : 'POST';
+    const url = id && id > 0 ? `${apiBaseUrl}/api/solicitud-personal/${id}` : `${apiBaseUrl}/api/solicitud-personal`;
+    const response = await fetch(url, {
+      method,
+      headers: {
+        'Content-Type': 'application/json',
+        ...actorHeaders,
+      },
+      body: JSON.stringify({
+        tipo: payload.tipo,
+        estado: payload.estado ?? 'Pendiente',
+        destinatarioId: payload.destinatarioId ? Number(payload.destinatarioId) : null,
+        form: payload.form ?? {},
+      }),
+    });
+    if (!response.ok) {
+      let message = `Error ${response.status}: ${response.statusText}`;
+      try {
+        const data = await response.json();
+        if (typeof data?.message === 'string') {
+          message = data.message;
+        }
+      } catch {
+        // ignore
+      }
+      throw new Error(message);
+    }
+    const payloadResponse = (await response.json()) as { data: any; message?: string };
+    if (!payloadResponse?.data) {
+      throw new Error('Formato de respuesta inesperado');
+    }
+    const record = mapSolicitudPersonalToRecord(payloadResponse.data);
+    setPersonalSolicitudes((prev) => {
+      const exists = prev.some((item) => item.id === record.id);
+      if (exists) {
+        return prev.map((item) => (item.id === record.id ? record : item));
+      }
+      return [record, ...prev];
+    });
+    return payloadResponse;
+  };
+
+  const resetPrestamoForm = () => {
+    setPrestamoForm({
+      solicitanteNombre: authUser?.name ?? '',
+      numeroOrden: '',
+      montoSolicitado: '',
+      cantidadCuotas: '',
+      cuotasPagadas: '0',
+      fechaNecesaria: '',
+      destinatarioId: '',
+      observaciones: '',
+      estado: 'Pendiente',
+    });
+    setEditingSolicitudId(null);
+    setEditingSolicitudTipo(null);
+  };
+
+  const handlePrestamoSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+
+    try {
+      setPrestamoSubmitting(true);
+      setFlash(null);
+
+      const formSnapshot = { ...prestamoForm, solicitanteId: authUser?.id ?? null };
+      const numeroOrden = formSnapshot.numeroOrden?.trim() || String(resolveNextPrestamoOrden(editingSolicitudId));
+      formSnapshot.numeroOrden = numeroOrden;
+      if (!formSnapshot.cantidadCuotas.trim()) {
+        throw new Error('Ingresá la cantidad de cuotas.');
+      }
+      const cuotasRaw = Number(formSnapshot.cantidadCuotas);
+      if (Number.isNaN(cuotasRaw) || cuotasRaw < 1 || cuotasRaw > 18) {
+        throw new Error('La cantidad de cuotas debe estar entre 1 y 18.');
+      }
+      if (!formSnapshot.destinatarioId) {
+        throw new Error('Seleccioná a quién enviar la solicitud.');
+      }
+      if (!canEditPrestamoEstado) {
+        const existing = getSolicitudById(editingSolicitudId);
+        formSnapshot.estado = existing?.estado ?? 'Pendiente';
+      }
+      const monto = parseMonto(formSnapshot.montoSolicitado) ?? 0;
+      const cuotas = Math.min(Math.max(cuotasRaw, 1), 18);
+      const cuotasPagadas = Math.min(Math.max(Number(formSnapshot.cuotasPagadas) || 0, 0), cuotas);
+      const interes = monto * 0.04 * cuotas;
+      const totalConInteres = monto + interes;
+      const valorCuota = cuotas > 0 ? totalConInteres / cuotas : 0;
+      const cuotasRestantes = Math.max(cuotas - cuotasPagadas, 0);
+      const destinatarioNombre = resolveApproverName(formSnapshot.destinatarioId);
+
+      const recordBase: PersonalRecord = {
+        id: createSyntheticId(),
+        nombre: formSnapshot.solicitanteNombre || null,
+        cuil: null,
+        telefono: null,
+        email: null,
+        cliente: null,
+        unidad: null,
+        unidadDetalle: null,
+        sucursal: null,
+        fechaAlta: formSnapshot.fechaNecesaria || null,
+        perfil: 'Solicitud de préstamo',
+        perfilValue: null,
+        agente: destinatarioNombre,
+        estado: formSnapshot.estado || 'Pendiente',
+        combustible: null,
+        combustibleValue: false,
+        tarifaEspecial: null,
+        tarifaEspecialValue: false,
+        aprobado: false,
+        aprobadoAt: null,
+        aprobadoPor: null,
+        esSolicitud: true,
+        solicitudTipo: 'prestamo',
+        solicitudData: {
+          form: {
+            ...formSnapshot,
+            numeroOrden,
+            cantidadCuotas: String(cuotas),
+            cuotasPagadas: String(cuotasPagadas),
+          },
+          origin: isSolicitudPersonalView ? 'solicitud-personal' : 'aprobaciones',
+          resumen: {
+            monto,
+            cuotas,
+            interes,
+            totalConInteres,
+            valorCuota,
+            cuotasRestantes,
+          },
+        },
+      };
+
+      if (isSolicitudPersonalView) {
+        await persistSolicitudPersonal(
+          {
+            tipo: 'prestamo',
+            estado: formSnapshot.estado,
+            destinatarioId: formSnapshot.destinatarioId,
+            form: {
+              ...formSnapshot,
+              numeroOrden,
+              cantidadCuotas: String(cuotas),
+              cuotasPagadas: String(cuotasPagadas),
+            },
+          },
+          editingSolicitudId
+        );
+        setFlash({
+          type: 'success',
+          message: editingSolicitudId ? 'Solicitud de préstamo actualizada.' : 'Solicitud de préstamo registrada.',
+        });
+      } else if (editingSolicitudId && editingSolicitudTipo === 'prestamo') {
+        if (editingSolicitudId > 0) {
+          throw new Error('No se puede actualizar una solicitud ya registrada en el servidor.');
+        }
+        updateLocalSolicitud(editingSolicitudId, (prev) => ({
+          ...prev,
+          ...recordBase,
+          id: prev.id,
+          createdAt: prev.createdAt ?? new Date().toISOString(),
+        }));
+        setFlash({ type: 'success', message: 'Solicitud de préstamo actualizada.' });
+      } else {
+        appendLocalSolicitud(recordBase);
+        setFlash({ type: 'success', message: 'Solicitud de préstamo registrada.' });
+      }
+
+      resetPrestamoForm();
+      handleGoToList();
+    } catch (err) {
+      setFlash({
+        type: 'error',
+        message: (err as Error).message ?? 'No se pudo registrar el préstamo.',
+      });
+    } finally {
+      setPrestamoSubmitting(false);
+    }
+  };
+
+  const handleVacacionesFieldChange =
+    (field: keyof VacacionesRequestForm) =>
+    (event: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
+      const { value } = event.target;
+      setVacacionesForm((prev) => ({
+        ...prev,
+        [field]: value,
+      }));
+    };
+
+  const handleVacacionesEmpleadoChange = (event: React.ChangeEvent<HTMLSelectElement>) => {
+    const value = event.target.value;
+    const nombre = resolveAgenteNombre(value);
+    setVacacionesForm((prev) => ({
+      ...prev,
+      empleadoId: value,
+      empleadoNombre: nombre ?? prev.empleadoNombre,
+    }));
+  };
+
+  const resetVacacionesForm = () => {
+    setVacacionesForm({
+      empleadoId: '',
+      empleadoNombre: authUser?.name ?? '',
+      fechaDesde: '',
+      fechaHasta: '',
+      diasHabiles: '',
+      motivo: '',
+      estado: 'Pendiente',
+      destinatarioId: '',
+    });
+    setEditingSolicitudId(null);
+    setEditingSolicitudTipo(null);
+  };
+
+  const updateVacacionesDias = useCallback(
+    async (userId: string, dias: number) => {
+      const response = await fetch(`${apiBaseUrl}/api/vacaciones-dias`, {
+        method: 'PUT',
+        headers: {
+          Accept: 'application/json',
+          'Content-Type': 'application/json',
+          ...actorHeaders,
+        },
+        body: JSON.stringify({ userId: Number(userId), dias }),
+      });
+
+      if (!response.ok) {
+        const message = await response.text();
+        throw new Error(message || `Error ${response.status}: ${response.statusText}`);
+      }
+
+      const payload = (await response.json()) as { data?: { dias?: number } };
+      const finalDias = Number(payload?.data?.dias);
+      return Number.isFinite(finalDias) ? finalDias : dias;
+    },
+    [apiBaseUrl, actorHeaders]
+  );
+
+  const handleVacacionesConfigSave = async () => {
+    const empleadoId = vacacionesConfigForm.empleadoId.trim();
+    if (!empleadoId) {
+      setFlash({ type: 'error', message: 'Seleccioná un usuario para cargar los días.' });
+      return;
+    }
+    const dias = Number(vacacionesConfigForm.dias);
+    if (!Number.isFinite(dias) || dias < 0) {
+      setFlash({ type: 'error', message: 'Ingresá un número de días válido.' });
+      return;
+    }
+    try {
+      const stored = await updateVacacionesDias(empleadoId, Math.floor(dias));
+      setVacacionesDiasDisponibles((prev) => ({
+        ...prev,
+        [empleadoId]: stored,
+      }));
+      setFlash({ type: 'success', message: 'Días hábiles actualizados.' });
+      setVacacionesConfigForm((prev) => ({ ...prev, dias: '' }));
+    } catch (err) {
+      setFlash({
+        type: 'error',
+        message: (err as Error).message ?? 'No se pudieron actualizar los días hábiles.',
+      });
+    }
+  };
+
+  const handleVacacionesSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+
+    try {
+      setVacacionesSubmitting(true);
+      setFlash(null);
+
+      const formSnapshot = { ...vacacionesForm, solicitanteId: authUser?.id ?? null };
+      const diasSolicitados = Math.max(Number(formSnapshot.diasHabiles) || 0, 0);
+      const empleadoNombre =
+        formSnapshot.empleadoNombre || resolveAgenteNombre(formSnapshot.empleadoId) || 'Empleado';
+      if (!empleadoNombre.trim()) {
+        throw new Error('Ingresá el nombre del empleado.');
+      }
+      const prevRecord = getSolicitudById(editingSolicitudId);
+      const prevEstado = prevRecord?.estado ?? null;
+      if (!canEditEstadoPersonal) {
+        const existing = getSolicitudById(editingSolicitudId);
+        formSnapshot.estado = existing?.estado ?? 'Pendiente';
+      }
+
+      const recordBase: PersonalRecord = {
+        id: createSyntheticId(),
+        nombre: empleadoNombre || null,
+        cuil: null,
+        telefono: null,
+        email: null,
+        cliente: null,
+        unidad: null,
+        unidadDetalle: null,
+        sucursal: null,
+        fechaAlta: formSnapshot.fechaDesde || null,
+        perfil: 'Solicitud de vacaciones',
+        perfilValue: null,
+        agente: null,
+        estado: formSnapshot.estado || 'Pendiente',
+        combustible: null,
+        combustibleValue: false,
+        tarifaEspecial: null,
+        tarifaEspecialValue: false,
+        aprobado: false,
+        aprobadoAt: null,
+        aprobadoPor: null,
+        esSolicitud: true,
+        solicitudTipo: 'vacaciones',
+        solicitudData: {
+          form: formSnapshot,
+          origin: isSolicitudPersonalView ? 'solicitud-personal' : 'aprobaciones',
+          resumen: {
+            diasSolicitados,
+            diasDisponibles:
+              formSnapshot.empleadoId && vacacionesDiasDisponibles[formSnapshot.empleadoId] != null
+                ? vacacionesDiasDisponibles[formSnapshot.empleadoId]
+                : null,
+          },
+        },
+      };
+
+      if (isSolicitudPersonalView) {
+        await persistSolicitudPersonal(
+          {
+            tipo: 'vacaciones',
+            estado: formSnapshot.estado,
+            destinatarioId: formSnapshot.destinatarioId ?? null,
+            form: formSnapshot,
+          },
+          editingSolicitudId
+        );
+        if (formSnapshot.estado === 'Aprobado' && prevEstado !== 'Aprobado' && formSnapshot.empleadoId) {
+          const current = vacacionesDiasDisponibles[formSnapshot.empleadoId];
+          if (Number.isFinite(current)) {
+            const nextValue = Math.max(current - diasSolicitados, 0);
+            const stored = await updateVacacionesDias(formSnapshot.empleadoId, nextValue);
+            setVacacionesDiasDisponibles((prev) => ({ ...prev, [formSnapshot.empleadoId]: stored }));
+          }
+        }
+        setFlash({
+          type: 'success',
+          message: editingSolicitudId ? 'Solicitud de vacaciones actualizada.' : 'Solicitud de vacaciones registrada.',
+        });
+      } else if (editingSolicitudId && editingSolicitudTipo === 'vacaciones') {
+        if (editingSolicitudId > 0) {
+          throw new Error('No se puede actualizar una solicitud ya registrada en el servidor.');
+        }
+        updateLocalSolicitud(editingSolicitudId, (prev) => ({
+          ...prev,
+          ...recordBase,
+          id: prev.id,
+          createdAt: prev.createdAt ?? new Date().toISOString(),
+        }));
+        setFlash({ type: 'success', message: 'Solicitud de vacaciones actualizada.' });
+      } else {
+        appendLocalSolicitud(recordBase);
+        setFlash({ type: 'success', message: 'Solicitud de vacaciones registrada.' });
+      }
+
+      resetVacacionesForm();
+      handleGoToList();
+    } catch (err) {
+      setFlash({
+        type: 'error',
+        message: (err as Error).message ?? 'No se pudo registrar la solicitud de vacaciones.',
+      });
+    } finally {
+      setVacacionesSubmitting(false);
     }
   };
 
@@ -26023,8 +26792,8 @@ const handleAdelantoFieldChange =
   };
 
   const combinedSolicitudes = useMemo(
-    () => [...localSolicitudes, ...backendSolicitudes],
-    [localSolicitudes, backendSolicitudes]
+    () => (isSolicitudPersonalView ? personalSolicitudes : [...localSolicitudes, ...backendSolicitudes]),
+    [isSolicitudPersonalView, localSolicitudes, backendSolicitudes, personalSolicitudes]
   );
 
   const solicitudesPerfilOptions = useMemo(() => {
@@ -26183,6 +26952,33 @@ const handleAdelantoFieldChange =
     };
 
     return combinedSolicitudes.filter((registro) => {
+      const data = registro.solicitudData as any;
+      const origin = data?.origin ?? null;
+      if (!isSolicitudPersonalView) {
+        if (origin === 'solicitud-personal') {
+          return false;
+        }
+        if (registro.solicitudTipo === 'prestamo' || registro.solicitudTipo === 'vacaciones') {
+          return false;
+        }
+      }
+      if (isSolicitudPersonalView) {
+        if (origin !== 'solicitud-personal') {
+          return false;
+        }
+        const form = data?.form ?? {};
+        const solicitanteId = form?.solicitanteId ?? form?.requesterId ?? null;
+        const empleadoId = form?.empleadoId ?? null;
+        const destinatarioId = form?.destinatarioId ?? null;
+        const authId = authUser?.id ?? null;
+        const isRequester =
+          authId != null &&
+          (String(solicitanteId) === String(authId) || String(empleadoId) === String(authId));
+        const isDestinatario = authId != null && String(destinatarioId) === String(authId);
+        if (!isRequester && !isDestinatario) {
+          return false;
+        }
+      }
       const perfilLabel = perfilNames[registro.perfilValue ?? 0] ?? registro.perfil ?? '';
 
       if (solicitudesPerfilFilter && perfilLabel !== solicitudesPerfilFilter) {
@@ -26242,6 +27038,8 @@ const handleAdelantoFieldChange =
     solicitudesFechaTo,
     perfilNames,
     resolveSolicitudCreated,
+    authUser?.id,
+    isSolicitudPersonalView,
   ]);
 
   const solicitudesFooterLabel = useMemo(() => {
@@ -26345,8 +27143,10 @@ const handleAdelantoFieldChange =
     setReviewCommentInfo(null);
     setReviewLoading(false);
     setReviewEditMode(false);
+    setEditingSolicitudId(null);
+    setEditingSolicitudTipo(null);
     if (personaIdFromQuery) {
-      navigate('/aprobaciones', { replace: true });
+      navigate(isSolicitudPersonalView ? '/solicitud-personal' : '/aprobaciones', { replace: true });
     }
   };
 
@@ -26382,11 +27182,70 @@ const handleAdelantoFieldChange =
       case 'adelanto': {
         setActiveTab('adelanto');
         const data = (registro.solicitudData as { form?: AdelantoRequestForm }) ?? {};
+        setEditingSolicitudId(registro.id);
+        setEditingSolicitudTipo('adelanto');
         if (data.form) {
-          setAdelantoForm(data.form);
+          setAdelantoForm({
+            empresaId: data.form.empresaId ?? '',
+            sucursalId: data.form.sucursalId ?? '',
+            transportista: data.form.transportista ?? '',
+            monto: data.form.monto ?? '',
+            fechaSolicitud: data.form.fechaSolicitud ?? '',
+            motivo: data.form.motivo ?? '',
+            observaciones: data.form.observaciones ?? '',
+            agenteId: data.form.agenteId ?? '',
+            estado: data.form.estado ?? registro.estado ?? 'Pendiente',
+          });
+        } else {
+          setAdelantoForm({
+            empresaId: '',
+            sucursalId: '',
+            transportista: '',
+            monto: '',
+            fechaSolicitud: '',
+            motivo: '',
+            observaciones: '',
+            agenteId: '',
+            estado: registro.estado ?? 'Pendiente',
+          });
         }
         setAdelantoAttachments([]);
         setAdelantoFilesVersion((value) => value + 1);
+        return;
+      }
+      case 'prestamo': {
+        setActiveTab('prestamo');
+        setEditingSolicitudId(registro.id);
+        setEditingSolicitudTipo('prestamo');
+        const data = (registro.solicitudData as { form?: PrestamoRequestForm }) ?? {};
+        setPrestamoForm({
+          solicitanteNombre: data.form?.solicitanteNombre ?? registro.nombre ?? authUser?.name ?? '',
+          numeroOrden: data.form?.numeroOrden ?? '',
+          montoSolicitado: data.form?.montoSolicitado ?? '',
+          cantidadCuotas: data.form?.cantidadCuotas ?? '',
+          cuotasPagadas: data.form?.cuotasPagadas ?? '0',
+          fechaNecesaria: data.form?.fechaNecesaria ?? registro.fechaAlta ?? '',
+          destinatarioId: data.form?.destinatarioId ?? '',
+          observaciones: data.form?.observaciones ?? '',
+          estado: data.form?.estado ?? registro.estado ?? 'Pendiente',
+        });
+        return;
+      }
+      case 'vacaciones': {
+        setActiveTab('vacaciones');
+        setEditingSolicitudId(registro.id);
+        setEditingSolicitudTipo('vacaciones');
+        const data = (registro.solicitudData as { form?: VacacionesRequestForm }) ?? {};
+        setVacacionesForm({
+          empleadoId: data.form?.empleadoId ?? '',
+          empleadoNombre: data.form?.empleadoNombre ?? registro.nombre ?? authUser?.name ?? '',
+          fechaDesde: data.form?.fechaDesde ?? registro.fechaAlta ?? '',
+          fechaHasta: data.form?.fechaHasta ?? '',
+          diasHabiles: data.form?.diasHabiles ?? '',
+          motivo: data.form?.motivo ?? '',
+          estado: data.form?.estado ?? registro.estado ?? 'Pendiente',
+          destinatarioId: data.form?.destinatarioId ?? '',
+        });
         return;
       }
       case 'poliza': {
@@ -26413,8 +27272,10 @@ const handleAdelantoFieldChange =
     }
   };
 
-  const renderSolicitudesList = () => (
-    <div className="approvals-list">
+  const renderSolicitudesList = () => {
+    const listColSpan = isSolicitudPersonalView ? 13 : 11;
+    return (
+      <div className="approvals-list">
       <div className="card-header card-header--compact">
         <div className="search-wrapper">
           <input
@@ -26544,6 +27405,8 @@ const handleAdelantoFieldChange =
               <th>Tipo</th>
               <th>ID</th>
               <th>Nombre</th>
+              {isSolicitudPersonalView ? <th>Solicitante</th> : null}
+              {isSolicitudPersonalView ? <th>Enviada a</th> : null}
               <th>Perfil</th>
               <th>Cliente</th>
               <th>Sucursal</th>
@@ -26557,17 +27420,17 @@ const handleAdelantoFieldChange =
           <tbody>
             {solicitudesLoading ? (
               <tr>
-                <td colSpan={10}>Cargando solicitudes...</td>
+                <td colSpan={listColSpan}>Cargando solicitudes...</td>
               </tr>
             ) : solicitudesError ? (
               <tr>
-                <td colSpan={10} className="error-cell">
+                <td colSpan={listColSpan} className="error-cell">
                   {solicitudesError}
                 </td>
               </tr>
             ) : filteredSolicitudes.length === 0 ? (
               <tr>
-                <td colSpan={10}>No hay solicitudes pendientes.</td>
+                <td colSpan={listColSpan}>No hay solicitudes pendientes.</td>
               </tr>
             ) : (
               filteredSolicitudes.map((registro) => {
@@ -26587,15 +27450,32 @@ const handleAdelantoFieldChange =
                       return 'Adelanto de pago';
                     case 'poliza':
                       return 'Solicitud de póliza';
+                    case 'prestamo':
+                      return 'Solicitud de préstamo';
+                    case 'vacaciones':
+                      return 'Solicitud de vacaciones';
                     default:
                       return 'Solicitud registrada';
                   }
                 })();
+                const data = registro.solicitudData as any;
+                const solicitanteLabel =
+                  data?.form?.solicitanteNombre ??
+                  data?.form?.empleadoNombre ??
+                  data?.form?.transportista ??
+                  registro.nombre ??
+                  '—';
+                const destinatarioLabel =
+                  resolveApproverName(data?.form?.destinatarioId) ??
+                  registro.agente ??
+                  '—';
                 return (
                   <tr key={registro.id}>
                     <td>{solicitudTipoLabel}</td>
                     <td>{registro.id}</td>
                     <td>{registro.nombre ?? '—'}</td>
+                    {isSolicitudPersonalView ? <td>{solicitanteLabel}</td> : null}
+                    {isSolicitudPersonalView ? <td>{destinatarioLabel}</td> : null}
                     <td>{perfilLabel}</td>
                     <td>{registro.cliente ?? '—'}</td>
                     <td>{registro.sucursal ?? '—'}</td>
@@ -26638,7 +27518,7 @@ const handleAdelantoFieldChange =
                     </div>
                   </td>
                 </tr>
-              );
+                );
               })
             )}
           </tbody>
@@ -26657,7 +27537,8 @@ const handleAdelantoFieldChange =
         </div>
       </footer>
     </div>
-  );
+    );
+  };
 
   const renderAltaPerfilSection = () => {
     switch (altaForm.perfilValue) {
@@ -28187,51 +29068,71 @@ const handleAdelantoFieldChange =
     </form>
   );
 
-  const renderAdelantoTab = () => (
-    <form className="approvals-form" onSubmit={handleAdelantoSubmit}>
-      <section className="personal-section">
-        <h3>Adelanto de pago</h3>
+  const renderAdelantoTab = () => {
+    const isEditing = Boolean(editingSolicitudId && editingSolicitudTipo === 'adelanto');
+    return (
+      <form className="approvals-form" onSubmit={handleAdelantoSubmit}>
+        <section className="personal-section">
+          <h3>Adelanto de pago</h3>
+          <p className="section-helper">Tenés tiempo hasta el jueves para pedir adelantos.</p>
         <div className="form-grid">
+          {!isSolicitudPersonalView ? (
+            <>
+              <label className="input-control">
+                <span>Empresa</span>
+                <select value={adelantoForm.empresaId} onChange={handleAdelantoFieldChange('empresaId')}>
+                  <option value="">Seleccionar</option>
+                  {(meta?.clientes ?? []).map((cliente) => (
+                    <option key={cliente.id} value={cliente.id}>
+                      {cliente.nombre ?? `Cliente #${cliente.id}`}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="input-control">
+                <span>Sucursal</span>
+                <select value={adelantoForm.sucursalId} onChange={handleAdelantoFieldChange('sucursalId')}>
+                  <option value="">Seleccionar</option>
+                  {adelantoSucursalOptions.map((sucursal) => (
+                    <option key={sucursal.id} value={sucursal.id}>
+                      {sucursal.nombre ?? `Sucursal #${sucursal.id}`}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="input-control">
+                <span>Agente responsable</span>
+                <select value={adelantoForm.agenteId} onChange={handleAdelantoFieldChange('agenteId')}>
+                  <option value="">Seleccionar</option>
+                  {(meta?.agentes ?? []).map((agente) => (
+                    <option key={agente.id} value={agente.id}>
+                      {agente.name ?? `Agente #${agente.id}`}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </>
+          ) : (
+            <label className="input-control">
+              <span>Enviar solicitud a</span>
+              <select value={adelantoForm.agenteId} onChange={handleAdelantoFieldChange('agenteId')}>
+                <option value="">Seleccionar</option>
+                {approverOptions.map((option) => (
+                  <option key={option.id} value={option.id}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
           <label className="input-control">
-            <span>Empresa</span>
-            <select value={adelantoForm.empresaId} onChange={handleAdelantoFieldChange('empresaId')}>
-              <option value="">Seleccionar</option>
-              {(meta?.clientes ?? []).map((cliente) => (
-                <option key={cliente.id} value={cliente.id}>
-                  {cliente.nombre ?? `Cliente #${cliente.id}`}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="input-control">
-            <span>Sucursal</span>
-            <select value={adelantoForm.sucursalId} onChange={handleAdelantoFieldChange('sucursalId')}>
-              <option value="">Seleccionar</option>
-              {adelantoSucursalOptions.map((sucursal) => (
-                <option key={sucursal.id} value={sucursal.id}>
-                  {sucursal.nombre ?? `Sucursal #${sucursal.id}`}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="input-control">
-            <span>Agente responsable</span>
-            <select value={adelantoForm.agenteId} onChange={handleAdelantoFieldChange('agenteId')}>
-              <option value="">Seleccionar</option>
-              {(meta?.agentes ?? []).map((agente) => (
-                <option key={agente.id} value={agente.id}>
-                  {agente.name ?? `Agente #${agente.id}`}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="input-control">
-            <span>Transportista</span>
+            <span>{isSolicitudPersonalView ? 'Solicitante' : 'Transportista'}</span>
             <input
               type="text"
-              value={adelantoForm.transportista}
+              value={isSolicitudPersonalView ? (authUser?.name ?? '') : adelantoForm.transportista}
               onChange={handleAdelantoFieldChange('transportista')}
               placeholder="Ingresar"
+              disabled={isSolicitudPersonalView}
             />
           </label>
           <label className="input-control">
@@ -28253,6 +29154,23 @@ const handleAdelantoFieldChange =
               placeholder="dd/mm/aaaa"
             />
           </label>
+          {canEditEstadoPersonal ? (
+            <label className="input-control">
+              <span>Estado</span>
+              <select value={adelantoForm.estado} onChange={handleAdelantoFieldChange('estado')}>
+                {SOLICITUD_ESTADO_OPTIONS.map((estado) => (
+                  <option key={estado} value={estado}>
+                    {estado}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : (
+            <label className="input-control">
+              <span>Estado</span>
+              <input type="text" value={adelantoForm.estado || 'Pendiente'} disabled />
+            </label>
+          )}
           <label className="input-control">
             <span>Motivo</span>
             <input
@@ -28282,34 +29200,360 @@ const handleAdelantoFieldChange =
           />
           {renderAttachmentList(adelantoAttachments)}
         </label>
-      </section>
-      <div className="form-actions">
-        <button
-          type="button"
-          className="secondary-action"
-          onClick={() => {
-            setAdelantoForm({
-              empresaId: '',
-              sucursalId: '',
-              transportista: '',
-              monto: '',
-              fechaSolicitud: '',
-              motivo: '',
-              observaciones: '',
-              agenteId: '',
-            });
-            setAdelantoAttachments([]);
-            setAdelantoFilesVersion((value) => value + 1);
-          }}
-        >
-          Limpiar
-        </button>
-        <button type="submit" className="primary-action" disabled={adelantoSubmitting}>
-          {adelantoSubmitting ? 'Enviando...' : 'Enviar solicitud'}
-        </button>
-      </div>
-    </form>
-  );
+        </section>
+        <div className="form-actions">
+          <button
+            type="button"
+            className="secondary-action"
+            onClick={() => {
+              setAdelantoForm({
+                empresaId: '',
+                sucursalId: '',
+                transportista: '',
+                monto: '',
+                fechaSolicitud: '',
+                motivo: '',
+                observaciones: '',
+                agenteId: '',
+                estado: 'Pendiente',
+              });
+              setAdelantoAttachments([]);
+              setAdelantoFilesVersion((value) => value + 1);
+              setEditingSolicitudId(null);
+              setEditingSolicitudTipo(null);
+            }}
+          >
+            Limpiar
+          </button>
+          <button type="submit" className="primary-action" disabled={adelantoSubmitting}>
+            {adelantoSubmitting ? 'Enviando...' : isEditing ? 'Guardar cambios' : 'Enviar solicitud'}
+          </button>
+        </div>
+      </form>
+    );
+  };
+
+  const renderPrestamoTab = () => {
+    const monto = parseMonto(prestamoForm.montoSolicitado) ?? 0;
+    const cuotasRaw = Number(prestamoForm.cantidadCuotas);
+    const cuotas =
+      prestamoForm.cantidadCuotas.trim().length > 0 && Number.isFinite(cuotasRaw)
+        ? Math.min(Math.max(cuotasRaw, 1), 18)
+        : 0;
+    const cuotasPagadas = Math.min(Math.max(Number(prestamoForm.cuotasPagadas) || 0, 0), cuotas);
+    const interes = monto * 0.04 * cuotas;
+    const totalConInteres = monto + interes;
+    const valorCuota = cuotas > 0 ? totalConInteres / cuotas : 0;
+    const cuotasRestantes = Math.max(cuotas - cuotasPagadas, 0);
+    const isEditing = Boolean(editingSolicitudId && editingSolicitudTipo === 'prestamo');
+    const formatAmount = (value: number) =>
+      value.toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+    return (
+      <form className="approvals-form" onSubmit={handlePrestamoSubmit}>
+        <section className="personal-section">
+          <h3>Solicitud de préstamo personal</h3>
+          <p className="section-helper">Cada cuota agrega 4% sobre el valor total del préstamo.</p>
+          <div className="form-grid">
+            <label className="input-control">
+              <span>Solicitante</span>
+              <input
+                type="text"
+                value={prestamoForm.solicitanteNombre}
+                onChange={handlePrestamoFieldChange('solicitanteNombre')}
+                placeholder="Ingresar"
+                disabled={!isAdmin && Boolean(authUser?.name)}
+              />
+            </label>
+            <label className="input-control">
+              <span>Número de orden</span>
+              <input
+                type="text"
+                value={prestamoForm.numeroOrden || String(resolveNextPrestamoOrden(editingSolicitudId))}
+                disabled
+              />
+            </label>
+            <label className="input-control">
+              <span>Préstamo solicitado</span>
+              <input
+                type="number"
+                min="0"
+                value={prestamoForm.montoSolicitado}
+                onChange={handlePrestamoFieldChange('montoSolicitado')}
+                placeholder="Ingresar"
+              />
+            </label>
+            <label className="input-control">
+              <span>Cantidad de cuotas (1 a 18)</span>
+              <input
+                type="number"
+                min="1"
+                max="18"
+                value={prestamoForm.cantidadCuotas}
+                onChange={handlePrestamoFieldChange('cantidadCuotas')}
+                placeholder="Ingresar"
+              />
+            </label>
+            {isAdmin ? (
+              <label className="input-control">
+                <span>Cuotas pagadas</span>
+                <input
+                  type="number"
+                  min="0"
+                  max={String(Math.max(cuotas, 0))}
+                  value={prestamoForm.cuotasPagadas}
+                  onChange={handlePrestamoFieldChange('cuotasPagadas')}
+                  placeholder="0"
+                />
+              </label>
+            ) : (
+              <label className="input-control">
+                <span>Cuotas pagadas</span>
+                <input type="number" value={prestamoForm.cuotasPagadas || '0'} disabled />
+              </label>
+            )}
+            <label className="input-control">
+              <span>Fecha en la que necesita el préstamo</span>
+              <input
+                type="date"
+                value={prestamoForm.fechaNecesaria}
+                onChange={handlePrestamoFieldChange('fechaNecesaria')}
+              />
+            </label>
+            <label className="input-control">
+              <span>Enviar solicitud a</span>
+              <select
+                value={prestamoForm.destinatarioId}
+                onChange={handlePrestamoFieldChange('destinatarioId')}
+              >
+                <option value="">Seleccionar</option>
+                {approverOptions.map((option) => (
+                  <option key={option.id} value={option.id}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            {canEditPrestamoEstado ? (
+              <label className="input-control">
+                <span>Estado</span>
+                <select value={prestamoForm.estado} onChange={handlePrestamoFieldChange('estado')}>
+                  {SOLICITUD_ESTADO_OPTIONS.map((estado) => (
+                    <option key={estado} value={estado}>
+                      {estado}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : (
+              <label className="input-control">
+                <span>Estado</span>
+                <input type="text" value={prestamoForm.estado || 'Pendiente'} disabled />
+              </label>
+            )}
+          </div>
+          <div className="form-grid">
+            <label className="input-control">
+              <span>Total con interés</span>
+              <input type="text" value={formatAmount(totalConInteres)} disabled />
+            </label>
+            <label className="input-control">
+              <span>Valor de cada cuota</span>
+              <input type="text" value={formatAmount(valorCuota)} disabled />
+            </label>
+            <label className="input-control">
+              <span>Cuotas restantes</span>
+              <input type="text" value={String(cuotasRestantes)} disabled />
+            </label>
+          </div>
+          <label className="input-control">
+            <span>Observaciones</span>
+            <textarea
+              rows={4}
+              value={prestamoForm.observaciones}
+              onChange={handlePrestamoFieldChange('observaciones')}
+              placeholder="Agregar observaciones"
+            />
+          </label>
+        </section>
+        <div className="form-actions">
+          <button type="button" className="secondary-action" onClick={resetPrestamoForm}>
+            Limpiar
+          </button>
+          <button type="submit" className="primary-action" disabled={prestamoSubmitting}>
+            {prestamoSubmitting ? 'Enviando...' : isEditing ? 'Guardar cambios' : 'Enviar solicitud'}
+          </button>
+        </div>
+      </form>
+    );
+  };
+
+  const renderVacacionesTab = () => {
+    const diasDisponibles =
+      vacacionesForm.empleadoId && vacacionesDiasDisponibles[vacacionesForm.empleadoId] != null
+        ? vacacionesDiasDisponibles[vacacionesForm.empleadoId]
+        : null;
+    const diasSolicitados = Math.max(Number(vacacionesForm.diasHabiles) || 0, 0);
+    const diasRestantes = diasDisponibles != null ? diasDisponibles - diasSolicitados : null;
+    const isEditing = Boolean(editingSolicitudId && editingSolicitudTipo === 'vacaciones');
+
+    return (
+      <form className="approvals-form" onSubmit={handleVacacionesSubmit}>
+        {isAdmin ? (
+          <section className="personal-section">
+            <h3>Días hábiles disponibles</h3>
+            <div className="form-grid">
+              <label className="input-control">
+                <span>Empleado</span>
+                <select
+                  value={vacacionesConfigForm.empleadoId}
+                  onChange={(event) =>
+                    setVacacionesConfigForm((prev) => ({ ...prev, empleadoId: event.target.value }))
+                  }
+                >
+                  <option value="">Seleccionar</option>
+                  {(meta?.agentes ?? []).map((agente) => (
+                    <option key={agente.id} value={agente.id}>
+                      {agente.name ?? `Agente #${agente.id}`}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="input-control">
+                <span>Días hábiles</span>
+                <input
+                  type="number"
+                  min="0"
+                  value={vacacionesConfigForm.dias}
+                  onChange={(event) =>
+                    setVacacionesConfigForm((prev) => ({ ...prev, dias: event.target.value }))
+                  }
+                  placeholder="Ingresar"
+                />
+              </label>
+            </div>
+            <div className="form-actions">
+              <button type="button" className="secondary-action" onClick={handleVacacionesConfigSave}>
+                Guardar días
+              </button>
+            </div>
+          </section>
+        ) : null}
+        <section className="personal-section">
+          <h3>Solicitud de vacaciones</h3>
+          <div className="form-grid">
+            {isAdmin ? (
+              <label className="input-control">
+                <span>Empleado</span>
+                <select value={vacacionesForm.empleadoId} onChange={handleVacacionesEmpleadoChange}>
+                  <option value="">Seleccionar</option>
+                  {(meta?.agentes ?? []).map((agente) => (
+                    <option key={agente.id} value={agente.id}>
+                      {agente.name ?? `Agente #${agente.id}`}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : (
+              <label className="input-control">
+                <span>Empleado</span>
+                <input type="text" value={vacacionesForm.empleadoNombre || authUser?.name || ''} disabled />
+              </label>
+            )}
+            {isAdmin ? (
+              <label className="input-control">
+                <span>Nombre (si no está en la lista)</span>
+                <input
+                  type="text"
+                  value={vacacionesForm.empleadoNombre}
+                  onChange={handleVacacionesFieldChange('empleadoNombre')}
+                  placeholder="Ingresar"
+                />
+              </label>
+            ) : null}
+            <label className="input-control">
+              <span>Desde</span>
+              <input
+                type="date"
+                value={vacacionesForm.fechaDesde}
+                onChange={handleVacacionesFieldChange('fechaDesde')}
+              />
+            </label>
+            <label className="input-control">
+              <span>Hasta</span>
+              <input
+                type="date"
+                value={vacacionesForm.fechaHasta}
+                onChange={handleVacacionesFieldChange('fechaHasta')}
+              />
+            </label>
+            <label className="input-control">
+              <span>Días hábiles solicitados</span>
+              <input
+                type="number"
+                min="0"
+                value={vacacionesForm.diasHabiles}
+                onChange={handleVacacionesFieldChange('diasHabiles')}
+                placeholder="Ingresar"
+              />
+              <small className="form-hint">
+                {diasDisponibles != null
+                  ? `Disponibles: ${diasDisponibles} · Restantes: ${diasRestantes ?? diasDisponibles}`
+                  : 'Días disponibles sin configurar'}
+              </small>
+            </label>
+            {isSolicitudPersonalView ? (
+              <label className="input-control">
+                <span>Enviar solicitud a</span>
+                <select value={vacacionesForm.destinatarioId} onChange={handleVacacionesFieldChange('destinatarioId')}>
+                  <option value="">Seleccionar</option>
+                  {approverOptions.map((option) => (
+                    <option key={option.id} value={option.id}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : null}
+            {canEditEstadoPersonal ? (
+              <label className="input-control">
+                <span>Estado</span>
+                <select value={vacacionesForm.estado} onChange={handleVacacionesFieldChange('estado')}>
+                  {VACACIONES_ESTADO_OPTIONS.map((estado) => (
+                    <option key={estado} value={estado}>
+                      {estado}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : (
+              <label className="input-control">
+                <span>Estado</span>
+                <input type="text" value={vacacionesForm.estado || 'Pendiente'} disabled />
+              </label>
+            )}
+          </div>
+          <label className="input-control">
+            <span>Motivo</span>
+            <textarea
+              rows={4}
+              value={vacacionesForm.motivo}
+              onChange={handleVacacionesFieldChange('motivo')}
+              placeholder="Agregar motivo"
+            />
+          </label>
+        </section>
+        <div className="form-actions">
+          <button type="button" className="secondary-action" onClick={resetVacacionesForm}>
+            Limpiar
+          </button>
+          <button type="submit" className="primary-action" disabled={vacacionesSubmitting}>
+            {vacacionesSubmitting ? 'Enviando...' : isEditing ? 'Guardar cambios' : 'Enviar solicitud'}
+          </button>
+        </div>
+      </form>
+    );
+  };
 
   const renderTabContent = () => {
     switch (activeTab) {
@@ -28321,6 +29565,10 @@ const handleAdelantoFieldChange =
         return renderAumentoCombustibleTab();
       case 'adelanto':
         return renderAdelantoTab();
+      case 'prestamo':
+        return renderPrestamoTab();
+      case 'vacaciones':
+        return renderVacacionesTab();
       case 'poliza':
         return renderPolizaTab();
       case 'altas':
@@ -28329,11 +29577,16 @@ const handleAdelantoFieldChange =
     }
   };
 
+  const pageTitle = isSolicitudPersonalView ? 'Solicitud personal' : 'Aprobaciones y solicitudes';
+  const pageSubtitle = isSolicitudPersonalView
+    ? 'Prestamos, adelantos y vacaciones'
+    : 'Gestiona las solicitudes pendientes';
+
   if (loadingMeta) {
     return (
       <DashboardLayout
-        title="Aprobaciones y solicitudes"
-        subtitle="Gestiona las solicitudes pendientes"
+        title={pageTitle}
+        subtitle={pageSubtitle}
         headerContent={headerContent}
       >
         <p className="form-info">Cargando información necesaria...</p>
@@ -28344,8 +29597,8 @@ const handleAdelantoFieldChange =
   if (metaError) {
     return (
       <DashboardLayout
-        title="Aprobaciones y solicitudes"
-        subtitle="Gestiona las solicitudes pendientes"
+        title={pageTitle}
+        subtitle={pageSubtitle}
         headerContent={headerContent}
       >
         <p className="form-info form-info--error">{metaError}</p>
@@ -28355,8 +29608,8 @@ const handleAdelantoFieldChange =
 
   return (
     <DashboardLayout
-      title="Aprobaciones y solicitudes"
-      subtitle="Gestiona las solicitudes pendientes"
+      title={pageTitle}
+      subtitle={pageSubtitle}
       headerContent={headerContent}
     >
       {flash ? (
@@ -28372,48 +29625,89 @@ const handleAdelantoFieldChange =
       ) : null}
 
       <div className="approvals-tabs">
-        <button
-          type="button"
-          className={`approvals-tab${activeTab === 'list' ? ' is-active' : ''}`}
-          onClick={handleGoToList}
-        >
-          Solicitudes pendientes
-        </button>
-        <button
-          type="button"
-          className={`approvals-tab${activeTab === 'altas' ? ' is-active' : ''}`}
-          onClick={() => setActiveTab('altas')}
-        >
-          Solicitud de altas
-        </button>
-        <button
-          type="button"
-          className={`approvals-tab${activeTab === 'combustible' ? ' is-active' : ''}`}
-          onClick={() => setActiveTab('combustible')}
-        >
-          Solicitud de combustible
-        </button>
-        <button
-          type="button"
-          className={`approvals-tab${activeTab === 'aumento_combustible' ? ' is-active' : ''}`}
-          onClick={() => setActiveTab('aumento_combustible')}
-        >
-          Aumento de combustible
-        </button>
-        <button
-          type="button"
-          className={`approvals-tab${activeTab === 'adelanto' ? ' is-active' : ''}`}
-          onClick={() => setActiveTab('adelanto')}
-        >
-          Adelanto de pago
-        </button>
-        <button
-          type="button"
-          className={`approvals-tab${activeTab === 'poliza' ? ' is-active' : ''}`}
-          onClick={() => setActiveTab('poliza')}
-        >
-          Solicitud de póliza
-        </button>
+        {isSolicitudPersonalView ? (
+          <>
+            <button
+              type="button"
+              className={`approvals-tab${activeTab === 'list' ? ' is-active' : ''}`}
+              onClick={handleGoToList}
+            >
+              Solicitudes pendientes
+            </button>
+            <button
+              type="button"
+              className={`approvals-tab${activeTab === 'prestamo' ? ' is-active' : ''}`}
+              onClick={() => {
+                resetPrestamoForm();
+                setActiveTab('prestamo');
+              }}
+            >
+              Préstamo personal
+            </button>
+            <button
+              type="button"
+              className={`approvals-tab${activeTab === 'adelanto' ? ' is-active' : ''}`}
+              onClick={() => setActiveTab('adelanto')}
+            >
+              Adelanto de pago
+            </button>
+            <button
+              type="button"
+              className={`approvals-tab${activeTab === 'vacaciones' ? ' is-active' : ''}`}
+              onClick={() => {
+                resetVacacionesForm();
+                setActiveTab('vacaciones');
+              }}
+            >
+              Vacaciones
+            </button>
+          </>
+        ) : (
+          <>
+            <button
+              type="button"
+              className={`approvals-tab${activeTab === 'list' ? ' is-active' : ''}`}
+              onClick={handleGoToList}
+            >
+              Solicitudes pendientes
+            </button>
+            <button
+              type="button"
+              className={`approvals-tab${activeTab === 'altas' ? ' is-active' : ''}`}
+              onClick={() => setActiveTab('altas')}
+            >
+              Solicitud de altas
+            </button>
+            <button
+              type="button"
+              className={`approvals-tab${activeTab === 'combustible' ? ' is-active' : ''}`}
+              onClick={() => setActiveTab('combustible')}
+            >
+              Solicitud de combustible
+            </button>
+            <button
+              type="button"
+              className={`approvals-tab${activeTab === 'aumento_combustible' ? ' is-active' : ''}`}
+              onClick={() => setActiveTab('aumento_combustible')}
+            >
+              Aumento de combustible
+            </button>
+            <button
+              type="button"
+              className={`approvals-tab${activeTab === 'adelanto' ? ' is-active' : ''}`}
+              onClick={() => setActiveTab('adelanto')}
+            >
+              Adelanto de pago
+            </button>
+            <button
+              type="button"
+              className={`approvals-tab${activeTab === 'poliza' ? ' is-active' : ''}`}
+              onClick={() => setActiveTab('poliza')}
+            >
+              Solicitud de póliza
+            </button>
+          </>
+        )}
       </div>
 
       <div className="approvals-panel">{renderTabContent()}</div>
@@ -35264,7 +36558,7 @@ const AppRoutes: React.FC = () => (
       <Route
         path="/dashboard"
         element={
-          <RequireAccess section="clientes">
+          <RequireAccess section="panel-general">
             <DashboardPage showPersonalPanel />
           </RequireAccess>
         }
@@ -35553,6 +36847,14 @@ const AppRoutes: React.FC = () => (
         element={
           <RequireAccess section="flujo-trabajo">
             <WorkflowPage />
+          </RequireAccess>
+        }
+      />
+      <Route
+        path="/solicitud-personal"
+        element={
+          <RequireAccess section="solicitud-personal">
+            <ApprovalsRequestsPage />
           </RequireAccess>
         }
       />

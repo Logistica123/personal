@@ -19,6 +19,7 @@ class UserController extends Controller
      * @var string[]
      */
     private array $allowedPermissions = [
+        'panel-general',
         'clientes',
         'unidades',
         'usuarios',
@@ -31,6 +32,7 @@ class UserController extends Controller
         'auditoria',
         'flujo-trabajo',
         'aprobaciones',
+        'solicitud-personal',
         'liquidaciones',
         'pagos',
         'tarifas',

@@ -18,6 +18,8 @@ use App\Http\Controllers\Api\TeamGroupController;
 use App\Http\Controllers\Api\TicketRequestController;
 use App\Http\Controllers\Api\NosisController;
 use App\Http\Controllers\Api\TarifaImagenController;
+use App\Http\Controllers\Api\SolicitudPersonalController;
+use App\Http\Controllers\Api\VacacionesDiasController;
 use Illuminate\Support\Facades\Route;
 
 Route::post('/login', [AuthController::class, 'login']);
@@ -57,6 +59,12 @@ Route::middleware('auth.api')->group(function () {
     Route::put('/personal/{persona}', [PersonalController::class, 'update']);
     Route::post('/personal/{persona}/contact-reveal', [PersonalController::class, 'logContactReveal']);
     Route::delete('/personal/{persona}', [PersonalController::class, 'destroy']);
+
+    Route::get('/solicitud-personal', [SolicitudPersonalController::class, 'index']);
+    Route::post('/solicitud-personal', [SolicitudPersonalController::class, 'store']);
+    Route::put('/solicitud-personal/{solicitudPersonal}', [SolicitudPersonalController::class, 'update']);
+    Route::get('/vacaciones-dias', [VacacionesDiasController::class, 'index']);
+    Route::put('/vacaciones-dias', [VacacionesDiasController::class, 'update']);
 
     Route::get('/clientes', [ClienteController::class, 'index']);
     Route::get('/clientes/{cliente}', [ClienteController::class, 'show']);
