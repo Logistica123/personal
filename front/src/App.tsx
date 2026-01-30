@@ -866,6 +866,7 @@ type AdelantoRequestForm = {
   motivo: string;
   observaciones: string;
   agenteId: string;
+  destinatarioIds: string[];
   estado: string;
 };
 
@@ -876,7 +877,7 @@ type PrestamoRequestForm = {
   cantidadCuotas: string;
   cuotasPagadas: string;
   fechaNecesaria: string;
-  destinatarioId: string;
+  destinatarioIds: string[];
   observaciones: string;
   estado: string;
 };
@@ -889,7 +890,7 @@ type VacacionesRequestForm = {
   diasHabiles: string;
   motivo: string;
   estado: string;
-  destinatarioId: string;
+  destinatarioIds: string[];
 };
 
 type AumentoCombustibleForm = {
@@ -23361,7 +23362,9 @@ const ApprovalsRequestsPage: React.FC = () => {
     solicitanteId?: number | null;
     solicitanteNombre?: string | null;
     destinatarioId?: number | null;
+    destinatarioIds?: Array<number | string> | null;
     destinatarioNombre?: string | null;
+    destinatarioNombres?: string[] | null;
     createdAt?: string | null;
   }): PersonalRecord => {
     const tipo = item.tipo as PersonalRecord['solicitudTipo'];
@@ -23377,6 +23380,16 @@ const ApprovalsRequestsPage: React.FC = () => {
     const createdAtLabel = createdAt
       ? new Date(createdAt).toLocaleString('es-AR', { dateStyle: 'short', timeStyle: 'short' })
       : null;
+    const destinatarioIds = Array.isArray(item.destinatarioIds)
+      ? item.destinatarioIds.map((value) => String(value))
+      : item.destinatarioId != null
+      ? [String(item.destinatarioId)]
+      : [];
+    const destinatarioNombres = Array.isArray(item.destinatarioNombres)
+      ? item.destinatarioNombres
+      : item.destinatarioNombre
+      ? [item.destinatarioNombre]
+      : [];
     const base: PersonalRecord = {
       id: item.id,
       nombre: item.solicitanteNombre ?? null,
@@ -23390,7 +23403,10 @@ const ApprovalsRequestsPage: React.FC = () => {
       fechaAlta: null,
       perfil: perfilLabel,
       perfilValue: null,
-      agente: item.destinatarioNombre ?? null,
+      agente:
+        destinatarioNombres.length > 0
+          ? destinatarioNombres.join(', ')
+          : item.destinatarioNombre ?? null,
       estado: item.estado ?? 'Pendiente',
       combustible: null,
       combustibleValue: false,
@@ -23405,7 +23421,8 @@ const ApprovalsRequestsPage: React.FC = () => {
         form: {
           ...(item.form ?? {}),
           solicitanteId: item.solicitanteId ?? (item.form?.solicitanteId ?? null),
-          destinatarioId: item.destinatarioId ?? (item.form?.destinatarioId ?? null),
+          destinatarioIds:
+            destinatarioIds.length > 0 ? destinatarioIds : (item.form?.destinatarioIds ?? []),
           solicitanteNombre: item.solicitanteNombre ?? item.form?.solicitanteNombre ?? null,
           empleadoNombre: item.form?.empleadoNombre ?? null,
         },
@@ -23511,6 +23528,24 @@ const ApprovalsRequestsPage: React.FC = () => {
     const match = approverOptions.find((option) => option.id === String(value));
     return match?.label ?? null;
   };
+  const resolveApproverNames = (values: string[] | null | undefined) => {
+    if (!values || values.length === 0) {
+      return null;
+    }
+    const labels = values
+      .map((value) => resolveApproverName(value))
+      .filter((label): label is string => Boolean(label));
+    return labels.length > 0 ? labels.join(', ') : null;
+  };
+  const isUserDestinatario = useCallback(
+    (values: string[] | null | undefined) => {
+      if (!authUser?.id || !values || values.length === 0) {
+        return false;
+      }
+      return values.some((value) => String(value) === String(authUser.id));
+    },
+    [authUser?.id]
+  );
 
   const canEditEstadoPersonal = APPROVER_IDS.includes(authUser?.id ?? -1);
 
@@ -23817,6 +23852,7 @@ const ApprovalsRequestsPage: React.FC = () => {
     motivo: '',
     observaciones: '',
     agenteId: '',
+    destinatarioIds: [],
     estado: 'Pendiente',
   }));
   const [prestamoForm, setPrestamoForm] = useState<PrestamoRequestForm>(() => ({
@@ -23826,19 +23862,10 @@ const ApprovalsRequestsPage: React.FC = () => {
     cantidadCuotas: '',
     cuotasPagadas: '0',
     fechaNecesaria: '',
-    destinatarioId: '',
+    destinatarioIds: [],
     observaciones: '',
     estado: 'Pendiente',
   }));
-  const canEditPrestamoEstado = useMemo(() => {
-    if (!canEditEstadoPersonal) {
-      return false;
-    }
-    if (!prestamoForm.destinatarioId) {
-      return false;
-    }
-    return String(authUser?.id ?? '') === String(prestamoForm.destinatarioId);
-  }, [authUser?.id, canEditEstadoPersonal, prestamoForm.destinatarioId]);
   const [vacacionesForm, setVacacionesForm] = useState<VacacionesRequestForm>(() => ({
     empleadoId: '',
     empleadoNombre: authUser?.name ?? '',
@@ -23847,8 +23874,41 @@ const ApprovalsRequestsPage: React.FC = () => {
     diasHabiles: '',
     motivo: '',
     estado: 'Pendiente',
-    destinatarioId: '',
+    destinatarioIds: [],
   }));
+  const canEditPrestamoEstado = useMemo(() => {
+    if (!canEditEstadoPersonal) {
+      return false;
+    }
+    if (!prestamoForm.destinatarioIds || prestamoForm.destinatarioIds.length === 0) {
+      return false;
+    }
+    return isUserDestinatario(prestamoForm.destinatarioIds);
+  }, [canEditEstadoPersonal, isUserDestinatario, prestamoForm.destinatarioIds]);
+  const canEditAdelantoEstado = useMemo(() => {
+    if (!canEditEstadoPersonal) {
+      return false;
+    }
+    if (!isSolicitudPersonalView) {
+      return true;
+    }
+    if (!adelantoForm.destinatarioIds || adelantoForm.destinatarioIds.length === 0) {
+      return false;
+    }
+    return isUserDestinatario(adelantoForm.destinatarioIds);
+  }, [adelantoForm.destinatarioIds, canEditEstadoPersonal, isSolicitudPersonalView, isUserDestinatario]);
+  const canEditVacacionesEstado = useMemo(() => {
+    if (!canEditEstadoPersonal) {
+      return false;
+    }
+    if (!isSolicitudPersonalView) {
+      return true;
+    }
+    if (!vacacionesForm.destinatarioIds || vacacionesForm.destinatarioIds.length === 0) {
+      return false;
+    }
+    return isUserDestinatario(vacacionesForm.destinatarioIds);
+  }, [canEditEstadoPersonal, isSolicitudPersonalView, isUserDestinatario, vacacionesForm.destinatarioIds]);
   const [vacacionesDiasDisponibles, setVacacionesDiasDisponibles] = useState<Record<string, number>>({});
   const [vacacionesConfigForm, setVacacionesConfigForm] = useState<{ empleadoId: string; dias: string }>({
     empleadoId: '',
@@ -26181,6 +26241,13 @@ const handleAdelantoFieldChange =
         ...(field === 'empresaId' ? { sucursalId: '' } : {}),
       }));
     };
+  const handleAdelantoDestinatariosChange = (event: React.ChangeEvent<HTMLSelectElement>) => {
+    const values = Array.from(event.target.selectedOptions).map((option) => option.value);
+    setAdelantoForm((prev) => ({
+      ...prev,
+      destinatarioIds: values,
+    }));
+  };
 
   const handleAdelantoFilesChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     setAdelantoAttachments(filesFromEvent(event.target.files));
@@ -26194,7 +26261,10 @@ const handleAdelantoFieldChange =
       setFlash(null);
 
       const formSnapshot = { ...adelantoForm, solicitanteId: authUser?.id ?? null };
-      if (!canEditEstadoPersonal) {
+      if (isSolicitudPersonalView && (!formSnapshot.destinatarioIds || formSnapshot.destinatarioIds.length === 0)) {
+        throw new Error('Seleccioná a quién enviar la solicitud.');
+      }
+      if (!canEditAdelantoEstado) {
         const existing = getSolicitudById(editingSolicitudId);
         formSnapshot.estado = existing?.estado ?? 'Pendiente';
       }
@@ -26207,7 +26277,9 @@ const handleAdelantoFieldChange =
         formSnapshot.sucursalId && meta?.sucursales
           ? meta.sucursales.find((sucursal) => sucursal.id === Number(formSnapshot.sucursalId))?.nombre ?? null
           : null;
-      const agenteNombre = resolveAgenteNombre(formSnapshot.agenteId);
+      const agenteNombre = isSolicitudPersonalView
+        ? resolveApproverNames(formSnapshot.destinatarioIds)
+        : resolveAgenteNombre(formSnapshot.agenteId);
 
       const newRecord: PersonalRecord = {
         id: createSyntheticId(),
@@ -26245,7 +26317,7 @@ const handleAdelantoFieldChange =
           {
             tipo: 'adelanto',
             estado: formSnapshot.estado,
-            destinatarioId: formSnapshot.agenteId,
+            destinatarioIds: formSnapshot.destinatarioIds,
             form: formSnapshot,
           },
           editingSolicitudId
@@ -26285,6 +26357,7 @@ const handleAdelantoFieldChange =
         motivo: '',
         observaciones: '',
         agenteId: '',
+        destinatarioIds: [],
         estado: 'Pendiente',
       });
       setAdelantoAttachments([]);
@@ -26311,12 +26384,19 @@ const handleAdelantoFieldChange =
         [field]: value,
       }));
     };
+  const handlePrestamoDestinatariosChange = (event: React.ChangeEvent<HTMLSelectElement>) => {
+    const values = Array.from(event.target.selectedOptions).map((option) => option.value);
+    setPrestamoForm((prev) => ({
+      ...prev,
+      destinatarioIds: values,
+    }));
+  };
 
   const persistSolicitudPersonal = async (
     payload: {
       tipo: 'prestamo' | 'adelanto' | 'vacaciones';
       estado?: string | null;
-      destinatarioId?: string | number | null;
+      destinatarioIds?: Array<string | number> | null;
       form?: Record<string, any>;
     },
     id?: number | null
@@ -26332,7 +26412,11 @@ const handleAdelantoFieldChange =
       body: JSON.stringify({
         tipo: payload.tipo,
         estado: payload.estado ?? 'Pendiente',
-        destinatarioId: payload.destinatarioId ? Number(payload.destinatarioId) : null,
+        destinatarioIds: payload.destinatarioIds
+          ? payload.destinatarioIds
+              .map((value) => Number(value))
+              .filter((value) => Number.isFinite(value))
+          : [],
         form: payload.form ?? {},
       }),
     });
@@ -26371,7 +26455,7 @@ const handleAdelantoFieldChange =
       cantidadCuotas: '',
       cuotasPagadas: '0',
       fechaNecesaria: '',
-      destinatarioId: '',
+      destinatarioIds: [],
       observaciones: '',
       estado: 'Pendiente',
     });
@@ -26396,7 +26480,7 @@ const handleAdelantoFieldChange =
       if (Number.isNaN(cuotasRaw) || cuotasRaw < 1 || cuotasRaw > 18) {
         throw new Error('La cantidad de cuotas debe estar entre 1 y 18.');
       }
-      if (!formSnapshot.destinatarioId) {
+      if (!formSnapshot.destinatarioIds || formSnapshot.destinatarioIds.length === 0) {
         throw new Error('Seleccioná a quién enviar la solicitud.');
       }
       if (!canEditPrestamoEstado) {
@@ -26410,7 +26494,7 @@ const handleAdelantoFieldChange =
       const totalConInteres = monto + interes;
       const valorCuota = cuotas > 0 ? totalConInteres / cuotas : 0;
       const cuotasRestantes = Math.max(cuotas - cuotasPagadas, 0);
-      const destinatarioNombre = resolveApproverName(formSnapshot.destinatarioId);
+      const destinatarioNombre = resolveApproverNames(formSnapshot.destinatarioIds);
 
       const recordBase: PersonalRecord = {
         id: createSyntheticId(),
@@ -26460,7 +26544,7 @@ const handleAdelantoFieldChange =
           {
             tipo: 'prestamo',
             estado: formSnapshot.estado,
-            destinatarioId: formSnapshot.destinatarioId,
+            destinatarioIds: formSnapshot.destinatarioIds,
             form: {
               ...formSnapshot,
               numeroOrden,
@@ -26511,6 +26595,13 @@ const handleAdelantoFieldChange =
         [field]: value,
       }));
     };
+  const handleVacacionesDestinatariosChange = (event: React.ChangeEvent<HTMLSelectElement>) => {
+    const values = Array.from(event.target.selectedOptions).map((option) => option.value);
+    setVacacionesForm((prev) => ({
+      ...prev,
+      destinatarioIds: values,
+    }));
+  };
 
   const handleVacacionesEmpleadoChange = (event: React.ChangeEvent<HTMLSelectElement>) => {
     const value = event.target.value;
@@ -26531,7 +26622,7 @@ const handleAdelantoFieldChange =
       diasHabiles: '',
       motivo: '',
       estado: 'Pendiente',
-      destinatarioId: '',
+      destinatarioIds: [],
     });
     setEditingSolicitudId(null);
     setEditingSolicitudTipo(null);
@@ -26604,7 +26695,10 @@ const handleAdelantoFieldChange =
       }
       const prevRecord = getSolicitudById(editingSolicitudId);
       const prevEstado = prevRecord?.estado ?? null;
-      if (!canEditEstadoPersonal) {
+      if (isSolicitudPersonalView && (!formSnapshot.destinatarioIds || formSnapshot.destinatarioIds.length === 0)) {
+        throw new Error('Seleccioná a quién enviar la solicitud.');
+      }
+      if (!canEditVacacionesEstado) {
         const existing = getSolicitudById(editingSolicitudId);
         formSnapshot.estado = existing?.estado ?? 'Pendiente';
       }
@@ -26651,7 +26745,7 @@ const handleAdelantoFieldChange =
           {
             tipo: 'vacaciones',
             estado: formSnapshot.estado,
-            destinatarioId: formSnapshot.destinatarioId ?? null,
+            destinatarioIds: formSnapshot.destinatarioIds ?? [],
             form: formSnapshot,
           },
           editingSolicitudId
@@ -26969,12 +27063,16 @@ const handleAdelantoFieldChange =
         const form = data?.form ?? {};
         const solicitanteId = form?.solicitanteId ?? form?.requesterId ?? null;
         const empleadoId = form?.empleadoId ?? null;
-        const destinatarioId = form?.destinatarioId ?? null;
+        const destinatarioIds = Array.isArray(form?.destinatarioIds)
+          ? form.destinatarioIds
+          : form?.destinatarioId
+          ? [form.destinatarioId]
+          : [];
         const authId = authUser?.id ?? null;
         const isRequester =
           authId != null &&
           (String(solicitanteId) === String(authId) || String(empleadoId) === String(authId));
-        const isDestinatario = authId != null && String(destinatarioId) === String(authId);
+        const isDestinatario = authId != null && destinatarioIds.some((id: string | number) => String(id) === String(authId));
         if (!isRequester && !isDestinatario) {
           return false;
         }
@@ -27194,6 +27292,11 @@ const handleAdelantoFieldChange =
             motivo: data.form.motivo ?? '',
             observaciones: data.form.observaciones ?? '',
             agenteId: data.form.agenteId ?? '',
+            destinatarioIds: Array.isArray(data.form.destinatarioIds)
+              ? data.form.destinatarioIds
+              : (data.form as any)?.destinatarioId
+              ? [String((data.form as any)?.destinatarioId)]
+              : [],
             estado: data.form.estado ?? registro.estado ?? 'Pendiente',
           });
         } else {
@@ -27206,6 +27309,7 @@ const handleAdelantoFieldChange =
             motivo: '',
             observaciones: '',
             agenteId: '',
+            destinatarioIds: [],
             estado: registro.estado ?? 'Pendiente',
           });
         }
@@ -27225,7 +27329,11 @@ const handleAdelantoFieldChange =
           cantidadCuotas: data.form?.cantidadCuotas ?? '',
           cuotasPagadas: data.form?.cuotasPagadas ?? '0',
           fechaNecesaria: data.form?.fechaNecesaria ?? registro.fechaAlta ?? '',
-          destinatarioId: data.form?.destinatarioId ?? '',
+          destinatarioIds: Array.isArray(data.form?.destinatarioIds)
+            ? data.form?.destinatarioIds ?? []
+            : (data.form as any)?.destinatarioId
+            ? [String((data.form as any)?.destinatarioId)]
+            : [],
           observaciones: data.form?.observaciones ?? '',
           estado: data.form?.estado ?? registro.estado ?? 'Pendiente',
         });
@@ -27244,7 +27352,11 @@ const handleAdelantoFieldChange =
           diasHabiles: data.form?.diasHabiles ?? '',
           motivo: data.form?.motivo ?? '',
           estado: data.form?.estado ?? registro.estado ?? 'Pendiente',
-          destinatarioId: data.form?.destinatarioId ?? '',
+          destinatarioIds: Array.isArray(data.form?.destinatarioIds)
+            ? data.form?.destinatarioIds ?? []
+            : (data.form as any)?.destinatarioId
+            ? [String((data.form as any)?.destinatarioId)]
+            : [],
         });
         return;
       }
@@ -27465,8 +27577,13 @@ const handleAdelantoFieldChange =
                   data?.form?.transportista ??
                   registro.nombre ??
                   '—';
+                const destinatarioIds = Array.isArray(data?.form?.destinatarioIds)
+                  ? data?.form?.destinatarioIds
+                  : data?.form?.destinatarioId
+                  ? [String(data?.form?.destinatarioId)]
+                  : [];
                 const destinatarioLabel =
-                  resolveApproverName(data?.form?.destinatarioId) ??
+                  resolveApproverNames(destinatarioIds) ??
                   registro.agente ??
                   '—';
                 return (
@@ -29115,8 +29232,12 @@ const handleAdelantoFieldChange =
           ) : (
             <label className="input-control">
               <span>Enviar solicitud a</span>
-              <select value={adelantoForm.agenteId} onChange={handleAdelantoFieldChange('agenteId')}>
-                <option value="">Seleccionar</option>
+              <select
+                multiple
+                size={3}
+                value={adelantoForm.destinatarioIds}
+                onChange={handleAdelantoDestinatariosChange}
+              >
                 {approverOptions.map((option) => (
                   <option key={option.id} value={option.id}>
                     {option.label}
@@ -29154,7 +29275,7 @@ const handleAdelantoFieldChange =
               placeholder="dd/mm/aaaa"
             />
           </label>
-          {canEditEstadoPersonal ? (
+          {canEditAdelantoEstado ? (
             <label className="input-control">
               <span>Estado</span>
               <select value={adelantoForm.estado} onChange={handleAdelantoFieldChange('estado')}>
@@ -29215,6 +29336,7 @@ const handleAdelantoFieldChange =
                 motivo: '',
                 observaciones: '',
                 agenteId: '',
+                destinatarioIds: [],
                 estado: 'Pendiente',
               });
               setAdelantoAttachments([]);
@@ -29323,10 +29445,11 @@ const handleAdelantoFieldChange =
             <label className="input-control">
               <span>Enviar solicitud a</span>
               <select
-                value={prestamoForm.destinatarioId}
-                onChange={handlePrestamoFieldChange('destinatarioId')}
+                multiple
+                size={3}
+                value={prestamoForm.destinatarioIds}
+                onChange={handlePrestamoDestinatariosChange}
               >
-                <option value="">Seleccionar</option>
                 {approverOptions.map((option) => (
                   <option key={option.id} value={option.id}>
                     {option.label}
@@ -29505,8 +29628,12 @@ const handleAdelantoFieldChange =
             {isSolicitudPersonalView ? (
               <label className="input-control">
                 <span>Enviar solicitud a</span>
-                <select value={vacacionesForm.destinatarioId} onChange={handleVacacionesFieldChange('destinatarioId')}>
-                  <option value="">Seleccionar</option>
+                <select
+                  multiple
+                  size={3}
+                  value={vacacionesForm.destinatarioIds}
+                  onChange={handleVacacionesDestinatariosChange}
+                >
                   {approverOptions.map((option) => (
                     <option key={option.id} value={option.id}>
                       {option.label}
@@ -29515,7 +29642,7 @@ const handleAdelantoFieldChange =
                 </select>
               </label>
             ) : null}
-            {canEditEstadoPersonal ? (
+            {canEditVacacionesEstado ? (
               <label className="input-control">
                 <span>Estado</span>
                 <select value={vacacionesForm.estado} onChange={handleVacacionesFieldChange('estado')}>

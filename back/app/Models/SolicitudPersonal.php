@@ -17,10 +17,12 @@ class SolicitudPersonal extends Model
         'form',
         'solicitante_id',
         'destinatario_id',
+        'destinatario_ids',
     ];
 
     protected $casts = [
         'form' => 'array',
+        'destinatario_ids' => 'array',
     ];
 
     public function solicitante()
