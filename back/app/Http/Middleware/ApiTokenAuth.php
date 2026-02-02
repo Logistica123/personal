@@ -19,6 +19,10 @@ class ApiTokenAuth
             return $next($request);
         }
 
+        if ($this->isPersonalDownloadWithAuthToken($request, $token)) {
+            return $next($request);
+        }
+
         if (! $token) {
             return response()->json(['message' => 'No autenticado.'], 401);
         }
@@ -80,6 +84,34 @@ class ApiTokenAuth
             if (! $request->is('api/personal/*/notificaciones/*/read')) {
                 return false;
             }
+        }
+
+        $email = $this->resolveRequestEmail($request);
+        if (! $email) {
+            return false;
+        }
+
+        $persona = $this->resolvePersonaFromRequest($request);
+        if (! $persona) {
+            return false;
+        }
+
+        return $this->personaMatchesEmail($persona, $email);
+    }
+
+    private function isPersonalDownloadWithAuthToken(Request $request, ?string $token): bool
+    {
+        if (! $request->isMethod('GET')) {
+            return false;
+        }
+
+        if (! $request->is('api/personal/*/documentos/*/descargar')
+            && ! $request->is('api/personal/*/documentos/*/preview')) {
+            return false;
+        }
+
+        if (! $token) {
+            return false;
         }
 
         $email = $this->resolveRequestEmail($request);
