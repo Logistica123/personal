@@ -51,17 +51,17 @@ class ApiTokenAuth
             return false;
         }
 
-        if ($request->is('api/personal') || $request->is('api/personal/')) {
+        if ($this->isPersonalPath($request, 'personal') || $this->isPersonalPath($request, 'personal/')) {
             return true;
         }
 
-        if (! $request->is('api/personal/*/liquidaciones')
-            && ! $request->is('api/personal/*/combustible')
-            && ! $request->is('api/personal/*/combustible-reportes')
-            && ! $request->is('api/personal/*/combustible-proyeccion')
-            && ! $request->is('api/personal/*/notificaciones')
-            && ! $request->is('api/personal/*/documentos/*/descargar')
-            && ! $request->is('api/personal/*/documentos/*/preview')) {
+        if (! $this->isPersonalPath($request, 'personal/*/liquidaciones')
+            && ! $this->isPersonalPath($request, 'personal/*/combustible')
+            && ! $this->isPersonalPath($request, 'personal/*/combustible-reportes')
+            && ! $this->isPersonalPath($request, 'personal/*/combustible-proyeccion')
+            && ! $this->isPersonalPath($request, 'personal/*/notificaciones')
+            && ! $this->isPersonalPath($request, 'personal/*/documentos/*/descargar')
+            && ! $this->isPersonalPath($request, 'personal/*/documentos/*/preview')) {
             return false;
         }
 
@@ -80,8 +80,8 @@ class ApiTokenAuth
             return false;
         }
 
-        if (! $request->is('api/personal/*/documentos')) {
-            if (! $request->is('api/personal/*/notificaciones/*/read')) {
+        if (! $this->isPersonalPath($request, 'personal/*/documentos')) {
+            if (! $this->isPersonalPath($request, 'personal/*/notificaciones/*/read')) {
                 return false;
             }
         }
@@ -105,8 +105,8 @@ class ApiTokenAuth
             return false;
         }
 
-        if (! $request->is('api/personal/*/documentos/*/descargar')
-            && ! $request->is('api/personal/*/documentos/*/preview')) {
+        if (! $this->isPersonalPath($request, 'personal/*/documentos/*/descargar')
+            && ! $this->isPersonalPath($request, 'personal/*/documentos/*/preview')) {
             return false;
         }
 
@@ -196,5 +196,10 @@ class ApiTokenAuth
         $cookieToken = $request->cookie('api_token');
 
         return $cookieToken ?: null;
+    }
+
+    private function isPersonalPath(Request $request, string $pattern): bool
+    {
+        return $request->is($pattern) || $request->is('api/' . $pattern);
     }
 }
