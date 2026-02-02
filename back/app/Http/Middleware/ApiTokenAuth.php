@@ -110,21 +110,7 @@ class ApiTokenAuth
             return false;
         }
 
-        if (! $token) {
-            return false;
-        }
-
-        $email = $this->resolveRequestEmail($request);
-        if (! $email) {
-            return false;
-        }
-
-        $persona = $this->resolvePersonaFromRequest($request);
-        if (! $persona) {
-            return false;
-        }
-
-        return $this->personaMatchesEmail($persona, $email);
+        return (bool) $token;
     }
 
     private function resolveRequestEmail(Request $request): ?string
