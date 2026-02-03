@@ -283,6 +283,7 @@ class PersonalDocumentController extends Controller
             'tipoArchivoId' => ['required', 'integer', 'exists:fyle_types,id'],
             'fechaVencimiento' => ['nullable', 'date'],
             'fortnightKey' => ['nullable', 'in:Q1,Q2'],
+            'monthKey' => ['nullable', 'date_format:Y-m'],
             'importeCombustible' => ['nullable', 'numeric', 'min:0'],
             'importeFacturar' => ['nullable', 'numeric', 'min:0'],
             'attachFuelInvoices' => ['nullable', 'boolean'],
@@ -333,6 +334,14 @@ class PersonalDocumentController extends Controller
         $fechaVencimiento = $validated['fechaVencimiento'] ?? null;
 
         $parsedFecha = $fechaVencimiento ? Carbon::parse($fechaVencimiento) : null;
+        $monthKey = $validated['monthKey'] ?? null;
+        if (! $parsedFecha && $monthKey) {
+            try {
+                $parsedFecha = Carbon::createFromFormat('Y-m', $monthKey)->startOfMonth();
+            } catch (\Throwable $exception) {
+                // ignore invalid monthKey
+            }
+        }
 
         $nombreOriginal = $validated['nombre'] ?? $file->getClientOriginalName();
 

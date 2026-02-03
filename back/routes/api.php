@@ -42,6 +42,7 @@ Route::middleware('auth.api')->group(function () {
     Route::get('/personal/{persona}/combustible', [PersonalController::class, 'combustible']);
     Route::get('/personal/{persona}/combustible-reportes', [PersonalController::class, 'combustibleReports']);
     Route::get('/personal/{persona}/combustible-proyeccion', [PersonalController::class, 'combustibleProjection']);
+    Route::get('/personal/resumen-mensual', [PersonalController::class, 'resumenMensual']);
     Route::get('/personal/{persona}/notificaciones', [PersonalController::class, 'personalNotifications']);
     Route::post('/personal/{persona}/notificaciones/{notification}/read', [PersonalController::class, 'markPersonalNotificationRead']);
     Route::get('/personal/{persona}/documentos/{documento}/preview', [PersonalDocumentController::class, 'preview'])

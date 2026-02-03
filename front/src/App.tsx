@@ -3986,6 +3986,14 @@ const DashboardLayout: React.FC<{
             <span className="sidebar-info-card__title">Panel general</span>
           </NavLink>
         ) : null}
+        {canAccessSection(userRole, 'panel-general', authUser?.permissions) ? (
+          <NavLink
+            to="/resumen"
+            className={({ isActive }) => `sidebar-info-card${isActive ? ' is-active' : ''}`}
+          >
+            <span className="sidebar-info-card__title">Resumen</span>
+          </NavLink>
+        ) : null}
 
         <nav className="sidebar-nav" onClick={closeSidebar}>
           <span className="sidebar-title">Acciones</span>
@@ -8763,6 +8771,141 @@ const DashboardPage: React.FC<{
           </footer>
         </>
       ) : null}
+    </DashboardLayout>
+  );
+};
+
+const ResumenPage: React.FC = () => {
+  const apiBaseUrl = useMemo(() => resolveApiBaseUrl(), []);
+  const [resumenMensual, setResumenMensual] = useState<
+    Array<{ key: string; label: string; altas: number; bajas: number; total: number; frozen: boolean }>
+  >([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    setLoading(true);
+    setError(null);
+    fetch(`${apiBaseUrl}/api/personal/resumen-mensual`, { signal: controller.signal })
+      .then(async (response) => {
+        if (!response.ok) {
+          throw new Error(`Error ${response.status}: ${response.statusText}`);
+        }
+        const payload = (await response.json()) as {
+          data?: Array<{ year: number; month: number; altas: number; bajas: number; total: number; frozen?: boolean }>;
+        };
+        const formatter = new Intl.DateTimeFormat('es-AR', { month: 'long', year: 'numeric' });
+        const capitalize = (value: string) => value.charAt(0).toUpperCase() + value.slice(1);
+        const pad = (value: number) => String(value).padStart(2, '0');
+        const rows = Array.isArray(payload?.data) ? payload.data : [];
+        const normalized = rows.map((row) => {
+          const key = `${row.year}-${pad(row.month)}`;
+          const label = capitalize(formatter.format(new Date(Date.UTC(row.year, row.month - 1, 1))));
+          return {
+            key,
+            label,
+            altas: row.altas ?? 0,
+            bajas: row.bajas ?? 0,
+            total: 0,
+            frozen: Boolean(row.frozen),
+          };
+        });
+        const chronological = [...normalized].sort((a, b) => a.key.localeCompare(b.key));
+        let running = 0;
+        chronological.forEach((item) => {
+          running += item.altas - item.bajas;
+          item.total = running;
+        });
+        const totalByKey = new Map(chronological.map((item) => [item.key, item.total]));
+        setResumenMensual(
+          normalized.map((item) => ({
+            ...item,
+            total: totalByKey.get(item.key) ?? 0,
+          }))
+        );
+      })
+      .catch((err) => {
+        if ((err as Error).name === 'AbortError') {
+          return;
+        }
+        setError((err as Error).message ?? 'No se pudieron cargar los datos.');
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) {
+          setLoading(false);
+        }
+      });
+    return () => controller.abort();
+  }, [apiBaseUrl]);
+
+  const totals = useMemo(() => {
+    if (resumenMensual.length === 0) {
+      return { altas: 0, bajas: 0, total: 0 };
+    }
+    const sum = resumenMensual.reduce(
+      (acc, item) => {
+        acc.altas += item.altas;
+        acc.bajas += item.bajas;
+        return acc;
+      },
+      { altas: 0, bajas: 0 }
+    );
+    const latest = [...resumenMensual].sort((a, b) => b.key.localeCompare(a.key))[0];
+    return { altas: sum.altas, bajas: sum.bajas, total: latest?.total ?? 0 };
+  }, [resumenMensual]);
+
+  return (
+    <DashboardLayout title="Resumen" subtitle="Resumen mensual de altas y bajas">
+      <section className="dashboard-card">
+        <header className="card-header">
+          <h3>Resumen mensual</h3>
+        </header>
+        <div className="card-body">
+          {loading ? <p className="form-info">Cargando resumen...</p> : null}
+          {error ? <p className="form-info form-info--error">{error}</p> : null}
+          {!loading && !error ? (
+            <div className="table-wrapper">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Mes</th>
+                    <th>Altas</th>
+                    <th>Bajas</th>
+                    <th>Total</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {resumenMensual.length === 0 ? (
+                    <tr>
+                      <td colSpan={4}>No hay movimientos para mostrar.</td>
+                    </tr>
+                  ) : (
+                    resumenMensual.map((item) => (
+                      <tr key={item.key}>
+                        <td>{item.label}</td>
+                        <td>{item.altas}</td>
+                        <td>{item.bajas}</td>
+                        <td>{item.total}</td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+                {resumenMensual.length > 0 ? (
+                  <tfoot>
+                    <tr>
+                      <td>Total</td>
+                      <td>{totals.altas}</td>
+                      <td>{totals.bajas}</td>
+                      <td>{totals.total}</td>
+                    </tr>
+                  </tfoot>
+                ) : null}
+              </table>
+            </div>
+          ) : null}
+        </div>
+      </section>
     </DashboardLayout>
   );
 };
@@ -16699,6 +16842,7 @@ const LiquidacionesPage: React.FC = () => {
   const [liquidacionYearFilter, setLiquidacionYearFilter] = useState('');
   const [liquidacionImporteManual, setLiquidacionImporteManual] = useState('');
   const [liquidacionFortnightSelection, setLiquidacionFortnightSelection] = useState('');
+  const [liquidacionMonthSelection, setLiquidacionMonthSelection] = useState('');
   const [selectedPagadoIds, setSelectedPagadoIds] = useState<Set<number>>(() => new Set());
   const [selectedListPagadoIds, setSelectedListPagadoIds] = useState<Set<number>>(() => new Set());
   const [selectedPersonaId, setSelectedPersonaId] = useState<number | null>(personaIdFromRoute);
@@ -16828,6 +16972,38 @@ const LiquidacionesPage: React.FC = () => {
     }
     return fuelPreview.items.filter((item) => fuelSelection.has(item.id));
   }, [fuelPreview, fuelSelection]);
+  const fuelSelectableIds = useMemo(() => {
+    if (!fuelPreview) {
+      return [];
+    }
+    return fuelPreview.items
+      .filter((item) => {
+        const isObserved = (item.status ?? '').toLowerCase().includes('observ');
+        const isDiscounted = Boolean(item.discounted) || item.status === 'DISCOUNTED';
+        return !isObserved && !isDiscounted;
+      })
+      .map((item) => item.id);
+  }, [fuelPreview]);
+  const fuelSelectableSelectedCount = useMemo(() => {
+    if (!fuelSelectableIds.length) {
+      return 0;
+    }
+    let count = 0;
+    fuelSelectableIds.forEach((id) => {
+      if (fuelSelection.has(id)) {
+        count += 1;
+      }
+    });
+    return count;
+  }, [fuelSelectableIds, fuelSelection]);
+  const fuelAllSelected = fuelSelectableIds.length > 0 && fuelSelectableSelectedCount === fuelSelectableIds.length;
+  const fuelSomeSelected = fuelSelectableSelectedCount > 0 && !fuelAllSelected;
+  useEffect(() => {
+    if (!fuelSelectAllRef.current) {
+      return;
+    }
+    fuelSelectAllRef.current.indeterminate = fuelSomeSelected;
+  }, [fuelSomeSelected]);
   const fuelSelectedTotal = useMemo(
     () => fuelSelectedItems.reduce((sum, item) => sum + (item.amount ?? 0), 0),
     [fuelSelectedItems]
@@ -16860,6 +17036,7 @@ const LiquidacionesPage: React.FC = () => {
   const [pasteError, setPasteError] = useState<string | null>(null);
   const pasteTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const fuelPreviewDocIdRef = useRef<string | null>(null);
+  const fuelSelectAllRef = useRef<HTMLInputElement | null>(null);
   const isPagosView = useMemo(() => location.pathname.startsWith('/pagos'), [location.pathname]);
   const [showPagosColumnPicker, setShowPagosColumnPicker] = useState(false);
   const [showLiquidacionesColumnPicker, setShowLiquidacionesColumnPicker] = useState(false);
@@ -17544,6 +17721,22 @@ const LiquidacionesPage: React.FC = () => {
     fuelSelectionAdjustments,
     refreshPersonaDetail,
   ]);
+
+  const toggleFuelSelectAll = useCallback(() => {
+    setFuelSelection((prev) => {
+      const next = new Set(prev);
+      if (fuelSelectableIds.length === 0) {
+        return next;
+      }
+      const allSelected = fuelSelectableIds.every((id) => next.has(id));
+      if (allSelected) {
+        fuelSelectableIds.forEach((id) => next.delete(id));
+      } else {
+        fuelSelectableIds.forEach((id) => next.add(id));
+      }
+      return next;
+    });
+  }, [fuelSelectableIds]);
 
   const listRecords = useMemo(() => {
     if (!isPagosView) {
@@ -19397,6 +19590,9 @@ const LiquidacionesPage: React.FC = () => {
         if (liquidacionFortnightSelection) {
           formData.append('fortnightKey', liquidacionFortnightSelection);
         }
+        if (liquidacionMonthSelection) {
+          formData.append('monthKey', liquidacionMonthSelection);
+        }
         if (importeFacturarFinal != null) {
           formData.append('importeFacturar', String(importeFacturarFinal));
         }
@@ -19553,6 +19749,7 @@ const LiquidacionesPage: React.FC = () => {
       clearPendingUploads();
       setDocumentExpiry('');
       setLiquidacionFortnightSelection('');
+      setLiquidacionMonthSelection('');
       refreshPersonaDetail();
     } catch (err) {
       setUploadStatus({ type: 'error', message: (err as Error).message ?? 'No se pudieron subir los archivos.' });
@@ -19592,6 +19789,9 @@ const LiquidacionesPage: React.FC = () => {
         }
         if (liquidacionFortnightSelection) {
           formData.append('fortnightKey', liquidacionFortnightSelection);
+        }
+        if (liquidacionMonthSelection) {
+          formData.append('monthKey', liquidacionMonthSelection);
         }
         if (importeFacturarFinal != null) {
           formData.append('importeFacturar', String(importeFacturarFinal));
@@ -19704,6 +19904,7 @@ const LiquidacionesPage: React.FC = () => {
       clearPendingUploads();
       setDocumentExpiry('');
       setLiquidacionFortnightSelection('');
+      setLiquidacionMonthSelection('');
       refreshPersonaDetail();
     } catch (err) {
       setUploadStatus({ type: 'error', message: (err as Error).message ?? 'No se pudieron guardar las liquidaciones.' });
@@ -20599,6 +20800,14 @@ const LiquidacionesPage: React.FC = () => {
             />
           </label>
           <label className="input-control">
+            <span>Mes de liquidación</span>
+            <input
+              type="month"
+              value={liquidacionMonthSelection}
+              onChange={(event) => setLiquidacionMonthSelection(event.target.value)}
+            />
+          </label>
+          <label className="input-control">
             <span>Quincena</span>
             <select
               value={liquidacionFortnightSelection}
@@ -20818,7 +21027,17 @@ const LiquidacionesPage: React.FC = () => {
               <table>
                 <thead>
                   <tr>
-                    <th></th>
+                    <th>
+                      <input
+                        ref={fuelSelectAllRef}
+                        type="checkbox"
+                        checked={fuelAllSelected}
+                        onChange={toggleFuelSelectAll}
+                        disabled={fuelSelectableIds.length === 0}
+                        aria-label="Seleccionar todo"
+                        title="Seleccionar todo"
+                      />
+                    </th>
                     <th>Fecha</th>
                     <th>Estación</th>
                     <th>Producto</th>
@@ -32644,6 +32863,10 @@ const PersonalEditPage: React.FC = () => {
     if (!personaId) {
       return;
     }
+    if (isEstadoBaja && !formValues.fechaBaja) {
+      setSaveError('Seleccioná la fecha de baja.');
+      return;
+    }
 
     try {
       setSaveError(null);
@@ -33446,6 +33669,7 @@ const PersonalEditPage: React.FC = () => {
                 value={formValues.fechaBaja}
                 onChange={(event) => setFormValues((prev) => ({ ...prev, fechaBaja: event.target.value }))}
                 disabled={isReadOnly}
+                required={isEstadoBaja}
               />
             </label>
           ) : null}
@@ -36687,6 +36911,14 @@ const AppRoutes: React.FC = () => (
         element={
           <RequireAccess section="panel-general">
             <DashboardPage showPersonalPanel />
+          </RequireAccess>
+        }
+      />
+      <Route
+        path="/resumen"
+        element={
+          <RequireAccess section="panel-general">
+            <ResumenPage />
           </RequireAccess>
         }
       />

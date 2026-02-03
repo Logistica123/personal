@@ -18,6 +18,7 @@ use App\Models\Archivo;
 use App\Models\Factura;
 use App\Models\FuelMovement;
 use App\Models\FuelReport;
+use App\Models\PersonalMonthlySummary;
 use App\Models\PersonalNotification;
 use App\Models\ContactReveal;
 use App\Services\AuditLogger;
@@ -28,6 +29,7 @@ use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
+use Illuminate\Validation\ValidationException;
 
 class PersonalController extends Controller
 {
@@ -258,6 +260,7 @@ class PersonalController extends Controller
             ->whereHas('items.movement', function ($movementQuery) use ($domain) {
                 $movementQuery->where('domain_norm', $domain);
             })
+            ->with(['items.movement'])
             ->orderByDesc('applied_at')
             ->orderByDesc('id');
 
@@ -269,23 +272,153 @@ class PersonalController extends Controller
             $query->whereDate('period_to', '<=', trim($dateTo));
         }
 
-        $reports = $query->limit(200)->get()->map(fn (FuelReport $report) => [
-            'id' => $report->id,
-            'period_from' => $report->period_from,
-            'period_to' => $report->period_to,
-            'total_amount' => $report->total_amount,
-            'adjustments_total' => $report->adjustments_total,
-            'total_to_bill' => $report->total_to_bill,
-            'status' => $report->status,
-            'applied_at' => $report->applied_at
-                ? $report->applied_at->timezone(config('app.timezone', 'America/Argentina/Buenos_Aires'))->toIso8601String()
-                : null,
-            'liquidacion_id' => $report->liquidacion_id,
-        ]);
+        $reports = $query->limit(200)->get()->map(function (FuelReport $report) {
+            return [
+                'id' => $report->id,
+                'period_from' => $report->period_from,
+                'period_to' => $report->period_to,
+                'total_amount' => $report->total_amount,
+                'adjustments_total' => $report->adjustments_total,
+                'total_to_bill' => $report->total_to_bill,
+                'status' => $report->status,
+                'applied_at' => $report->applied_at
+                    ? $report->applied_at->timezone(config('app.timezone', 'America/Argentina/Buenos_Aires'))->toIso8601String()
+                    : null,
+                'liquidacion_id' => $report->liquidacion_id,
+                'items' => $report->items->map(function ($item) {
+                    $movement = $item->movement;
+                    return [
+                        'id' => $item->id,
+                        'movement_id' => $item->fuel_movement_id,
+                        'occurred_at' => $movement?->occurred_at,
+                        'station' => $movement?->station,
+                        'product' => $movement?->product,
+                        'liters' => $movement?->liters ?? $item->liters,
+                        'amount' => $movement?->amount ?? $item->amount,
+                        'status' => $movement?->status,
+                    ];
+                })->values(),
+            ];
+        });
 
         return response()->json([
             'data' => $reports,
             'domain' => $domain,
+        ]);
+    }
+
+    public function resumenMensual(Request $request): JsonResponse
+    {
+        $timezone = config('app.timezone', 'UTC');
+        $cutoff = Carbon::create(2026, 1, 1, 0, 0, 0, $timezone);
+
+        $personas = Persona::query()
+            ->select(['fecha_alta', 'fecha_baja', 'es_solicitud'])
+            ->where(function ($query) {
+                $query->where('es_solicitud', false)->orWhereNull('es_solicitud');
+            })
+            ->get();
+
+        $frozenCandidates = [];
+        $liveBuckets = [];
+
+        $addBucket = function (array &$target, Carbon $date, string $field): void {
+            $year = (int) $date->format('Y');
+            $month = (int) $date->format('m');
+            $key = sprintf('%04d-%02d', $year, $month);
+            if (! isset($target[$key])) {
+                $target[$key] = [
+                    'year' => $year,
+                    'month' => $month,
+                    'altas' => 0,
+                    'bajas' => 0,
+                    'total' => 0,
+                ];
+            }
+            $target[$key][$field] += 1;
+            $target[$key]['total'] = $target[$key]['altas'] + $target[$key]['bajas'];
+        };
+
+        foreach ($personas as $persona) {
+            if ($persona->fecha_alta) {
+                $altaDate = Carbon::parse($persona->fecha_alta, $timezone);
+                if ($altaDate->lt($cutoff)) {
+                    $addBucket($frozenCandidates, $altaDate, 'altas');
+                } else {
+                    $addBucket($liveBuckets, $altaDate, 'altas');
+                }
+            }
+            if ($persona->fecha_baja) {
+                $bajaDate = Carbon::parse($persona->fecha_baja, $timezone);
+                if ($bajaDate->lt($cutoff)) {
+                    $addBucket($frozenCandidates, $bajaDate, 'bajas');
+                } else {
+                    $addBucket($liveBuckets, $bajaDate, 'bajas');
+                }
+            }
+        }
+
+        $existingFrozen = PersonalMonthlySummary::query()
+            ->where('year', '<', 2026)
+            ->get()
+            ->keyBy(fn ($item) => sprintf('%04d-%02d', $item->year, $item->month));
+
+        $toInsert = [];
+        foreach ($frozenCandidates as $key => $bucket) {
+            if ($existingFrozen->has($key)) {
+                continue;
+            }
+            $toInsert[] = [
+                'year' => $bucket['year'],
+                'month' => $bucket['month'],
+                'altas' => $bucket['altas'],
+                'bajas' => $bucket['bajas'],
+                'total' => $bucket['total'],
+                'frozen_at' => now($timezone),
+                'created_at' => now($timezone),
+                'updated_at' => now($timezone),
+            ];
+        }
+
+        if (! empty($toInsert)) {
+            PersonalMonthlySummary::query()->insert($toInsert);
+            $existingFrozen = PersonalMonthlySummary::query()
+                ->where('year', '<', 2026)
+                ->get()
+                ->keyBy(fn ($item) => sprintf('%04d-%02d', $item->year, $item->month));
+        }
+
+        $combined = [];
+        foreach ($existingFrozen as $key => $row) {
+            $combined[$key] = [
+                'year' => (int) $row->year,
+                'month' => (int) $row->month,
+                'altas' => (int) $row->altas,
+                'bajas' => (int) $row->bajas,
+                'total' => (int) $row->total,
+                'frozen' => true,
+            ];
+        }
+
+        foreach ($liveBuckets as $key => $bucket) {
+            $combined[$key] = [
+                'year' => $bucket['year'],
+                'month' => $bucket['month'],
+                'altas' => $bucket['altas'],
+                'bajas' => $bucket['bajas'],
+                'total' => $bucket['total'],
+                'frozen' => false,
+            ];
+        }
+
+        $sorted = collect($combined)
+            ->sortByDesc(fn ($item, $key) => $key)
+            ->values()
+            ->all();
+
+        return response()->json([
+            'data' => $sorted,
+            'cutoff' => $cutoff->toDateString(),
         ]);
     }
 
@@ -660,6 +793,20 @@ class PersonalController extends Controller
             'duenoTelefono' => ['nullable', 'string', 'max:255'],
             'duenoObservaciones' => ['nullable', 'string'],
         ]);
+
+        $targetEstadoId = array_key_exists('estadoId', $validated) ? $validated['estadoId'] : $persona->estado_id;
+        $estadoNombre = '';
+        if ($targetEstadoId) {
+            $estado = Estado::query()->find($targetEstadoId);
+            $estadoNombre = $estado?->nombre ?? '';
+        } else {
+            $estadoNombre = $persona->estado?->nombre ?? '';
+        }
+        if (Str::contains(Str::lower($estadoNombre), 'baja') && empty($validated['fechaBaja'])) {
+            throw ValidationException::withMessages([
+                'fechaBaja' => 'La fecha de baja es obligatoria cuando el estado es baja.',
+            ]);
+        }
 
         $originalClienteId = $persona->cliente_id;
         $originalClienteName = $this->resolveClienteName($originalClienteId);
