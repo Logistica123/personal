@@ -206,6 +206,7 @@ type UserRole = 'admin' | 'admin2' | 'encargado' | 'operator' | 'asesor';
 type AccessSection =
   | 'clientes'
   | 'panel-general'
+  | 'resumen'
   | 'unidades'
   | 'usuarios'
   | 'personal'
@@ -1010,6 +1011,7 @@ const USER_ROLE_OPTIONS: Array<{ value: UserRole; label: string }> = [
 
 const USER_PERMISSION_OPTIONS: Array<{ value: AccessSection; label: string }> = [
   { value: 'panel-general', label: 'Panel general' },
+  { value: 'resumen', label: 'Resumen' },
   { value: 'clientes', label: 'Gestión de clientes' },
   { value: 'unidades', label: 'Gestión de unidades' },
   { value: 'usuarios', label: 'Gestión de usuarios' },
@@ -1055,6 +1057,7 @@ const canAccessSection = (
       return false;
     case 'clientes':
     case 'panel-general':
+    case 'resumen':
     case 'unidades':
       return role !== 'operator' && role !== 'asesor';
     case 'reclamos':
@@ -3986,7 +3989,7 @@ const DashboardLayout: React.FC<{
             <span className="sidebar-info-card__title">Panel general</span>
           </NavLink>
         ) : null}
-        {canAccessSection(userRole, 'panel-general', authUser?.permissions) ? (
+        {canAccessSection(userRole, 'resumen', authUser?.permissions) ? (
           <NavLink
             to="/resumen"
             className={({ isActive }) => `sidebar-info-card${isActive ? ' is-active' : ''}`}
@@ -36917,7 +36920,7 @@ const AppRoutes: React.FC = () => (
       <Route
         path="/resumen"
         element={
-          <RequireAccess section="panel-general">
+          <RequireAccess section="resumen">
             <ResumenPage />
           </RequireAccess>
         }
