@@ -335,9 +335,15 @@ class FuelModuleController extends Controller
         $dateTo = $request->query('date_to');
         $onlyImputed = $request->boolean('only_imputed');
         $onlyPending = $request->boolean('only_pending');
+        $includeDuplicates = $request->boolean('include_duplicates');
+        $status = $request->query('status');
+        $sourceFile = $request->query('source_file');
 
-        $baseQuery = FuelMovement::query()
-            ->whereNotIn('status', ['DUPLICATE']);
+        $baseQuery = FuelMovement::query();
+        $normalizedStatus = is_string($status) ? strtoupper(trim($status)) : '';
+        if (! $includeDuplicates && $normalizedStatus !== 'DUPLICATE') {
+            $baseQuery->whereNotIn('status', ['DUPLICATE']);
+        }
 
         if (is_string($distributorId) && trim($distributorId) !== '') {
             $baseQuery->where('distributor_id', (int) $distributorId);
@@ -355,6 +361,14 @@ class FuelModuleController extends Controller
 
         if (is_string($dateTo) && trim($dateTo) !== '') {
             $baseQuery->whereDate('occurred_at', '<=', trim($dateTo));
+        }
+
+        if ($normalizedStatus !== '') {
+            $baseQuery->where('status', $normalizedStatus);
+        }
+
+        if (is_string($sourceFile) && trim($sourceFile) !== '') {
+            $baseQuery->where('source_file', trim($sourceFile));
         }
 
         if ($onlyPending) {
@@ -392,6 +406,9 @@ class FuelModuleController extends Controller
             'price_per_liter' => $movement->price_per_liter,
             'status' => $movement->status,
             'discounted' => (bool) $movement->discounted,
+            'observations' => $movement->observations,
+            'source_file' => $movement->source_file,
+            'source_row' => $movement->source_row,
         ]);
 
         $totals = [

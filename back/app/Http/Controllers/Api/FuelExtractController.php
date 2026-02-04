@@ -205,6 +205,7 @@ class FuelExtractController extends Controller
             }
             if ($movementStatus === 'DUPLICATE') {
                 $ignoredDuplicates += 1;
+                continue;
             } elseif ($movementStatus === 'OBSERVED') {
                 $observed += 1;
             }

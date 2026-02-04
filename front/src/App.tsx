@@ -8804,7 +8804,7 @@ const ResumenPage: React.FC = () => {
         const rows = Array.isArray(payload?.data) ? payload.data : [];
         const normalized = rows.map((row) => {
           const key = `${row.year}-${pad(row.month)}`;
-          const label = capitalize(formatter.format(new Date(Date.UTC(row.year, row.month - 1, 1))));
+            const label = capitalize(formatter.format(new Date(row.year, row.month - 1, 1)));
           return {
             key,
             label,
@@ -13386,6 +13386,25 @@ const CombustibleCargaPage: React.FC = () => {
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
   const [autoAssignConductor, setAutoAssignConductor] = useState(true);
+  const [duplicateRows, setDuplicateRows] = useState<
+    Array<{
+      id: number;
+      occurred_at: string | null;
+      station: string | null;
+      domain_norm: string | null;
+      product: string | null;
+      liters: number | null;
+      amount: number | null;
+      price_per_liter: number | null;
+      status: string | null;
+      observations?: string | null;
+      source_file?: string | null;
+      source_row?: number | null;
+    }>
+  >([]);
+  const [duplicateTotals, setDuplicateTotals] = useState<{ movements: number; liters: number; amount: number } | null>(null);
+  const [duplicateLoading, setDuplicateLoading] = useState(false);
+  const [duplicateError, setDuplicateError] = useState<string | null>(null);
 
   const handleFilePicker = () => {
     fileInputRef.current?.click();
@@ -13403,6 +13422,9 @@ const CombustibleCargaPage: React.FC = () => {
     setPreviewError(null);
     setProcessMessage(null);
     setProcessError(null);
+    setDuplicateRows([]);
+    setDuplicateTotals(null);
+    setDuplicateError(null);
   };
 
   const handleClearFile = () => {
@@ -13419,6 +13441,9 @@ const CombustibleCargaPage: React.FC = () => {
     setPreviewError(null);
     setProcessMessage(null);
     setProcessError(null);
+    setDuplicateRows([]);
+    setDuplicateTotals(null);
+    setDuplicateError(null);
   };
 
   const handlePreview = async () => {
@@ -13596,6 +13621,43 @@ const CombustibleCargaPage: React.FC = () => {
     }
   };
 
+  const handleLoadDuplicates = async () => {
+    if (!selectedFile) {
+      setDuplicateError('Selecciona un archivo para ver duplicadas.');
+      return;
+    }
+    setDuplicateLoading(true);
+    setDuplicateError(null);
+    try {
+      const url = new URL(`${apiBaseUrl}/api/combustible/consumos`);
+      url.searchParams.set('include_duplicates', '1');
+      url.searchParams.set('status', 'DUPLICATE');
+      url.searchParams.set('source_file', selectedFile.name);
+      const response = await fetch(url.toString(), { credentials: 'include' });
+      if (!response.ok) {
+        const payload = await parseJsonSafe(response).catch(() => null);
+        throw new Error(payload?.message ?? `No se pudieron cargar las duplicadas (${response.status}).`);
+      }
+      const payload = await parseJsonSafe(response);
+      setDuplicateRows(Array.isArray(payload.data) ? payload.data : []);
+      if (payload.totals && typeof payload.totals === 'object') {
+        setDuplicateTotals({
+          movements: Number(payload.totals.movements) || 0,
+          liters: Number(payload.totals.liters) || 0,
+          amount: Number(payload.totals.amount) || 0,
+        });
+      } else {
+        setDuplicateTotals(null);
+      }
+    } catch (err) {
+      setDuplicateError(err instanceof Error ? err.message : 'No se pudieron cargar las duplicadas.');
+      setDuplicateRows([]);
+      setDuplicateTotals(null);
+    } finally {
+      setDuplicateLoading(false);
+    }
+  };
+
   const handleClosePeriod = async () => {
     setCloseLoading(true);
     setCloseMessage(null);
@@ -13715,6 +13777,14 @@ const CombustibleCargaPage: React.FC = () => {
             >
               {deleteLoading ? 'Limpiando...' : 'Limpiar archivo'}
             </button>
+            <button
+              type="button"
+              className="secondary-action secondary-action--ghost"
+              onClick={handleLoadDuplicates}
+              disabled={duplicateLoading || !selectedFile}
+            >
+              {duplicateLoading ? 'Cargando duplicadas...' : 'Ver duplicadas'}
+            </button>
             <button type="button" className="secondary-action secondary-action--ghost">
               Descargar log
             </button>
@@ -13723,6 +13793,7 @@ const CombustibleCargaPage: React.FC = () => {
           {previewError ? <p className="form-info form-info--error">{previewError}</p> : null}
           {processError ? <p className="form-info form-info--error">{processError}</p> : null}
           {processMessage ? <p className="form-info form-info--success">{processMessage}</p> : null}
+          {duplicateError ? <p className="form-info form-info--error">{duplicateError}</p> : null}
         </div>
       </section>
 
@@ -13823,6 +13894,61 @@ const CombustibleCargaPage: React.FC = () => {
                   <td colSpan={previewColumns.length > 0 ? previewColumns.length : 7}>Sin datos para mostrar.</td>
                 </tr>
               )}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section className="dashboard-card">
+        <header className="card-header">
+          <div>
+            <h3>Duplicadas del archivo</h3>
+            {duplicateTotals ? (
+              <p className="section-helper">
+                Movimientos: {duplicateTotals.movements} · Litros: {formatNumber(duplicateTotals.liters)} · Importe:{' '}
+                {formatCurrency(duplicateTotals.amount)}
+              </p>
+            ) : null}
+          </div>
+        </header>
+        <div className="table-wrapper">
+          <table>
+            <thead>
+              <tr>
+                <th>Fecha</th>
+                <th>Estación</th>
+                <th>Dominio</th>
+                <th>Producto</th>
+                <th>Litros</th>
+                <th>Importe</th>
+                <th>Observaciones</th>
+                <th>Fila</th>
+              </tr>
+            </thead>
+            <tbody>
+              {duplicateLoading && (
+                <tr>
+                  <td colSpan={8}>Cargando duplicadas...</td>
+                </tr>
+              )}
+              {!duplicateLoading && duplicateRows.length === 0 && (
+                <tr>
+                  <td colSpan={8}>No hay duplicadas para el archivo seleccionado.</td>
+                </tr>
+              )}
+              {!duplicateLoading &&
+                duplicateRows.map((row) => (
+                  <tr key={`dup-${row.id}`}>
+                    <td>{formatDateTime(row.occurred_at)}</td>
+                    <td>{row.station ?? '—'}</td>
+                    <td>{row.domain_norm ?? '—'}</td>
+                    <td>{row.product ?? '—'}</td>
+                    <td>{formatNumber(row.liters)}</td>
+                    <td>{formatCurrency(row.amount ?? 0)}</td>
+                    <td>{row.observations ?? 'Duplicado'}</td>
+                    <td>{row.source_row ?? '—'}</td>
+                  </tr>
+                ))}
             </tbody>
           </table>
         </div>

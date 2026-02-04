@@ -312,22 +312,30 @@ class PersonalController extends Controller
         $timezone = config('app.timezone', 'UTC');
         $cutoff = Carbon::create(2026, 1, 1, 0, 0, 0, $timezone);
 
-        $personas = Persona::query()
-            ->select(['fecha_alta', 'fecha_baja', 'es_solicitud'])
+        $baseQuery = Persona::query()
             ->where(function ($query) {
                 $query->where('es_solicitud', false)->orWhereNull('es_solicitud');
-            })
+            });
+
+        $altaRows = (clone $baseQuery)
+            ->whereNotNull('fecha_alta')
+            ->selectRaw('YEAR(fecha_alta) as year, MONTH(fecha_alta) as month, COUNT(*) as total')
+            ->groupByRaw('YEAR(fecha_alta), MONTH(fecha_alta)')
             ->get();
 
-        $frozenCandidates = [];
-        $liveBuckets = [];
+        $bajaRows = (clone $baseQuery)
+            ->whereNotNull('fecha_baja')
+            ->selectRaw('YEAR(fecha_baja) as year, MONTH(fecha_baja) as month, COUNT(*) as total')
+            ->groupByRaw('YEAR(fecha_baja), MONTH(fecha_baja)')
+            ->get();
 
-        $addBucket = function (array &$target, Carbon $date, string $field): void {
-            $year = (int) $date->format('Y');
-            $month = (int) $date->format('m');
+        $computedBuckets = [];
+        foreach ($altaRows as $row) {
+            $year = (int) $row->year;
+            $month = (int) $row->month;
             $key = sprintf('%04d-%02d', $year, $month);
-            if (! isset($target[$key])) {
-                $target[$key] = [
+            if (! isset($computedBuckets[$key])) {
+                $computedBuckets[$key] = [
                     'year' => $year,
                     'month' => $month,
                     'altas' => 0,
@@ -335,26 +343,37 @@ class PersonalController extends Controller
                     'total' => 0,
                 ];
             }
-            $target[$key][$field] += 1;
-            $target[$key]['total'] = $target[$key]['altas'] + $target[$key]['bajas'];
-        };
+            $computedBuckets[$key]['altas'] = (int) $row->total;
+            $computedBuckets[$key]['total'] =
+                $computedBuckets[$key]['altas'] + $computedBuckets[$key]['bajas'];
+        }
 
-        foreach ($personas as $persona) {
-            if ($persona->fecha_alta) {
-                $altaDate = Carbon::parse($persona->fecha_alta, $timezone);
-                if ($altaDate->lt($cutoff)) {
-                    $addBucket($frozenCandidates, $altaDate, 'altas');
-                } else {
-                    $addBucket($liveBuckets, $altaDate, 'altas');
-                }
+        foreach ($bajaRows as $row) {
+            $year = (int) $row->year;
+            $month = (int) $row->month;
+            $key = sprintf('%04d-%02d', $year, $month);
+            if (! isset($computedBuckets[$key])) {
+                $computedBuckets[$key] = [
+                    'year' => $year,
+                    'month' => $month,
+                    'altas' => 0,
+                    'bajas' => 0,
+                    'total' => 0,
+                ];
             }
-            if ($persona->fecha_baja) {
-                $bajaDate = Carbon::parse($persona->fecha_baja, $timezone);
-                if ($bajaDate->lt($cutoff)) {
-                    $addBucket($frozenCandidates, $bajaDate, 'bajas');
-                } else {
-                    $addBucket($liveBuckets, $bajaDate, 'bajas');
-                }
+            $computedBuckets[$key]['bajas'] = (int) $row->total;
+            $computedBuckets[$key]['total'] =
+                $computedBuckets[$key]['altas'] + $computedBuckets[$key]['bajas'];
+        }
+
+        $frozenCandidates = [];
+        $liveBuckets = [];
+        foreach ($computedBuckets as $key => $bucket) {
+            $bucketDate = Carbon::create($bucket['year'], $bucket['month'], 1, 0, 0, 0, $timezone);
+            if ($bucketDate->lt($cutoff)) {
+                $frozenCandidates[$key] = $bucket;
+            } else {
+                $liveBuckets[$key] = $bucket;
             }
         }
 
