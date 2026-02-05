@@ -14486,6 +14486,7 @@ const CombustibleDistribuidorPage: React.FC = () => {
   const [newDistributorName, setNewDistributorName] = useState('');
   const [newDistributorCode, setNewDistributorCode] = useState('');
   const [domain, setDomain] = useState('');
+  const [sourceFile, setSourceFile] = useState('');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
   const [periodPreset, setPeriodPreset] = useState<'Q1' | 'Q2' | 'MONTH' | ''>('');
@@ -14594,6 +14595,9 @@ const CombustibleDistribuidorPage: React.FC = () => {
       }
       if (domain.trim()) {
         url.searchParams.set('domain', domain.trim());
+      }
+      if (sourceFile.trim()) {
+        url.searchParams.set('source_file', sourceFile.trim());
       }
       if (dateFrom) {
         url.searchParams.set('date_from', dateFrom);
@@ -16281,6 +16285,7 @@ const CombustibleConsumosPage: React.FC = () => {
   const [distributors, setDistributors] = useState<Array<{ id: number; name: string; code?: string | null }>>([]);
   const [distributorId, setDistributorId] = useState('');
   const [domain, setDomain] = useState('');
+  const [sourceFile, setSourceFile] = useState('');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
   const [periodPreset, setPeriodPreset] = useState<'Q1' | 'Q2' | 'MONTH' | ''>('');
@@ -16399,7 +16404,7 @@ const CombustibleConsumosPage: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  }, [apiBaseUrl, distributorId, domain, dateFrom, dateTo, onlyPending, onlyImputed]);
+  }, [apiBaseUrl, distributorId, domain, sourceFile, dateFrom, dateTo, onlyPending, onlyImputed]);
 
   useEffect(() => {
     fetchConsumos();
@@ -16410,6 +16415,7 @@ const CombustibleConsumosPage: React.FC = () => {
   const notTakenCount =
     totals?.discount_counts?.not_taken ?? rows.filter((row) => !row.discounted && row.status !== 'DISCOUNTED').length;
   const statusEntries = Object.entries(totals?.status_counts ?? {}).sort((a, b) => b[1] - a[1]);
+  const latestOccurredAt = rows.length > 0 ? rows[0]?.occurred_at ?? null : null;
 
   return (
     <DashboardLayout title="Combustible" subtitle="Consumos registrados" headerContent={<CombustibleTabs />}>
@@ -16433,6 +16439,14 @@ const CombustibleConsumosPage: React.FC = () => {
             <label className="input-control">
               <span>Dominio</span>
               <input value={domain} onChange={(event) => setDomain(event.target.value)} placeholder="ABC123" />
+            </label>
+            <label className="input-control">
+              <span>Archivo</span>
+              <input
+                value={sourceFile}
+                onChange={(event) => setSourceFile(event.target.value)}
+                placeholder="ReporteConsumos-2026-01-22T094110.xlsx"
+              />
             </label>
             <label className="input-control">
               <span>Período</span>
@@ -16559,7 +16573,11 @@ const CombustibleConsumosPage: React.FC = () => {
         <header className="card-header">
           <h3>Detalle</h3>
           <p className="helper-text">
-            Distribuidor: {selectedDistributor?.name ?? 'Todos'} · Dominio: {domain.trim() || '—'}
+            Distribuidor: {selectedDistributor?.name ?? 'Todos'} · Dominio: {domain.trim() || '—'} · Archivo:{' '}
+            {sourceFile.trim() || '—'}
+          </p>
+          <p className="helper-text">
+            Última fecha cargada: {latestOccurredAt ? formatDateTime(latestOccurredAt) : '—'}
           </p>
         </header>
         <div className="table-wrapper">
@@ -26143,6 +26161,69 @@ const sucursalOptions = useMemo(() => {
       return;
     }
 
+    const applyLocalRejection = (estadoNombre: string) => {
+      setReviewPersonaDetail((prev) =>
+        prev
+          ? {
+              ...prev,
+              estadoId: rechazoEstadoId,
+              estado: estadoNombre,
+              esSolicitud: true,
+              aprobado: false,
+              aprobadoAt: null,
+              aprobadoPor: null,
+              aprobadoPorId: null,
+              aprobadoPorNombre: null,
+            }
+          : prev
+      );
+      setRejectedIds((prev) => {
+        const next = new Set(prev);
+        next.add(reviewPersonaDetail.id);
+        return next;
+      });
+      setBackendSolicitudes((prev) =>
+        prev.map((item) =>
+          item.id === reviewPersonaDetail.id
+            ? {
+                ...item,
+                estadoId: rechazoEstadoId,
+                estado: estadoNombre,
+                esSolicitud: true,
+                aprobado: false,
+                aprobadoAt: null,
+                aprobadoPor: null,
+              }
+            : item
+        )
+      );
+      setLocalSolicitudes((prev) =>
+        prev.map((item) =>
+          item.id === reviewPersonaDetail.id
+            ? {
+                ...item,
+                estadoId: rechazoEstadoId,
+                estado: estadoNombre,
+                esSolicitud: true,
+                aprobado: false,
+                aprobadoAt: null,
+                aprobadoPor: null,
+              }
+            : item
+        )
+      );
+    };
+
+    if (!Number.isFinite(Number(reviewPersonaDetail.id)) || Number(reviewPersonaDetail.id) <= 0) {
+      const fallbackName = rechazoDisplayNameFallback ?? 'Rechazado';
+      applyLocalRejection(fallbackName);
+      setFlash({
+        type: 'success',
+        message: 'Solicitud rechazada correctamente.',
+      });
+      return;
+    }
+
     try {
       setApproveLoading(true);
       setFlash(null);
@@ -26157,6 +26238,16 @@ const sucursalOptions = useMemo(() => {
       });
 
       if (!response.ok) {
+        if (response.status === 404) {
+          const fallbackName = rechazoDisplayNameFallback ?? 'Rechazado';
+          applyLocalRejection(fallbackName);
+          setFlash({
+            type: 'error',
+            message: 'La solicitud no existe en el servidor. Se actualizó el estado local.',
+          });
+          fetchSolicitudes();
+          return;
+        }
         let message = `Error ${response.status}: ${response.statusText}`;
         try {
           const payload = await response.json();
@@ -32328,6 +32419,7 @@ const PersonalEditPage: React.FC = () => {
   const canManagePersonal = useMemo(() => isPersonalEditor(authUser), [authUser]);
   const actorHeaders = useMemo(() => buildActorHeaders(authUser), [authUser]);
   const isReadOnly = userRole === 'operator' || !canManagePersonal;
+  const canEditCbu = userRole === 'admin' || userRole === 'admin2';
   const [detail, setDetail] = useState<PersonalDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -33005,7 +33097,9 @@ const PersonalEditPage: React.FC = () => {
       const cobradorNombre = formValues.cobradorNombre.trim() || null;
       const cobradorEmail = formValues.cobradorEmail.trim() || null;
       const cobradorCuil = formValues.cobradorCuil.trim() || null;
-      const cobradorCbuAlias = formValues.cobradorCbuAlias.trim() || null;
+      const cobradorCbuAlias = canEditCbu
+        ? (formValues.cobradorCbuAlias.trim() || null)
+        : (detail?.cobradorCbuAlias ?? null);
       const hasCobradorFields = Boolean(cobradorNombre || cobradorEmail || cobradorCuil || cobradorCbuAlias);
       const esCobradorFlag = formValues.esCobrador || hasCobradorFields || formValues.perfilValue === 2;
       const combustibleEstado = formValues.combustible ? formValues.combustibleEstado || null : null;
@@ -33013,7 +33107,10 @@ const PersonalEditPage: React.FC = () => {
       const duenoNombre = esCobradorFlag ? cobradorNombre : formValues.duenoNombre.trim() || null;
       const duenoEmail = esCobradorFlag ? cobradorEmail : formValues.duenoEmail.trim() || null;
       const duenoCuilCobrador = esCobradorFlag ? cobradorCuil : formValues.duenoCuilCobrador.trim() || null;
-      const duenoCbuAlias = esCobradorFlag ? cobradorCbuAlias : formValues.duenoCbuAlias.trim() || null;
+      const duenoCbuAlias = esCobradorFlag
+        ? cobradorCbuAlias
+        : (canEditCbu ? (formValues.duenoCbuAlias.trim() || null) : (detail?.duenoCbuAlias ?? null));
+      const cbuAlias = canEditCbu ? (formValues.cbuAlias.trim() || null) : (detail?.cbuAlias ?? null);
 
       const response = await fetch(`${apiBaseUrl}/api/personal/${personaId}`, {
         method: 'PUT',
@@ -33038,7 +33135,7 @@ const PersonalEditPage: React.FC = () => {
           fechaAlta: formValues.fechaAlta || null,
           fechaBaja,
           pago: serializePagoValue(formValues.pago),
-          cbuAlias: formValues.cbuAlias.trim() || null,
+          cbuAlias,
           patente: formValues.patente.trim() || null,
           observacionTarifa: formValues.observacionTarifa.trim() || null,
           observaciones: formValues.observaciones.trim() || null,
@@ -33552,6 +33649,7 @@ const PersonalEditPage: React.FC = () => {
               value={formValues.cbuAlias}
               onChange={(event) => setFormValues((prev) => ({ ...prev, cbuAlias: event.target.value }))}
               placeholder="Ingresar"
+              disabled={isReadOnly || !canEditCbu}
             />
           </label>
           <label className="input-control">
@@ -33684,7 +33782,7 @@ const PersonalEditPage: React.FC = () => {
                   value={formValues.cobradorCbuAlias}
                   onChange={(event) => setFormValues((prev) => ({ ...prev, cobradorCbuAlias: event.target.value }))}
                   placeholder="Ingresar"
-                  disabled={isReadOnly}
+                  disabled={isReadOnly || !canEditCbu}
                 />
               </label>
             </>
@@ -33860,6 +33958,7 @@ const PersonalEditPage: React.FC = () => {
                 value={formValues.duenoCbuAlias}
                 onChange={(event) => setFormValues((prev) => ({ ...prev, duenoCbuAlias: event.target.value }))}
                 placeholder="Ingresar"
+                disabled={isReadOnly || !canEditCbu}
               />
             </label>
             <label className="input-control">

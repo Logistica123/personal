@@ -770,6 +770,8 @@ class PersonalController extends Controller
     public function update(Request $request, Persona $persona): JsonResponse
     {
         $this->ensureCanManagePersonal($request, $persona);
+        $role = strtolower(trim((string) ($request->user()?->role ?? '')));
+        $canEditCbu = in_array($role, ['admin', 'admin2'], true);
 
         $validated = $request->validate([
             'nombres' => ['nullable', 'string', 'max:255'],
@@ -856,15 +858,17 @@ class PersonalController extends Controller
             'cuil' => 'cuil',
             'telefono' => 'telefono',
             'email' => 'email',
-            'cbuAlias' => 'cbu_alias',
             'patente' => 'patente',
             'observacionTarifa' => 'observaciontarifa',
             'observaciones' => 'observaciones',
             'cobradorNombre' => 'cobrador_nombre',
             'cobradorEmail' => 'cobrador_email',
             'cobradorCuil' => 'cobrador_cuil',
-            'cobradorCbuAlias' => 'cobrador_cbu_alias',
         ];
+        if ($canEditCbu) {
+            $stringAssignments['cbuAlias'] = 'cbu_alias';
+            $stringAssignments['cobradorCbuAlias'] = 'cobrador_cbu_alias';
+        }
 
         foreach ($stringAssignments as $inputKey => $attribute) {
             if (array_key_exists($inputKey, $validated)) {
@@ -945,7 +949,9 @@ class PersonalController extends Controller
             $persona->cobrador_nombre = $validated['esCobrador'] ? ($validated['cobradorNombre'] ?? null) : null;
             $persona->cobrador_email = $validated['esCobrador'] ? ($validated['cobradorEmail'] ?? null) : null;
             $persona->cobrador_cuil = $validated['esCobrador'] ? ($validated['cobradorCuil'] ?? null) : null;
-            $persona->cobrador_cbu_alias = $validated['esCobrador'] ? ($validated['cobradorCbuAlias'] ?? null) : null;
+            if ($canEditCbu && array_key_exists('cobradorCbuAlias', $validated)) {
+                $persona->cobrador_cbu_alias = $validated['esCobrador'] ? ($validated['cobradorCbuAlias'] ?? null) : null;
+            }
         }
 
         $persona->save();
@@ -957,7 +963,9 @@ class PersonalController extends Controller
             'telefono' => $validated['duenoTelefono'] ?? null,
             'cuil' => $validated['duenoCuil'] ?? null,
             'cuil_cobrador' => $validated['duenoCuilCobrador'] ?? null,
-            'cbu_alias' => $validated['duenoCbuAlias'] ?? null,
+            'cbu_alias' => $canEditCbu
+                ? ($validated['duenoCbuAlias'] ?? null)
+                : ($persona->dueno?->cbu_alias ?? null),
             'observaciones' => $validated['duenoObservaciones'] ?? null,
         ];
 
