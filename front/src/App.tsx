@@ -26699,7 +26699,11 @@ const handleAdelantoFieldChange =
       setAdelantoSubmitting(true);
       setFlash(null);
 
-      const formSnapshot = { ...adelantoForm, solicitanteId: authUser?.id ?? null };
+      const formSnapshot = {
+        ...adelantoForm,
+        solicitanteId: authUser?.id ?? null,
+        transportista: adelantoForm.transportista || authUser?.name || '',
+      };
       if (isSolicitudPersonalView && (!formSnapshot.destinatarioIds || formSnapshot.destinatarioIds.length === 0)) {
         throw new Error('Seleccioná a quién enviar la solicitud.');
       }
@@ -27824,7 +27828,7 @@ const handleAdelantoFieldChange =
   };
 
   const renderSolicitudesList = () => {
-    const listColSpan = isSolicitudPersonalView ? 13 : 11;
+    const listColSpan = isSolicitudPersonalView ? 11 : 11;
     return (
       <div className="approvals-list">
       <div className="card-header card-header--compact">
@@ -27862,34 +27866,38 @@ const handleAdelantoFieldChange =
               ))}
             </select>
           </label>
-          <label className="filter-field">
-            <span>Cliente</span>
-            <select
-              value={solicitudesClienteFilter}
-              onChange={(event) => setSolicitudesClienteFilter(event.target.value)}
-            >
-              <option value="">Cliente</option>
-              {solicitudesClienteOptions.map((option) => (
-                <option key={option} value={option}>
-                  {option}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="filter-field">
-            <span>Sucursal</span>
-            <select
-              value={solicitudesSucursalFilter}
-              onChange={(event) => setSolicitudesSucursalFilter(event.target.value)}
-            >
-              <option value="">Sucursal</option>
-              {solicitudesSucursalOptions.map((option) => (
-                <option key={option} value={option}>
-                  {option}
-                </option>
-              ))}
-            </select>
-          </label>
+          {!isSolicitudPersonalView ? (
+            <label className="filter-field">
+              <span>Cliente</span>
+              <select
+                value={solicitudesClienteFilter}
+                onChange={(event) => setSolicitudesClienteFilter(event.target.value)}
+              >
+                <option value="">Cliente</option>
+                {solicitudesClienteOptions.map((option) => (
+                  <option key={option} value={option}>
+                    {option}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : null}
+          {!isSolicitudPersonalView ? (
+            <label className="filter-field">
+              <span>Sucursal</span>
+              <select
+                value={solicitudesSucursalFilter}
+                onChange={(event) => setSolicitudesSucursalFilter(event.target.value)}
+              >
+                <option value="">Sucursal</option>
+                {solicitudesSucursalOptions.map((option) => (
+                  <option key={option} value={option}>
+                    {option}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : null}
           <label className="filter-field">
             <span>Agente</span>
             <select
@@ -27959,12 +27967,13 @@ const handleAdelantoFieldChange =
               {isSolicitudPersonalView ? <th>Solicitante</th> : null}
               {isSolicitudPersonalView ? <th>Enviada a</th> : null}
               <th>Perfil</th>
-              <th>Cliente</th>
-              <th>Sucursal</th>
+              {!isSolicitudPersonalView ? <th>Cliente</th> : null}
+              {!isSolicitudPersonalView ? <th>Sucursal</th> : null}
               <th>Agente</th>
               <th>Estado</th>
+              {isSolicitudPersonalView ? <th>Importe</th> : null}
               <th>Creada</th>
-              <th>Fecha alta</th>
+              {!isSolicitudPersonalView ? <th>Fecha alta</th> : null}
               <th>Acciones</th>
             </tr>
           </thead>
@@ -28025,6 +28034,19 @@ const handleAdelantoFieldChange =
                   resolveApproverNames(destinatarioIds) ??
                   registro.agente ??
                   '—';
+                const importeSolicitado = (() => {
+                  if (!isSolicitudPersonalView) {
+                    return null;
+                  }
+                  switch (registro.solicitudTipo) {
+                    case 'adelanto':
+                      return data?.form?.monto ?? null;
+                    case 'prestamo':
+                      return data?.form?.montoSolicitado ?? null;
+                    default:
+                      return null;
+                  }
+                })();
                 return (
                   <tr key={registro.id}>
                     <td>{solicitudTipoLabel}</td>
@@ -28033,10 +28055,11 @@ const handleAdelantoFieldChange =
                     {isSolicitudPersonalView ? <td>{solicitanteLabel}</td> : null}
                     {isSolicitudPersonalView ? <td>{destinatarioLabel}</td> : null}
                     <td>{perfilLabel}</td>
-                    <td>{registro.cliente ?? '—'}</td>
-                    <td>{registro.sucursal ?? '—'}</td>
+                    {!isSolicitudPersonalView ? <td>{registro.cliente ?? '—'}</td> : null}
+                    {!isSolicitudPersonalView ? <td>{registro.sucursal ?? '—'}</td> : null}
                     <td>{registro.agente ?? '—'}</td>
                     <td>{registro.estado ?? '—'}</td>
+                    {isSolicitudPersonalView ? <td>{formatCurrency(importeSolicitado)}</td> : null}
                     <td>
                       {(() => {
                         const created = resolveSolicitudCreated(registro);
@@ -28053,7 +28076,7 @@ const handleAdelantoFieldChange =
                         });
                       })()}
                     </td>
-                    <td>{registro.fechaAlta ?? '—'}</td>
+                    {!isSolicitudPersonalView ? <td>{registro.fechaAlta ?? '—'}</td> : null}
                     <td>
                       <div className="action-buttons">
                         <button
@@ -29689,10 +29712,9 @@ const handleAdelantoFieldChange =
             <span>{isSolicitudPersonalView ? 'Solicitante' : 'Transportista'}</span>
             <input
               type="text"
-              value={isSolicitudPersonalView ? (authUser?.name ?? '') : adelantoForm.transportista}
+              value={adelantoForm.transportista}
               onChange={handleAdelantoFieldChange('transportista')}
               placeholder="Ingresar"
-              disabled={isSolicitudPersonalView}
             />
           </label>
           <label className="input-control">
