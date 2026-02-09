@@ -4936,7 +4936,7 @@ tbody tr:hover {
   border-radius: 1rem;
   padding: 0.9rem 1rem;
   box-shadow: 0 10px 30px rgba(15, 27, 71, 0.08);
-  cursor: grab;
+  user-select: text;
 }
 
 [data-theme='dark'] .workflow-card {
@@ -4955,6 +4955,38 @@ tbody tr:hover {
 
 .workflow-card__title strong {
   font-size: 1rem;
+}
+
+.workflow-card__actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.workflow-card__drag-handle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.5rem;
+  height: 1.5rem;
+  border: none;
+  background: transparent;
+  padding: 0;
+  border-radius: 0.4rem;
+  color: #9fb0d5;
+  cursor: grab;
+  user-select: none;
+  line-height: 1;
+  font-weight: 700;
+  letter-spacing: -0.12rem;
+}
+
+.workflow-card__drag-handle:active {
+  cursor: grabbing;
+}
+
+[data-theme='dark'] .workflow-card__drag-handle {
+  color: #8fa5d1;
 }
 
 .workflow-card__delete {

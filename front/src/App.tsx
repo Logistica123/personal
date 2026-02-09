@@ -23312,25 +23312,35 @@ const WorkflowPage: React.FC = () => {
                   <article
                     key={task.id}
                     className="workflow-card"
-                    draggable
-                    onDragStart={(event) => {
-                      event.dataTransfer.setData('text/plain', String(task.id));
-                    }}
                   >
                     <div className="workflow-card__title">
                       <strong>{task.titulo}</strong>
-                      {canDeleteWorkflowTasks ? (
+                      <div className="workflow-card__actions">
                         <button
                           type="button"
-                          className="workflow-card__delete"
-                          onClick={() => handleDelete(task.id)}
-                          aria-label="Eliminar tarea"
+                          className="workflow-card__drag-handle"
+                          draggable
+                          aria-label="Arrastrar tarea"
+                          title="Arrastrar tarea"
+                          onDragStart={(event) => {
+                            event.dataTransfer.setData('text/plain', String(task.id));
+                          }}
                         >
-                          ×
+                          ⋮⋮
                         </button>
-                      ) : (
-                        <span className="workflow-card__badge">Sin permisos</span>
-                      )}
+                        {canDeleteWorkflowTasks ? (
+                          <button
+                            type="button"
+                            className="workflow-card__delete"
+                            onClick={() => handleDelete(task.id)}
+                            aria-label="Eliminar tarea"
+                          >
+                            ×
+                          </button>
+                        ) : (
+                          <span className="workflow-card__badge">Sin permisos</span>
+                        )}
+                      </div>
                     </div>
                     {task.descripcion ? (
                       <p className="workflow-card__description">{task.descripcion}</p>

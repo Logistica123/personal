@@ -168,10 +168,10 @@ class FuelExtractController extends Controller
                 $liters = $this->normalizeLiters($liters, $price, $amount);
             }
 
-            $hash = strtolower($domainNorm . '|' . $dateRaw . '|' . $amountRaw . '|' . $litersRaw . '|' . $station);
-
             $movementStatus = $status === 'VALID' ? 'IMPORTED' : $status;
-            if ($hash !== '||||' && FuelMovement::query()->where('duplicate_hash', $hash)->exists()) {
+            $legacyHash = $this->buildLegacyDuplicateHash($domainNorm, $dateRaw, $amountRaw, $litersRaw, $station);
+            $hash = $this->buildCanonicalDuplicateHash($domainNorm, $occurredAt, $amount, $liters, $station);
+            if ($this->isDuplicateMovement($hash, $legacyHash, $domainNorm, $occurredAt, $amount, $liters, $station)) {
                 $movementStatus = 'DUPLICATE';
                 $observations = trim($observations . ' Duplicado.');
             }
@@ -806,7 +806,7 @@ class FuelExtractController extends Controller
             }
 
             $stationRaw = $stationIndex !== null ? (string) ($row[$stationIndex] ?? '') : '';
-            $hash = strtolower($domainNorm . '|' . $dateRaw . '|' . $amountRaw . '|' . $litersRaw . '|' . $stationRaw);
+            $hash = $this->buildCanonicalDuplicateHash($domainNorm, $this->parseDate($dateRaw), $amount, $liters, $stationRaw);
             $isDuplicate = $hash !== '||||' && array_key_exists($hash, $seen);
 
             $status = 'VALID';
@@ -995,6 +995,84 @@ class FuelExtractController extends Controller
         } catch (\Throwable $exception) {
             return null;
         }
+    }
+
+    private function buildLegacyDuplicateHash(
+        string $domainNorm,
+        string $dateRaw,
+        string $amountRaw,
+        string $litersRaw,
+        string $stationRaw
+    ): string {
+        return strtolower($domainNorm . '|' . $dateRaw . '|' . $amountRaw . '|' . $litersRaw . '|' . $stationRaw);
+    }
+
+    private function buildCanonicalDuplicateHash(
+        string $domainNorm,
+        ?Carbon $occurredAt,
+        ?float $amount,
+        ?float $liters,
+        ?string $stationRaw
+    ): string {
+        $datePart = $occurredAt?->format('Y-m-d H:i:s') ?? '';
+        $amountPart = $amount !== null ? number_format(round($amount, 2), 2, '.', '') : '';
+        $litersPart = $liters !== null ? number_format(round($liters, 3), 3, '.', '') : '';
+        $stationPart = $this->normalizeStation($stationRaw ?? '');
+
+        return strtolower($domainNorm . '|' . $datePart . '|' . $amountPart . '|' . $litersPart . '|' . $stationPart);
+    }
+
+    private function normalizeStation(string $value): string
+    {
+        $normalized = strtolower(trim($value));
+        $normalized = preg_replace('/\s+/', ' ', $normalized);
+        return $normalized ?? '';
+    }
+
+    private function isDuplicateMovement(
+        string $hash,
+        string $legacyHash,
+        string $domainNorm,
+        ?Carbon $occurredAt,
+        ?float $amount,
+        ?float $liters,
+        ?string $stationRaw
+    ): bool {
+        $hashes = collect([$hash, $legacyHash])
+            ->filter(fn ($value) => $value !== '||||' && $value !== '')
+            ->unique()
+            ->values()
+            ->all();
+        $canCompareByFields = $domainNorm !== '' && $occurredAt && $amount !== null && $liters !== null;
+
+        if (empty($hashes) && ! $canCompareByFields) {
+            return false;
+        }
+
+        $query = FuelMovement::query();
+
+        if (! empty($hashes)) {
+            $query->whereIn('duplicate_hash', $hashes);
+        }
+
+        if ($canCompareByFields) {
+            $station = $this->normalizeStation($stationRaw ?? '');
+            $fieldMatch = function ($inner) use ($domainNorm, $occurredAt, $amount, $liters, $station) {
+                $inner->where('domain_norm', $domainNorm)
+                    ->where('occurred_at', $occurredAt->format('Y-m-d H:i:s'))
+                    ->where('amount', round($amount, 2))
+                    ->where('liters', round($liters, 3))
+                    ->whereRaw("LOWER(TRIM(COALESCE(station, ''))) = ?", [$station]);
+            };
+
+            if (! empty($hashes)) {
+                $query->orWhere($fieldMatch);
+            } else {
+                $query->where($fieldMatch);
+            }
+        }
+
+        return $query->exists();
     }
 
     private function getRowValue(array $row, array $indexes, string $column): string
