@@ -25620,14 +25620,21 @@ const sucursalOptions = useMemo(() => {
         esSolicitud: true,
       };
 
-      const response = await fetch(`${apiBaseUrl}/api/personal/${reviewPersonaDetail.id}`, {
+      const requestInit: RequestInit = {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
           ...actorHeaders,
         },
         body: JSON.stringify(requestPayload),
-      });
+      };
+      let response = await fetch(`${apiBaseUrl}/api/personal/${reviewPersonaDetail.id}`, requestInit);
+      if (response.status === 405) {
+        response = await fetch(`${apiBaseUrl}/api/personal/${reviewPersonaDetail.id}`, {
+          ...requestInit,
+          method: 'POST',
+        });
+      }
 
       if (!response.ok) {
         let message = `Error ${response.status}: ${response.statusText}`;
@@ -26238,14 +26245,21 @@ const sucursalOptions = useMemo(() => {
       setApproveLoading(true);
       setFlash(null);
 
-      const response = await fetch(`${apiBaseUrl}/api/personal/${reviewPersonaDetail.id}`, {
+      const requestInit: RequestInit = {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
           ...actorHeaders,
         },
         body: JSON.stringify({ estadoId: rechazoEstadoId }),
-      });
+      };
+      let response = await fetch(`${apiBaseUrl}/api/personal/${reviewPersonaDetail.id}`, requestInit);
+      if (response.status === 405) {
+        response = await fetch(`${apiBaseUrl}/api/personal/${reviewPersonaDetail.id}`, {
+          ...requestInit,
+          method: 'POST',
+        });
+      }
 
       if (!response.ok) {
         if (response.status === 404) {
@@ -26856,7 +26870,7 @@ const handleAdelantoFieldChange =
   ) => {
     const method = id && id > 0 ? 'PUT' : 'POST';
     const url = id && id > 0 ? `${apiBaseUrl}/api/solicitud-personal/${id}` : `${apiBaseUrl}/api/solicitud-personal`;
-    const response = await fetch(url, {
+    const requestInit: RequestInit = {
       method,
       headers: {
         'Content-Type': 'application/json',
@@ -26872,7 +26886,14 @@ const handleAdelantoFieldChange =
           : [],
         form: payload.form ?? {},
       }),
-    });
+    };
+    let response = await fetch(url, requestInit);
+    if (response.status === 405 && method === 'PUT') {
+      response = await fetch(url, {
+        ...requestInit,
+        method: 'POST',
+      });
+    }
     if (!response.ok) {
       let message = `Error ${response.status}: ${response.statusText}`;
       try {
