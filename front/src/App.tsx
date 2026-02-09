@@ -1561,9 +1561,29 @@ type EditableSucursal = {
 };
 
 const resolveApiBaseUrl = (): string => {
-  const raw = process.env.REACT_APP_API_BASE || 'https://apibasepersonal.distriapp.com.ar';
-  // Evitar /api duplicado si la variable ya viene con el prefijo.
-  return raw.replace(/\/+$/, '').replace(/\/api$/i, '');
+  const remoteFallback = 'https://apibasepersonal.distriapp.com.ar';
+  const sameOriginFallback =
+    typeof window !== 'undefined' && window.location?.origin
+      ? window.location.origin
+      : remoteFallback;
+  const raw = (process.env.REACT_APP_API_BASE ?? '').trim();
+  const candidate = raw.length > 0 ? raw : sameOriginFallback;
+
+  try {
+    const parsed = new URL(candidate, sameOriginFallback);
+    const pathname = parsed.pathname.replace(/\/+$/, '');
+    const looksLikeUiRoute =
+      pathname.toLowerCase().startsWith('/aprobaciones') ||
+      pathname.toLowerCase().startsWith('/solicitud-personal') ||
+      /^\/\d+$/.test(pathname);
+    const normalizedPath = looksLikeUiRoute
+      ? ''
+      : pathname.replace(/\/api$/i, '');
+
+    return `${parsed.origin}${normalizedPath}`;
+  } catch {
+    return sameOriginFallback.replace(/\/+$/, '').replace(/\/api$/i, '');
+  }
 };
 
 const getEstadoBadgeClass = (estado?: string | null) => {
