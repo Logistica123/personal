@@ -1679,7 +1679,41 @@ const installAuthFetchInterceptor = () => {
       normalizedInit.credentials = 'same-origin';
     }
 
-    return originalFetch(input, normalizedInit);
+    let normalizedInput: RequestInfo | URL = input;
+    try {
+      const rawInputUrl =
+        typeof input === 'string'
+          ? input
+          : input instanceof URL
+          ? input.toString()
+          : input.url;
+      const parsed = new URL(rawInputUrl, window.location.origin);
+      const requestMethod = (normalizedInit.method ?? (input instanceof Request ? input.method : 'GET')).toUpperCase();
+
+      if (
+        ['PUT', 'PATCH', 'DELETE'].includes(requestMethod) &&
+        parsed.origin === window.location.origin &&
+        !parsed.pathname.startsWith('/api/')
+      ) {
+        const isApprovalsPath =
+          parsed.pathname.startsWith('/aprobaciones') || parsed.pathname.startsWith('/solicitud-personal');
+        if (isApprovalsPath) {
+          const personaId = parsed.searchParams.get('personaId') ?? parsed.searchParams.get('personalId');
+          if (personaId && /^\d+$/.test(personaId)) {
+            parsed.pathname = `/api/personal/${personaId}`;
+            parsed.search = '';
+            normalizedInput = parsed.toString();
+          } else {
+            parsed.pathname = `/api${parsed.pathname}`;
+            normalizedInput = parsed.toString();
+          }
+        }
+      }
+    } catch {
+      // ignore malformed URL
+    }
+
+    return originalFetch(normalizedInput, normalizedInit);
   };
 };
 
@@ -24028,7 +24062,7 @@ const ApprovalsRequestsPage: React.FC = () => {
   const [reviewDeletingDocumentIds, setReviewDeletingDocumentIds] = useState<Set<number>>(() => new Set());
   const personaIdFromQuery = useMemo(() => {
     const searchParams = new URLSearchParams(location.search);
-    const value = searchParams.get('personaId');
+    const value = searchParams.get('personaId') ?? searchParams.get('personalId');
     return value && value.trim().length > 0 ? value : null;
   }, [location.search]);
   const [altaSubmitting, setAltaSubmitting] = useState(false);
