@@ -17695,13 +17695,23 @@ const LiquidacionesPage: React.FC = () => {
         window.alert('Este personal no tiene patente asociada.');
         return;
       }
+      const selectedRange = resolveFuelRange(liquidacionMonthSelection, liquidacionFortnightSelection);
+      const documentRange = resolveFuelRange(doc.monthKey, doc.fortnightKey);
+      const range = selectedRange ?? documentRange;
+      const url = new URL(`${apiBaseUrl}/api/combustible/consumos`);
+      url.searchParams.set('domain', domain);
+      url.searchParams.set('only_pending', '1');
+      if (range) {
+        url.searchParams.set('date_from', range.from);
+        url.searchParams.set('date_to', range.to);
+      }
       setFuelPreviewLoading(true);
       setFuelPreviewError(null);
       setFuelPreviewMessage(null);
       setFuelPreview(null);
       setFuelSelectionAdjustments([]);
       setFuelAdjustmentError(null);
-      fetch(`${apiBaseUrl}/api/combustible/consumos?domain=${encodeURIComponent(domain)}`, {
+      fetch(url.toString(), {
         credentials: 'include',
       })
         .then(async (response) => {
@@ -17739,8 +17749,8 @@ const LiquidacionesPage: React.FC = () => {
             .filter((value): value is string => Boolean(value))
             .map((value) => value.slice(0, 10))
             .sort();
-          const dateFrom = dateValues[0] ?? '—';
-          const dateTo = dateValues[dateValues.length - 1] ?? '—';
+          const dateFrom = range?.from ?? dateValues[0] ?? '—';
+          const dateTo = range?.to ?? dateValues[dateValues.length - 1] ?? '—';
           setFuelPreview({
             domain,
             dateFrom,
@@ -17759,7 +17769,14 @@ const LiquidacionesPage: React.FC = () => {
           setFuelPreviewLoading(false);
         });
     },
-    [detail?.patente, apiBaseUrl, normalizeDomainValue]
+    [
+      detail?.patente,
+      apiBaseUrl,
+      liquidacionMonthSelection,
+      liquidacionFortnightSelection,
+      normalizeDomainValue,
+      resolveFuelRange,
+    ]
   );
 
   const handleAddFuelSelectionAdjustment = useCallback(() => {
@@ -26007,6 +26024,7 @@ const sucursalOptions = useMemo(() => {
       const response = await fetch(`${apiBaseUrl}/api/personal/${reviewPersonaDetail.id}/aprobar`, {
         method: 'POST',
         headers: {
+          Accept: 'application/json',
           'Content-Type': 'application/json',
           ...actorHeaders,
         },
@@ -26015,19 +26033,15 @@ const sucursalOptions = useMemo(() => {
 
       if (!response.ok) {
         let message = `Error ${response.status}: ${response.statusText}`;
-        try {
-          const payload = await response.json();
-          if (typeof payload?.message === 'string') {
-            message = payload.message;
-          }
-        } catch {
-          // ignore parsing error
+        const payload = (await parseJsonSafe(response).catch(() => null)) as { message?: string } | null;
+        if (typeof payload?.message === 'string') {
+          message = payload.message;
         }
 
         throw new Error(message);
       }
 
-      const payload = (await response.json()) as {
+      const payload = (await parseJsonSafe(response)) as {
         message?: string;
         data?: {
           aprobadoAt?: string | null;
@@ -26443,18 +26457,23 @@ const sucursalOptions = useMemo(() => {
     try {
       setApproveLoading(true);
       setFlash(null);
+      const endpoint = `${apiBaseUrl}/api/personal/${reviewPersonaDetail.id}`;
+      const isJsonResponse = (targetResponse: Response) =>
+        (targetResponse.headers.get('content-type') ?? '').toLowerCase().includes('application/json');
 
       const requestInit: RequestInit = {
         method: 'PUT',
         headers: {
+          Accept: 'application/json',
           'Content-Type': 'application/json',
           ...actorHeaders,
         },
         body: JSON.stringify({ estadoId: rechazoEstadoId }),
       };
-      let response = await fetch(`${apiBaseUrl}/api/personal/${reviewPersonaDetail.id}`, requestInit);
-      if (response.status === 405) {
-        response = await fetch(`${apiBaseUrl}/api/personal/${reviewPersonaDetail.id}`, {
+
+      let response = await fetch(endpoint, requestInit);
+      if (response.status === 405 || (response.ok && !isJsonResponse(response))) {
+        response = await fetch(endpoint, {
           ...requestInit,
           method: 'POST',
         });
@@ -26472,18 +26491,14 @@ const sucursalOptions = useMemo(() => {
           return;
         }
         let message = `Error ${response.status}: ${response.statusText}`;
-        try {
-          const payload = await response.json();
-          if (typeof payload?.message === 'string') {
-            message = payload.message;
-          }
-        } catch {
-          // ignore parse errors
+        const payload = (await parseJsonSafe(response).catch(() => null)) as { message?: string } | null;
+        if (typeof payload?.message === 'string') {
+          message = payload.message;
         }
         throw new Error(message);
       }
 
-      const payload = (await response.json()) as { message?: string; data?: PersonalDetail };
+      const payload = (await parseJsonSafe(response)) as { message?: string; data?: PersonalDetail };
 
       if (payload.data) {
         const chosenNombre =

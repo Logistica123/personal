@@ -129,6 +129,7 @@ class FuelExtractController extends Controller
         foreach ($columns as $index => $name) {
             $columnIndexes[$name] = $index;
         }
+        $preferredDateOrder = $this->resolvePreferredDateOrder($rows, $columnIndexes);
 
         $importedBy = $request->user()?->id;
         $provider = $request->input('provider');
@@ -142,6 +143,7 @@ class FuelExtractController extends Controller
         $ignoredDuplicates = 0;
         $observed = 0;
         $lateCharges = 0;
+        $normalizedSwappedDates = 0;
         $consumptionByDomain = [];
 
         foreach ($rows as $rowIndex => $row) {
@@ -160,17 +162,33 @@ class FuelExtractController extends Controller
             $amountRaw = $this->getRowValue($row, $columnIndexes, 'Importe');
             $priceRaw = $this->getRowValue($row, $columnIndexes, 'Precio/Litro');
 
-            $occurredAt = $this->parseDate($dateRaw);
+            $occurredAt = $this->parseDate($dateRaw, $preferredDateOrder);
             $liters = $this->parseNumber($litersRaw);
             $amount = $this->parseNumber($amountRaw);
             $price = $this->parseNumber($priceRaw);
             if ($liters !== null && $amount !== null) {
                 $liters = $this->normalizeLiters($liters, $price, $amount);
             }
+            $alternateOccurredAt = $this->resolveAlternateAmbiguousDate($dateRaw, $preferredDateOrder, $occurredAt);
 
             $movementStatus = $status === 'VALID' ? 'IMPORTED' : $status;
             $legacyHash = $this->buildLegacyDuplicateHash($domainNorm, $dateRaw, $amountRaw, $litersRaw, $station);
             $hash = $this->buildCanonicalDuplicateHash($domainNorm, $occurredAt, $amount, $liters, $station);
+            $sourceRow = $rowIndex + 2;
+            if ($this->normalizeLegacySwappedDateMovement(
+                $originalName,
+                $sourceRow,
+                $domainNorm,
+                $occurredAt,
+                $alternateOccurredAt,
+                $amount,
+                $liters,
+                $station,
+                $hash
+            )) {
+                $normalizedSwappedDates += 1;
+                continue;
+            }
             if ($this->isDuplicateMovement($hash, $legacyHash, $domainNorm, $occurredAt, $amount, $liters, $station)) {
                 $movementStatus = 'DUPLICATE';
                 $observations = trim($observations . ' Duplicado.');
@@ -223,7 +241,7 @@ class FuelExtractController extends Controller
                 'status' => $movementStatus,
                 'observations' => $observations,
                 'source_file' => $originalName,
-                'source_row' => $rowIndex + 2,
+                'source_row' => $sourceRow,
                 'duplicate_hash' => $hash,
                 'provider' => is_string($provider) ? $provider : null,
                 'format' => is_string($format) ? $format : null,
@@ -266,6 +284,7 @@ class FuelExtractController extends Controller
             'observed' => $observed,
             'duplicates' => $ignoredDuplicates,
             'late_charges' => $lateCharges,
+            'normalized_swapped_dates' => $normalizedSwappedDates,
         ]);
 
         return response()->json([
@@ -276,6 +295,7 @@ class FuelExtractController extends Controller
             'observed' => $observed,
             'duplicates' => $ignoredDuplicates,
             'late' => $lateCharges,
+            'normalized' => $normalizedSwappedDates,
         ]);
     }
 
@@ -751,6 +771,7 @@ class FuelExtractController extends Controller
         foreach ($columns as $index => $name) {
             $columnIndexes[$name] = $index;
         }
+        $preferredDateOrder = $this->resolvePreferredDateOrder($rows, $columnIndexes);
 
         $domainIndex = $columnIndexes['Dominio'] ?? null;
         $dateIndex = $columnIndexes['Fecha'] ?? null;
@@ -779,7 +800,8 @@ class FuelExtractController extends Controller
             }
 
             $dateRaw = $dateIndex !== null ? (string) ($row[$dateIndex] ?? '') : '';
-            $dateValid = $this->isValidDate($dateRaw);
+            $parsedDate = $this->parseDate($dateRaw, $preferredDateOrder);
+            $dateValid = $parsedDate !== null;
             if (!$dateValid) {
                 $errors[] = 'Fecha inválida';
             }
@@ -806,7 +828,7 @@ class FuelExtractController extends Controller
             }
 
             $stationRaw = $stationIndex !== null ? (string) ($row[$stationIndex] ?? '') : '';
-            $hash = $this->buildCanonicalDuplicateHash($domainNorm, $this->parseDate($dateRaw), $amount, $liters, $stationRaw);
+            $hash = $this->buildCanonicalDuplicateHash($domainNorm, $parsedDate, $amount, $liters, $stationRaw);
             $isDuplicate = $hash !== '||||' && array_key_exists($hash, $seen);
 
             $status = 'VALID';
@@ -902,11 +924,6 @@ class FuelExtractController extends Controller
         return $normalized ?? '';
     }
 
-    private function isValidDate(string $value): bool
-    {
-        return $this->parseDate($value) !== null;
-    }
-
     private function parseNumber(string $value): ?float
     {
         $clean = trim($value);
@@ -932,7 +949,7 @@ class FuelExtractController extends Controller
         return (float) $clean;
     }
 
-    private function parseDate(string $value): ?Carbon
+    private function parseDate(string $value, string $preferredOrder = 'dmy'): ?Carbon
     {
         $trimmed = trim($value);
         if ($trimmed === '') {
@@ -942,10 +959,12 @@ class FuelExtractController extends Controller
         if (is_numeric($trimmed)) {
             $serial = (float) $trimmed;
             $base = Carbon::create(1899, 12, 30, 0, 0, 0, 'UTC');
-            return $base->copy()->addDays((int) $serial);
+            $days = (int) floor($serial);
+            $seconds = (int) round(($serial - $days) * 86400);
+            return $base->copy()->addDays($days)->addSeconds($seconds);
         }
 
-        $formats = [
+        $dmyFormats = [
             '!d/m/Y H:i:s',
             '!d/m/Y H:i',
             '!d/m/Y G:i:s',
@@ -956,10 +975,28 @@ class FuelExtractController extends Controller
             '!d-m-Y G:i:s',
             '!d-m-Y G:i',
             '!d-m-Y',
+        ];
+        $mdyFormats = [
+            '!m/d/Y H:i:s',
+            '!m/d/Y H:i',
+            '!m/d/Y G:i:s',
+            '!m/d/Y G:i',
+            '!m/d/Y',
+            '!m-d-Y H:i:s',
+            '!m-d-Y H:i',
+            '!m-d-Y G:i:s',
+            '!m-d-Y G:i',
+            '!m-d-Y',
+        ];
+        $isoFormats = [
             '!Y-m-d H:i:s',
             '!Y-m-d H:i',
             '!Y-m-d',
         ];
+        $formats = $preferredOrder === 'mdy'
+            ? array_merge($mdyFormats, $dmyFormats, $isoFormats)
+            : array_merge($dmyFormats, $mdyFormats, $isoFormats);
+
         foreach ($formats as $format) {
             $date = \DateTime::createFromFormat($format, $trimmed);
             if (! $date) {
@@ -975,7 +1012,7 @@ class FuelExtractController extends Controller
             }
         }
 
-        // If it starts with a numeric date (slashes or dashes), force day-first parsing.
+        // If it starts with a numeric date (slashes or dashes), avoid ambiguous auto-parse.
         if (preg_match('/^\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}/', $trimmed)) {
             return null;
         }
@@ -985,6 +1022,167 @@ class FuelExtractController extends Controller
         } catch (\Throwable $exception) {
             return null;
         }
+    }
+
+    private function resolvePreferredDateOrder(array $rows, array $columnIndexes): string
+    {
+        $dateIndex = $columnIndexes['Fecha'] ?? null;
+        if ($dateIndex === null) {
+            return 'dmy';
+        }
+
+        $dmySignals = 0;
+        $mdySignals = 0;
+
+        foreach ($rows as $row) {
+            $raw = (string) ($row[$dateIndex] ?? '');
+            $signal = $this->inferDateOrderFromRaw($raw);
+            if ($signal === 'dmy') {
+                $dmySignals++;
+            } elseif ($signal === 'mdy') {
+                $mdySignals++;
+            }
+        }
+
+        if ($mdySignals > $dmySignals) {
+            return 'mdy';
+        }
+
+        return 'dmy';
+    }
+
+    private function inferDateOrderFromRaw(string $value): ?string
+    {
+        $trimmed = trim($value);
+        if ($trimmed === '') {
+            return null;
+        }
+
+        if (! preg_match('/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})(?:\D|$)/', $trimmed, $matches)) {
+            return null;
+        }
+
+        $first = (int) $matches[1];
+        $second = (int) $matches[2];
+
+        if ($first > 12 && $second <= 12) {
+            return 'dmy';
+        }
+        if ($second > 12 && $first <= 12) {
+            return 'mdy';
+        }
+
+        return null;
+    }
+
+    private function resolveAlternateAmbiguousDate(string $rawDate, string $preferredOrder, ?Carbon $parsedDate): ?Carbon
+    {
+        if (! $parsedDate) {
+            return null;
+        }
+
+        $trimmed = trim($rawDate);
+        if (! preg_match('/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})(?:\D|$)/', $trimmed, $matches)) {
+            return null;
+        }
+
+        $first = (int) $matches[1];
+        $second = (int) $matches[2];
+        if ($first > 12 || $second > 12) {
+            return null;
+        }
+
+        $alternateOrder = $preferredOrder === 'mdy' ? 'dmy' : 'mdy';
+        $alternateDate = $this->parseDate($trimmed, $alternateOrder);
+        if (! $alternateDate || $alternateDate->equalTo($parsedDate)) {
+            return null;
+        }
+
+        return $alternateDate;
+    }
+
+    private function normalizeLegacySwappedDateMovement(
+        string $sourceFile,
+        int $sourceRow,
+        string $domainNorm,
+        ?Carbon $occurredAt,
+        ?Carbon $alternateOccurredAt,
+        ?float $amount,
+        ?float $liters,
+        ?string $stationRaw,
+        string $hash
+    ): bool {
+        if (
+            $sourceFile === '' ||
+            $domainNorm === '' ||
+            ! $occurredAt ||
+            $amount === null ||
+            $liters === null ||
+            $hash === '||||'
+        ) {
+            return false;
+        }
+
+        $occurredAtValue = $occurredAt->format('Y-m-d H:i:s');
+        $candidateDates = [$occurredAtValue];
+        $alternateValue = null;
+        if ($alternateOccurredAt) {
+            $alternateValue = $alternateOccurredAt->format('Y-m-d H:i:s');
+            if ($alternateValue !== $occurredAtValue) {
+                $candidateDates[] = $alternateValue;
+            }
+        }
+
+        $station = $this->normalizeStation($stationRaw ?? '');
+        $candidates = FuelMovement::query()
+            ->where('source_file', $sourceFile)
+            ->where('source_row', $sourceRow)
+            ->where('domain_norm', $domainNorm)
+            ->where('amount', round($amount, 2))
+            ->where('liters', round($liters, 3))
+            ->whereRaw("LOWER(TRIM(COALESCE(station, ''))) = ?", [$station])
+            ->whereIn('occurred_at', $candidateDates)
+            ->orderByDesc('id')
+            ->get();
+
+        if ($candidates->isEmpty()) {
+            return false;
+        }
+
+        $current = $candidates->first(
+            fn (FuelMovement $movement) => $movement->occurred_at?->format('Y-m-d H:i:s') === $occurredAtValue
+        );
+        $alternate = $alternateValue
+            ? $candidates->first(
+                fn (FuelMovement $movement) => $movement->occurred_at?->format('Y-m-d H:i:s') === $alternateValue
+            )
+            : null;
+        $keep = $current ?? $alternate;
+        if (! $keep) {
+            return false;
+        }
+
+        if (! $current) {
+            $keep->update([
+                'occurred_at' => $occurredAt,
+                'duplicate_hash' => $hash,
+                'status' => $keep->status === 'DUPLICATE' ? 'OBSERVED' : $keep->status,
+                'observations' => trim((string) $keep->observations . ' Fecha normalizada automáticamente.'),
+            ]);
+        } elseif ($keep->duplicate_hash !== $hash) {
+            $keep->update(['duplicate_hash' => $hash]);
+        }
+
+        $toDeleteIds = $candidates
+            ->pluck('id')
+            ->filter(fn (int $id) => $id !== $keep->id)
+            ->values()
+            ->all();
+        if (! empty($toDeleteIds)) {
+            FuelMovement::query()->whereIn('id', $toDeleteIds)->delete();
+        }
+
+        return true;
     }
 
     private function buildLegacyDuplicateHash(
