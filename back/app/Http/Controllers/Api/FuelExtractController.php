@@ -904,34 +904,7 @@ class FuelExtractController extends Controller
 
     private function isValidDate(string $value): bool
     {
-        $trimmed = trim($value);
-        if ($trimmed === '') {
-            return false;
-        }
-
-        if (strtotime($trimmed) !== false) {
-            return true;
-        }
-
-        $formats = [
-            'd/m/Y',
-            'd/m/Y H:i',
-            'd/m/Y H:i:s',
-            'd-m-Y',
-            'd-m-Y H:i',
-            'd-m-Y H:i:s',
-            'Y-m-d',
-            'Y-m-d H:i',
-            'Y-m-d H:i:s',
-        ];
-        foreach ($formats as $format) {
-            $date = \DateTime::createFromFormat($format, $trimmed);
-            if ($date && $date->format($format) === $trimmed) {
-                return true;
-            }
-        }
-
-        return false;
+        return $this->parseDate($value) !== null;
     }
 
     private function parseNumber(string $value): ?float
@@ -973,21 +946,38 @@ class FuelExtractController extends Controller
         }
 
         $formats = [
-            'd/m/Y',
-            'd/m/Y H:i',
-            'd/m/Y H:i:s',
-            'd-m-Y',
-            'd-m-Y H:i',
-            'd-m-Y H:i:s',
-            'Y-m-d',
-            'Y-m-d H:i',
-            'Y-m-d H:i:s',
+            '!d/m/Y H:i:s',
+            '!d/m/Y H:i',
+            '!d/m/Y G:i:s',
+            '!d/m/Y G:i',
+            '!d/m/Y',
+            '!d-m-Y H:i:s',
+            '!d-m-Y H:i',
+            '!d-m-Y G:i:s',
+            '!d-m-Y G:i',
+            '!d-m-Y',
+            '!Y-m-d H:i:s',
+            '!Y-m-d H:i',
+            '!Y-m-d',
         ];
         foreach ($formats as $format) {
             $date = \DateTime::createFromFormat($format, $trimmed);
-            if ($date && $date->format($format) === $trimmed) {
+            if (! $date) {
+                continue;
+            }
+            $errors = \DateTime::getLastErrors();
+            if (is_array($errors) && (($errors['warning_count'] ?? 0) > 0 || ($errors['error_count'] ?? 0) > 0)) {
+                continue;
+            }
+            $normalizedFormat = ltrim($format, '!');
+            if ($date->format($normalizedFormat) === $trimmed) {
                 return Carbon::instance($date);
             }
+        }
+
+        // If it starts with a numeric date (slashes or dashes), force day-first parsing.
+        if (preg_match('/^\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}/', $trimmed)) {
+            return null;
         }
 
         try {

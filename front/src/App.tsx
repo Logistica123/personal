@@ -693,6 +693,7 @@ const FORTNIGHT_FILTER_OPTIONS = [
 ];
 
 const DOCUMENT_ALERT_DAYS = 30;
+const LIQUIDACIONES_PERIOD_SELECTION_STORAGE_KEY = 'liquidaciones.periodSelection';
 
 const PERFIL_DISPLAY_LABELS: Record<number, string> = {
   1: 'Transportista',
@@ -706,6 +707,48 @@ const getPerfilDisplayLabel = (value?: number | null, fallback?: string | null):
     return PERFIL_DISPLAY_LABELS[value];
   }
   return fallback ?? '';
+};
+
+const resolveCurrentMonthSelection = (): string => {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+};
+
+const resolveCurrentFortnightSelection = (): 'Q1' | 'Q2' => {
+  const now = new Date();
+  return now.getDate() <= 15 ? 'Q1' : 'Q2';
+};
+
+const readStoredLiquidacionesPeriodSelection = (): { month: string; fortnight: string } => {
+  const fallback = {
+    month: resolveCurrentMonthSelection(),
+    fortnight: resolveCurrentFortnightSelection(),
+  };
+
+  if (typeof window === 'undefined') {
+    return fallback;
+  }
+
+  try {
+    const raw = window.localStorage.getItem(LIQUIDACIONES_PERIOD_SELECTION_STORAGE_KEY);
+    if (!raw) {
+      return fallback;
+    }
+
+    const parsed = JSON.parse(raw) as { month?: unknown; fortnight?: unknown };
+    const month =
+      typeof parsed.month === 'string' && /^\d{4}-\d{2}$/.test(parsed.month)
+        ? parsed.month
+        : fallback.month;
+    const fortnight =
+      typeof parsed.fortnight === 'string' && ['Q1', 'Q2', 'MONTHLY'].includes(parsed.fortnight)
+        ? parsed.fortnight
+        : fallback.fortnight;
+
+    return { month, fortnight };
+  } catch {
+    return fallback;
+  }
 };
 
 type AltaAttachmentItem = {
@@ -2568,13 +2611,47 @@ const formatNumber = (value: string | number | null | undefined): string => {
   return numberFormatter.format(numeric);
 };
 
+const parseDateTimeValue = (value: string): Date | null => {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  const dayFirstMatch = trimmed.match(
+    /^(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})(?:[ T](\d{1,2}):(\d{2})(?::(\d{2}))?)?$/
+  );
+  if (dayFirstMatch) {
+    const day = Number(dayFirstMatch[1]);
+    const month = Number(dayFirstMatch[2]);
+    const yearRaw = Number(dayFirstMatch[3]);
+    const hour = Number(dayFirstMatch[4] ?? '0');
+    const minute = Number(dayFirstMatch[5] ?? '0');
+    const second = Number(dayFirstMatch[6] ?? '0');
+    const year = yearRaw < 100 ? 2000 + yearRaw : yearRaw;
+    const parsed = new Date(year, month - 1, day, hour, minute, second);
+    if (
+      parsed.getFullYear() === year &&
+      parsed.getMonth() === month - 1 &&
+      parsed.getDate() === day &&
+      parsed.getHours() === hour &&
+      parsed.getMinutes() === minute &&
+      parsed.getSeconds() === second
+    ) {
+      return parsed;
+    }
+  }
+
+  const normalized = trimmed.replace(' ', 'T');
+  const parsed = new Date(normalized);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+};
+
 const formatDateTime = (value: string | null | undefined): string => {
   if (!value) {
     return '—';
   }
-  const normalized = value.replace(' ', 'T');
-  const parsed = new Date(normalized);
-  if (Number.isNaN(parsed.getTime())) {
+  const parsed = parseDateTimeValue(value);
+  if (!parsed) {
     return value;
   }
   return parsed.toLocaleDateString('es-AR', {
@@ -17042,8 +17119,12 @@ const LiquidacionesPage: React.FC = () => {
   const [liquidacionFortnightFilter, setLiquidacionFortnightFilter] = useState('');
   const [liquidacionYearFilter, setLiquidacionYearFilter] = useState('');
   const [liquidacionImporteManual, setLiquidacionImporteManual] = useState('');
-  const [liquidacionFortnightSelection, setLiquidacionFortnightSelection] = useState('');
-  const [liquidacionMonthSelection, setLiquidacionMonthSelection] = useState('');
+  const [liquidacionFortnightSelection, setLiquidacionFortnightSelection] = useState(
+    () => readStoredLiquidacionesPeriodSelection().fortnight
+  );
+  const [liquidacionMonthSelection, setLiquidacionMonthSelection] = useState(
+    () => readStoredLiquidacionesPeriodSelection().month
+  );
   const [selectedPagadoIds, setSelectedPagadoIds] = useState<Set<number>>(() => new Set());
   const [selectedListPagadoIds, setSelectedListPagadoIds] = useState<Set<number>>(() => new Set());
   const [selectedPersonaId, setSelectedPersonaId] = useState<number | null>(personaIdFromRoute);
@@ -17151,7 +17232,7 @@ const LiquidacionesPage: React.FC = () => {
   } | null>(null);
   const [fuelSelection, setFuelSelection] = useState<Set<number>>(() => new Set());
   const [fuelAdjustmentType, setFuelAdjustmentType] = useState<
-    'ajuste_favor' | 'cuota_combustible' | 'pendiente' | 'adelantos_prestamos' | 'credito' | 'debito'
+    'ajuste_favor' | 'cuota_combustible' | 'pendiente' | 'adelantos_prestamos' | 'credito' | 'debito' | 'poliza'
   >('ajuste_favor');
   const [fuelAdjustmentAmount, setFuelAdjustmentAmount] = useState('');
   const [fuelAdjustmentNote, setFuelAdjustmentNote] = useState('');
@@ -17166,6 +17247,7 @@ const LiquidacionesPage: React.FC = () => {
     adelantos_prestamos: 'Adelantos/Préstamos',
     credito: 'Crédito',
     debito: 'Débito',
+    poliza: 'Póliza',
   };
   const fuelSelectedItems = useMemo(() => {
     if (!fuelPreview) {
@@ -17213,7 +17295,7 @@ const LiquidacionesPage: React.FC = () => {
     if (!fuelSelectionAdjustments.length) {
       return 0;
     }
-    const negativeTypes = new Set(['pendiente', 'cuota_combustible', 'adelantos_prestamos', 'debito']);
+    const negativeTypes = new Set(['pendiente', 'cuota_combustible', 'adelantos_prestamos', 'debito', 'poliza']);
     return fuelSelectionAdjustments.reduce((sum, adj) => {
       if (!Number.isFinite(adj.amount)) {
         return sum;
@@ -17379,6 +17461,20 @@ const LiquidacionesPage: React.FC = () => {
     }
   }, [showPasteModal]);
 
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(
+        LIQUIDACIONES_PERIOD_SELECTION_STORAGE_KEY,
+        JSON.stringify({
+          month: liquidacionMonthSelection,
+          fortnight: liquidacionFortnightSelection,
+        })
+      );
+    } catch {
+      // ignore storage failures (private mode, quota, etc)
+    }
+  }, [liquidacionMonthSelection, liquidacionFortnightSelection]);
+
   const selectedDocumentType = useMemo(() => {
     if (!selectedDocumentTypeId) {
       return null;
@@ -17392,9 +17488,25 @@ const LiquidacionesPage: React.FC = () => {
   const liquidacionTypeOptions = useMemo(() => {
     return documentTypes.filter((tipo) => (tipo.nombre ?? '').toLowerCase().includes('liquid'));
   }, [documentTypes]);
-  const liquidacionType = useMemo(() => {
-    return liquidacionTypeOptions[0] ?? null;
+  const defaultLiquidacionType = useMemo(() => {
+    if (liquidacionTypeOptions.length === 0) {
+      return null;
+    }
+
+    const normalize = (value: string) =>
+      value
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/[_\s]+/g, ' ')
+        .trim()
+        .toLowerCase();
+
+    const exact = liquidacionTypeOptions.find((tipo) => normalize(tipo.nombre ?? '') === 'liquidacion');
+    return exact ?? liquidacionTypeOptions[0];
   }, [liquidacionTypeOptions]);
+  const liquidacionType = useMemo(() => {
+    return defaultLiquidacionType ?? null;
+  }, [defaultLiquidacionType]);
   const fuelInvoiceType = useMemo(() => {
     return documentTypes.find((tipo) => (tipo.nombre ?? '').toLowerCase().includes('combustible')) ?? null;
   }, [documentTypes]);
@@ -18188,10 +18300,12 @@ const LiquidacionesPage: React.FC = () => {
       return;
     }
 
-    if (liquidacionType) {
-      const typeId = String(liquidacionType.id);
-      if (typeId !== selectedDocumentTypeId) {
-        setSelectedDocumentTypeId(typeId);
+    if (defaultLiquidacionType) {
+      const isSelectedLiquidacionType = liquidacionTypeOptions.some(
+        (tipo) => String(tipo.id) === selectedDocumentTypeId
+      );
+      if (!isSelectedLiquidacionType) {
+        setSelectedDocumentTypeId(String(defaultLiquidacionType.id));
       }
       return;
     }
@@ -18200,7 +18314,7 @@ const LiquidacionesPage: React.FC = () => {
     if (!alreadySelected) {
       setSelectedDocumentTypeId(String(documentTypes[0].id));
     }
-  }, [documentTypes, liquidacionType, selectedDocumentTypeId]);
+  }, [defaultLiquidacionType, documentTypes, liquidacionTypeOptions, selectedDocumentTypeId]);
 
   const perfilNames: Record<number, string> = useMemo(
     () => ({
@@ -19241,7 +19355,6 @@ const LiquidacionesPage: React.FC = () => {
       }
       return null;
     });
-    setLiquidacionFortnightSelection('');
     pendingPreviewUrlsRef.current = [];
     closePreviewModal();
   }, [closePreviewModal]);
@@ -19261,8 +19374,7 @@ const LiquidacionesPage: React.FC = () => {
       }
 
     const tipo = selectedDocumentType;
-
-    const effectiveTypeId = liquidacionType ? liquidacionType.id : Number(selectedDocumentTypeId);
+    const effectiveTypeId = Number(selectedDocumentTypeId);
     if (!effectiveTypeId || Number.isNaN(effectiveTypeId)) {
       return { ok: false, message: 'No se pudo determinar el tipo de documento para la liquidación.' };
     }
@@ -19278,7 +19390,7 @@ const LiquidacionesPage: React.FC = () => {
       id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
       file,
       typeId: effectiveTypeId,
-      typeName: (liquidacionType ?? tipo)?.nombre ?? null,
+      typeName: tipo?.nombre ?? null,
       fechaVencimiento,
       previewUrl: createImagePreviewUrl(file),
     }));
@@ -19290,7 +19402,6 @@ const LiquidacionesPage: React.FC = () => {
       selectedDocumentTypeId,
       selectedDocumentType,
       documentExpiry,
-      liquidacionType,
       resolveFilteredTargetDate,
     ]
   );
@@ -19364,6 +19475,38 @@ const LiquidacionesPage: React.FC = () => {
 
     event.target.value = '';
   };
+
+  const handlePendingFilesDragOver = useCallback((event: React.DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    event.dataTransfer.dropEffect = 'copy';
+  }, []);
+
+  const handlePendingFilesDrop = useCallback(
+    (event: React.DragEvent<HTMLDivElement>) => {
+      event.preventDefault();
+      event.stopPropagation();
+
+      const files = Array.from(event.dataTransfer.files ?? []);
+      if (files.length === 0) {
+        return;
+      }
+
+      const result = prepareUploadsFromFiles(files);
+      if (!result.ok) {
+        setUploadStatus({ type: 'error', message: result.message });
+        return;
+      }
+
+      setPendingUploads((prev) => [...prev, ...result.uploads]);
+      setUploadStatus(null);
+
+      if (!selectedDocumentType?.vence) {
+        setDocumentExpiry('');
+      }
+    },
+    [prepareUploadsFromFiles, selectedDocumentType?.vence]
+  );
 
   const handleFuelFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
     const files = event.target.files;
@@ -19758,7 +19901,7 @@ const LiquidacionesPage: React.FC = () => {
     }
 
     if (pendingUploads.length > 0 && !liquidacionFortnightSelection) {
-      setUploadStatus({ type: 'error', message: 'Seleccioná si es primera o segunda quincena.' });
+      setUploadStatus({ type: 'error', message: 'Seleccioná quincena o mes completo.' });
       return;
     }
 
@@ -19949,8 +20092,6 @@ const LiquidacionesPage: React.FC = () => {
       setUploadStatus(validationStatus ?? { type: 'success', message: 'Liquidaciones cargadas correctamente.' });
       clearPendingUploads();
       setDocumentExpiry('');
-      setLiquidacionFortnightSelection('');
-      setLiquidacionMonthSelection('');
       refreshPersonaDetail();
     } catch (err) {
       setUploadStatus({ type: 'error', message: (err as Error).message ?? 'No se pudieron subir los archivos.' });
@@ -19966,7 +20107,7 @@ const LiquidacionesPage: React.FC = () => {
     }
 
     if (!liquidacionFortnightSelection) {
-      setUploadStatus({ type: 'error', message: 'Seleccioná si es primera o segunda quincena.' });
+      setUploadStatus({ type: 'error', message: 'Seleccioná quincena o mes completo.' });
       return;
     }
 
@@ -20104,8 +20245,6 @@ const LiquidacionesPage: React.FC = () => {
       }
       clearPendingUploads();
       setDocumentExpiry('');
-      setLiquidacionFortnightSelection('');
-      setLiquidacionMonthSelection('');
       refreshPersonaDetail();
     } catch (err) {
       setUploadStatus({ type: 'error', message: (err as Error).message ?? 'No se pudieron guardar las liquidaciones.' });
@@ -21015,6 +21154,7 @@ const LiquidacionesPage: React.FC = () => {
               onChange={(event) => setLiquidacionFortnightSelection(event.target.value)}
             >
               <option value="">Seleccionar</option>
+              <option value="MONTHLY">Mes completo</option>
               <option value="Q1">Primera quincena</option>
               <option value="Q2">Segunda quincena</option>
             </select>
@@ -21034,7 +21174,12 @@ const LiquidacionesPage: React.FC = () => {
           <p className="form-info form-info--error">{documentTypesError}</p>
         ) : null}
 
-        <div className="upload-dropzone" role="presentation">
+        <div
+          className="upload-dropzone"
+          role="presentation"
+          onDragOver={handlePendingFilesDragOver}
+          onDrop={handlePendingFilesDrop}
+        >
           <div className="upload-dropzone__icon">📄</div>
           <p>Arrastra y suelta liquidaciones aquí</p>
           <label className="secondary-action" style={{ cursor: 'pointer' }}>
@@ -21101,7 +21246,7 @@ const LiquidacionesPage: React.FC = () => {
           </header>
           <div className="card-body">
             <p className="form-info">
-              Sumá o restá importes antes de aplicar el descuento. Pendiente, Cuota combustible y Adelantos/Préstamos restan.
+              Sumá o restá importes antes de aplicar el descuento. Pendiente, Cuota combustible, Adelantos/Préstamos y Póliza restan.
             </p>
             <div className="form-grid">
               <label className="input-control">

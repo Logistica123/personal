@@ -2237,7 +2237,7 @@ class PersonalController extends Controller
 
     protected function determineFortnightKey(Archivo $document, Carbon $date): string
     {
-        if (in_array($document->fortnight_key ?? null, ['Q1', 'Q2'], true)) {
+        if (in_array($document->fortnight_key ?? null, ['Q1', 'Q2', 'MONTHLY'], true)) {
             return $document->fortnight_key;
         }
 

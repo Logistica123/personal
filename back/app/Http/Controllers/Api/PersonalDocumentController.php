@@ -255,7 +255,7 @@ class PersonalDocumentController extends Controller
 
     public function store(Request $request, Persona $persona): JsonResponse
     {
-        if ($request->boolean('esLiquidacion')) {
+        if ($request->boolean('esLiquidacion') && ! $request->filled('tipoArchivoId')) {
             $liquidacionType = FileType::query()->firstOrCreate(
                 ['nombre' => 'Liquidación'],
                 ['vence' => false]
@@ -282,7 +282,7 @@ class PersonalDocumentController extends Controller
             'nombre' => ['nullable', 'string'],
             'tipoArchivoId' => ['required', 'integer', 'exists:fyle_types,id'],
             'fechaVencimiento' => ['nullable', 'date'],
-            'fortnightKey' => ['nullable', 'in:Q1,Q2'],
+            'fortnightKey' => ['nullable', 'in:Q1,Q2,MONTHLY'],
             'monthKey' => ['nullable', 'date_format:Y-m'],
             'importeCombustible' => ['nullable', 'numeric', 'min:0'],
             'importeFacturar' => ['nullable', 'numeric', 'min:0'],
@@ -619,7 +619,7 @@ class PersonalDocumentController extends Controller
             abort(404);
         }
 
-        if ($request->boolean('esLiquidacion')) {
+        if ($request->boolean('esLiquidacion') && ! $request->filled('tipoArchivoId')) {
             $liquidacionType = FileType::query()->firstOrCreate(
                 ['nombre' => 'Liquidación'],
                 ['vence' => false]
@@ -1547,7 +1547,7 @@ class PersonalDocumentController extends Controller
 
         $validated = $request->validate([
             'adjustments' => ['required', 'array', 'min:1'],
-            'adjustments.*.type' => ['required', 'in:credito,debito,ajuste_favor,cuota_combustible,pendiente,adelantos_prestamos'],
+            'adjustments.*.type' => ['required', 'in:credito,debito,ajuste_favor,cuota_combustible,pendiente,adelantos_prestamos,poliza'],
             'adjustments.*.amount' => ['required', 'numeric', 'min:0.01'],
             'adjustments.*.note' => ['nullable', 'string', 'max:500'],
         ]);
@@ -1560,7 +1560,7 @@ class PersonalDocumentController extends Controller
         $created = [];
         $directory = $documento->carpeta ?: ('personal/' . $persona->id);
         $disk = $documento->disk ?: 'public';
-        $negativeTypes = ['debito', 'pendiente', 'cuota_combustible', 'adelantos_prestamos'];
+        $negativeTypes = ['debito', 'pendiente', 'cuota_combustible', 'adelantos_prestamos', 'poliza'];
 
         foreach ($validated['adjustments'] as $adjustment) {
             $amount = (float) $adjustment['amount'];
@@ -1573,6 +1573,7 @@ class PersonalDocumentController extends Controller
                 'pendiente' => 'Pendiente',
                 'adelantos_prestamos' => 'Adelantos/Préstamos',
                 'debito' => 'Débito',
+                'poliza' => 'Póliza',
                 default => 'Ajuste a favor',
             };
             $note = trim((string) ($adjustment['note'] ?? ''));
