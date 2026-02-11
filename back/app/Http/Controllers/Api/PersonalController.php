@@ -816,14 +816,20 @@ class PersonalController extends Controller
         ]);
 
         $targetEstadoId = array_key_exists('estadoId', $validated) ? $validated['estadoId'] : $persona->estado_id;
-        $estadoNombre = '';
+        $targetEstadoNombre = '';
         if ($targetEstadoId) {
             $estado = Estado::query()->find($targetEstadoId);
-            $estadoNombre = $estado?->nombre ?? '';
+            $targetEstadoNombre = $estado?->nombre ?? '';
         } else {
-            $estadoNombre = $persona->estado?->nombre ?? '';
+            $targetEstadoNombre = $persona->estado?->nombre ?? '';
         }
-        if (Str::contains(Str::lower($estadoNombre), 'baja') && empty($validated['fechaBaja'])) {
+        $currentEstadoNombre = (string) ($persona->estado?->nombre ?? '');
+        $isTargetBaja = Str::contains(Str::lower($targetEstadoNombre), 'baja');
+        $isCurrentBaja = Str::contains(Str::lower($currentEstadoNombre), 'baja');
+        $isCurrentActivo = Str::contains(Str::lower($currentEstadoNombre), 'activo') || (bool) $persona->aprobado;
+        $requiresFechaBaja = $isTargetBaja && ! $isCurrentBaja && $isCurrentActivo;
+
+        if ($requiresFechaBaja && empty($validated['fechaBaja'])) {
             throw ValidationException::withMessages([
                 'fechaBaja' => 'La fecha de baja es obligatoria cuando el estado es baja.',
             ]);
