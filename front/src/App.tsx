@@ -3061,7 +3061,14 @@ const DashboardLayout: React.FC<{
       return 'todos';
     }
     const params = new URLSearchParams(location.search);
-    return (params.get('estado') ?? 'todos').toLowerCase();
+    const raw = (params.get('estado') ?? 'todos').toLowerCase();
+    if (raw === 'sin estado') {
+      return 'sin_estado';
+    }
+    if (raw === 'no citado' || raw === 'no sitado') {
+      return 'no_citado';
+    }
+    return raw;
   }, [isPersonalListRoute, location.search]);
   const canAccessLiquidacionesGroup = useMemo(
     () =>
@@ -4169,6 +4176,7 @@ const DashboardLayout: React.FC<{
                     { value: 'activo', label: 'Activos' },
                     { value: 'baja', label: 'Baja' },
                     { value: 'suspendido', label: 'Suspendido' },
+                    { value: 'no_citado', label: 'No citado' },
                     { value: 'sin_estado', label: 'Sin estado' },
                   ].map((item) => (
                     <button
@@ -5991,12 +5999,14 @@ const DashboardPage: React.FC<{
     activo: number;
     baja: number;
     suspendido: number;
+    noCitado: number;
     otros: number;
     total: number;
   }>({
     activo: 0,
     baja: 0,
     suspendido: 0,
+    noCitado: 0,
     otros: 0,
     total: 0,
   });
@@ -6085,6 +6095,22 @@ const DashboardPage: React.FC<{
   const [reclamoStats, setReclamoStats] = useState({ total: 0, resueltos: 0, rechazados: 0 });
   const [reclamoStatsLoading, setReclamoStatsLoading] = useState(false);
   const [reclamoStatsError, setReclamoStatsError] = useState<string | null>(null);
+  const normalizeEstadoForStats = useCallback((estado: string | null | undefined): string => {
+    return (estado ?? '')
+      .trim()
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '');
+  }, []);
+
+  const isNoCitadoEstadoForStats = useCallback(
+    (estado: string | null | undefined): boolean => {
+      const normalized = normalizeEstadoForStats(estado);
+      return normalized.includes('no citado') || normalized.includes('no sitado');
+    },
+    [normalizeEstadoForStats]
+  );
+
   const filterPersonalRecords = useCallback(
     (data: PersonalRecord[], clienteFilter: string, estadoFilter: string, agenteFilter: string) =>
       data.filter((registro) => {
@@ -6095,8 +6121,17 @@ const DashboardPage: React.FC<{
           return false;
         }
         if (estadoFilter) {
-          const estado = (registro.estado ?? '').trim().toLowerCase();
-          if (estado !== estadoFilter.trim().toLowerCase()) {
+          const normalizedFilter = normalizeEstadoForStats(estadoFilter);
+          const estado = normalizeEstadoForStats(registro.estado);
+          const filterNoCitado =
+            normalizedFilter === 'no_citado' ||
+            normalizedFilter === 'no citado' ||
+            normalizedFilter === 'no sitado';
+          if (filterNoCitado) {
+            if (!isNoCitadoEstadoForStats(registro.estado)) {
+              return false;
+            }
+          } else if (estado !== normalizedFilter) {
             return false;
           }
         }
@@ -6105,14 +6140,16 @@ const DashboardPage: React.FC<{
         }
         return true;
       }),
-    []
+    [isNoCitadoEstadoForStats, normalizeEstadoForStats]
   );
 
   const computePersonalStats = useCallback((data: PersonalRecord[]) => {
     const stats = data.reduce(
       (acc, registro) => {
-        const estado = (registro.estado ?? '').trim().toLowerCase();
-        if (estado.includes('activo')) {
+        const estado = normalizeEstadoForStats(registro.estado);
+        if (isNoCitadoEstadoForStats(registro.estado)) {
+          acc.noCitado += 1;
+        } else if (estado.includes('activo')) {
           acc.activo += 1;
         } else if (estado.includes('baja')) {
           acc.baja += 1;
@@ -6123,11 +6160,11 @@ const DashboardPage: React.FC<{
         }
         return acc;
       },
-      { activo: 0, baja: 0, suspendido: 0, otros: 0, total: 0 }
+      { activo: 0, baja: 0, suspendido: 0, noCitado: 0, otros: 0, total: 0 }
     );
-    stats.total = stats.activo + stats.baja + stats.suspendido + stats.otros;
+    stats.total = stats.activo + stats.baja + stats.suspendido + stats.noCitado + stats.otros;
     return stats;
-  }, []);
+  }, [isNoCitadoEstadoForStats, normalizeEstadoForStats]);
 
   const fetchPersonalStats = useCallback(
     async ({ signal, silent }: { signal?: AbortSignal; silent?: boolean } = {}) => {
@@ -8123,7 +8160,7 @@ const DashboardPage: React.FC<{
 
           {!monitorMode || monitorSummaryActive ? (
             <div className={`summary-panel${monitorMode ? ' monitor-summary' : ''}`}>
-              <div className="summary-panel__header">
+              <div className="summary-panel__header summary-panel__header--radar">
                 <div>
                   <h3>Radar de personal</h3>
                   <p>Filtrá por cliente, estado o agente para ver los totales y cortes por cliente.</p>
@@ -8184,8 +8221,14 @@ const DashboardPage: React.FC<{
                     {statsLoading ? '—' : personalStats.suspendido}
                   </strong>
                 </div>
+                <div className="summary-card summary-card--neutral">
+                  <span className="summary-card__label">No citado</span>
+                  <strong className="summary-card__value">
+                    {statsLoading ? '—' : personalStats.noCitado}
+                  </strong>
+                </div>
                 {personalStats.otros > 0 ? (
-                  <div className="summary-card summary-card--neutral">
+                  <div className="summary-card summary-card--muted">
                     <span className="summary-card__label">Sin estado</span>
                     <strong className="summary-card__value">
                       {statsLoading ? '—' : personalStats.otros}
@@ -8223,7 +8266,9 @@ const DashboardPage: React.FC<{
                         <header>
                           <h4>{clienteNombre}</h4>
                           <span>
-                            {counts.total} en total{counts.otros > 0 ? ` · ${counts.otros} sin estado` : ''}
+                            {counts.total} en total
+                            {counts.noCitado > 0 ? ` · ${counts.noCitado} no citado` : ''}
+                            {counts.otros > 0 ? ` · ${counts.otros} sin estado` : ''}
                           </span>
                         </header>
                         <div className="client-card__stats">
@@ -8238,6 +8283,10 @@ const DashboardPage: React.FC<{
                           <div>
                             <small title="Suspendido">Susp.</small>
                             <strong>{counts.suspendido}</strong>
+                          </div>
+                          <div>
+                            <small>No citado</small>
+                            <strong>{counts.noCitado}</strong>
                           </div>
                         </div>
                       </div>
@@ -8442,6 +8491,7 @@ const DashboardPage: React.FC<{
                           <h4>{member.name}</h4>
                           <span>
                             {stats.total} en total
+                            {stats.noCitado > 0 ? ` · ${stats.noCitado} no citado` : ''}
                             {stats.otros > 0 ? ` · ${stats.otros} sin estado` : ''}
                           </span>
                         </header>
@@ -8458,6 +8508,10 @@ const DashboardPage: React.FC<{
                             <small>Suspendido</small>
                             <strong>{stats.suspendido}</strong>
                           </div>
+                          <div>
+                            <small>No citado</small>
+                            <strong>{stats.noCitado}</strong>
+                          </div>
                         </div>
                       </div>
                     ))}
@@ -8469,7 +8523,9 @@ const DashboardPage: React.FC<{
                         <header>
                           <h4>{clienteNombre}</h4>
                           <span>
-                            {stats.total} en total{stats.otros > 0 ? ` · ${stats.otros} sin estado` : ''}
+                            {stats.total} en total
+                            {stats.noCitado > 0 ? ` · ${stats.noCitado} no citado` : ''}
+                            {stats.otros > 0 ? ` · ${stats.otros} sin estado` : ''}
                           </span>
                         </header>
                         <div className="client-card__stats">
@@ -8484,6 +8540,10 @@ const DashboardPage: React.FC<{
                           <div>
                             <small>Suspendido</small>
                             <strong>{stats.suspendido}</strong>
+                          </div>
+                          <div>
+                            <small>No citado</small>
+                            <strong>{stats.noCitado}</strong>
                           </div>
                         </div>
                       </div>
@@ -12026,6 +12086,15 @@ const PersonalPage: React.FC = () => {
   const [docStatusFilter, setDocStatusFilter] = useState<'vencido' | 'por_vencer' | 'vigente' | ''>('');
   const [docsSortActive, setDocsSortActive] = useState(false);
   const sinEstadoFilterValue = 'sin_estado';
+  const noCitadoFilterValue = 'no_citado';
+  const isNoCitadoEstado = useCallback((estado: string | null | undefined): boolean => {
+    const normalized = (estado ?? '')
+      .trim()
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '');
+    return normalized.includes('no citado') || normalized.includes('no sitado');
+  }, []);
   const [showColumnPicker, setShowColumnPicker] = useState(false);
   const personalColumnsStorageKey = 'personal.visibleColumns';
   const personalColumnOptions = useMemo(
@@ -12086,6 +12155,9 @@ const PersonalPage: React.FC = () => {
       if (normalized === sinEstadoFilterValue || normalized === 'sin estado') {
         return sinEstadoFilterValue;
       }
+      if (normalized === noCitadoFilterValue || normalized === 'no citado' || normalized === 'no sitado') {
+        return noCitadoFilterValue;
+      }
       if (normalized === 'activo') {
         return 'Activo';
       }
@@ -12097,7 +12169,7 @@ const PersonalPage: React.FC = () => {
       }
       return normalized;
     },
-    [sinEstadoFilterValue]
+    [noCitadoFilterValue, sinEstadoFilterValue]
   );
   const updateEstadoQuery = useCallback(
     (value: string) => {
@@ -12110,11 +12182,13 @@ const PersonalPage: React.FC = () => {
           ? 'todos'
           : value === sinEstadoFilterValue
           ? sinEstadoFilterValue
+          : value === noCitadoFilterValue
+          ? noCitadoFilterValue
           : value.toLowerCase();
       params.set('estado', normalized);
       navigate({ pathname: location.pathname, search: params.toString() }, { replace: true });
     },
-    [location.pathname, location.search, navigate, sinEstadoFilterValue]
+    [location.pathname, location.search, navigate, noCitadoFilterValue, sinEstadoFilterValue]
   );
   const isColumnVisible = useCallback(
     (key: string) => visibleColumns[key] !== false,
@@ -12366,6 +12440,10 @@ const PersonalPage: React.FC = () => {
           if (registro.estado) {
             return false;
           }
+        } else if (estadoFilter === noCitadoFilterValue) {
+          if (!isNoCitadoEstado(registro.estado)) {
+            return false;
+          }
         } else {
           return false;
         }
@@ -12451,6 +12529,9 @@ const PersonalPage: React.FC = () => {
     perfilNames,
     legajoFilter,
     pagoFilter,
+    noCitadoFilterValue,
+    sinEstadoFilterValue,
+    isNoCitadoEstado,
   ]);
 
   const filteredPersonal = useMemo(() => {
@@ -12590,9 +12671,9 @@ const PersonalPage: React.FC = () => {
       setEstadoFilter('');
       return;
     }
-    if (mapped === sinEstadoFilterValue) {
-      if (estadoFilter !== sinEstadoFilterValue) {
-        setEstadoFilter(sinEstadoFilterValue);
+    if (mapped === sinEstadoFilterValue || mapped === noCitadoFilterValue) {
+      if (estadoFilter !== mapped) {
+        setEstadoFilter(mapped);
       }
       return;
     }
@@ -12604,7 +12685,7 @@ const PersonalPage: React.FC = () => {
     if (!match && mapped && mapped !== estadoFilter) {
       setEstadoFilter(mapped);
     }
-  }, [estadoFilter, estadoOptions, location.search, mapEstadoParamToFilter, sinEstadoFilterValue]);
+  }, [estadoFilter, estadoOptions, location.search, mapEstadoParamToFilter, noCitadoFilterValue, sinEstadoFilterValue]);
 
 
   const clearFilters = () => {
@@ -26908,7 +26989,7 @@ const sucursalOptions = useMemo(() => {
     }
   };
 
-const handleAdelantoFieldChange =
+  const handleAdelantoFieldChange =
     (field: keyof AdelantoRequestForm) =>
     (event: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
       const { value } = event.target;
@@ -26923,6 +27004,19 @@ const handleAdelantoFieldChange =
     setAdelantoForm((prev) => ({
       ...prev,
       destinatarioIds: values,
+    }));
+  };
+  const handleAdelantoSelectAllDestinatarios = () => {
+    const allIds = approverOptions.map((option) => option.id);
+    setAdelantoForm((prev) => ({
+      ...prev,
+      destinatarioIds: allIds,
+    }));
+  };
+  const handleAdelantoClearDestinatarios = () => {
+    setAdelantoForm((prev) => ({
+      ...prev,
+      destinatarioIds: [],
     }));
   };
 
@@ -27070,6 +27164,19 @@ const handleAdelantoFieldChange =
     setPrestamoForm((prev) => ({
       ...prev,
       destinatarioIds: values,
+    }));
+  };
+  const handlePrestamoSelectAllDestinatarios = () => {
+    const allIds = approverOptions.map((option) => option.id);
+    setPrestamoForm((prev) => ({
+      ...prev,
+      destinatarioIds: allIds,
+    }));
+  };
+  const handlePrestamoClearDestinatarios = () => {
+    setPrestamoForm((prev) => ({
+      ...prev,
+      destinatarioIds: [],
     }));
   };
 
@@ -27288,6 +27395,19 @@ const handleAdelantoFieldChange =
     setVacacionesForm((prev) => ({
       ...prev,
       destinatarioIds: values,
+    }));
+  };
+  const handleVacacionesSelectAllDestinatarios = () => {
+    const allIds = approverOptions.map((option) => option.id);
+    setVacacionesForm((prev) => ({
+      ...prev,
+      destinatarioIds: allIds,
+    }));
+  };
+  const handleVacacionesClearDestinatarios = () => {
+    setVacacionesForm((prev) => ({
+      ...prev,
+      destinatarioIds: [],
     }));
   };
 
@@ -27887,7 +28007,11 @@ const handleAdelantoFieldChange =
     try {
       setDeletingSolicitudId(registro.id);
 
-      const response = await fetch(`${apiBaseUrl}/api/personal/${registro.id}`, {
+      const deleteUrl = isSolicitudPersonalView
+        ? `${apiBaseUrl}/api/solicitud-personal/${registro.id}`
+        : `${apiBaseUrl}/api/personal/${registro.id}`;
+
+      const response = await fetch(deleteUrl, {
         method: 'DELETE',
         headers: { Accept: 'application/json', ...actorHeaders },
       });
@@ -27905,7 +28029,11 @@ const handleAdelantoFieldChange =
         throw new Error(message);
       }
 
-      setBackendSolicitudes((prev) => prev.filter((item) => item.id !== registro.id));
+      if (isSolicitudPersonalView) {
+        setPersonalSolicitudes((prev) => prev.filter((item) => item.id !== registro.id));
+      } else {
+        setBackendSolicitudes((prev) => prev.filter((item) => item.id !== registro.id));
+      }
       setRejectedIds((prev) => {
         const next = new Set(prev);
         next.delete(registro.id);
@@ -29951,6 +30079,25 @@ const handleAdelantoFieldChange =
                   </option>
                 ))}
               </select>
+              <div className="destinatarios-quick-actions">
+                <button
+                  type="button"
+                  className="secondary-action secondary-action--ghost"
+                  onClick={handleAdelantoSelectAllDestinatarios}
+                  disabled={approverOptions.length === 0}
+                >
+                  Seleccionar los 3
+                </button>
+                <button
+                  type="button"
+                  className="secondary-action secondary-action--ghost"
+                  onClick={handleAdelantoClearDestinatarios}
+                  disabled={adelantoForm.destinatarioIds.length === 0}
+                >
+                  Limpiar selección
+                </button>
+              </div>
+              <small className="form-hint">Podés seleccionar uno, dos o los tres destinatarios.</small>
             </label>
           )}
           <label className="input-control">
@@ -30162,6 +30309,25 @@ const handleAdelantoFieldChange =
                   </option>
                 ))}
               </select>
+              <div className="destinatarios-quick-actions">
+                <button
+                  type="button"
+                  className="secondary-action secondary-action--ghost"
+                  onClick={handlePrestamoSelectAllDestinatarios}
+                  disabled={approverOptions.length === 0}
+                >
+                  Seleccionar los 3
+                </button>
+                <button
+                  type="button"
+                  className="secondary-action secondary-action--ghost"
+                  onClick={handlePrestamoClearDestinatarios}
+                  disabled={prestamoForm.destinatarioIds.length === 0}
+                >
+                  Limpiar selección
+                </button>
+              </div>
+              <small className="form-hint">Podés seleccionar uno, dos o los tres destinatarios.</small>
             </label>
             {canEditPrestamoEstado ? (
               <label className="input-control">
@@ -30346,6 +30512,25 @@ const handleAdelantoFieldChange =
                     </option>
                   ))}
                 </select>
+                <div className="destinatarios-quick-actions">
+                  <button
+                    type="button"
+                    className="secondary-action secondary-action--ghost"
+                    onClick={handleVacacionesSelectAllDestinatarios}
+                    disabled={approverOptions.length === 0}
+                  >
+                    Seleccionar los 3
+                  </button>
+                  <button
+                    type="button"
+                    className="secondary-action secondary-action--ghost"
+                    onClick={handleVacacionesClearDestinatarios}
+                    disabled={vacacionesForm.destinatarioIds.length === 0}
+                  >
+                    Limpiar selección
+                  </button>
+                </div>
+                <small className="form-hint">Podés seleccionar uno, dos o los tres destinatarios.</small>
               </label>
             ) : null}
             {canEditVacacionesEstado ? (

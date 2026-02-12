@@ -252,4 +252,29 @@ class SolicitudPersonalController extends Controller
             ],
         ]);
     }
+
+    public function destroy(Request $request, SolicitudPersonal $solicitudPersonal): JsonResponse
+    {
+        $user = $request->user();
+
+        $isSolicitante = $solicitudPersonal->solicitante_id === $user?->id;
+        $destinatarioIds = collect($solicitudPersonal->destinatario_ids ?? []);
+        if ($solicitudPersonal->destinatario_id) {
+            $destinatarioIds->push($solicitudPersonal->destinatario_id);
+        }
+        $isDestinatario = $destinatarioIds
+            ->filter()
+            ->unique()
+            ->contains($user?->id);
+
+        if (! $isSolicitante && ! $isDestinatario) {
+            return response()->json(['message' => 'No tenés permisos para eliminar esta solicitud.'], 403);
+        }
+
+        $solicitudPersonal->delete();
+
+        return response()->json([
+            'message' => 'Solicitud eliminada correctamente.',
+        ]);
+    }
 }

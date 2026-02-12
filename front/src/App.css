@@ -3999,6 +3999,18 @@ tbody tr:hover {
   color: #6b7c93;
 }
 
+.destinatarios-quick-actions {
+  margin-top: 0.5rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.destinatarios-quick-actions .secondary-action {
+  padding: 0.4rem 0.75rem;
+  font-size: 0.8rem;
+}
+
 .file-list {
   list-style: none;
   margin: 0.5rem 0 0;
@@ -5580,6 +5592,41 @@ tbody tr:hover {
   color: #516277;
 }
 
+.summary-panel__header--radar {
+  align-items: flex-end;
+  flex-wrap: wrap;
+}
+
+.summary-panel__header--radar > div:first-child {
+  flex: 1 1 320px;
+  min-width: 260px;
+}
+
+.summary-panel__header--radar .summary-filters {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: nowrap;
+  align-items: flex-end;
+  gap: 0.75rem;
+  margin-bottom: 0;
+}
+
+.summary-panel__header--radar .summary-filters .filter-field {
+  min-width: 165px;
+}
+
+@media (max-width: 1180px) {
+  .summary-panel__header--radar .summary-filters {
+    width: 100%;
+    flex-wrap: wrap;
+  }
+
+  .summary-panel__header--radar .summary-filters .filter-field {
+    flex: 1 1 160px;
+    min-width: 150px;
+  }
+}
+
 .informe-card .card-header {
   align-items: center;
   gap: 1rem;
@@ -6225,10 +6272,12 @@ tbody tr:hover {
 }
 
 .client-card__stats {
-  display: flex;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(74px, 1fr));
   gap: 0.45rem;
-  flex-wrap: nowrap;
   justify-content: center;
+  max-width: 240px;
+  margin: 0 auto;
 }
 
 .client-card__stats div {
@@ -6236,9 +6285,7 @@ tbody tr:hover {
   border: 1px solid #e6ecf5;
   border-radius: 10px;
   padding: 0.5rem 0.6rem;
-  min-width: 0;
-  flex: 0 0 auto;
-  min-width: 64px;
+  min-width: 74px;
   text-align: center;
 }
 
