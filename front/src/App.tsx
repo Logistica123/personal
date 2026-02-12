@@ -24549,6 +24549,8 @@ const ApprovalsRequestsPage: React.FC = () => {
     estado: 'Pendiente',
     destinatarioIds: [],
   }));
+  const [editingSolicitudId, setEditingSolicitudId] = useState<number | null>(null);
+  const [editingSolicitudTipo, setEditingSolicitudTipo] = useState<PersonalRecord['solicitudTipo'] | null>(null);
   const canEditPrestamoEstado = useMemo(() => {
     if (!canEditEstadoPersonal) {
       return false;
@@ -24582,13 +24584,23 @@ const ApprovalsRequestsPage: React.FC = () => {
     }
     return isUserDestinatario(vacacionesForm.destinatarioIds);
   }, [canEditEstadoPersonal, isSolicitudPersonalView, isUserDestinatario, vacacionesForm.destinatarioIds]);
+  const canEditAdelantoSolicitud = useMemo(() => {
+    const isEditingAdelanto = isSolicitudPersonalView && Boolean(editingSolicitudId && editingSolicitudTipo === 'adelanto');
+    return !isEditingAdelanto || canEditAdelantoEstado;
+  }, [canEditAdelantoEstado, editingSolicitudId, editingSolicitudTipo, isSolicitudPersonalView]);
+  const canEditPrestamoSolicitud = useMemo(() => {
+    const isEditingPrestamo = isSolicitudPersonalView && Boolean(editingSolicitudId && editingSolicitudTipo === 'prestamo');
+    return !isEditingPrestamo || canEditPrestamoEstado;
+  }, [canEditPrestamoEstado, editingSolicitudId, editingSolicitudTipo, isSolicitudPersonalView]);
+  const canEditVacacionesSolicitud = useMemo(() => {
+    const isEditingVacaciones = isSolicitudPersonalView && Boolean(editingSolicitudId && editingSolicitudTipo === 'vacaciones');
+    return !isEditingVacaciones || canEditVacacionesEstado;
+  }, [canEditVacacionesEstado, editingSolicitudId, editingSolicitudTipo, isSolicitudPersonalView]);
   const [vacacionesDiasDisponibles, setVacacionesDiasDisponibles] = useState<Record<string, number>>({});
   const [vacacionesConfigForm, setVacacionesConfigForm] = useState<{ empleadoId: string; dias: string }>({
     empleadoId: '',
     dias: '',
   });
-  const [editingSolicitudId, setEditingSolicitudId] = useState<number | null>(null);
-  const [editingSolicitudTipo, setEditingSolicitudTipo] = useState<PersonalRecord['solicitudTipo'] | null>(null);
   const [altaFormDirty, setAltaFormDirty] = useState(false);
   const [personalLookup, setPersonalLookup] = useState<PersonalRecord[]>([]);
   const [personalLookupLoading, setPersonalLookupLoading] = useState(false);
@@ -27036,6 +27048,9 @@ const sucursalOptions = useMemo(() => {
         solicitanteId: authUser?.id ?? null,
         transportista: adelantoForm.transportista || authUser?.name || '',
       };
+      if (isSolicitudPersonalView && editingSolicitudId && !canEditAdelantoSolicitud) {
+        throw new Error('Solo los destinatarios pueden editar esta solicitud.');
+      }
       if (isSolicitudPersonalView && (!formSnapshot.destinatarioIds || formSnapshot.destinatarioIds.length === 0)) {
         throw new Error('Seleccioná a quién enviar la solicitud.');
       }
@@ -27266,14 +27281,17 @@ const sucursalOptions = useMemo(() => {
       setFlash(null);
 
       const formSnapshot = { ...prestamoForm, solicitanteId: authUser?.id ?? null };
+      if (isSolicitudPersonalView && editingSolicitudId && !canEditPrestamoSolicitud) {
+        throw new Error('Solo los destinatarios pueden editar esta solicitud.');
+      }
       const numeroOrden = formSnapshot.numeroOrden?.trim() || String(resolveNextPrestamoOrden(editingSolicitudId));
       formSnapshot.numeroOrden = numeroOrden;
       if (!formSnapshot.cantidadCuotas.trim()) {
         throw new Error('Ingresá la cantidad de cuotas.');
       }
       const cuotasRaw = Number(formSnapshot.cantidadCuotas);
-      if (Number.isNaN(cuotasRaw) || cuotasRaw < 1 || cuotasRaw > 18) {
-        throw new Error('La cantidad de cuotas debe estar entre 1 y 18.');
+      if (Number.isNaN(cuotasRaw) || cuotasRaw < 1 || cuotasRaw > 12) {
+        throw new Error('La cantidad de cuotas debe estar entre 1 y 12.');
       }
       if (!formSnapshot.destinatarioIds || formSnapshot.destinatarioIds.length === 0) {
         throw new Error('Seleccioná a quién enviar la solicitud.');
@@ -27283,7 +27301,7 @@ const sucursalOptions = useMemo(() => {
         formSnapshot.estado = existing?.estado ?? 'Pendiente';
       }
       const monto = parseMonto(formSnapshot.montoSolicitado) ?? 0;
-      const cuotas = Math.min(Math.max(cuotasRaw, 1), 18);
+      const cuotas = Math.min(Math.max(cuotasRaw, 1), 12);
       const cuotasPagadas = Math.min(Math.max(Number(formSnapshot.cuotasPagadas) || 0, 0), cuotas);
       const interes = monto * 0.04 * cuotas;
       const totalConInteres = monto + interes;
@@ -27495,6 +27513,9 @@ const sucursalOptions = useMemo(() => {
       setFlash(null);
 
       const formSnapshot = { ...vacacionesForm, solicitanteId: authUser?.id ?? null };
+      if (isSolicitudPersonalView && editingSolicitudId && !canEditVacacionesSolicitud) {
+        throw new Error('Solo los destinatarios pueden editar esta solicitud.');
+      }
       const diasSolicitados = Math.max(Number(formSnapshot.diasHabiles) || 0, 0);
       const empleadoNombre =
         formSnapshot.empleadoNombre || resolveAgenteNombre(formSnapshot.empleadoId) || 'Empleado';
@@ -30027,6 +30048,9 @@ const sucursalOptions = useMemo(() => {
         <section className="personal-section">
           <h3>Adelanto de pago</h3>
           <p className="section-helper">Tenés tiempo hasta el jueves para pedir adelantos.</p>
+          {isSolicitudPersonalView && isEditing && !canEditAdelantoSolicitud ? (
+            <p className="form-info">Solo los destinatarios pueden editar esta solicitud.</p>
+          ) : null}
         <div className="form-grid">
           {!isSolicitudPersonalView ? (
             <>
@@ -30072,6 +30096,7 @@ const sucursalOptions = useMemo(() => {
                 size={3}
                 value={adelantoForm.destinatarioIds}
                 onChange={handleAdelantoDestinatariosChange}
+                disabled={!canEditAdelantoSolicitud}
               >
                 {approverOptions.map((option) => (
                   <option key={option.id} value={option.id}>
@@ -30084,7 +30109,7 @@ const sucursalOptions = useMemo(() => {
                   type="button"
                   className="secondary-action secondary-action--ghost"
                   onClick={handleAdelantoSelectAllDestinatarios}
-                  disabled={approverOptions.length === 0}
+                  disabled={approverOptions.length === 0 || !canEditAdelantoSolicitud}
                 >
                   Seleccionar los 3
                 </button>
@@ -30092,7 +30117,7 @@ const sucursalOptions = useMemo(() => {
                   type="button"
                   className="secondary-action secondary-action--ghost"
                   onClick={handleAdelantoClearDestinatarios}
-                  disabled={adelantoForm.destinatarioIds.length === 0}
+                  disabled={adelantoForm.destinatarioIds.length === 0 || !canEditAdelantoSolicitud}
                 >
                   Limpiar selección
                 </button>
@@ -30107,6 +30132,7 @@ const sucursalOptions = useMemo(() => {
               value={adelantoForm.transportista}
               onChange={handleAdelantoFieldChange('transportista')}
               placeholder="Ingresar"
+              disabled={!canEditAdelantoSolicitud}
             />
           </label>
           <label className="input-control">
@@ -30117,6 +30143,7 @@ const sucursalOptions = useMemo(() => {
               onChange={handleAdelantoFieldChange('monto')}
               placeholder="Ingresar"
               min="0"
+              disabled={!canEditAdelantoSolicitud}
             />
           </label>
           <label className="input-control">
@@ -30126,6 +30153,7 @@ const sucursalOptions = useMemo(() => {
               value={adelantoForm.fechaSolicitud}
               onChange={handleAdelantoFieldChange('fechaSolicitud')}
               placeholder="dd/mm/aaaa"
+              disabled={!canEditAdelantoSolicitud}
             />
           </label>
           {canEditAdelantoEstado ? (
@@ -30152,6 +30180,7 @@ const sucursalOptions = useMemo(() => {
               value={adelantoForm.motivo}
               onChange={handleAdelantoFieldChange('motivo')}
               placeholder="Ingresar"
+              disabled={!canEditAdelantoSolicitud}
             />
           </label>
         </div>
@@ -30162,6 +30191,7 @@ const sucursalOptions = useMemo(() => {
             value={adelantoForm.observaciones}
             onChange={handleAdelantoFieldChange('observaciones')}
             placeholder="Agregar observaciones adicionales"
+            disabled={!canEditAdelantoSolicitud}
           />
         </label>
         <label className="input-control">
@@ -30171,6 +30201,7 @@ const sucursalOptions = useMemo(() => {
             type="file"
             multiple
             onChange={handleAdelantoFilesChange}
+            disabled={!canEditAdelantoSolicitud}
           />
           {renderAttachmentList(adelantoAttachments)}
         </label>
@@ -30179,6 +30210,7 @@ const sucursalOptions = useMemo(() => {
           <button
             type="button"
             className="secondary-action"
+            disabled={!canEditAdelantoSolicitud}
             onClick={() => {
               setAdelantoForm({
                 empresaId: '',
@@ -30200,7 +30232,7 @@ const sucursalOptions = useMemo(() => {
           >
             Limpiar
           </button>
-          <button type="submit" className="primary-action" disabled={adelantoSubmitting}>
+          <button type="submit" className="primary-action" disabled={adelantoSubmitting || !canEditAdelantoSolicitud}>
             {adelantoSubmitting ? 'Enviando...' : isEditing ? 'Guardar cambios' : 'Enviar solicitud'}
           </button>
         </div>
@@ -30213,7 +30245,7 @@ const sucursalOptions = useMemo(() => {
     const cuotasRaw = Number(prestamoForm.cantidadCuotas);
     const cuotas =
       prestamoForm.cantidadCuotas.trim().length > 0 && Number.isFinite(cuotasRaw)
-        ? Math.min(Math.max(cuotasRaw, 1), 18)
+        ? Math.min(Math.max(cuotasRaw, 1), 12)
         : 0;
     const cuotasPagadas = Math.min(Math.max(Number(prestamoForm.cuotasPagadas) || 0, 0), cuotas);
     const interes = monto * 0.04 * cuotas;
@@ -30229,6 +30261,9 @@ const sucursalOptions = useMemo(() => {
         <section className="personal-section">
           <h3>Solicitud de préstamo personal</h3>
           <p className="section-helper">Cada cuota agrega 4% sobre el valor total del préstamo.</p>
+          {isSolicitudPersonalView && isEditing && !canEditPrestamoSolicitud ? (
+            <p className="form-info">Solo los destinatarios pueden editar esta solicitud.</p>
+          ) : null}
           <div className="form-grid">
             <label className="input-control">
               <span>Solicitante</span>
@@ -30237,7 +30272,7 @@ const sucursalOptions = useMemo(() => {
                 value={prestamoForm.solicitanteNombre}
                 onChange={handlePrestamoFieldChange('solicitanteNombre')}
                 placeholder="Ingresar"
-                disabled={!isAdmin && Boolean(authUser?.name)}
+                disabled={!canEditPrestamoSolicitud || (!isAdmin && Boolean(authUser?.name))}
               />
             </label>
             <label className="input-control">
@@ -30256,17 +30291,19 @@ const sucursalOptions = useMemo(() => {
                 value={prestamoForm.montoSolicitado}
                 onChange={handlePrestamoFieldChange('montoSolicitado')}
                 placeholder="Ingresar"
+                disabled={!canEditPrestamoSolicitud}
               />
             </label>
             <label className="input-control">
-              <span>Cantidad de cuotas (1 a 18)</span>
+              <span>Cantidad de cuotas (1 a 12)</span>
               <input
                 type="number"
                 min="1"
-                max="18"
+                max="12"
                 value={prestamoForm.cantidadCuotas}
                 onChange={handlePrestamoFieldChange('cantidadCuotas')}
                 placeholder="Ingresar"
+                disabled={!canEditPrestamoSolicitud}
               />
             </label>
             {isAdmin ? (
@@ -30279,6 +30316,7 @@ const sucursalOptions = useMemo(() => {
                   value={prestamoForm.cuotasPagadas}
                   onChange={handlePrestamoFieldChange('cuotasPagadas')}
                   placeholder="0"
+                  disabled={!canEditPrestamoSolicitud}
                 />
               </label>
             ) : (
@@ -30293,6 +30331,7 @@ const sucursalOptions = useMemo(() => {
                 type="date"
                 value={prestamoForm.fechaNecesaria}
                 onChange={handlePrestamoFieldChange('fechaNecesaria')}
+                disabled={!canEditPrestamoSolicitud}
               />
             </label>
             <label className="input-control">
@@ -30302,6 +30341,7 @@ const sucursalOptions = useMemo(() => {
                 size={3}
                 value={prestamoForm.destinatarioIds}
                 onChange={handlePrestamoDestinatariosChange}
+                disabled={!canEditPrestamoSolicitud}
               >
                 {approverOptions.map((option) => (
                   <option key={option.id} value={option.id}>
@@ -30314,7 +30354,7 @@ const sucursalOptions = useMemo(() => {
                   type="button"
                   className="secondary-action secondary-action--ghost"
                   onClick={handlePrestamoSelectAllDestinatarios}
-                  disabled={approverOptions.length === 0}
+                  disabled={approverOptions.length === 0 || !canEditPrestamoSolicitud}
                 >
                   Seleccionar los 3
                 </button>
@@ -30322,7 +30362,7 @@ const sucursalOptions = useMemo(() => {
                   type="button"
                   className="secondary-action secondary-action--ghost"
                   onClick={handlePrestamoClearDestinatarios}
-                  disabled={prestamoForm.destinatarioIds.length === 0}
+                  disabled={prestamoForm.destinatarioIds.length === 0 || !canEditPrestamoSolicitud}
                 >
                   Limpiar selección
                 </button>
@@ -30368,14 +30408,15 @@ const sucursalOptions = useMemo(() => {
               value={prestamoForm.observaciones}
               onChange={handlePrestamoFieldChange('observaciones')}
               placeholder="Agregar observaciones"
+              disabled={!canEditPrestamoSolicitud}
             />
           </label>
         </section>
         <div className="form-actions">
-          <button type="button" className="secondary-action" onClick={resetPrestamoForm}>
+          <button type="button" className="secondary-action" onClick={resetPrestamoForm} disabled={!canEditPrestamoSolicitud}>
             Limpiar
           </button>
-          <button type="submit" className="primary-action" disabled={prestamoSubmitting}>
+          <button type="submit" className="primary-action" disabled={prestamoSubmitting || !canEditPrestamoSolicitud}>
             {prestamoSubmitting ? 'Enviando...' : isEditing ? 'Guardar cambios' : 'Enviar solicitud'}
           </button>
         </div>
@@ -30436,11 +30477,14 @@ const sucursalOptions = useMemo(() => {
         ) : null}
         <section className="personal-section">
           <h3>Solicitud de vacaciones</h3>
+          {isSolicitudPersonalView && isEditing && !canEditVacacionesSolicitud ? (
+            <p className="form-info">Solo los destinatarios pueden editar esta solicitud.</p>
+          ) : null}
           <div className="form-grid">
             {isAdmin ? (
               <label className="input-control">
                 <span>Empleado</span>
-                <select value={vacacionesForm.empleadoId} onChange={handleVacacionesEmpleadoChange}>
+                <select value={vacacionesForm.empleadoId} onChange={handleVacacionesEmpleadoChange} disabled={!canEditVacacionesSolicitud}>
                   <option value="">Seleccionar</option>
                   {(meta?.agentes ?? []).map((agente) => (
                     <option key={agente.id} value={agente.id}>
@@ -30463,6 +30507,7 @@ const sucursalOptions = useMemo(() => {
                   value={vacacionesForm.empleadoNombre}
                   onChange={handleVacacionesFieldChange('empleadoNombre')}
                   placeholder="Ingresar"
+                  disabled={!canEditVacacionesSolicitud}
                 />
               </label>
             ) : null}
@@ -30472,6 +30517,7 @@ const sucursalOptions = useMemo(() => {
                 type="date"
                 value={vacacionesForm.fechaDesde}
                 onChange={handleVacacionesFieldChange('fechaDesde')}
+                disabled={!canEditVacacionesSolicitud}
               />
             </label>
             <label className="input-control">
@@ -30480,6 +30526,7 @@ const sucursalOptions = useMemo(() => {
                 type="date"
                 value={vacacionesForm.fechaHasta}
                 onChange={handleVacacionesFieldChange('fechaHasta')}
+                disabled={!canEditVacacionesSolicitud}
               />
             </label>
             <label className="input-control">
@@ -30490,6 +30537,7 @@ const sucursalOptions = useMemo(() => {
                 value={vacacionesForm.diasHabiles}
                 onChange={handleVacacionesFieldChange('diasHabiles')}
                 placeholder="Ingresar"
+                disabled={!canEditVacacionesSolicitud}
               />
               <small className="form-hint">
                 {diasDisponibles != null
@@ -30505,6 +30553,7 @@ const sucursalOptions = useMemo(() => {
                   size={3}
                   value={vacacionesForm.destinatarioIds}
                   onChange={handleVacacionesDestinatariosChange}
+                  disabled={!canEditVacacionesSolicitud}
                 >
                   {approverOptions.map((option) => (
                     <option key={option.id} value={option.id}>
@@ -30517,7 +30566,7 @@ const sucursalOptions = useMemo(() => {
                     type="button"
                     className="secondary-action secondary-action--ghost"
                     onClick={handleVacacionesSelectAllDestinatarios}
-                    disabled={approverOptions.length === 0}
+                    disabled={approverOptions.length === 0 || !canEditVacacionesSolicitud}
                   >
                     Seleccionar los 3
                   </button>
@@ -30525,7 +30574,7 @@ const sucursalOptions = useMemo(() => {
                     type="button"
                     className="secondary-action secondary-action--ghost"
                     onClick={handleVacacionesClearDestinatarios}
-                    disabled={vacacionesForm.destinatarioIds.length === 0}
+                    disabled={vacacionesForm.destinatarioIds.length === 0 || !canEditVacacionesSolicitud}
                   >
                     Limpiar selección
                   </button>
@@ -30558,14 +30607,15 @@ const sucursalOptions = useMemo(() => {
               value={vacacionesForm.motivo}
               onChange={handleVacacionesFieldChange('motivo')}
               placeholder="Agregar motivo"
+              disabled={!canEditVacacionesSolicitud}
             />
           </label>
         </section>
         <div className="form-actions">
-          <button type="button" className="secondary-action" onClick={resetVacacionesForm}>
+          <button type="button" className="secondary-action" onClick={resetVacacionesForm} disabled={!canEditVacacionesSolicitud}>
             Limpiar
           </button>
-          <button type="submit" className="primary-action" disabled={vacacionesSubmitting}>
+          <button type="submit" className="primary-action" disabled={vacacionesSubmitting || !canEditVacacionesSolicitud}>
             {vacacionesSubmitting ? 'Enviando...' : isEditing ? 'Guardar cambios' : 'Enviar solicitud'}
           </button>
         </div>

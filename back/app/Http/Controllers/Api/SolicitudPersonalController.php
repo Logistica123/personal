@@ -9,9 +9,50 @@ use App\Models\User;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Validation\ValidationException;
 
 class SolicitudPersonalController extends Controller
 {
+    private function normalizePrestamoForm(array $form): array
+    {
+        if (! array_key_exists('cantidadCuotas', $form)) {
+            return $form;
+        }
+
+        $rawCuotas = $form['cantidadCuotas'];
+        if (is_string($rawCuotas)) {
+            $rawCuotas = trim($rawCuotas);
+        }
+
+        if ($rawCuotas === '' || $rawCuotas === null || ! is_numeric($rawCuotas)) {
+            throw ValidationException::withMessages([
+                'form.cantidadCuotas' => 'Ingresá una cantidad de cuotas válida.',
+            ]);
+        }
+
+        $cuotas = (int) $rawCuotas;
+        if ($cuotas < 1 || $cuotas > 12) {
+            throw ValidationException::withMessages([
+                'form.cantidadCuotas' => 'La cantidad de cuotas debe estar entre 1 y 12.',
+            ]);
+        }
+
+        $form['cantidadCuotas'] = (string) $cuotas;
+
+        if (array_key_exists('cuotasPagadas', $form)) {
+            $rawPagadas = $form['cuotasPagadas'];
+            if (is_string($rawPagadas)) {
+                $rawPagadas = trim($rawPagadas);
+            }
+
+            $cuotasPagadas = is_numeric($rawPagadas) ? (int) $rawPagadas : 0;
+            $cuotasPagadas = max(0, min($cuotasPagadas, $cuotas));
+            $form['cuotasPagadas'] = (string) $cuotasPagadas;
+        }
+
+        return $form;
+    }
+
     public function index(Request $request): JsonResponse
     {
         $user = $request->user();
@@ -107,10 +148,15 @@ class SolicitudPersonalController extends Controller
         $destinatarioId = $destinatarioIds->first();
         $estado = $validated['estado'] ?? 'Pendiente';
 
+        $form = $validated['form'] ?? [];
+        if (($validated['tipo'] ?? null) === 'prestamo') {
+            $form = $this->normalizePrestamoForm($form);
+        }
+
         $item = SolicitudPersonal::create([
             'tipo' => $validated['tipo'],
             'estado' => $estado,
-            'form' => $validated['form'] ?? [],
+            'form' => $form,
             'solicitante_id' => $user?->id,
             'destinatario_id' => $destinatarioId,
             'destinatario_ids' => $destinatarioIds->values()->all(),
@@ -203,20 +249,19 @@ class SolicitudPersonalController extends Controller
             return response()->json(['message' => 'No tenés permisos para modificar esta solicitud.'], 403);
         }
 
-        if (array_key_exists('form', $validated) && $isSolicitante) {
-            $solicitudPersonal->form = $validated['form'] ?? [];
+        if (! $isDestinatario) {
+            return response()->json(['message' => 'Solo los destinatarios pueden editar esta solicitud.'], 403);
         }
 
-        if (array_key_exists('destinatarioIds', $validated) && $isSolicitante) {
-            $nextDestinatarioIds = collect($validated['destinatarioIds'] ?? [])
-                ->filter()
-                ->map(fn ($id) => (int) $id)
-                ->values();
-            $solicitudPersonal->destinatario_ids = $nextDestinatarioIds->all();
-            $solicitudPersonal->destinatario_id = $nextDestinatarioIds->first();
+        if (array_key_exists('form', $validated)) {
+            $form = $validated['form'] ?? [];
+            if ($solicitudPersonal->tipo === 'prestamo') {
+                $form = $this->normalizePrestamoForm($form);
+            }
+            $solicitudPersonal->form = $form;
         }
 
-        if (array_key_exists('estado', $validated) && $isDestinatario) {
+        if (array_key_exists('estado', $validated)) {
             $solicitudPersonal->estado = $validated['estado'] ?? $solicitudPersonal->estado;
         }
 
