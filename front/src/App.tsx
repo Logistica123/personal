@@ -1648,17 +1648,24 @@ const resolveApiBaseUrl = (): string => {
 
 const resolveDistriappLegacyAdminUrl = (): string | null => {
   const raw = (process.env.REACT_APP_DISTRIAPP_LEGACY_ADMIN_URL ?? '').trim();
-  if (raw.length === 0) {
-    return null;
-  }
+  const productionFallback = 'https://admin.distriapp.com.ar/';
 
   const base =
     typeof window !== 'undefined' && window.location?.origin
       ? window.location.origin
       : 'http://localhost';
 
+  const isProductionHost =
+    typeof window !== 'undefined' &&
+    Boolean(window.location?.hostname?.includes('distriapp.com.ar'));
+
+  const candidate = raw.length > 0 ? raw : (isProductionHost ? productionFallback : '');
+  if (candidate.length === 0) {
+    return null;
+  }
+
   try {
-    return new URL(raw, base).toString();
+    return new URL(candidate, base).toString();
   } catch {
     return null;
   }
