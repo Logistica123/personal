@@ -26,6 +26,8 @@ class AddCorsHeaders
             'http://127.0.0.1:4202',
             'http://localhost:8100',
             'http://127.0.0.1:8100',
+            'http://localhost:4300',
+            'http://127.0.0.1:4300',
         ];
 
         $normalizedOrigin = is_string($origin) ? trim($origin) : null;
@@ -51,7 +53,7 @@ class AddCorsHeaders
         $headers = [
             'Access-Control-Allow-Origin' => $allowedOrigin,
             'Access-Control-Allow-Methods' => 'GET, POST, PUT, PATCH, DELETE, OPTIONS',
-            'Access-Control-Allow-Headers' => 'Content-Type, Authorization, X-Requested-With, Accept, Origin, X-Api-Token',
+            'Access-Control-Allow-Headers' => 'Content-Type, Authorization, X-Requested-With, Accept, Origin, X-Api-Token, X-Actor-Email',
             'Access-Control-Allow-Credentials' => 'true',
             'Vary' => 'Origin',
         ];

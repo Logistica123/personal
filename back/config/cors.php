@@ -27,10 +27,12 @@ return [
         'http://127.0.0.1:4202',
         'http://localhost:8100',
         'http://127.0.0.1:8100',
+        'http://localhost:4300',
+        'http://127.0.0.1:4300',
     ],
 
     'allowed_origins_patterns' => [
-        '^https?://(localhost|127\\.0\\.0\\.1)(:\\d+)?$',
+        '#^https?://(localhost|127\\.0\\.0\\.1)(:\\d+)?$#',
     ],
 
     'allowed_headers' => [
