@@ -19,6 +19,7 @@ class UserController extends Controller
      * @var string[]
      */
     private array $allowedPermissions = [
+        'distriapp',
         'panel-general',
         'clientes',
         'unidades',

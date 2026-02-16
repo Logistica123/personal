@@ -39,4 +39,17 @@ return [
         'model' => env('OPENAI_MODEL', 'gpt-4o-mini'),
     ],
 
+    'distriapp_mobile' => [
+        'base_url' => env('DISTRIAPP_MOBILE_API_URL', 'https://api.distriapp.com.ar/api'),
+        'token' => env('DISTRIAPP_MOBILE_API_TOKEN'),
+        'timeout' => env('DISTRIAPP_MOBILE_API_TIMEOUT', 12),
+        'live_endpoint' => env('DISTRIAPP_MOBILE_LIVE_ENDPOINT', 'v1/app/driver-geopositions/live'),
+    ],
+
+    'distriapp_admin' => [
+        'base_url' => env('DISTRIAPP_ADMIN_API_URL', 'https://api.distriapp.com.ar/api'),
+        'token' => env('DISTRIAPP_ADMIN_API_TOKEN'),
+        'timeout' => env('DISTRIAPP_ADMIN_API_TIMEOUT', 12),
+    ],
+
 ];

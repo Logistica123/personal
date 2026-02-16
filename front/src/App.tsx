@@ -48,7 +48,20 @@ const parseJsonSafe = async (response: Response) => {
   const contentType = response.headers.get('content-type') || '';
   if (!contentType.toLowerCase().includes('application/json')) {
     const text = await response.text();
-    throw new Error(text.slice(0, 200) || 'Respuesta no es JSON');
+    const normalized = text.replace(/\s+/g, ' ').trim();
+    const isHtmlLike =
+      contentType.toLowerCase().includes('text/html') ||
+      /^<!doctype html/i.test(normalized) ||
+      /<html[\s>]/i.test(normalized);
+
+    if (isHtmlLike) {
+      throw new Error(
+        'El servidor respondió HTML en vez de JSON. Verificá que la API esté activa y que REACT_APP_API_BASE apunte al backend.'
+      );
+    }
+
+    const plainPreview = normalized.replace(/<[^>]*>/g, '').trim().slice(0, 200);
+    throw new Error(plainPreview || 'Respuesta no es JSON');
   }
   return response.json();
 };
@@ -204,6 +217,7 @@ const normalizeTarifaTemplate = (template: TarifaTemplate): TarifaTemplate => {
 };
 type UserRole = 'admin' | 'admin2' | 'encargado' | 'operator' | 'asesor';
 type AccessSection =
+  | 'distriapp'
   | 'clientes'
   | 'panel-general'
   | 'resumen'
@@ -1053,6 +1067,7 @@ const USER_ROLE_OPTIONS: Array<{ value: UserRole; label: string }> = [
 ];
 
 const USER_PERMISSION_OPTIONS: Array<{ value: AccessSection; label: string }> = [
+  { value: 'distriapp', label: 'Distriapp' },
   { value: 'panel-general', label: 'Panel general' },
   { value: 'resumen', label: 'Resumen' },
   { value: 'clientes', label: 'Gestión de clientes' },
@@ -1090,6 +1105,8 @@ const canAccessSection = (
   }
 
   switch (section) {
+    case 'distriapp':
+      return role !== 'operator' && role !== 'asesor';
     case 'usuarios':
     case 'control-horario':
     case 'liquidaciones':
@@ -1629,6 +1646,24 @@ const resolveApiBaseUrl = (): string => {
   }
 };
 
+const resolveDistriappLegacyAdminUrl = (): string | null => {
+  const raw = (process.env.REACT_APP_DISTRIAPP_LEGACY_ADMIN_URL ?? '').trim();
+  if (raw.length === 0) {
+    return null;
+  }
+
+  const base =
+    typeof window !== 'undefined' && window.location?.origin
+      ? window.location.origin
+      : 'http://localhost';
+
+  try {
+    return new URL(raw, base).toString();
+  } catch {
+    return null;
+  }
+};
+
 const getEstadoBadgeClass = (estado?: string | null) => {
   switch ((estado ?? '').trim().toLowerCase()) {
     case 'baja':
@@ -1789,7 +1824,6 @@ const useStoredAuthUser = (): AuthUser | null => {
 };
 
 const ATTENDANCE_RECORD_KEY = 'attendanceRecord';
-const ATTENDANCE_LOG_KEY = 'attendanceLog';
 const LOCAL_SOLICITUDES_STORAGE_KEY = 'approvals:localSolicitudes';
 const GENERAL_INFO_STORAGE_KEY = 'generalInfo:entries';
 const GENERAL_INFO_UPDATED_EVENT = 'general-info:updated';
@@ -2256,54 +2290,6 @@ const readAttendanceRecordFromStorage = (expectedUserKey?: string | null): Atten
     ...record,
     userKey: buildAttendanceUserKey(record),
   };
-};
-
-const clearAttendanceStore = () => {
-  if (typeof window === 'undefined') {
-    return;
-  }
-  window.localStorage.removeItem(ATTENDANCE_RECORD_KEY);
-};
-
-const readAttendanceLogFromStorage = (): AttendanceRecord[] => {
-  if (typeof window === 'undefined') {
-    return [];
-  }
-  const raw = window.localStorage.getItem(ATTENDANCE_LOG_KEY);
-  if (!raw) {
-    return [];
-  }
-  try {
-    const parsed = JSON.parse(raw);
-    if (Array.isArray(parsed)) {
-      return parsed
-        .filter(
-          (item): item is AttendanceRecord =>
-            item && (item.status === 'entrada' || item.status === 'salida') && typeof item.timestamp === 'string'
-        )
-        .map((item) => ({
-          ...item,
-          userKey: buildAttendanceUserKey(item),
-        }));
-    }
-  } catch {
-    // ignore
-  }
-  return [];
-};
-
-const appendAttendanceLog = (record: AttendanceRecord) => {
-  if (typeof window === 'undefined') {
-    return;
-  }
-  const current = readAttendanceLogFromStorage();
-  const normalized: AttendanceRecord = {
-    ...record,
-    userKey: buildAttendanceUserKey(record),
-  };
-  current.push(normalized);
-  const trimmed = current.slice(-200);
-  window.localStorage.setItem(ATTENDANCE_LOG_KEY, JSON.stringify(trimmed));
 };
 
 const readStoredChatMessages = (currentUserId: number | null): StoredChatMessage[] => {
@@ -2775,6 +2761,19 @@ const buildAttendanceUserKey = (record: AttendanceRecord): string => {
   return 'anon';
 };
 
+const cleanAttendanceUserName = (value?: string | null): string | null => {
+  if (!value) {
+    return null;
+  }
+
+  const cleaned = value
+    .replace(/[^A-Za-z0-9ÁÉÍÓÚÜÑáéíóúüñ\s.'-]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  return cleaned.length > 0 ? cleaned : null;
+};
+
 const mapRemoteAttendance = (items: RemoteAttendanceApiRecord[]): AttendanceRecord[] => {
   return items
     .filter((item) => typeof item.recordedAt === 'string' && item.recordedAt.length > 0)
@@ -2782,7 +2781,7 @@ const mapRemoteAttendance = (items: RemoteAttendanceApiRecord[]): AttendanceReco
       status: item.status,
       timestamp: item.recordedAt as string,
       userId: item.userId ?? null,
-      userName: item.userName ?? null,
+      userName: cleanAttendanceUserName(item.userName ?? null),
       userKey: item.userId != null ? `id-${item.userId}` : undefined,
     }));
 };
@@ -2800,6 +2799,48 @@ const formatDurationFromMs = (ms: number): string => {
   const base = new Date(0).toISOString();
   const target = new Date(ms).toISOString();
   return formatElapsedTime(base, target);
+};
+
+const formatAttendanceDayCount = (days: number): string => {
+  const safeDays = Math.max(0, Math.round(days));
+  return `${safeDays} ${safeDays === 1 ? 'día' : 'días'}`;
+};
+
+const ATTENDANCE_EXPECTED_WORKDAY_MS = 9 * 60 * 60 * 1000; // L-V 08:00 a 17:00
+
+const isAttendanceWorkday = (date: Date): boolean => {
+  const day = date.getDay();
+  return day >= 1 && day <= 5;
+};
+
+const formatAttendanceDate = (date: Date): string =>
+  date.toLocaleDateString('es-AR', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  });
+
+const formatAttendanceTime = (value: number | Date): string => {
+  const date = value instanceof Date ? value : new Date(value);
+  return date.toLocaleTimeString('es-AR', {
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  });
+};
+
+const formatSignedDurationFromMs = (ms: number): string => {
+  if (ms === 0) {
+    return '0m';
+  }
+  return `${ms > 0 ? '+' : '-'}${formatDurationFromMs(Math.abs(ms))}`;
+};
+
+const getAttendanceWeekStart = (date: Date): Date => {
+  const day = date.getDay();
+  const diff = day === 0 ? -6 : 1 - day;
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate() + diff);
 };
 
 const LoginPage: React.FC = () => {
@@ -3029,6 +3070,7 @@ const DashboardLayout: React.FC<{
   const lastToastIdRef = useRef<number | null>(null);
   const { brandLogoSrc } = useBranding();
   const userRole = useMemo(() => getUserRole(authUser), [authUser]);
+  const distriappLegacyAdminUrl = useMemo(() => resolveDistriappLegacyAdminUrl(), []);
   const unreadInitializedRef = useRef(false);
   const previousUnreadCountRef = useRef(0);
   const previousLatestNotificationIdRef = useRef<number | null>(null);
@@ -3077,6 +3119,7 @@ const DashboardLayout: React.FC<{
       canAccessSection(userRole, 'combustible', authUser?.permissions),
     [userRole, authUser?.permissions]
   );
+  const hasDistriappAccess = canAccessSection(userRole, 'distriapp', authUser?.permissions);
   const toggleSidebarVisibility = useCallback(() => {
     setIsSidebarOpen((prev) => !prev);
   }, []);
@@ -3557,18 +3600,7 @@ const DashboardLayout: React.FC<{
     [currentTime]
   );
 
-  const formattedAttendance = useMemo(() => {
-    if (!attendanceRecord || attendanceRecord.status !== 'entrada') {
-      return '';
-    }
-
-    const workedTime = formatElapsedTime(attendanceRecord.timestamp, currentTime.toISOString());
-    return `En horario laboral · ${workedTime}`;
-  }, [attendanceRecord, currentTime]);
-
-  const isWorking = attendanceRecord?.status === 'entrada';
-  const entryButtonClassName = 'time-button time-button--in';
-  const exitButtonClassName = 'time-button time-button--active-out';
+  const attendanceModeMessage = 'Marcación manual deshabilitada. Usar importación C26/Excel.';
 
   const displayName = useMemo(() => {
     if (authUser?.name && authUser.name.trim().length > 0) {
@@ -3986,74 +4018,6 @@ const DashboardLayout: React.FC<{
     window.location.href = '/';
   };
 
-  const syncAttendanceRecord = useCallback(
-    async (record: AttendanceRecord) => {
-      try {
-        await fetch(`${apiBaseUrl}/api/attendance`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            status: record.status,
-            timestamp: record.timestamp,
-            userId: record.userId ?? null,
-            userName: record.userName ?? null,
-          }),
-        });
-      } catch (err) {
-        // eslint-disable-next-line no-console
-        console.error('No se pudo sincronizar el registro de asistencia', err);
-      }
-    },
-    [apiBaseUrl]
-  );
-
-  const handleMarkAttendance = (status: AttendanceRecord['status']) => {
-    const currentlyWorking = attendanceRecord?.status === 'entrada';
-
-    if (status === 'entrada' && currentlyWorking) {
-      window.alert('Ya registraste la entrada. Marcá la salida cuando corresponda.');
-      return;
-    }
-
-    if (status === 'salida' && !currentlyWorking) {
-      window.alert('Todavía no registraste la entrada.');
-      return;
-    }
-
-    if (!currentUserKey) {
-      window.alert('No se pudo identificar al usuario actual.');
-      return;
-    }
-
-    const confirmationMessage =
-      status === 'entrada'
-        ? '¿Estás seguro/a que querés registrar Entrada al horario laboral?'
-        : '¿Estás seguro/a que querés registrar Salida del horario laboral?';
-
-    if (!window.confirm(confirmationMessage)) {
-      return;
-    }
-
-    const operatorName =
-      authUser?.name && authUser.name.trim().length > 0
-        ? authUser.name.trim()
-        : authUser?.email ?? 'Usuario';
-
-    const record: AttendanceRecord = {
-      status,
-      timestamp: new Date().toISOString(),
-      userId: authUser?.id ?? null,
-      userName: operatorName,
-      userKey: currentUserKey,
-    };
-    setAttendanceRecord(record);
-    appendAttendanceLog(record);
-    window.dispatchEvent(new CustomEvent('attendance:updated', { detail: record }));
-    syncAttendanceRecord(record);
-  };
-
   return (
     <>
       {celebration ? (
@@ -4112,6 +4076,29 @@ const DashboardLayout: React.FC<{
               <div className="brand-placeholder">Tu marca</div>
             )}
           </NavLink>
+          {hasDistriappAccess ? (
+            distriappLegacyAdminUrl ? (
+              <a
+                href={distriappLegacyAdminUrl}
+                className="sidebar-distriapp-link"
+                onClick={closeSidebar}
+                aria-label="Abrir panel de Distriapp"
+                title="Abrir panel de Distriapp"
+              >
+                <img src="/distriapp-logo-v6.png" alt="Distriapp" className="sidebar-distriapp-logo" />
+              </a>
+            ) : (
+              <NavLink
+                to="/distriapp"
+                className="sidebar-distriapp-link"
+                onClick={closeSidebar}
+                aria-label="Abrir panel de Distriapp"
+                title="Abrir panel de Distriapp"
+              >
+                <img src="/distriapp-logo-v6.png" alt="Distriapp" className="sidebar-distriapp-logo" />
+              </NavLink>
+            )
+          ) : null}
 
         <NavLink
           to="/informacion-general"
@@ -4382,20 +4369,7 @@ const DashboardLayout: React.FC<{
                   <span className="time-tracker__clock">{formattedClock}</span>
                   <small className="time-tracker__date">{formattedDate}</small>
                 </div>
-                {formattedAttendance ? (
-                  <small className="time-tracker__last">{formattedAttendance}</small>
-                ) : null}
-              </div>
-              <div className="time-tracker__actions">
-                {attendanceRecord?.status === 'entrada' ? (
-                  <button type="button" className={exitButtonClassName} onClick={() => handleMarkAttendance('salida')}>
-                    Salida
-                  </button>
-                ) : (
-                  <button type="button" className={entryButtonClassName} onClick={() => handleMarkAttendance('entrada')}>
-                    Entrada
-                  </button>
-                )}
+                <small className="time-tracker__last">{attendanceModeMessage}</small>
               </div>
             </div>
             <div className="notification-anchor notification-anchor--desktop">
@@ -9098,6 +9072,1225 @@ const ResumenPage: React.FC = () => {
               </table>
             </div>
           ) : null}
+        </div>
+      </section>
+    </DashboardLayout>
+  );
+};
+
+type DistriappResumen = {
+  clientesTotal: number;
+  unidadesTotal: number;
+  proveedoresTotal: number;
+  proveedoresActivos: number;
+  reclamosAbiertos: number;
+  combustibleReportesPendientes: number;
+  updatedAt?: string | null;
+};
+
+type DistriappMobileModule = {
+  key: string;
+  title: string;
+  status: 'connected' | 'error' | 'not_configured';
+  count: number | null;
+  error?: string | null;
+};
+
+type DistriappLiveTrackingItem = {
+  driverName: string;
+  unitPatent: string;
+  lat: number;
+  lng: number;
+  recordedAt?: string | null;
+};
+
+type DistriappRankingItem = {
+  position: number;
+  driverName: string;
+  score: number;
+  trips: number;
+};
+
+type DistriappMobileOverview = {
+  configured: boolean;
+  message?: string | null;
+  month: number;
+  year: number;
+  modules: DistriappMobileModule[];
+  liveTracking: {
+    available: boolean;
+    count: number;
+    items: DistriappLiveTrackingItem[];
+    error?: string | null;
+    sourceEndpoint?: string | null;
+  };
+  rankingPreview: DistriappRankingItem[];
+  updatedAt?: string | null;
+};
+
+type DistriappAdminOrderItem = {
+  id?: number | string | null;
+  driverName: string;
+  receiver: string;
+  phone: string;
+  locationName: string;
+  status: string;
+  createdAt?: string | null;
+  deliveredAt?: string | null;
+};
+
+type DistriappAdminDriverLocationItem = {
+  driverId?: number | string | null;
+  driverName: string;
+  lat: number;
+  lng: number;
+  accuracy?: number | null;
+  recordedAt?: string | null;
+};
+
+type DistriappModuleData<T> = {
+  configured: boolean;
+  module: string;
+  count: number;
+  items: T[];
+  message?: string | null;
+  updatedAt?: string | null;
+  month?: number;
+  year?: number;
+  from?: string | null;
+  to?: string | null;
+};
+
+const formatDistriappTimestamp = (value?: string | null): string => {
+  if (!value) {
+    return 'Sin sincronización reciente';
+  }
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return 'Sin sincronización reciente';
+  }
+
+  return date.toLocaleString('es-AR', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  });
+};
+
+const formatDistriappOptionalTimestamp = (value?: string | null): string => {
+  if (!value) {
+    return '—';
+  }
+  return formatDistriappTimestamp(value);
+};
+
+const parseMonthInput = (monthInput: string): { year: number; month: number } | null => {
+  const match = /^(\d{4})-(\d{2})$/.exec(monthInput);
+  if (!match) {
+    return null;
+  }
+
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  if (!Number.isFinite(year) || !Number.isFinite(month) || month < 1 || month > 12) {
+    return null;
+  }
+
+  return { year, month };
+};
+
+const currentMonthInput = () => {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  return `${year}-${month}`;
+};
+
+const currentDateInput = () => {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const day = String(now.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
+
+const firstDateOfCurrentMonthInput = () => {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  return `${year}-${month}-01`;
+};
+
+const toIsoBoundary = (dateValue: string, endOfDay = false): string | null => {
+  if (!dateValue) {
+    return null;
+  }
+  const date = new Date(`${dateValue}T${endOfDay ? '23:59:59' : '00:00:00'}`);
+  if (Number.isNaN(date.getTime())) {
+    return null;
+  }
+  return date.toISOString();
+};
+
+const getDistriappModuleStatusLabel = (status: DistriappMobileModule['status']): string => {
+  switch (status) {
+    case 'connected':
+      return 'Conectado';
+    case 'error':
+      return 'Con error';
+    case 'not_configured':
+    default:
+      return 'Sin configurar';
+  }
+};
+
+const getDistriappModuleStatusClass = (status: DistriappMobileModule['status']): string => {
+  switch (status) {
+    case 'connected':
+      return 'is-connected';
+    case 'error':
+      return 'is-error';
+    case 'not_configured':
+    default:
+      return 'is-pending';
+  }
+};
+
+const DistriappHubPage: React.FC = () => {
+  const navigate = useNavigate();
+  const apiBaseUrl = useMemo(() => resolveApiBaseUrl(), []);
+  const legacyAdminUrl = useMemo(() => resolveDistriappLegacyAdminUrl(), []);
+  const authUser = useStoredAuthUser();
+  const userRole = useMemo(() => getUserRole(authUser), [authUser]);
+  const [resumen, setResumen] = useState<DistriappResumen | null>(null);
+  const [mobileOverview, setMobileOverview] = useState<DistriappMobileOverview | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const controller = new AbortController();
+
+    const fetchHub = async () => {
+      try {
+        setLoading(true);
+        setError(null);
+
+        const [resumenResponse, mobileResponse] = await Promise.all([
+          fetch(`${apiBaseUrl}/api/distriapp/resumen`, { signal: controller.signal }),
+          fetch(`${apiBaseUrl}/api/distriapp/mobile/overview`, { signal: controller.signal }),
+        ]);
+
+        if (!resumenResponse.ok) {
+          throw new Error(`Error ${resumenResponse.status}: ${resumenResponse.statusText}`);
+        }
+
+        const resumenPayload = (await parseJsonSafe(resumenResponse)) as {
+          data?: Partial<DistriappResumen>;
+        };
+
+        setResumen({
+          clientesTotal: Number(resumenPayload?.data?.clientesTotal ?? 0),
+          unidadesTotal: Number(resumenPayload?.data?.unidadesTotal ?? 0),
+          proveedoresTotal: Number(resumenPayload?.data?.proveedoresTotal ?? 0),
+          proveedoresActivos: Number(resumenPayload?.data?.proveedoresActivos ?? 0),
+          reclamosAbiertos: Number(resumenPayload?.data?.reclamosAbiertos ?? 0),
+          combustibleReportesPendientes: Number(resumenPayload?.data?.combustibleReportesPendientes ?? 0),
+          updatedAt: resumenPayload?.data?.updatedAt ?? null,
+        });
+
+        if (mobileResponse.ok) {
+          const mobilePayload = (await parseJsonSafe(mobileResponse)) as {
+            data?: Partial<DistriappMobileOverview>;
+          };
+
+          setMobileOverview({
+            configured: Boolean(mobilePayload?.data?.configured),
+            message: mobilePayload?.data?.message ?? null,
+            month: Number(mobilePayload?.data?.month ?? new Date().getMonth() + 1),
+            year: Number(mobilePayload?.data?.year ?? new Date().getFullYear()),
+            modules: Array.isArray(mobilePayload?.data?.modules)
+              ? (mobilePayload?.data?.modules as DistriappMobileModule[])
+              : [],
+            liveTracking: {
+              available: Boolean(mobilePayload?.data?.liveTracking?.available),
+              count: Number(mobilePayload?.data?.liveTracking?.count ?? 0),
+              items: Array.isArray(mobilePayload?.data?.liveTracking?.items)
+                ? (mobilePayload?.data?.liveTracking?.items as DistriappLiveTrackingItem[])
+                : [],
+              error: mobilePayload?.data?.liveTracking?.error ?? null,
+              sourceEndpoint: mobilePayload?.data?.liveTracking?.sourceEndpoint ?? null,
+            },
+            rankingPreview: Array.isArray(mobilePayload?.data?.rankingPreview)
+              ? (mobilePayload?.data?.rankingPreview as DistriappRankingItem[])
+              : [],
+            updatedAt: mobilePayload?.data?.updatedAt ?? null,
+          });
+        } else {
+          setMobileOverview({
+            configured: false,
+            message: `No se pudo consultar la integración mobile (${mobileResponse.status}).`,
+            month: new Date().getMonth() + 1,
+            year: new Date().getFullYear(),
+            modules: [],
+            liveTracking: {
+              available: false,
+              count: 0,
+              items: [],
+              error: 'Sin conexión',
+              sourceEndpoint: null,
+            },
+            rankingPreview: [],
+            updatedAt: null,
+          });
+        }
+      } catch (err) {
+        if ((err as Error).name === 'AbortError') {
+          return;
+        }
+        setError((err as Error).message ?? 'No se pudo cargar el resumen de Distriapp.');
+        setMobileOverview({
+          configured: false,
+          message: 'No se pudo consultar la integración de la app móvil.',
+          month: new Date().getMonth() + 1,
+          year: new Date().getFullYear(),
+          modules: [],
+          liveTracking: {
+            available: false,
+            count: 0,
+            items: [],
+            error: 'Sin conexión',
+            sourceEndpoint: null,
+          },
+          rankingPreview: [],
+          updatedAt: null,
+        });
+      } finally {
+        if (!controller.signal.aborted) {
+          setLoading(false);
+        }
+      }
+    };
+
+    void fetchHub();
+    return () => controller.abort();
+  }, [apiBaseUrl]);
+
+  const shortcuts = useMemo(
+    () =>
+      [
+        {
+          key: 'monitoreo-live',
+          title: 'Ruteo en tiempo real',
+          description: 'Posición y último reporte de cada transportista.',
+          path: '/distriapp/monitoreo',
+          section: 'distriapp' as AccessSection,
+        },
+        {
+          key: 'urban-distribution',
+          title: 'Distribución urbana',
+          description: 'Órdenes del mes por conductor, estado y entrega.',
+          path: '/distriapp/distribucion-urbana',
+          section: 'distriapp' as AccessSection,
+        },
+        {
+          key: 'journeys-admin',
+          title: 'Viajes',
+          description: 'Listado de viajes con filtros por rango de fecha.',
+          path: '/distriapp/viajes',
+          section: 'distriapp' as AccessSection,
+        },
+        {
+          key: 'driver-locations-admin',
+          title: 'Ubic. repartidores',
+          description: 'Última ubicación reportada por cada conductor.',
+          path: '/distriapp/ubic-repartidores',
+          section: 'distriapp' as AccessSection,
+        },
+        {
+          key: 'proveedores',
+          title: 'Proveedores',
+          description: 'Alta, edición, documentación y estado.',
+          path: '/personal',
+          section: 'personal' as AccessSection,
+        },
+        {
+          key: 'unidades',
+          title: 'Unidades',
+          description: 'Gestión de flota, dominio y datos técnicos.',
+          path: '/unidades',
+          section: 'unidades' as AccessSection,
+        },
+        {
+          key: 'reclamos',
+          title: 'Reclamos',
+          description: 'Seguimiento y resolución de casos.',
+          path: '/reclamos',
+          section: 'reclamos' as AccessSection,
+        },
+        {
+          key: 'liquidaciones',
+          title: 'Liquidaciones',
+          description: 'Control de estados, envío y validación.',
+          path: '/liquidaciones',
+          section: 'liquidaciones' as AccessSection,
+        },
+        {
+          key: 'combustible',
+          title: 'Combustible',
+          description: 'Reportes, pendientes y cierres mensuales.',
+          path: '/combustible',
+          section: 'combustible' as AccessSection,
+        },
+        {
+          key: 'auditoria',
+          title: 'Auditoría',
+          description: 'Trazabilidad de acciones por usuario.',
+          path: '/auditoria',
+          section: 'auditoria' as AccessSection,
+        },
+      ] as Array<{ key: string; title: string; description: string; path: string; section: AccessSection }>,
+    []
+  );
+
+  const visibleShortcuts = useMemo(
+    () => shortcuts.filter((item) => canAccessSection(userRole, item.section, authUser?.permissions)),
+    [shortcuts, userRole, authUser?.permissions]
+  );
+
+  const updatedAtLabel = useMemo(() => formatDistriappTimestamp(resumen?.updatedAt), [resumen?.updatedAt]);
+  const mobileUpdatedAtLabel = useMemo(
+    () => formatDistriappTimestamp(mobileOverview?.updatedAt),
+    [mobileOverview?.updatedAt]
+  );
+  const mobileModules = mobileOverview?.modules ?? [];
+  const mobileConfigured = Boolean(mobileOverview?.configured);
+
+  useEffect(() => {
+    if (!legacyAdminUrl) {
+      return;
+    }
+    window.location.href = legacyAdminUrl;
+  }, [legacyAdminUrl]);
+
+  if (legacyAdminUrl) {
+    return (
+      <DashboardLayout title="Distriapp Admin" subtitle="Abriendo admin legacy de Distriapp">
+        <section className="dashboard-card">
+          <p className="form-info">Redirigiendo al admin legacy...</p>
+          <a href={legacyAdminUrl}>Abrir manualmente</a>
+        </section>
+      </DashboardLayout>
+    );
+  }
+
+  return (
+    <DashboardLayout
+      title="Distriapp Admin"
+      subtitle="Menú operativo para administrar módulos de la aplicación Distriapp"
+    >
+      <section className="dashboard-card">
+        <header className="card-header">
+          <div>
+            <h3>Resumen operativo</h3>
+            <p className="form-info">Última actualización: {updatedAtLabel}</p>
+          </div>
+          <button type="button" className="secondary-action" onClick={() => navigate('/dashboard')}>
+            Ver panel general
+          </button>
+        </header>
+
+        {loading ? <p className="form-info">Cargando métricas de Distriapp...</p> : null}
+        {error ? <p className="form-info form-info--error">{error}</p> : null}
+
+        {!loading && !error ? (
+          <div className="distriapp-kpi-grid">
+            <article className="distriapp-kpi">
+              <span className="distriapp-kpi__label">Clientes</span>
+              <strong className="distriapp-kpi__value">{resumen?.clientesTotal ?? 0}</strong>
+            </article>
+            <article className="distriapp-kpi">
+              <span className="distriapp-kpi__label">Unidades</span>
+              <strong className="distriapp-kpi__value">{resumen?.unidadesTotal ?? 0}</strong>
+            </article>
+            <article className="distriapp-kpi">
+              <span className="distriapp-kpi__label">Proveedores</span>
+              <strong className="distriapp-kpi__value">{resumen?.proveedoresTotal ?? 0}</strong>
+            </article>
+            <article className="distriapp-kpi">
+              <span className="distriapp-kpi__label">Proveedores activos</span>
+              <strong className="distriapp-kpi__value">{resumen?.proveedoresActivos ?? 0}</strong>
+            </article>
+            <article className="distriapp-kpi">
+              <span className="distriapp-kpi__label">Reclamos abiertos</span>
+              <strong className="distriapp-kpi__value">{resumen?.reclamosAbiertos ?? 0}</strong>
+            </article>
+            <article className="distriapp-kpi">
+              <span className="distriapp-kpi__label">Reportes combustible pendientes</span>
+              <strong className="distriapp-kpi__value">{resumen?.combustibleReportesPendientes ?? 0}</strong>
+            </article>
+          </div>
+        ) : null}
+      </section>
+
+      <section className="dashboard-card">
+        <header className="card-header">
+          <div>
+            <h3>Integración app móvil</h3>
+            <p className="form-info">Última sincronización mobile: {mobileUpdatedAtLabel}</p>
+          </div>
+          <button type="button" className="secondary-action" onClick={() => navigate('/distriapp/monitoreo')}>
+            Ver ruteo en vivo
+          </button>
+        </header>
+
+        {!mobileConfigured ? (
+          <p className="form-info form-info--error">
+            {mobileOverview?.message ?? 'Sin integración activa con la API móvil.'}
+          </p>
+        ) : null}
+
+        <div className="distriapp-mobile-modules">
+          {mobileModules.length === 0 ? (
+            <p className="form-info">No hay módulos mobile disponibles para mostrar.</p>
+          ) : (
+            mobileModules.map((module) => (
+              <article key={module.key} className="distriapp-mobile-module">
+                <div className="distriapp-mobile-module__header">
+                  <strong>{module.title}</strong>
+                  <span
+                    className={`distriapp-status-pill ${getDistriappModuleStatusClass(module.status)}`}
+                  >
+                    {getDistriappModuleStatusLabel(module.status)}
+                  </span>
+                </div>
+                <p className="distriapp-mobile-module__count">
+                  {module.count == null ? 'Sin dato' : `${module.count} registros`}
+                </p>
+                {module.error ? <p className="form-info form-info--error">{module.error}</p> : null}
+              </article>
+            ))
+          )}
+        </div>
+
+        <div className="distriapp-inline-metrics">
+          <span>
+            Tracking activo: <strong>{mobileOverview?.liveTracking?.available ? 'Sí' : 'No'}</strong>
+          </span>
+          <span>
+            Unidades con señal: <strong>{mobileOverview?.liveTracking?.count ?? 0}</strong>
+          </span>
+        </div>
+        {mobileOverview?.liveTracking?.error ? (
+          <p className="form-info form-info--error">{mobileOverview.liveTracking.error}</p>
+        ) : null}
+      </section>
+
+      {mobileOverview?.rankingPreview?.length ? (
+        <section className="dashboard-card">
+          <header className="card-header">
+            <h3>Ranking (preview)</h3>
+          </header>
+          <div className="table-wrapper">
+            <table>
+              <thead>
+                <tr>
+                  <th>Puesto</th>
+                  <th>Conductor</th>
+                  <th>Puntaje</th>
+                  <th>Viajes</th>
+                </tr>
+              </thead>
+              <tbody>
+                {mobileOverview.rankingPreview.map((item) => (
+                  <tr key={`${item.position}-${item.driverName}`}>
+                    <td>{item.position}</td>
+                    <td>{item.driverName}</td>
+                    <td>{item.score}</td>
+                    <td>{item.trips}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      ) : null}
+
+      <section className="dashboard-card">
+        <header className="card-header">
+          <h3>Módulos Distriapp</h3>
+        </header>
+        {visibleShortcuts.length === 0 ? (
+          <p className="form-info">No tenés módulos de Distriapp habilitados.</p>
+        ) : (
+          <div className="distriapp-shortcuts-grid">
+            {visibleShortcuts.map((item) => (
+              <button
+                key={item.key}
+                type="button"
+                className="distriapp-shortcut"
+                onClick={() => navigate(item.path)}
+              >
+                <span className="distriapp-shortcut__title">{item.title}</span>
+                <span className="distriapp-shortcut__description">{item.description}</span>
+              </button>
+            ))}
+          </div>
+        )}
+      </section>
+    </DashboardLayout>
+  );
+};
+
+const DistriappLiveTrackingPage: React.FC = () => {
+  const navigate = useNavigate();
+  const apiBaseUrl = useMemo(() => resolveApiBaseUrl(), []);
+  const [overview, setOverview] = useState<DistriappMobileOverview | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const fetchOverview = useCallback(
+    async (options?: { signal?: AbortSignal; silent?: boolean }) => {
+      const signal = options?.signal;
+      const silent = options?.silent ?? false;
+
+      try {
+        if (!silent) {
+          setRefreshing(true);
+        }
+        setError(null);
+
+        const response = await fetch(`${apiBaseUrl}/api/distriapp/mobile/overview`, { signal });
+        if (!response.ok) {
+          throw new Error(`Error ${response.status}: ${response.statusText}`);
+        }
+
+        const payload = (await parseJsonSafe(response)) as {
+          data?: Partial<DistriappMobileOverview>;
+        };
+
+        setOverview({
+          configured: Boolean(payload?.data?.configured),
+          message: payload?.data?.message ?? null,
+          month: Number(payload?.data?.month ?? new Date().getMonth() + 1),
+          year: Number(payload?.data?.year ?? new Date().getFullYear()),
+          modules: Array.isArray(payload?.data?.modules) ? (payload?.data?.modules as DistriappMobileModule[]) : [],
+          liveTracking: {
+            available: Boolean(payload?.data?.liveTracking?.available),
+            count: Number(payload?.data?.liveTracking?.count ?? 0),
+            items: Array.isArray(payload?.data?.liveTracking?.items)
+              ? (payload?.data?.liveTracking?.items as DistriappLiveTrackingItem[])
+              : [],
+            error: payload?.data?.liveTracking?.error ?? null,
+            sourceEndpoint: payload?.data?.liveTracking?.sourceEndpoint ?? null,
+          },
+          rankingPreview: Array.isArray(payload?.data?.rankingPreview)
+            ? (payload?.data?.rankingPreview as DistriappRankingItem[])
+            : [],
+          updatedAt: payload?.data?.updatedAt ?? null,
+        });
+      } catch (err) {
+        if ((err as Error).name === 'AbortError') {
+          return;
+        }
+        setError((err as Error).message ?? 'No se pudo cargar el monitoreo en vivo.');
+      } finally {
+        setLoading(false);
+        if (!silent) {
+          setRefreshing(false);
+        }
+      }
+    },
+    [apiBaseUrl]
+  );
+
+  useEffect(() => {
+    const controller = new AbortController();
+    setLoading(true);
+    void fetchOverview({ signal: controller.signal, silent: true });
+
+    const intervalId = window.setInterval(() => {
+      void fetchOverview({ silent: true });
+    }, 45000);
+
+    return () => {
+      controller.abort();
+      window.clearInterval(intervalId);
+    };
+  }, [fetchOverview]);
+
+  const liveItems = overview?.liveTracking?.items ?? [];
+  const updatedAtLabel = formatDistriappTimestamp(overview?.updatedAt);
+
+  return (
+    <DashboardLayout
+      title="Ruteo En Vivo"
+      subtitle="Seguimiento operativo de transportistas desde el admin Distriapp"
+    >
+      <section className="dashboard-card">
+        <header className="card-header">
+          <div>
+            <h3>Monitoreo en tiempo real</h3>
+            <p className="form-info">Última sincronización: {updatedAtLabel}</p>
+          </div>
+          <div className="distriapp-live-actions">
+            <button type="button" className="secondary-action" onClick={() => navigate('/distriapp')}>
+              Volver al centro
+            </button>
+            <button type="button" className="secondary-action" onClick={() => void fetchOverview()} disabled={refreshing}>
+              {refreshing ? 'Actualizando...' : 'Actualizar ahora'}
+            </button>
+          </div>
+        </header>
+
+        {loading ? <p className="form-info">Cargando posiciones...</p> : null}
+        {error ? <p className="form-info form-info--error">{error}</p> : null}
+
+        {!overview?.configured ? (
+          <p className="form-info form-info--error">
+            {overview?.message ?? 'Configurá DISTRIAPP_MOBILE_API_URL y DISTRIAPP_MOBILE_API_TOKEN para activar tracking.'}
+          </p>
+        ) : null}
+
+        <div className="distriapp-inline-metrics">
+          <span>
+            Tracking disponible: <strong>{overview?.liveTracking?.available ? 'Sí' : 'No'}</strong>
+          </span>
+          <span>
+            Transportistas con señal: <strong>{overview?.liveTracking?.count ?? 0}</strong>
+          </span>
+          {overview?.liveTracking?.sourceEndpoint ? (
+            <span>
+              Endpoint: <code>{overview.liveTracking.sourceEndpoint}</code>
+            </span>
+          ) : null}
+        </div>
+        {overview?.liveTracking?.error ? <p className="form-info form-info--error">{overview.liveTracking.error}</p> : null}
+
+        <div className="table-wrapper">
+          <table>
+            <thead>
+              <tr>
+                <th>Conductor</th>
+                <th>Unidad</th>
+                <th>Lat</th>
+                <th>Lng</th>
+                <th>Última señal</th>
+                <th>Mapa</th>
+              </tr>
+            </thead>
+            <tbody>
+              {liveItems.length === 0 ? (
+                <tr>
+                  <td colSpan={6}>No hay posiciones activas disponibles.</td>
+                </tr>
+              ) : (
+                liveItems.map((item, index) => {
+                  const mapUrl = `https://www.google.com/maps?q=${item.lat},${item.lng}`;
+                  return (
+                    <tr key={`${item.driverName}-${item.unitPatent}-${index}`}>
+                      <td>{item.driverName}</td>
+                      <td>{item.unitPatent}</td>
+                      <td>{item.lat.toFixed(6)}</td>
+                      <td>{item.lng.toFixed(6)}</td>
+                      <td>{formatDistriappTimestamp(item.recordedAt)}</td>
+                      <td>
+                        <a href={mapUrl} target="_blank" rel="noreferrer">
+                          Ver
+                        </a>
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </DashboardLayout>
+  );
+};
+
+const fetchDistriappModule = async <T,>(
+  apiBaseUrl: string,
+  module: 'urban-distribution' | 'journeys' | 'driver-locations',
+  params?: Record<string, string | number | null | undefined>,
+  signal?: AbortSignal
+): Promise<DistriappModuleData<T>> => {
+  const searchParams = new URLSearchParams();
+  Object.entries(params ?? {}).forEach(([key, value]) => {
+    if (value === undefined || value === null || `${value}`.trim().length === 0) {
+      return;
+    }
+    searchParams.set(key, `${value}`);
+  });
+  const qs = searchParams.toString();
+  const url = `${apiBaseUrl}/api/distriapp/mobile/module/${module}${qs ? `?${qs}` : ''}`;
+
+  const response = await fetch(url, { signal });
+  if (!response.ok) {
+    throw new Error(`Error ${response.status}: ${response.statusText}`);
+  }
+
+  const payload = (await parseJsonSafe(response)) as {
+    data?: Partial<DistriappModuleData<T>>;
+  };
+
+  return {
+    configured: Boolean(payload?.data?.configured),
+    module: payload?.data?.module ?? module,
+    count: Number(payload?.data?.count ?? 0),
+    items: Array.isArray(payload?.data?.items) ? (payload?.data?.items as T[]) : [],
+    message: payload?.data?.message ?? null,
+    updatedAt: payload?.data?.updatedAt ?? null,
+    month: payload?.data?.month != null ? Number(payload?.data?.month) : undefined,
+    year: payload?.data?.year != null ? Number(payload?.data?.year) : undefined,
+    from: payload?.data?.from ?? null,
+    to: payload?.data?.to ?? null,
+  };
+};
+
+const DistriappUrbanDistributionPage: React.FC = () => {
+  const navigate = useNavigate();
+  const apiBaseUrl = useMemo(() => resolveApiBaseUrl(), []);
+  const [monthInput, setMonthInput] = useState(currentMonthInput);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [items, setItems] = useState<DistriappAdminOrderItem[]>([]);
+  const [configured, setConfigured] = useState(true);
+  const [message, setMessage] = useState<string | null>(null);
+  const [updatedAt, setUpdatedAt] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const loadData = useCallback(
+    async (options?: { signal?: AbortSignal; silent?: boolean }) => {
+      const silent = options?.silent ?? false;
+      const parsed = parseMonthInput(monthInput);
+      if (!parsed) {
+        setError('Mes inválido. Usá formato YYYY-MM.');
+        return;
+      }
+
+      try {
+        if (!silent) {
+          setRefreshing(true);
+        }
+        setError(null);
+        const data = await fetchDistriappModule<DistriappAdminOrderItem>(
+          apiBaseUrl,
+          'urban-distribution',
+          { month: parsed.month, year: parsed.year },
+          options?.signal
+        );
+        setConfigured(data.configured);
+        setMessage(data.message ?? null);
+        setItems(data.items);
+        setUpdatedAt(data.updatedAt ?? null);
+      } catch (err) {
+        if ((err as Error).name === 'AbortError') {
+          return;
+        }
+        setError((err as Error).message ?? 'No se pudo cargar Distribución urbana.');
+      } finally {
+        setLoading(false);
+        if (!silent) {
+          setRefreshing(false);
+        }
+      }
+    },
+    [apiBaseUrl, monthInput]
+  );
+
+  useEffect(() => {
+    const controller = new AbortController();
+    setLoading(true);
+    void loadData({ signal: controller.signal, silent: true });
+    return () => controller.abort();
+  }, [loadData]);
+
+  const filteredItems = useMemo(() => {
+    const term = searchTerm.trim().toLowerCase();
+    if (!term) {
+      return items;
+    }
+    return items.filter((item) =>
+      [item.driverName, item.receiver, item.phone, item.locationName, item.status]
+        .join(' ')
+        .toLowerCase()
+        .includes(term)
+    );
+  }, [items, searchTerm]);
+
+  return (
+    <DashboardLayout
+      title="Distribución Urbana"
+      subtitle="Módulo legacy Distriapp integrado en el admin de apppersonal"
+    >
+      <section className="dashboard-card">
+        <header className="card-header">
+          <div>
+            <h3>Órdenes del mes</h3>
+            <p className="form-info">Última actualización: {formatDistriappTimestamp(updatedAt)}</p>
+          </div>
+          <div className="distriapp-live-actions">
+            <button type="button" className="secondary-action" onClick={() => navigate('/distriapp')}>
+              Volver al centro
+            </button>
+            <button type="button" className="secondary-action" onClick={() => void loadData()} disabled={refreshing}>
+              {refreshing ? 'Actualizando...' : 'Actualizar'}
+            </button>
+          </div>
+        </header>
+
+        <div className="distriapp-filters-row">
+          <label className="input-control">
+            <span>Mes</span>
+            <input type="month" value={monthInput} onChange={(event) => setMonthInput(event.target.value)} />
+          </label>
+          <label className="input-control">
+            <span>Buscar</span>
+            <input
+              type="search"
+              value={searchTerm}
+              onChange={(event) => setSearchTerm(event.target.value)}
+              placeholder="Conductor, receptor, estado..."
+            />
+          </label>
+        </div>
+
+        {!configured ? <p className="form-info form-info--error">{message ?? 'Integración no configurada.'}</p> : null}
+        {loading ? <p className="form-info">Cargando distribución urbana...</p> : null}
+        {error ? <p className="form-info form-info--error">{error}</p> : null}
+
+        <div className="table-wrapper">
+          <table>
+            <thead>
+              <tr>
+                <th>Conductor</th>
+                <th>Receptor</th>
+                <th>Teléfono</th>
+                <th>Dirección</th>
+                <th>Estado</th>
+                <th>Fecha</th>
+                <th>Entrega</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filteredItems.length === 0 ? (
+                <tr>
+                  <td colSpan={7}>No hay órdenes para los filtros seleccionados.</td>
+                </tr>
+              ) : (
+                filteredItems.map((item, index) => (
+                  <tr key={`${item.id ?? 'order'}-${index}`}>
+                    <td>{item.driverName || 'S/D'}</td>
+                    <td>{item.receiver || 'S/D'}</td>
+                    <td>{item.phone || 'S/D'}</td>
+                    <td>{item.locationName || 'S/D'}</td>
+                    <td>{item.status || 'S/D'}</td>
+                    <td>{formatDistriappOptionalTimestamp(item.createdAt)}</td>
+                    <td>{formatDistriappOptionalTimestamp(item.deliveredAt)}</td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </DashboardLayout>
+  );
+};
+
+const DistriappJourneysPage: React.FC = () => {
+  const navigate = useNavigate();
+  const apiBaseUrl = useMemo(() => resolveApiBaseUrl(), []);
+  const [fromDate, setFromDate] = useState(firstDateOfCurrentMonthInput);
+  const [toDate, setToDate] = useState(currentDateInput);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [items, setItems] = useState<DistriappAdminOrderItem[]>([]);
+  const [configured, setConfigured] = useState(true);
+  const [message, setMessage] = useState<string | null>(null);
+  const [updatedAt, setUpdatedAt] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const loadData = useCallback(
+    async (options?: { signal?: AbortSignal; silent?: boolean }) => {
+      const silent = options?.silent ?? false;
+      const fromIso = toIsoBoundary(fromDate, false);
+      const toIso = toIsoBoundary(toDate, true);
+
+      try {
+        if (!silent) {
+          setRefreshing(true);
+        }
+        setError(null);
+        const data = await fetchDistriappModule<DistriappAdminOrderItem>(
+          apiBaseUrl,
+          'journeys',
+          { from: fromIso, to: toIso },
+          options?.signal
+        );
+        setConfigured(data.configured);
+        setMessage(data.message ?? null);
+        setItems(data.items);
+        setUpdatedAt(data.updatedAt ?? null);
+      } catch (err) {
+        if ((err as Error).name === 'AbortError') {
+          return;
+        }
+        setError((err as Error).message ?? 'No se pudo cargar Viajes.');
+      } finally {
+        setLoading(false);
+        if (!silent) {
+          setRefreshing(false);
+        }
+      }
+    },
+    [apiBaseUrl, fromDate, toDate]
+  );
+
+  useEffect(() => {
+    const controller = new AbortController();
+    setLoading(true);
+    void loadData({ signal: controller.signal, silent: true });
+    return () => controller.abort();
+  }, [loadData]);
+
+  const filteredItems = useMemo(() => {
+    const term = searchTerm.trim().toLowerCase();
+    if (!term) {
+      return items;
+    }
+    return items.filter((item) =>
+      [item.driverName, item.locationName, item.status, item.receiver].join(' ').toLowerCase().includes(term)
+    );
+  }, [items, searchTerm]);
+
+  return (
+    <DashboardLayout title="Viajes" subtitle="Vista admin conectada al módulo legacy de viajes">
+      <section className="dashboard-card">
+        <header className="card-header">
+          <div>
+            <h3>Listado de viajes</h3>
+            <p className="form-info">Última actualización: {formatDistriappTimestamp(updatedAt)}</p>
+          </div>
+          <div className="distriapp-live-actions">
+            <button type="button" className="secondary-action" onClick={() => navigate('/distriapp')}>
+              Volver al centro
+            </button>
+            <button type="button" className="secondary-action" onClick={() => void loadData()} disabled={refreshing}>
+              {refreshing ? 'Actualizando...' : 'Actualizar'}
+            </button>
+          </div>
+        </header>
+
+        <div className="distriapp-filters-row">
+          <label className="input-control">
+            <span>Desde</span>
+            <input type="date" value={fromDate} onChange={(event) => setFromDate(event.target.value)} />
+          </label>
+          <label className="input-control">
+            <span>Hasta</span>
+            <input type="date" value={toDate} onChange={(event) => setToDate(event.target.value)} />
+          </label>
+          <label className="input-control">
+            <span>Buscar</span>
+            <input
+              type="search"
+              value={searchTerm}
+              onChange={(event) => setSearchTerm(event.target.value)}
+              placeholder="Conductor, dirección, estado..."
+            />
+          </label>
+        </div>
+
+        {!configured ? <p className="form-info form-info--error">{message ?? 'Integración no configurada.'}</p> : null}
+        {loading ? <p className="form-info">Cargando viajes...</p> : null}
+        {error ? <p className="form-info form-info--error">{error}</p> : null}
+
+        <div className="table-wrapper">
+          <table>
+            <thead>
+              <tr>
+                <th>Conductor</th>
+                <th>Destino</th>
+                <th>Estado</th>
+                <th>Fecha</th>
+                <th>Entrega</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filteredItems.length === 0 ? (
+                <tr>
+                  <td colSpan={5}>No hay viajes para los filtros seleccionados.</td>
+                </tr>
+              ) : (
+                filteredItems.map((item, index) => (
+                  <tr key={`${item.id ?? 'journey'}-${index}`}>
+                    <td>{item.driverName || 'S/D'}</td>
+                    <td>{item.locationName || 'S/D'}</td>
+                    <td>{item.status || 'S/D'}</td>
+                    <td>{formatDistriappOptionalTimestamp(item.createdAt)}</td>
+                    <td>{formatDistriappOptionalTimestamp(item.deliveredAt)}</td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </DashboardLayout>
+  );
+};
+
+const DistriappDriversLocationPage: React.FC = () => {
+  const navigate = useNavigate();
+  const apiBaseUrl = useMemo(() => resolveApiBaseUrl(), []);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [items, setItems] = useState<DistriappAdminDriverLocationItem[]>([]);
+  const [configured, setConfigured] = useState(true);
+  const [message, setMessage] = useState<string | null>(null);
+  const [updatedAt, setUpdatedAt] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const loadData = useCallback(
+    async (options?: { signal?: AbortSignal; silent?: boolean }) => {
+      const silent = options?.silent ?? false;
+
+      try {
+        if (!silent) {
+          setRefreshing(true);
+        }
+        setError(null);
+        const data = await fetchDistriappModule<DistriappAdminDriverLocationItem>(
+          apiBaseUrl,
+          'driver-locations',
+          undefined,
+          options?.signal
+        );
+        setConfigured(data.configured);
+        setMessage(data.message ?? null);
+        setItems(data.items);
+        setUpdatedAt(data.updatedAt ?? null);
+      } catch (err) {
+        if ((err as Error).name === 'AbortError') {
+          return;
+        }
+        setError((err as Error).message ?? 'No se pudieron cargar las ubicaciones.');
+      } finally {
+        setLoading(false);
+        if (!silent) {
+          setRefreshing(false);
+        }
+      }
+    },
+    [apiBaseUrl]
+  );
+
+  useEffect(() => {
+    const controller = new AbortController();
+    setLoading(true);
+    void loadData({ signal: controller.signal, silent: true });
+
+    const intervalId = window.setInterval(() => {
+      void loadData({ silent: true });
+    }, 45000);
+
+    return () => {
+      controller.abort();
+      window.clearInterval(intervalId);
+    };
+  }, [loadData]);
+
+  const filteredItems = useMemo(() => {
+    const term = searchTerm.trim().toLowerCase();
+    if (!term) {
+      return items;
+    }
+    return items.filter((item) => item.driverName.toLowerCase().includes(term));
+  }, [items, searchTerm]);
+
+  return (
+    <DashboardLayout title="Ubic. Repartidores" subtitle="Última geoposición reportada por conductor">
+      <section className="dashboard-card">
+        <header className="card-header">
+          <div>
+            <h3>Ubicaciones en vivo</h3>
+            <p className="form-info">Última actualización: {formatDistriappTimestamp(updatedAt)}</p>
+          </div>
+          <div className="distriapp-live-actions">
+            <button type="button" className="secondary-action" onClick={() => navigate('/distriapp')}>
+              Volver al centro
+            </button>
+            <button type="button" className="secondary-action" onClick={() => void loadData()} disabled={refreshing}>
+              {refreshing ? 'Actualizando...' : 'Actualizar'}
+            </button>
+          </div>
+        </header>
+
+        <div className="distriapp-filters-row">
+          <label className="input-control">
+            <span>Buscar conductor</span>
+            <input
+              type="search"
+              value={searchTerm}
+              onChange={(event) => setSearchTerm(event.target.value)}
+              placeholder="Nombre del conductor..."
+            />
+          </label>
+        </div>
+
+        {!configured ? <p className="form-info form-info--error">{message ?? 'Integración no configurada.'}</p> : null}
+        {loading ? <p className="form-info">Cargando ubicaciones...</p> : null}
+        {error ? <p className="form-info form-info--error">{error}</p> : null}
+
+        <div className="table-wrapper">
+          <table>
+            <thead>
+              <tr>
+                <th>Conductor</th>
+                <th>Lat</th>
+                <th>Lng</th>
+                <th>Precisión</th>
+                <th>Fecha</th>
+                <th>Mapa</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filteredItems.length === 0 ? (
+                <tr>
+                  <td colSpan={6}>No hay ubicaciones activas para mostrar.</td>
+                </tr>
+              ) : (
+                filteredItems.map((item, index) => {
+                  const mapUrl = `https://www.google.com/maps?q=${item.lat},${item.lng}`;
+                  return (
+                    <tr key={`${item.driverId ?? item.driverName}-${index}`}>
+                      <td>{item.driverName}</td>
+                      <td>{item.lat.toFixed(6)}</td>
+                      <td>{item.lng.toFixed(6)}</td>
+                      <td>{item.accuracy != null ? `${item.accuracy} m` : 'S/D'}</td>
+                      <td>{formatDistriappOptionalTimestamp(item.recordedAt)}</td>
+                      <td>
+                        <a href={mapUrl} target="_blank" rel="noreferrer">
+                          Ver
+                        </a>
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
         </div>
       </section>
     </DashboardLayout>
@@ -22568,18 +23761,16 @@ const AttendanceLogPage: React.FC = () => {
     const normalized = authUser?.role?.toLowerCase() ?? '';
     return normalized.includes('admin');
   }, [authUser?.role]);
-  const [log, setLog] = useState<AttendanceRecord[]>(() => readAttendanceLogFromStorage());
   const [remoteLog, setRemoteLog] = useState<AttendanceRecord[] | null>(null);
   const [remoteLoading, setRemoteLoading] = useState(true);
   const [remoteError, setRemoteError] = useState<string | null>(null);
+  const [importing, setImporting] = useState(false);
+  const [clearingRemote, setClearingRemote] = useState(false);
+  const [importFeedback, setImportFeedback] = useState<string | null>(null);
+  const [importError, setImportError] = useState<string | null>(null);
   const [refreshTick, setRefreshTick] = useState(0);
+  const importInputRef = useRef<HTMLInputElement | null>(null);
   const navigate = useNavigate();
-
-  useEffect(() => {
-    const handler = () => setLog(readAttendanceLogFromStorage());
-    window.addEventListener('attendance:updated', handler);
-    return () => window.removeEventListener('attendance:updated', handler);
-  }, []);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -22615,60 +23806,232 @@ const AttendanceLogPage: React.FC = () => {
     return () => controller.abort();
   }, [apiBaseUrl, refreshTick]);
 
-  const effectiveLog = useMemo(() => {
-    if (remoteLog && remoteLog.length > 0) {
-      return remoteLog;
-    }
-    return log;
-  }, [log, remoteLog]);
+  const effectiveLog = useMemo(() => remoteLog ?? [], [remoteLog]);
 
-  const durationLookup = useMemo(() => {
-    const lookup = new Map<string, string>();
-    const chronological = [...effectiveLog].sort(
-      (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
-    );
-    const lastEntryByUser = new Map<string, AttendanceRecord>();
-
-    chronological.forEach((record) => {
-      const userKey = record.userKey ?? buildAttendanceUserKey(record);
-      if (record.status === 'entrada') {
-        lastEntryByUser.set(userKey, record);
-      } else {
-        const entry = lastEntryByUser.get(userKey);
-        if (entry) {
-          lookup.set(record.timestamp, formatElapsedTime(entry.timestamp, record.timestamp));
-          lastEntryByUser.delete(userKey);
-        } else {
-          lookup.set(record.timestamp, '—');
-        }
-      }
-    });
-
-    return lookup;
-  }, [effectiveLog]);
-
-  const handleClearLog = () => {
-    if (!window.confirm('¿Seguro que deseas limpiar el registro local de marcaciones?')) {
+  const handleClearRemoteLog = async () => {
+    if (!window.confirm('¿Seguro que querés eliminar todo el registro de asistencia del servidor?')) {
       return;
     }
-    if (typeof window !== 'undefined') {
-      window.localStorage.removeItem(ATTENDANCE_LOG_KEY);
-      clearAttendanceStore();
+
+    try {
+      setClearingRemote(true);
+      setImportError(null);
+      setImportFeedback(null);
+
+      const response = await fetch(`${apiBaseUrl}/api/attendance`, {
+        method: 'DELETE',
+        headers: {
+          Accept: 'application/json',
+        },
+      });
+
+      const payload = (await parseJsonSafe(response)) as {
+        message?: string;
+        data?: { deletedCount?: number };
+      };
+
+      if (!response.ok) {
+        throw new Error(payload.message ?? `Error ${response.status}: ${response.statusText}`);
+      }
+
+      const deletedCount = Number(payload.data?.deletedCount ?? 0);
+      setImportFeedback(`Registro servidor limpiado. Marcaciones eliminadas: ${deletedCount}.`);
+      setRefreshTick((value) => value + 1);
+    } catch (err) {
+      setImportError((err as Error).message ?? 'No se pudo limpiar el registro del servidor.');
+    } finally {
+      setClearingRemote(false);
     }
-    setLog([]);
-    window.dispatchEvent(new CustomEvent('attendance:updated', { detail: null }));
   };
 
-  if (!isAdmin) {
-    return <Navigate to="/clientes" replace />;
-  }
+  const handleImportClick = () => {
+    importInputRef.current?.click();
+  };
+
+  const handleImportFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) {
+      return;
+    }
+
+    const replaceExisting = window.confirm(
+      '¿Querés limpiar el registro actual del servidor y reemplazarlo con este archivo?\n\nAceptar = limpiar y reemplazar.\nCancelar = importar sin limpiar.'
+    );
+
+    try {
+      setImporting(true);
+      setImportError(null);
+      setImportFeedback(null);
+
+      const formData = new FormData();
+      formData.append('file', file);
+      formData.append('replaceExisting', replaceExisting ? '1' : '0');
+
+      const response = await fetch(`${apiBaseUrl}/api/attendance/import`, {
+        method: 'POST',
+        headers: {
+          Accept: 'application/json',
+        },
+        body: formData,
+      });
+
+      const payload = (await parseJsonSafe(response)) as {
+        message?: string;
+        data?: {
+          processed?: number;
+          imported?: number;
+          skipped?: number;
+          inferredStatus?: number;
+          replaceExisting?: boolean;
+          deletedCount?: number;
+          errors?: string[];
+        };
+      };
+
+      if (!response.ok) {
+        const rawErrors = payload.data?.errors;
+        const errors: string[] = Array.isArray(rawErrors) ? rawErrors : [];
+        const detail = errors.length > 0 ? ` Detalle: ${errors[0]}` : '';
+        throw new Error((payload.message ?? `Error ${response.status}: ${response.statusText}`) + detail);
+      }
+
+      const processed = Number(payload.data?.processed ?? 0);
+      const imported = Number(payload.data?.imported ?? 0);
+      const skipped = Number(payload.data?.skipped ?? 0);
+      const inferredStatus = Number(payload.data?.inferredStatus ?? 0);
+      const didReplace = Boolean(payload.data?.replaceExisting);
+      const deletedCount = Number(payload.data?.deletedCount ?? 0);
+      const rawErrors = payload.data?.errors;
+      const errors: string[] = Array.isArray(rawErrors) ? rawErrors : [];
+      const warningSummary =
+        errors.length > 0
+          ? imported > 0
+            ? ` Filas ignoradas: ${errors.length}.`
+            : ` Primer detalle: ${errors[0]}`
+          : '';
+      const replaceSummary = didReplace ? ` Registros previos eliminados: ${deletedCount}.` : '';
+
+      setImportFeedback(
+        `Importación C26 completa. Procesadas: ${processed}. Nuevas: ${imported}. Omitidas: ${skipped}. Estado inferido: ${inferredStatus}.${replaceSummary}${warningSummary}`
+      );
+      setRefreshTick((value) => value + 1);
+    } catch (err) {
+      setImportError((err as Error).message ?? 'No se pudo importar el archivo del reloj.');
+    } finally {
+      setImporting(false);
+    }
+  };
 
   const sortedLog = [...effectiveLog].sort(
     (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
   );
 
+  const summaryRows = useMemo(() => {
+    const grouped = new Map<
+      string,
+      {
+        userKey: string;
+        operatorLabel: string;
+        marksByDay: Map<string, number[]>;
+        firstDaySortValue: number;
+        lastDaySortValue: number;
+        lastMarkSortValue: number;
+      }
+    >();
+
+    sortedLog.forEach((record) => {
+      const date = new Date(record.timestamp);
+      if (Number.isNaN(date.getTime())) {
+        return;
+      }
+      const dayKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(
+        date.getDate()
+      ).padStart(2, '0')}`;
+      const userKey = record.userKey ?? buildAttendanceUserKey(record);
+      const operatorLabel = cleanAttendanceUserName(record.userName) ?? '—';
+      const dayStart = new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+      const markTime = date.getTime();
+
+      if (!grouped.has(userKey)) {
+        grouped.set(userKey, {
+          userKey,
+          operatorLabel,
+          marksByDay: new Map<string, number[]>(),
+          firstDaySortValue: dayStart,
+          lastDaySortValue: dayStart,
+          lastMarkSortValue: markTime,
+        });
+      }
+
+      const target = grouped.get(userKey);
+      if (!target) {
+        return;
+      }
+
+      if (!target.marksByDay.has(dayKey)) {
+        target.marksByDay.set(dayKey, []);
+      }
+      target.marksByDay.get(dayKey)?.push(markTime);
+      target.firstDaySortValue = Math.min(target.firstDaySortValue, dayStart);
+      target.lastDaySortValue = Math.max(target.lastDaySortValue, dayStart);
+      target.lastMarkSortValue = Math.max(target.lastMarkSortValue, markTime);
+    });
+
+    return Array.from(grouped.values())
+      .map((group) => {
+        let marksCount = 0;
+        let totalMs = 0;
+        group.marksByDay.forEach((dayMarks) => {
+          const marks = [...dayMarks].sort((a, b) => a - b);
+          marksCount += marks.length;
+          for (let i = 0; i + 1 < marks.length; i += 2) {
+            const diff = marks[i + 1] - marks[i];
+            if (diff > 0 && diff < 24 * 60 * 60 * 1000) {
+              totalMs += diff;
+            }
+          }
+        });
+
+        return {
+          ...group,
+          daysCount: group.marksByDay.size,
+          firstDateLabel: formatAttendanceDate(new Date(group.firstDaySortValue)),
+          lastDateLabel: formatAttendanceDate(new Date(group.lastDaySortValue)),
+          lastMarkLabel: formatAttendanceTime(new Date(group.lastMarkSortValue)),
+          marksCount,
+          totalWorkedLabel: formatDurationFromMs(totalMs),
+        };
+      })
+      .sort((a, b) => {
+        if (b.lastDaySortValue !== a.lastDaySortValue) {
+          return b.lastDaySortValue - a.lastDaySortValue;
+        }
+        return a.operatorLabel.localeCompare(b.operatorLabel, 'es');
+      });
+  }, [sortedLog]);
+
+  if (!isAdmin) {
+    return <Navigate to="/clientes" replace />;
+  }
+
   const headerContent = (
     <div className="card-header card-header--compact">
+      <input
+        ref={importInputRef}
+        type="file"
+        accept=".csv,.txt,.dat,.log,text/csv,text/plain,application/csv,application/vnd.ms-excel"
+        style={{ display: 'none' }}
+        onChange={handleImportFileChange}
+      />
+      <button
+        type="button"
+        className="secondary-action"
+        onClick={handleImportClick}
+        disabled={importing}
+      >
+        {importing ? 'Importando C26...' : 'Importar C26'}
+      </button>
       <button
         type="button"
         className="secondary-action"
@@ -22680,10 +24043,17 @@ const AttendanceLogPage: React.FC = () => {
       <button
         type="button"
         className="secondary-action"
-        onClick={handleClearLog}
-        disabled={sortedLog.length === 0}
+        onClick={handleClearRemoteLog}
+        disabled={clearingRemote}
       >
-        Limpiar registro local
+        {clearingRemote ? 'Limpiando servidor...' : 'Limpiar registro servidor'}
+      </button>
+      <button
+        type="button"
+        className="secondary-action"
+        disabled
+      >
+        Solo datos de servidor
       </button>
     </div>
   );
@@ -22691,69 +24061,60 @@ const AttendanceLogPage: React.FC = () => {
   return (
     <DashboardLayout title="Control horario" subtitle="Registro de marcaciones" headerContent={headerContent}>
       <div className="table-wrapper">
+        <p className="form-info">Exportá las marcaciones del C26 (Pro-Soft) en CSV/TXT y cargalas aquí.</p>
+        {importError ? <p className="form-info form-info--error">{importError}</p> : null}
+        {importFeedback ? <p className="form-info">{importFeedback}</p> : null}
         {remoteError ? <p className="form-info form-info--error">{remoteError}</p> : null}
         {remoteLoading ? <p className="form-info">Sincronizando registro remoto...</p> : null}
+        <p className="form-info">Mostrando un resumen por operador. Click en el nombre para ver fechas y detalle.</p>
         <table>
           <thead>
             <tr>
               <th>#</th>
               <th>Operador</th>
-              <th>Acción</th>
-              <th>Fecha</th>
-              <th>Hora</th>
-              <th>Horas trabajadas</th>
+              <th>Días con marcas</th>
+              <th>Primera fecha</th>
+              <th>Última fecha</th>
+              <th>Última marca</th>
+              <th>Cant. marcas</th>
+              <th>Horas totales</th>
             </tr>
           </thead>
           <tbody>
-            {sortedLog.length === 0 ? (
+            {summaryRows.length === 0 ? (
               <tr>
-                <td colSpan={6}>No hay marcaciones registradas todavía.</td>
+                <td colSpan={8}>No hay marcaciones registradas todavía.</td>
               </tr>
             ) : (
-              sortedLog.map((item, index) => {
-                const date = new Date(item.timestamp);
-                const dateLabel = date.toLocaleDateString('es-AR', {
-                  year: 'numeric',
-                  month: '2-digit',
-                  day: '2-digit',
-                });
-                const timeLabel = date.toLocaleTimeString('es-AR', {
-                  hour: '2-digit',
-                  minute: '2-digit',
-                  second: '2-digit',
-                  hour12: false,
-                });
-                const operatorLabel =
-                  item.userName && item.userName.trim().length > 0 ? item.userName.trim() : '—';
-                const userKey = item.userKey ?? buildAttendanceUserKey(item);
-                const hoursLabel =
-                  item.status === 'salida' ? durationLookup.get(item.timestamp) ?? '—' : '—';
+              summaryRows.map((item, index) => {
                 return (
-                  <tr key={`${item.timestamp}-${index}`}>
+                  <tr key={`${item.userKey}-${index}`}>
                     <td>{index + 1}</td>
                     <td>
-                      {operatorLabel !== '—' ? (
+                      {item.operatorLabel !== '—' ? (
                         <button
                           type="button"
                           className="secondary-action secondary-action--ghost"
                           onClick={() =>
                             navigate(
-                              `/control-horario/${encodeURIComponent(userKey)}?nombre=${encodeURIComponent(
-                                operatorLabel
+                              `/control-horario/${encodeURIComponent(item.userKey)}?nombre=${encodeURIComponent(
+                                item.operatorLabel
                               )}`
                             )
                           }
                         >
-                          {operatorLabel}
+                          {item.operatorLabel}
                         </button>
                       ) : (
-                        operatorLabel
+                        item.operatorLabel
                       )}
                     </td>
-                    <td>{item.status === 'entrada' ? 'Entrada' : 'Salida'}</td>
-                    <td>{dateLabel}</td>
-                    <td>{timeLabel}</td>
-                    <td>{hoursLabel}</td>
+                    <td>{item.daysCount}</td>
+                    <td>{item.firstDateLabel}</td>
+                    <td>{item.lastDateLabel}</td>
+                    <td>{item.lastMarkLabel}</td>
+                    <td>{item.marksCount}</td>
+                    <td>{item.totalWorkedLabel}</td>
                   </tr>
                 );
               })
@@ -22770,18 +24131,11 @@ const AttendanceUserDetailPage: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const apiBaseUrl = useMemo(() => resolveApiBaseUrl(), []);
-  const [log, setLog] = useState<AttendanceRecord[]>(() => readAttendanceLogFromStorage());
   const [selectedMonth, setSelectedMonth] = useState(() => formatMonthValue(new Date()));
   const [remoteLog, setRemoteLog] = useState<AttendanceRecord[] | null>(null);
   const [remoteLoading, setRemoteLoading] = useState(true);
   const [remoteError, setRemoteError] = useState<string | null>(null);
   const [refreshTick, setRefreshTick] = useState(0);
-
-  useEffect(() => {
-    const handler = () => setLog(readAttendanceLogFromStorage());
-    window.addEventListener('attendance:updated', handler);
-    return () => window.removeEventListener('attendance:updated', handler);
-  }, []);
 
   const decodedUserKey = useMemo(() => {
     if (!encodedUserKey) {
@@ -22805,10 +24159,10 @@ const AttendanceUserDetailPage: React.FC = () => {
   }, [decodedUserKey]);
 
   useEffect(() => {
-    if (!userIdFromKey) {
-      setRemoteLog(null);
+    if (!decodedUserKey) {
+      setRemoteLog([]);
       setRemoteLoading(false);
-      setRemoteError(null);
+      setRemoteError('Operador no válido.');
       return;
     }
 
@@ -22819,12 +24173,13 @@ const AttendanceUserDetailPage: React.FC = () => {
         setRemoteLoading(true);
         setRemoteError(null);
 
-        const response = await fetch(
-          `${apiBaseUrl}/api/attendance?userId=${userIdFromKey}&limit=500`,
-          {
-            signal: controller.signal,
-          }
-        );
+        const url = new URL(`${apiBaseUrl}/api/attendance`);
+        url.searchParams.set('limit', '500');
+        if (userIdFromKey) {
+          url.searchParams.set('userId', String(userIdFromKey));
+        }
+
+        const response = await fetch(url.toString(), { signal: controller.signal });
 
         if (!response.ok) {
           throw new Error(`Error ${response.status}: ${response.statusText}`);
@@ -22846,21 +24201,16 @@ const AttendanceUserDetailPage: React.FC = () => {
     fetchRemote();
 
     return () => controller.abort();
-  }, [apiBaseUrl, userIdFromKey, refreshTick]);
+  }, [apiBaseUrl, decodedUserKey, userIdFromKey, refreshTick]);
 
-  const userLog = useMemo(() => {
+  const effectiveUserLog = useMemo(() => {
     if (!decodedUserKey) {
       return [] as AttendanceRecord[];
     }
-    return log.filter((record) => (record.userKey ?? buildAttendanceUserKey(record)) === decodedUserKey);
-  }, [log, decodedUserKey]);
-
-  const effectiveUserLog = useMemo(() => {
-    if (remoteLog && remoteLog.length > 0) {
-      return remoteLog;
-    }
-    return userLog;
-  }, [remoteLog, userLog]);
+    return (remoteLog ?? []).filter(
+      (record) => (record.userKey ?? buildAttendanceUserKey(record)) === decodedUserKey
+    );
+  }, [remoteLog, decodedUserKey]);
 
   const displayName = useMemo(() => {
     const fromQuery = queryName?.trim();
@@ -22892,71 +24242,196 @@ const AttendanceUserDetailPage: React.FC = () => {
     return { start, end };
   }, [selectedMonth]);
 
-  const monthlySessions = useMemo(() => {
+  const dailyRows = useMemo(() => {
     if (!monthRange) {
       return [] as Array<{
-        entry: AttendanceRecord | null;
-        exit: AttendanceRecord | null;
-        durationMs: number;
-        effectiveStart: Date;
-        effectiveEnd: Date;
+        dayKey: string;
+        dateLabel: string;
+        weekdayLabel: string;
+        dateSortValue: number;
+        scheduleLabel: string;
+        marksLabel: string;
+        marksCount: number;
+        firstMark: string;
+        lastMark: string;
+        workedMs: number;
+        workedLabel: string;
+        expectedMs: number;
+        expectedLabel: string;
+        balanceMs: number;
+        balanceLabel: string;
+        isWorkday: boolean;
       }>;
     }
 
-    const chronological = [...effectiveUserLog].sort(
-      (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
-    );
-    const sessions: Array<{
-      entry: AttendanceRecord | null;
-      exit: AttendanceRecord | null;
-      durationMs: number;
-      effectiveStart: Date;
-      effectiveEnd: Date;
-    }> = [];
-    let pending: AttendanceRecord | null = null;
-
-    chronological.forEach((record) => {
+    const marksByDay = new Map<string, number[]>();
+    effectiveUserLog.forEach((record) => {
       const recordDate = new Date(record.timestamp);
       if (Number.isNaN(recordDate.getTime())) {
         return;
       }
-      if (record.status === 'entrada') {
-        pending = record;
+      if (recordDate < monthRange.start || recordDate >= monthRange.end) {
         return;
       }
+      const dayKey = `${recordDate.getFullYear()}-${String(recordDate.getMonth() + 1).padStart(
+        2,
+        '0'
+      )}-${String(recordDate.getDate()).padStart(2, '0')}`;
 
-      if (record.status === 'salida') {
-        if (!pending) {
-          return;
+      if (!marksByDay.has(dayKey)) {
+        marksByDay.set(dayKey, []);
+      }
+      marksByDay.get(dayKey)?.push(recordDate.getTime());
+    });
+
+    const rows: Array<{
+      dayKey: string;
+      dateLabel: string;
+      weekdayLabel: string;
+      dateSortValue: number;
+      scheduleLabel: string;
+      marksLabel: string;
+      marksCount: number;
+      firstMark: string;
+      lastMark: string;
+      workedMs: number;
+      workedLabel: string;
+      expectedMs: number;
+      expectedLabel: string;
+      balanceMs: number;
+      balanceLabel: string;
+      isWorkday: boolean;
+    }> = [];
+
+    for (
+      const cursor = new Date(monthRange.start.getTime());
+      cursor < monthRange.end;
+      cursor.setDate(cursor.getDate() + 1)
+    ) {
+      const dayDate = new Date(cursor.getFullYear(), cursor.getMonth(), cursor.getDate());
+      const dayKey = `${dayDate.getFullYear()}-${String(dayDate.getMonth() + 1).padStart(
+        2,
+        '0'
+      )}-${String(dayDate.getDate()).padStart(2, '0')}`;
+      const marks = [...(marksByDay.get(dayKey) ?? [])].sort((a, b) => a - b);
+
+      let workedMs = 0;
+      for (let index = 0; index + 1 < marks.length; index += 2) {
+        const segmentMs = marks[index + 1] - marks[index];
+        if (segmentMs > 0 && segmentMs <= 18 * 60 * 60 * 1000) {
+          workedMs += segmentMs;
         }
+      }
 
-        const entryDate = new Date(pending.timestamp);
-        const exitDate = recordDate;
-        const effectiveStart =
-          monthRange.start > entryDate ? monthRange.start : entryDate;
-        const effectiveEnd = monthRange.end < exitDate ? monthRange.end : exitDate;
+      const isWorkday = isAttendanceWorkday(dayDate);
+      const expectedMs = isWorkday ? ATTENDANCE_EXPECTED_WORKDAY_MS : 0;
+      const balanceMs = workedMs - expectedMs;
 
-        if (effectiveEnd > effectiveStart) {
-          sessions.push({
-            entry: pending,
-            exit: record,
-            durationMs: effectiveEnd.getTime() - effectiveStart.getTime(),
-            effectiveStart,
-            effectiveEnd,
-          });
+      rows.push({
+        dayKey,
+        dateLabel: formatAttendanceDate(dayDate),
+        weekdayLabel: dayDate.toLocaleDateString('es-AR', { weekday: 'short' }),
+        dateSortValue: dayDate.getTime(),
+        scheduleLabel: isWorkday ? '08:00 - 17:00' : 'No laboral',
+        marksLabel: marks.length > 0 ? marks.map((value) => formatAttendanceTime(value)).join(' | ') : '—',
+        marksCount: marks.length,
+        firstMark: marks.length > 0 ? formatAttendanceTime(marks[0]) : '—',
+        lastMark: marks.length > 0 ? formatAttendanceTime(marks[marks.length - 1]) : '—',
+        workedMs,
+        workedLabel: formatDurationFromMs(workedMs),
+        expectedMs,
+        expectedLabel: formatAttendanceDayCount(isWorkday ? 1 : 0),
+        balanceMs,
+        balanceLabel: formatSignedDurationFromMs(balanceMs),
+        isWorkday,
+      });
+    }
+
+    return rows.sort((a, b) => b.dateSortValue - a.dateSortValue);
+  }, [effectiveUserLog, monthRange]);
+
+  const monthlySummary = useMemo(() => {
+    return dailyRows.reduce(
+      (acc, row) => {
+        acc.workedMs += row.workedMs;
+        acc.expectedMs += row.expectedMs;
+        if (row.isWorkday) {
+          acc.workdays += 1;
         }
+        if (row.marksCount > 0) {
+          acc.daysWithMarks += 1;
+        }
+        return acc;
+      },
+      {
+        workedMs: 0,
+        expectedMs: 0,
+        workdays: 0,
+        daysWithMarks: 0,
+      }
+    );
+  }, [dailyRows]);
 
-        pending = null;
+  const weeklyRows = useMemo(() => {
+    const grouped = new Map<
+      string,
+      {
+        weekStartMs: number;
+        weekStartLabel: string;
+        weekEndLabel: string;
+        workedMs: number;
+        expectedMs: number;
+        daysWithMarks: number;
+        workdays: number;
+      }
+    >();
+
+    dailyRows.forEach((row) => {
+      const dayDate = new Date(row.dateSortValue);
+      const weekStart = getAttendanceWeekStart(dayDate);
+      const weekEnd = new Date(weekStart.getTime());
+      weekEnd.setDate(weekEnd.getDate() + 6);
+      const key = `${weekStart.getFullYear()}-${String(weekStart.getMonth() + 1).padStart(
+        2,
+        '0'
+      )}-${String(weekStart.getDate()).padStart(2, '0')}`;
+
+      if (!grouped.has(key)) {
+        grouped.set(key, {
+          weekStartMs: weekStart.getTime(),
+          weekStartLabel: formatAttendanceDate(weekStart),
+          weekEndLabel: formatAttendanceDate(weekEnd),
+          workedMs: 0,
+          expectedMs: 0,
+          daysWithMarks: 0,
+          workdays: 0,
+        });
+      }
+
+      const target = grouped.get(key);
+      if (!target) {
+        return;
+      }
+      target.workedMs += row.workedMs;
+      target.expectedMs += row.expectedMs;
+      if (row.marksCount > 0) {
+        target.daysWithMarks += 1;
+      }
+      if (row.isWorkday) {
+        target.workdays += 1;
       }
     });
 
-    return sessions;
-  }, [effectiveUserLog, monthRange]);
-
-  const totalDurationMs = useMemo(
-    () => monthlySessions.reduce((acc, session) => acc + session.durationMs, 0),
-    [monthlySessions]
-  );
+    return Array.from(grouped.values())
+      .map((item) => ({
+        ...item,
+        workedLabel: formatDurationFromMs(item.workedMs),
+        expectedDaysLabel: formatAttendanceDayCount(item.workdays),
+        balanceMs: item.workedMs - item.expectedMs,
+        balanceLabel: formatSignedDurationFromMs(item.workedMs - item.expectedMs),
+      }))
+      .sort((a, b) => b.weekStartMs - a.weekStartMs);
+  }, [dailyRows]);
 
   const headerContent = (
     <div className="card-header card-header--compact">
@@ -22967,7 +24442,7 @@ const AttendanceUserDetailPage: React.FC = () => {
         type="button"
         className="secondary-action"
         onClick={() => setRefreshTick((value) => value + 1)}
-        disabled={!userIdFromKey || remoteLoading}
+        disabled={!decodedUserKey || remoteLoading}
       >
         {remoteLoading ? 'Actualizando...' : 'Actualizar'}
       </button>
@@ -23001,64 +24476,136 @@ const AttendanceUserDetailPage: React.FC = () => {
             />
           </label>
           <div className="attendance-detail__summary">
-            <strong>Total registrado:</strong> {formatDurationFromMs(totalDurationMs)}
+            <strong>Total registrado (mes):</strong> {formatDurationFromMs(monthlySummary.workedMs)}
           </div>
         </div>
 
+        <div className="attendance-metrics-grid">
+          <article className="attendance-metric">
+            <span>Horas trabajadas (mes)</span>
+            <strong>{formatDurationFromMs(monthlySummary.workedMs)}</strong>
+          </article>
+          <article className="attendance-metric">
+            <span>Objetivo (L-V 08:00-17:00)</span>
+            <strong>{formatAttendanceDayCount(monthlySummary.workdays)}</strong>
+          </article>
+          <article className="attendance-metric">
+            <span>Saldo mensual</span>
+            <strong
+              className={
+                monthlySummary.workedMs - monthlySummary.expectedMs >= 0
+                  ? 'attendance-balance attendance-balance--positive'
+                  : 'attendance-balance attendance-balance--negative'
+              }
+            >
+              {formatSignedDurationFromMs(monthlySummary.workedMs - monthlySummary.expectedMs)}
+            </strong>
+          </article>
+          <article className="attendance-metric">
+            <span>Días con marcaciones</span>
+            <strong>
+              {monthlySummary.daysWithMarks} / {dailyRows.length}
+            </strong>
+          </article>
+        </div>
+
         <div className="table-wrapper">
+          <p className="form-info">
+            Detalle diario de entrada/salida y balance contra jornada de 9h (lunes a viernes).
+          </p>
           <table>
             <thead>
               <tr>
                 <th>#</th>
                 <th>Fecha</th>
+                <th>Día</th>
+                <th>Jornada</th>
+                <th>Marcaciones</th>
                 <th>Entrada</th>
                 <th>Salida</th>
                 <th>Horas trabajadas</th>
+                <th>Objetivo</th>
+                <th>Saldo</th>
               </tr>
             </thead>
             <tbody>
-              {monthlySessions.length === 0 ? (
+              {dailyRows.length === 0 ? (
                 <tr>
-                  <td colSpan={5}>No hay marcaciones registradas en este mes para el operador.</td>
+                  <td colSpan={10}>No hay días disponibles en el mes seleccionado.</td>
                 </tr>
               ) : (
-                monthlySessions.map((session, index) => {
-                  const entryDate = session.entry ? new Date(session.entry.timestamp) : null;
-                  const exitDate = session.exit ? new Date(session.exit.timestamp) : null;
-                  const dateLabel = entryDate
-                    ? entryDate.toLocaleDateString('es-AR', {
-                        year: 'numeric',
-                        month: '2-digit',
-                        day: '2-digit',
-                      })
-                    : exitDate
-                    ? exitDate.toLocaleDateString('es-AR', {
-                        year: 'numeric',
-                        month: '2-digit',
-                        day: '2-digit',
-                      })
-                    : '—';
-
-                  const formatTime = (date: Date | null) =>
-                    date
-                      ? date.toLocaleTimeString('es-AR', {
-                          hour: '2-digit',
-                          minute: '2-digit',
-                          second: '2-digit',
-                          hour12: false,
-                        })
-                      : '—';
-
+                dailyRows.map((day, index) => {
                   return (
-                    <tr key={`${session.entry?.timestamp ?? session.exit?.timestamp ?? index}-${index}`}>
+                    <tr key={`${day.dayKey}-${index}`}>
                       <td>{index + 1}</td>
-                      <td>{dateLabel}</td>
-                      <td>{formatTime(entryDate)}</td>
-                      <td>{formatTime(exitDate)}</td>
-                      <td>{formatDurationFromMs(session.durationMs)}</td>
+                      <td>{day.dateLabel}</td>
+                      <td>{day.weekdayLabel}</td>
+                      <td>{day.scheduleLabel}</td>
+                      <td>{day.marksLabel}</td>
+                      <td>{day.firstMark}</td>
+                      <td>{day.lastMark}</td>
+                      <td>{day.workedLabel}</td>
+                      <td>{day.expectedLabel}</td>
+                      <td
+                        className={
+                          day.balanceMs >= 0
+                            ? 'attendance-balance attendance-balance--positive'
+                            : 'attendance-balance attendance-balance--negative'
+                        }
+                      >
+                        {day.balanceLabel}
+                      </td>
                     </tr>
                   );
                 })
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        <div className="table-wrapper">
+          <p className="form-info">Resumen semanal (acumulado por semana calendario).</p>
+          <table>
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Semana</th>
+                <th>Rango</th>
+                <th>Días laborales</th>
+                <th>Días con marcas</th>
+                <th>Horas trabajadas</th>
+                <th>Días objetivo</th>
+                <th>Saldo</th>
+              </tr>
+            </thead>
+            <tbody>
+              {weeklyRows.length === 0 ? (
+                <tr>
+                  <td colSpan={8}>No hay datos semanales para el mes seleccionado.</td>
+                </tr>
+              ) : (
+                weeklyRows.map((week, index) => (
+                  <tr key={`${week.weekStartMs}-${index}`}>
+                    <td>{index + 1}</td>
+                    <td>Semana {index + 1}</td>
+                    <td>
+                      {week.weekStartLabel} al {week.weekEndLabel}
+                    </td>
+                    <td>{week.workdays}</td>
+                    <td>{week.daysWithMarks}</td>
+                    <td>{week.workedLabel}</td>
+                    <td>{week.expectedDaysLabel}</td>
+                    <td
+                      className={
+                        week.balanceMs >= 0
+                          ? 'attendance-balance attendance-balance--positive'
+                          : 'attendance-balance attendance-balance--negative'
+                      }
+                    >
+                      {week.balanceLabel}
+                    </td>
+                  </tr>
+                ))
               )}
             </tbody>
           </table>
@@ -24145,6 +25692,7 @@ const ApprovalsRequestsPage: React.FC = () => {
   const [solicitudesFechaPreset, setSolicitudesFechaPreset] = useState('');
   const [solicitudesFechaFrom, setSolicitudesFechaFrom] = useState('');
   const [solicitudesFechaTo, setSolicitudesFechaTo] = useState('');
+  const [bulkRejectingSolicitudes, setBulkRejectingSolicitudes] = useState(false);
   const [flash, setFlash] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
   const [deletingSolicitudId, setDeletingSolicitudId] = useState<number | null>(null);
   const perfilNames: Record<number, string> = useMemo(
@@ -25206,8 +26754,19 @@ const ApprovalsRequestsPage: React.FC = () => {
 
   const headerContent = (
     <div className="card-header card-header--compact">
-      <button type="button" className="secondary-action" onClick={() => navigate('/personal')}>
-        ← Volver a proveedores
+      <button
+        type="button"
+        className="secondary-action"
+        onClick={() => {
+          if (isSolicitudPersonalView) {
+            setActiveTab('list');
+            navigate('/solicitud-personal');
+            return;
+          }
+          navigate('/personal');
+        }}
+      >
+        {isSolicitudPersonalView ? '← Volver a solicitudes pendientes' : '← Volver a proveedores'}
       </button>
     </div>
   );
@@ -28001,6 +29560,143 @@ const sucursalOptions = useMemo(() => {
     setSolicitudesFechaTo('');
   };
 
+  const isSolicitudPendiente = useCallback((estado?: string | null) => {
+    return (estado ?? '').trim().toLowerCase() === 'pendiente';
+  }, []);
+
+  const rejectableSolicitudes = useMemo(() => {
+    if (!isSolicitudPersonalView) {
+      return [] as PersonalRecord[];
+    }
+
+    return filteredSolicitudes.filter((registro) => {
+      if (!isSolicitudPendiente(registro.estado)) {
+        return false;
+      }
+
+      const data = registro.solicitudData as any;
+      const destinatarioIds = Array.isArray(data?.form?.destinatarioIds)
+        ? data.form.destinatarioIds.map((value: string | number) => String(value))
+        : data?.form?.destinatarioId != null
+        ? [String(data.form.destinatarioId)]
+        : [];
+
+      return isUserDestinatario(destinatarioIds);
+    });
+  }, [filteredSolicitudes, isSolicitudPersonalView, isSolicitudPendiente, isUserDestinatario]);
+
+  const handleRejectAllSolicitudes = async () => {
+    if (bulkRejectingSolicitudes) {
+      return;
+    }
+
+    if (!isSolicitudPersonalView) {
+      return;
+    }
+
+    if (rejectableSolicitudes.length === 0) {
+      setFlash({
+        type: 'error',
+        message: 'No hay solicitudes pendientes visibles para rechazar.',
+      });
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `¿Rechazar ${rejectableSolicitudes.length} solicitud${rejectableSolicitudes.length === 1 ? '' : 'es'} pendiente${rejectableSolicitudes.length === 1 ? '' : 's'} visibles?`
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    try {
+      setBulkRejectingSolicitudes(true);
+      setFlash(null);
+
+      const results = await Promise.all(
+        rejectableSolicitudes.map(async (registro) => {
+          const endpoint = `${apiBaseUrl}/api/solicitud-personal/${registro.id}`;
+          const requestInit: RequestInit = {
+            method: 'PUT',
+            headers: {
+              Accept: 'application/json',
+              'Content-Type': 'application/json',
+              ...actorHeaders,
+            },
+            body: JSON.stringify({ estado: 'Rechazado' }),
+          };
+
+          let response = await fetch(endpoint, requestInit);
+          if (response.status === 405) {
+            response = await fetch(endpoint, { ...requestInit, method: 'POST' });
+          }
+
+          if (!response.ok) {
+            const payload = (await parseJsonSafe(response).catch(() => null)) as { message?: string } | null;
+            return {
+              id: registro.id,
+              ok: false,
+              message: payload?.message ?? `Error ${response.status}`,
+            };
+          }
+
+          return { id: registro.id, ok: true, message: null as string | null };
+        })
+      );
+
+      const successIds = results.filter((item) => item.ok).map((item) => item.id);
+      const failed = results.filter((item) => !item.ok);
+
+      if (successIds.length > 0) {
+        const successSet = new Set(successIds);
+        setPersonalSolicitudes((prev) =>
+          prev.map((item) => {
+            if (!successSet.has(item.id)) {
+              return item;
+            }
+            const data = item.solicitudData as any;
+            return normalizeSolicitudRecord({
+              ...item,
+              estado: 'Rechazado',
+              solicitudData: {
+                ...data,
+                form: {
+                  ...(data?.form ?? {}),
+                  estado: 'Rechazado',
+                },
+              },
+            });
+          })
+        );
+      }
+
+      if (failed.length === 0) {
+        setFlash({
+          type: 'success',
+          message: `Se rechazaron ${successIds.length} solicitud${successIds.length === 1 ? '' : 'es'} correctamente.`,
+        });
+      } else {
+        const firstError = failed[0]?.message ?? 'Error desconocido';
+        setFlash({
+          type: successIds.length > 0 ? 'success' : 'error',
+          message:
+            successIds.length > 0
+              ? `Se rechazaron ${successIds.length}. No se pudieron rechazar ${failed.length}. Detalle: ${firstError}`
+              : `No se pudieron rechazar las solicitudes. Detalle: ${firstError}`,
+        });
+      }
+
+      fetchSolicitudes();
+    } catch (err) {
+      setFlash({
+        type: 'error',
+        message: (err as Error).message ?? 'No se pudo rechazar en lote.',
+      });
+    } finally {
+      setBulkRejectingSolicitudes(false);
+    }
+  };
+
   const handleDeleteSolicitud = async (registro: PersonalRecord) => {
     if (deletingSolicitudId !== null) {
       return;
@@ -28238,6 +29934,16 @@ const sucursalOptions = useMemo(() => {
           <button type="button" className="secondary-action" onClick={() => fetchSolicitudes()}>
             Actualizar
           </button>
+          {isSolicitudPersonalView ? (
+            <button
+              type="button"
+              className="secondary-action"
+              onClick={handleRejectAllSolicitudes}
+              disabled={bulkRejectingSolicitudes || rejectableSolicitudes.length === 0}
+            >
+              {bulkRejectingSolicitudes ? 'Rechazando...' : 'Rechazar todos'}
+            </button>
+          ) : null}
           <button type="button" className="secondary-action" onClick={handleSolicitudesReset}>
             Limpiar
           </button>
@@ -37641,6 +39347,46 @@ const AppRoutes: React.FC = () => (
         element={
           <RequireAccess section="panel-general">
             <DashboardPage showPersonalPanel />
+          </RequireAccess>
+        }
+      />
+      <Route
+        path="/distriapp"
+        element={
+          <RequireAccess section="distriapp">
+            <DistriappHubPage />
+          </RequireAccess>
+        }
+      />
+      <Route
+        path="/distriapp/monitoreo"
+        element={
+          <RequireAccess section="distriapp">
+            <DistriappLiveTrackingPage />
+          </RequireAccess>
+        }
+      />
+      <Route
+        path="/distriapp/distribucion-urbana"
+        element={
+          <RequireAccess section="distriapp">
+            <DistriappUrbanDistributionPage />
+          </RequireAccess>
+        }
+      />
+      <Route
+        path="/distriapp/viajes"
+        element={
+          <RequireAccess section="distriapp">
+            <DistriappJourneysPage />
+          </RequireAccess>
+        }
+      />
+      <Route
+        path="/distriapp/ubic-repartidores"
+        element={
+          <RequireAccess section="distriapp">
+            <DistriappDriversLocationPage />
           </RequireAccess>
         }
       />

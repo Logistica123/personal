@@ -20,6 +20,7 @@ use App\Http\Controllers\Api\NosisController;
 use App\Http\Controllers\Api\TarifaImagenController;
 use App\Http\Controllers\Api\SolicitudPersonalController;
 use App\Http\Controllers\Api\VacacionesDiasController;
+use App\Http\Controllers\Api\DistriappController;
 use Illuminate\Support\Facades\Route;
 
 Route::post('/login', [AuthController::class, 'login']);
@@ -108,6 +109,8 @@ Route::middleware('auth.api')->group(function () {
     Route::get('/attendance', [AttendanceController::class, 'index']);
     Route::match(['GET', 'POST'], '/attendance/logs', [AttendanceController::class, 'index']);
     Route::post('/attendance', [AttendanceController::class, 'store']);
+    Route::post('/attendance/import', [AttendanceController::class, 'import']);
+    Route::delete('/attendance', [AttendanceController::class, 'clear']);
 
     Route::get('/workflow-tasks', [WorkflowTaskController::class, 'index']);
     Route::get('/workflow-tasks/export', [WorkflowTaskController::class, 'export']);
@@ -170,6 +173,9 @@ Route::middleware('auth.api')->group(function () {
     Route::post('/combustible/cierre', [\App\Http\Controllers\Api\FuelReportController::class, 'closePeriod']);
     Route::get('/combustible/reportes-globales', [\App\Http\Controllers\Api\FuelReportController::class, 'globalReports']);
     Route::post('/personal/{persona}/liquidaciones/{documento}/ajustes', [\App\Http\Controllers\Api\PersonalDocumentController::class, 'addLiquidacionAdjustment']);
+    Route::get('/distriapp/resumen', [DistriappController::class, 'resumen']);
+    Route::get('/distriapp/mobile/overview', [DistriappController::class, 'mobileOverview']);
+    Route::get('/distriapp/mobile/module/{module}', [DistriappController::class, 'mobileModule']);
 });
 
 Route::options('/{any}', fn () => response()->noContent())->where('any', '.*');
