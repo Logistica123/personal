@@ -1677,6 +1677,10 @@ const getEstadoBadgeClass = (estado?: string | null) => {
       return 'estado-badge--baja';
     case 'activo':
       return 'estado-badge--activo';
+    case 'pre activo':
+    case 'preactivo':
+    case 'pre-activo':
+      return 'estado-badge--pre-activo';
     case 'suspendido':
       return 'estado-badge--suspendido';
     default:
@@ -3114,6 +3118,9 @@ const DashboardLayout: React.FC<{
     if (raw === 'sin estado') {
       return 'sin_estado';
     }
+    if (raw === 'pre activo' || raw === 'preactivo' || raw === 'pre-activo') {
+      return 'pre_activo';
+    }
     if (raw === 'no citado' || raw === 'no sitado') {
       return 'no_citado';
     }
@@ -4168,6 +4175,7 @@ const DashboardLayout: React.FC<{
                   {[
                     { value: 'todos', label: 'Todos' },
                     { value: 'activo', label: 'Activos' },
+                    { value: 'pre_activo', label: 'Pre activos' },
                     { value: 'baja', label: 'Baja' },
                     { value: 'suspendido', label: 'Suspendido' },
                     { value: 'no_citado', label: 'No citado' },
@@ -5977,6 +5985,7 @@ const DashboardPage: React.FC<{
   const [deletingClienteId, setDeletingClienteId] = useState<number | null>(null);
   const [personalStatsData, setPersonalStatsData] = useState<PersonalRecord[]>([]);
   const [personalStats, setPersonalStats] = useState<{
+    preActivo: number;
     activo: number;
     baja: number;
     suspendido: number;
@@ -5984,6 +5993,7 @@ const DashboardPage: React.FC<{
     otros: number;
     total: number;
   }>({
+    preActivo: 0,
     activo: 0,
     baja: 0,
     suspendido: 0,
@@ -6081,7 +6091,10 @@ const DashboardPage: React.FC<{
       .trim()
       .toLowerCase()
       .normalize('NFD')
-      .replace(/[\u0300-\u036f]/g, '');
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[_-]+/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
   }, []);
 
   const isNoCitadoEstadoForStats = useCallback(
@@ -6089,6 +6102,17 @@ const DashboardPage: React.FC<{
       const normalized = normalizeEstadoForStats(estado);
       return normalized.includes('no citado') || normalized.includes('no sitado');
     },
+    [normalizeEstadoForStats]
+  );
+  const isPreActivoEstadoForStats = useCallback(
+    (estado: string | null | undefined): boolean => {
+      const normalized = normalizeEstadoForStats(estado);
+      return normalized === 'pre activo' || normalized === 'preactivo';
+    },
+    [normalizeEstadoForStats]
+  );
+  const isActivoEstadoForStats = useCallback(
+    (estado: string | null | undefined): boolean => normalizeEstadoForStats(estado) === 'activo',
     [normalizeEstadoForStats]
   );
 
@@ -6130,7 +6154,9 @@ const DashboardPage: React.FC<{
         const estado = normalizeEstadoForStats(registro.estado);
         if (isNoCitadoEstadoForStats(registro.estado)) {
           acc.noCitado += 1;
-        } else if (estado.includes('activo')) {
+        } else if (isPreActivoEstadoForStats(registro.estado)) {
+          acc.preActivo += 1;
+        } else if (isActivoEstadoForStats(registro.estado)) {
           acc.activo += 1;
         } else if (estado.includes('baja')) {
           acc.baja += 1;
@@ -6141,11 +6167,11 @@ const DashboardPage: React.FC<{
         }
         return acc;
       },
-      { activo: 0, baja: 0, suspendido: 0, noCitado: 0, otros: 0, total: 0 }
+      { preActivo: 0, activo: 0, baja: 0, suspendido: 0, noCitado: 0, otros: 0, total: 0 }
     );
-    stats.total = stats.activo + stats.baja + stats.suspendido + stats.noCitado + stats.otros;
+    stats.total = stats.preActivo + stats.activo + stats.baja + stats.suspendido + stats.noCitado + stats.otros;
     return stats;
-  }, [isNoCitadoEstadoForStats, normalizeEstadoForStats]);
+  }, [isActivoEstadoForStats, isNoCitadoEstadoForStats, isPreActivoEstadoForStats, normalizeEstadoForStats]);
 
   const fetchPersonalStats = useCallback(
     async ({ signal, silent }: { signal?: AbortSignal; silent?: boolean } = {}) => {
@@ -8190,6 +8216,12 @@ const DashboardPage: React.FC<{
                     {statsLoading ? '—' : personalStats.activo}
                   </strong>
                 </div>
+                <div className="summary-card summary-card--info">
+                  <span className="summary-card__label">Pre activo</span>
+                  <strong className="summary-card__value">
+                    {statsLoading ? '—' : personalStats.preActivo}
+                  </strong>
+                </div>
                 <div className="summary-card summary-card--warning">
                   <span className="summary-card__label">Baja</span>
                   <strong className="summary-card__value">
@@ -8248,6 +8280,7 @@ const DashboardPage: React.FC<{
                           <h4>{clienteNombre}</h4>
                           <span>
                             {counts.total} en total
+                            {counts.preActivo > 0 ? ` · ${counts.preActivo} pre activo` : ''}
                             {counts.noCitado > 0 ? ` · ${counts.noCitado} no citado` : ''}
                             {counts.otros > 0 ? ` · ${counts.otros} sin estado` : ''}
                           </span>
@@ -8260,6 +8293,10 @@ const DashboardPage: React.FC<{
                           <div>
                             <small>Baja</small>
                             <strong>{counts.baja}</strong>
+                          </div>
+                          <div>
+                            <small>Pre activo</small>
+                            <strong>{counts.preActivo}</strong>
                           </div>
                           <div>
                             <small title="Suspendido">Susp.</small>
@@ -8472,6 +8509,7 @@ const DashboardPage: React.FC<{
                           <h4>{member.name}</h4>
                           <span>
                             {stats.total} en total
+                            {stats.preActivo > 0 ? ` · ${stats.preActivo} pre activo` : ''}
                             {stats.noCitado > 0 ? ` · ${stats.noCitado} no citado` : ''}
                             {stats.otros > 0 ? ` · ${stats.otros} sin estado` : ''}
                           </span>
@@ -8484,6 +8522,10 @@ const DashboardPage: React.FC<{
                           <div>
                             <small>Baja</small>
                             <strong>{stats.baja}</strong>
+                          </div>
+                          <div>
+                            <small>Pre activo</small>
+                            <strong>{stats.preActivo}</strong>
                           </div>
                           <div>
                             <small>Suspendido</small>
@@ -8505,6 +8547,7 @@ const DashboardPage: React.FC<{
                           <h4>{clienteNombre}</h4>
                           <span>
                             {stats.total} en total
+                            {stats.preActivo > 0 ? ` · ${stats.preActivo} pre activo` : ''}
                             {stats.noCitado > 0 ? ` · ${stats.noCitado} no citado` : ''}
                             {stats.otros > 0 ? ` · ${stats.otros} sin estado` : ''}
                           </span>
@@ -8517,6 +8560,10 @@ const DashboardPage: React.FC<{
                           <div>
                             <small>Baja</small>
                             <strong>{stats.baja}</strong>
+                          </div>
+                          <div>
+                            <small>Pre activo</small>
+                            <strong>{stats.preActivo}</strong>
                           </div>
                           <div>
                             <small>Suspendido</small>
@@ -13357,6 +13404,14 @@ const PersonalPage: React.FC = () => {
       }
       if (normalized === noCitadoFilterValue || normalized === 'no citado' || normalized === 'no sitado') {
         return noCitadoFilterValue;
+      }
+      if (
+        normalized === 'pre_activo' ||
+        normalized === 'pre activo' ||
+        normalized === 'pre-activo' ||
+        normalized === 'preactivo'
+      ) {
+        return 'Pre activo';
       }
       if (normalized === 'activo') {
         return 'Activo';
@@ -27654,11 +27709,26 @@ const sucursalOptions = useMemo(() => {
       return;
     }
 
-    const resolvedActivoEstadoId = (() => {
-      const match = (meta?.estados ?? []).find(
+    const resolvedDefaultEstadoId = (() => {
+      const estados = meta?.estados ?? [];
+      const preActivoMatch = estados.find((estado) => {
+        const normalized = (estado.nombre ?? '')
+          .trim()
+          .toLowerCase()
+          .replace(/[_-]+/g, ' ')
+          .replace(/\s+/g, ' ');
+        return normalized === 'pre activo' || normalized === 'preactivo';
+      });
+
+      if (preActivoMatch?.id) {
+        return String(preActivoMatch.id);
+      }
+
+      const activoMatch = estados.find(
         (estado) => (estado.nombre ?? '').trim().toLowerCase() === 'activo'
       );
-      return match?.id ? String(match.id) : '';
+
+      return activoMatch?.id ? String(activoMatch.id) : '';
     })();
 
     try {
@@ -27674,7 +27744,11 @@ const sucursalOptions = useMemo(() => {
 
       const effectiveEstadoId =
         forcedEstadoId ??
-        (parsedApprovalEstadoId ? parsedApprovalEstadoId : resolvedActivoEstadoId ? Number(resolvedActivoEstadoId) : null);
+        (parsedApprovalEstadoId
+          ? parsedApprovalEstadoId
+          : resolvedDefaultEstadoId
+          ? Number(resolvedDefaultEstadoId)
+          : null);
 
       if (effectiveEstadoId) {
         payloadBody.estadoId = effectiveEstadoId;
@@ -36676,6 +36750,7 @@ const PersonalCreatePage: React.FC = () => {
   const navigate = useNavigate();
   const apiBaseUrl = useMemo(() => resolveApiBaseUrl(), []);
   const authUser = useStoredAuthUser();
+  const syntheticPreActivoEstadoId = '-1';
   const canManagePersonal = useMemo(() => isPersonalEditor(authUser), [authUser]);
   const actorHeaders = useMemo(() => buildActorHeaders(authUser), [authUser]);
   const [meta, setMeta] = useState<PersonalMeta | null>(null);
@@ -36688,6 +36763,16 @@ const PersonalCreatePage: React.FC = () => {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const normalizeEstadoNombre = useCallback((value: string | null | undefined): string => {
+    return (value ?? '')
+      .trim()
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[_-]+/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }, []);
 
   const [formValues, setFormValues] = useState({
     perfilValue: 1,
@@ -36747,7 +36832,10 @@ const PersonalCreatePage: React.FC = () => {
         setMeta(payload);
         const firstAvailable = payload.perfiles.find((perfil) => perfil.value !== 2) ?? payload.perfiles[0];
         if (firstAvailable) {
-          setFormValues((prev) => ({ ...prev, perfilValue: firstAvailable.value }));
+          setFormValues((prev) => ({
+            ...prev,
+            perfilValue: firstAvailable.value,
+          }));
         }
       } catch (err) {
         setLoadError((err as Error).message ?? 'No se pudo cargar la información.');
@@ -36757,7 +36845,46 @@ const PersonalCreatePage: React.FC = () => {
     };
 
     fetchMeta();
-  }, [apiBaseUrl, canManagePersonal]);
+  }, [apiBaseUrl, canManagePersonal, normalizeEstadoNombre]);
+
+  const estadoOptions = useMemo(() => {
+    if (!meta?.estados) {
+      return [] as PersonalMeta['estados'];
+    }
+
+    const options = [...meta.estados];
+    const hasPreActivo = options.some((estado) => {
+      const normalized = normalizeEstadoNombre(estado.nombre);
+      return normalized === 'pre activo' || normalized === 'preactivo';
+    });
+
+    if (!hasPreActivo) {
+      options.push({
+        id: Number(syntheticPreActivoEstadoId),
+        nombre: 'Pre activo',
+      });
+    }
+
+    options.sort((a, b) => {
+      const aNormalized = normalizeEstadoNombre(a.nombre);
+      const bNormalized = normalizeEstadoNombre(b.nombre);
+      const aIsPreActivo = aNormalized === 'pre activo' || aNormalized === 'preactivo';
+      const bIsPreActivo = bNormalized === 'pre activo' || bNormalized === 'preactivo';
+
+      if (aIsPreActivo && !bIsPreActivo) {
+        return -1;
+      }
+      if (!aIsPreActivo && bIsPreActivo) {
+        return 1;
+      }
+
+      const aLabel = (a.nombre ?? '').toLowerCase();
+      const bLabel = (b.nombre ?? '').toLowerCase();
+      return aLabel.localeCompare(bLabel, 'es-AR');
+    });
+
+    return options;
+  }, [meta?.estados, normalizeEstadoNombre, syntheticPreActivoEstadoId]);
 
   const sucursalOptions = useMemo(() => {
     if (!meta) {
@@ -36837,7 +36964,10 @@ const PersonalCreatePage: React.FC = () => {
           sucursalId: formValues.sucursalId ? Number(formValues.sucursalId) : null,
           agenteId: formValues.agenteId ? Number(formValues.agenteId) : null,
           unidadId: formValues.unidadId ? Number(formValues.unidadId) : null,
-          estadoId: formValues.estadoId ? Number(formValues.estadoId) : null,
+          estadoId:
+            formValues.estadoId && formValues.estadoId !== syntheticPreActivoEstadoId
+              ? Number(formValues.estadoId)
+              : null,
           fechaAlta: formValues.fechaAlta || null,
           fechaBaja: formValues.fechaBaja || null,
           observacionTarifa: formValues.observacionTarifa.trim() || null,
@@ -37231,7 +37361,7 @@ const PersonalCreatePage: React.FC = () => {
             <span>Estado</span>
             <select value={formValues.estadoId} onChange={handleSelectChange('estadoId')}>
               <option value="">Seleccionar</option>
-              {meta.estados.map((estado) => (
+              {estadoOptions.map((estado) => (
                 <option key={estado.id} value={estado.id}>
                   {estado.nombre ?? `Estado #${estado.id}`}
                 </option>

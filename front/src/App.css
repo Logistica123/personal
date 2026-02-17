@@ -389,8 +389,11 @@ body {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  align-self: center;
   width: fit-content;
   padding: 0;
+  margin-left: auto;
+  margin-right: auto;
   margin-top: -4rem;
   margin-bottom: -1.2rem;
   border-radius: 0;
@@ -1989,6 +1992,11 @@ tbody tr:hover {
 .estado-badge--activo {
   background-color: rgba(40, 167, 69, 0.12);
   color: #28a745;
+}
+
+.estado-badge--pre-activo {
+  background-color: rgba(23, 162, 184, 0.14);
+  color: #0f7588;
 }
 
 .estado-badge--baja {
@@ -6278,6 +6286,12 @@ tbody tr:hover {
   color: #0f1f3a;
 }
 
+.summary-card--info {
+  background: linear-gradient(135deg, #e1f7f6, #f0fbfa);
+  border-color: #bfe9e6;
+  color: #0f1f3a;
+}
+
 .summary-card--warning {
   background: linear-gradient(135deg, #fff2e0, #fff7ed);
   border-color: #ffdcb4;
@@ -6313,6 +6327,7 @@ tbody tr:hover {
 }
 
 [data-theme='dark'] .summary-card--accent,
+[data-theme='dark'] .summary-card--info,
 [data-theme='dark'] .summary-card--warning,
 [data-theme='dark'] .summary-card--danger,
 [data-theme='dark'] .summary-card--muted {

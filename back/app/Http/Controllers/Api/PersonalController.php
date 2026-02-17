@@ -133,6 +133,42 @@ class PersonalController extends Controller
         return $normalized !== '' ? $normalized : null;
     }
 
+    protected function resolveDefaultApprovedEstadoId(): ?int
+    {
+        $this->ensurePreActivoEstadoExists();
+
+        $preActivoId = Estado::query()
+            ->whereRaw("LOWER(REPLACE(REPLACE(TRIM(nombre), '-', ' '), '_', ' ')) = ?", ['pre activo'])
+            ->value('id');
+
+        if ($preActivoId !== null) {
+            return (int) $preActivoId;
+        }
+
+        $activoId = Estado::query()
+            ->whereRaw('LOWER(TRIM(nombre)) = ?', ['activo'])
+            ->value('id');
+
+        return $activoId !== null ? (int) $activoId : null;
+    }
+
+    protected function ensurePreActivoEstadoExists(): void
+    {
+        if (! Schema::hasTable('estados')) {
+            return;
+        }
+
+        $exists = Estado::query()
+            ->whereRaw("LOWER(REPLACE(REPLACE(TRIM(nombre), '-', ' '), '_', ' ')) = ?", ['pre activo'])
+            ->exists();
+
+        if (! $exists) {
+            Estado::query()->create([
+                'nombre' => 'Pre activo',
+            ]);
+        }
+    }
+
     protected function matchesPersonaEmail(Persona $persona, ?string $email): bool
     {
         if (! is_string($email) || trim($email) === '') {
@@ -1097,6 +1133,8 @@ class PersonalController extends Controller
 
     public function meta(): JsonResponse
     {
+        $this->ensurePreActivoEstadoExists();
+
         return response()->json([
             'perfiles' => [
                 ['value' => 1, 'label' => 'Dueño y chofer'],
@@ -1273,6 +1311,11 @@ class PersonalController extends Controller
             $persona->aprobado_at = Carbon::now();
             $persona->aprobado_por = $approvedById;
             $persona->es_solicitud = false;
+
+            if (! $persona->estado_id) {
+                $persona->estado_id = $this->resolveDefaultApprovedEstadoId();
+            }
+
             $persona->save();
         }
 
@@ -1318,9 +1361,7 @@ class PersonalController extends Controller
 
         $estadoId = $validated['estadoId'] ?? null;
         if ($estadoId === null) {
-            $estadoId = Estado::query()
-                ->whereRaw('LOWER(nombre) = ?', ['activo'])
-                ->value('id');
+            $estadoId = $this->resolveDefaultApprovedEstadoId();
         }
 
         $persona->aprobado = true;

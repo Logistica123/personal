@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Models\Estado;
 use App\Models\Notification;
 use App\Models\Persona;
 use App\Models\Reclamo;
@@ -227,6 +228,7 @@ class ReclamoController extends Controller
             ], $actorId);
 
             $this->recordStatusChange($reclamo, null, $reclamo->status, $actorId);
+            $this->promotePersonaFromPreActivo($reclamo->persona_id);
 
             return $reclamo;
         });
@@ -370,6 +372,7 @@ class ReclamoController extends Controller
                 : $reclamo->importe_facturado;
 
             $reclamo->save();
+            $this->promotePersonaFromPreActivo($reclamo->persona_id);
 
             $actorId = $validated['creatorId'] ?? $validated['agenteId'] ?? null;
             $newAgenteId = $reclamo->agente_id;
@@ -993,6 +996,45 @@ class ReclamoController extends Controller
             'message' => $message,
             'meta' => $meta ?: null,
         ]);
+    }
+
+    protected function promotePersonaFromPreActivo(?int $personaId): void
+    {
+        if (! $personaId) {
+            return;
+        }
+
+        $persona = Persona::query()
+            ->with('estado:id,nombre')
+            ->find($personaId);
+
+        if (! $persona) {
+            return;
+        }
+
+        $normalizedEstado = $this->normalizeEstadoNombre($persona->estado?->nombre);
+        if ($normalizedEstado !== 'preactivo') {
+            return;
+        }
+
+        $activoEstadoId = Estado::query()
+            ->whereRaw('LOWER(TRIM(nombre)) = ?', ['activo'])
+            ->value('id');
+
+        if (! $activoEstadoId) {
+            return;
+        }
+
+        $persona->estado_id = (int) $activoEstadoId;
+        $persona->save();
+    }
+
+    protected function normalizeEstadoNombre(?string $estado): string
+    {
+        $normalized = Str::lower(trim((string) $estado));
+        $normalized = str_replace(['-', '_'], ' ', $normalized);
+        $normalized = preg_replace('/\s+/', ' ', $normalized) ?? '';
+        return str_replace(' ', '', trim($normalized));
     }
 
     protected function createAssignmentNotification(Reclamo $reclamo, int $userId): void
