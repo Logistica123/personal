@@ -33,6 +33,16 @@ class Archivo extends Model
         'enviada',
         'recibido',
         'pagado',
+        'liquidacion_destinatario_tipo',
+        'liquidacion_destinatario_emails',
+    ];
+
+    protected $casts = [
+        'es_pendiente' => 'boolean',
+        'enviada' => 'boolean',
+        'recibido' => 'boolean',
+        'pagado' => 'boolean',
+        'liquidacion_destinatario_emails' => 'array',
     ];
 
     protected $dates = [

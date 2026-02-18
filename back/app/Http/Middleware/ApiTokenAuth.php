@@ -145,7 +145,7 @@ class ApiTokenAuth
         }
 
         return Persona::query()
-            ->select('id', 'email')
+            ->select('id', 'email', 'cobrador_email')
             ->with(['dueno:id,persona_id,email'])
             ->find($personaId);
     }
@@ -154,6 +154,11 @@ class ApiTokenAuth
     {
         $personaEmail = $persona->email ? strtolower(trim($persona->email)) : null;
         if ($personaEmail && $personaEmail === $email) {
+            return true;
+        }
+
+        $cobradorEmail = $persona->cobrador_email ? strtolower(trim($persona->cobrador_email)) : null;
+        if ($cobradorEmail && $cobradorEmail === $email) {
             return true;
         }
 

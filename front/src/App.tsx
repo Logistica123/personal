@@ -18464,6 +18464,7 @@ const LiquidacionesPage: React.FC = () => {
   const [selectedPagadoIds, setSelectedPagadoIds] = useState<Set<number>>(() => new Set());
   const [selectedListPagadoIds, setSelectedListPagadoIds] = useState<Set<number>>(() => new Set());
   const [selectedPersonaId, setSelectedPersonaId] = useState<number | null>(personaIdFromRoute);
+  const [liquidacionRecipientType, setLiquidacionRecipientType] = useState<'proveedor' | 'cobrador' | 'ambos'>('proveedor');
   const [detail, setDetail] = useState<PersonalDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState<string | null>(null);
@@ -18789,6 +18790,10 @@ const LiquidacionesPage: React.FC = () => {
   }, [selectedPersonaId]);
 
   useEffect(() => {
+    setLiquidacionRecipientType('ambos');
+  }, [selectedPersonaId]);
+
+  useEffect(() => {
     if (showPasteModal) {
       setPasteError(null);
       window.setTimeout(() => {
@@ -18954,6 +18959,11 @@ const LiquidacionesPage: React.FC = () => {
     }
     return `${(size / (1024 * 1024)).toFixed(1)} MB`;
   };
+
+  const normalizeRecipientEmail = useCallback((value?: string | null): string | null => {
+    const normalized = (value ?? '').trim().toLowerCase();
+    return normalized.length > 0 ? normalized : null;
+  }, []);
 
   const normalizeDomainValue = useCallback((value?: string | null): string => {
     if (!value) {
@@ -21201,6 +21211,7 @@ const LiquidacionesPage: React.FC = () => {
     if (importeFacturarFinal != null) {
       formData.append('importeFacturar', String(importeFacturarFinal));
     }
+    formData.append('destinatarioTipo', liquidacionRecipientType);
 
     const response = await fetch(`${apiBaseUrl}/api/personal/${selectedPersonaId}/documentos/publicar`, {
       method: 'POST',
@@ -21222,7 +21233,7 @@ const LiquidacionesPage: React.FC = () => {
     }
 
     return true;
-  }, [apiBaseUrl, selectedPersonaId, importeFacturarFinal]);
+  }, [apiBaseUrl, selectedPersonaId, importeFacturarFinal, liquidacionRecipientType]);
 
   const handleUploadDocumentos = async () => {
     if (!selectedPersonaId) {
@@ -21293,6 +21304,7 @@ const LiquidacionesPage: React.FC = () => {
         if (importeFacturarFinal != null) {
           formData.append('importeFacturar', String(importeFacturarFinal));
         }
+        formData.append('destinatarioTipo', liquidacionRecipientType);
         formData.append('esLiquidacion', '1');
         formData.append('skipAutoValidacion', '1');
         if (shouldAttachFuelInvoices) {
@@ -21491,6 +21503,7 @@ const LiquidacionesPage: React.FC = () => {
         if (importeFacturarFinal != null) {
           formData.append('importeFacturar', String(importeFacturarFinal));
         }
+        formData.append('destinatarioTipo', liquidacionRecipientType);
         formData.append('esLiquidacion', '1');
         formData.append('pendiente', '1');
         formData.append('skipAutoValidacion', '1');
@@ -21971,6 +21984,67 @@ const LiquidacionesPage: React.FC = () => {
     return detail.email ?? `Registro #${detail.id}`;
   }, [detail]);
 
+  const liquidacionRecipientOptions = useMemo(() => {
+    if (!detail) {
+      return [] as Array<{ value: 'proveedor' | 'cobrador' | 'ambos'; label: string; emails: string[] }>;
+    }
+
+    const providerName = [detail.nombres, detail.apellidos].filter(Boolean).join(' ').trim() || 'Proveedor';
+    const providerEmail = normalizeRecipientEmail(detail.email);
+    const collectorEmail = normalizeRecipientEmail(detail.cobradorEmail ?? detail.duenoEmail);
+
+    const options: Array<{ value: 'proveedor' | 'cobrador' | 'ambos'; label: string; emails: string[] }> = [];
+
+    if (providerEmail) {
+      options.push({
+        value: 'proveedor',
+        label: `Proveedor (${providerName})`,
+        emails: [providerEmail],
+      });
+    }
+
+    if (collectorEmail) {
+      options.push({
+        value: 'cobrador',
+        label: 'Cobrador',
+        emails: [collectorEmail],
+      });
+    }
+
+    if (providerEmail && collectorEmail) {
+      options.push({
+        value: 'ambos',
+        label: 'Proveedor y cobrador',
+        emails: Array.from(new Set([providerEmail, collectorEmail])),
+      });
+    }
+
+    return options;
+  }, [detail, normalizeRecipientEmail]);
+
+  const selectedLiquidacionRecipient = useMemo(
+    () => liquidacionRecipientOptions.find((option) => option.value === liquidacionRecipientType) ?? null,
+    [liquidacionRecipientOptions, liquidacionRecipientType]
+  );
+
+  useEffect(() => {
+    if (liquidacionRecipientOptions.length === 0) {
+      return;
+    }
+
+    const isCurrentValid = liquidacionRecipientOptions.some((option) => option.value === liquidacionRecipientType);
+    if (isCurrentValid) {
+      return;
+    }
+
+    if (liquidacionRecipientOptions.some((option) => option.value === 'ambos')) {
+      setLiquidacionRecipientType('ambos');
+      return;
+    }
+
+    setLiquidacionRecipientType(liquidacionRecipientOptions[0].value);
+  }, [liquidacionRecipientOptions, liquidacionRecipientType]);
+
   const listTitle = isPagosView ? 'Pagos' : 'Liquidaciones';
   const listSubtitle = isPagosView ? 'Gestión de pagos del personal' : 'Gestión de liquidaciones del personal';
 
@@ -22177,6 +22251,37 @@ const LiquidacionesPage: React.FC = () => {
             : `Gestioná las liquidaciones de ${selectedPersonaLabel ?? 'este personal'}.`}
         </p>
         {detailError ? <p className="form-info form-info--error">{detailError}</p> : null}
+
+        {detail && liquidacionRecipientOptions.length > 0 ? (
+          <>
+            <div className="form-grid" style={{ marginTop: '0.75rem' }}>
+              <label className="input-control">
+                <span>Enviar liquidación a</span>
+                <select
+                  value={liquidacionRecipientType}
+                  onChange={(event) =>
+                    setLiquidacionRecipientType(event.target.value as 'proveedor' | 'cobrador' | 'ambos')
+                  }
+                >
+                  {liquidacionRecipientOptions.map((option) => (
+                    <option key={`destinatario-liquidacion-${option.value}`} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+            {selectedLiquidacionRecipient ? (
+              <p className="form-info">Se enviará a: {selectedLiquidacionRecipient.emails.join(', ')}</p>
+            ) : null}
+          </>
+        ) : null}
+
+        {detail && !detailLoading && liquidacionRecipientOptions.length === 0 ? (
+          <p className="form-info form-info--error">
+            No hay email configurado en proveedor ni cobrador para enviar la liquidación.
+          </p>
+        ) : null}
 
         <div className="quincena-filters">
           <label>

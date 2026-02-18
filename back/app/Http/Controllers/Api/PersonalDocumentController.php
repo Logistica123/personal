@@ -61,6 +61,8 @@ class PersonalDocumentController extends Controller
                     'enviada' => (bool) $documento->enviada,
                     'recibido' => (bool) $documento->recibido,
                     'pagado' => (bool) $documento->pagado,
+                    'destinatarioTipo' => $documento->liquidacion_destinatario_tipo,
+                    'destinatarioEmails' => $this->extractLiquidacionRecipientEmails($documento),
                 ];
             })
             ->values();
@@ -150,6 +152,18 @@ class PersonalDocumentController extends Controller
             })
             ->orderByDesc('created_at')
             ->get()
+            ->filter(function (Archivo $documento) use ($actorEmail) {
+                if ($actorEmail === '') {
+                    return true;
+                }
+
+                $recipientEmails = $this->extractLiquidacionRecipientEmails($documento);
+                if (empty($recipientEmails)) {
+                    return true;
+                }
+
+                return in_array($actorEmail, $recipientEmails, true);
+            })
             ->map(function (Archivo $documento) use ($persona) {
                 $relativeDownloadUrl = route('personal.documentos.descargar', [
                     'persona' => $persona->id,
@@ -211,6 +225,8 @@ class PersonalDocumentController extends Controller
                     'enviada' => (bool) $documento->enviada,
                     'recibido' => (bool) $documento->recibido || $hasAttachments,
                     'pagado' => (bool) $documento->pagado,
+                    'destinatarioTipo' => $documento->liquidacion_destinatario_tipo,
+                    'destinatarioEmails' => $this->extractLiquidacionRecipientEmails($documento),
                 ];
             })
             ->values();
@@ -289,6 +305,7 @@ class PersonalDocumentController extends Controller
             'attachFuelInvoices' => ['nullable', 'boolean'],
             'pendiente' => ['nullable', 'boolean'],
             'liquidacionId' => ['nullable', 'integer', 'min:1'],
+            'destinatarioTipo' => ['nullable', 'in:proveedor,cobrador,ambos'],
         ], [
             'tipoArchivoId.required' => 'Selecciona el tipo de documento.',
             'tipoArchivoId.exists' => 'El tipo de documento seleccionado no es válido.',
@@ -355,6 +372,14 @@ class PersonalDocumentController extends Controller
 
         $isLiquidacion = $request->boolean('esLiquidacion');
         $isPending = $request->boolean('pendiente');
+        $recipientPayload = null;
+
+        if ($isLiquidacion) {
+            $requestedRecipientType = is_string($request->input('destinatarioTipo'))
+                ? $request->input('destinatarioTipo')
+                : null;
+            $recipientPayload = $this->resolveLiquidacionRecipients($persona, $requestedRecipientType, true);
+        }
 
         $documento = $persona->documentos()->create([
             'carpeta' => $directory,
@@ -374,6 +399,8 @@ class PersonalDocumentController extends Controller
             'enviada' => $isLiquidacion && ! $isPending,
             'recibido' => false,
             'pagado' => false,
+            'liquidacion_destinatario_tipo' => $recipientPayload['type'] ?? null,
+            'liquidacion_destinatario_emails' => $recipientPayload['emails'] ?? null,
         ]);
 
         if ($parsedFecha) {
@@ -464,6 +491,8 @@ class PersonalDocumentController extends Controller
             'enviada' => (bool) $documento->enviada,
             'recibido' => (bool) $documento->recibido,
             'pagado' => (bool) $documento->pagado,
+            'destinatarioTipo' => $documento->liquidacion_destinatario_tipo,
+            'destinatarioEmails' => $this->extractLiquidacionRecipientEmails($documento),
         ],
     ], 201);
     }
@@ -474,7 +503,10 @@ class PersonalDocumentController extends Controller
             'documentIds' => ['nullable', 'array'],
             'documentIds.*' => ['integer'],
             'importeFacturar' => ['nullable', 'numeric', 'min:0'],
+            'destinatarioTipo' => ['nullable', 'in:proveedor,cobrador,ambos'],
         ]);
+
+        $recipientPayload = $this->resolveLiquidacionRecipients($persona, $validated['destinatarioTipo'] ?? null, true);
 
         $query = $persona->documentos()->where('es_pendiente', true);
 
@@ -503,7 +535,11 @@ class PersonalDocumentController extends Controller
             $enviadaQuery->whereIn('id', $validated['documentIds']);
         }
 
-        $enviadaQuery->update(['enviada' => true]);
+        $enviadaQuery->update([
+            'enviada' => true,
+            'liquidacion_destinatario_tipo' => $recipientPayload['type'],
+            'liquidacion_destinatario_emails' => json_encode($recipientPayload['emails'], JSON_UNESCAPED_UNICODE),
+        ]);
 
         if ($request->boolean('marcarRecibido')) {
             $liquidacionIds = $enviadaQuery->pluck('id');
@@ -637,6 +673,7 @@ class PersonalDocumentController extends Controller
             'fechaVencimiento' => ['nullable', 'date'],
             'importeFacturar' => ['nullable', 'numeric', 'min:0'],
             'liquidacionId' => ['nullable', 'integer', 'min:1'],
+            'destinatarioTipo' => ['nullable', 'in:proveedor,cobrador,ambos'],
         ], [
             'tipoArchivoId.exists' => 'El tipo de documento seleccionado no es válido.',
             'archivo.max' => 'El archivo es demasiado grande. Permitimos hasta 50 MB por liquidación.',
@@ -759,6 +796,8 @@ class PersonalDocumentController extends Controller
                 'enviada' => (bool) $documento->enviada,
                 'recibido' => (bool) $documento->recibido,
                 'pagado' => (bool) $documento->pagado,
+                'destinatarioTipo' => $documento->liquidacion_destinatario_tipo,
+                'destinatarioEmails' => $this->extractLiquidacionRecipientEmails($documento),
             ],
         ]);
     }
@@ -1483,6 +1522,96 @@ class PersonalDocumentController extends Controller
         } catch (\Throwable $exception) {
             return null;
         }
+    }
+
+
+    protected function normalizeEmailValue(?string $value): ?string
+    {
+        $normalized = strtolower(trim((string) $value));
+
+        return $normalized !== '' ? $normalized : null;
+    }
+
+    protected function extractLiquidacionRecipientEmails(Archivo $documento): array
+    {
+        $raw = $documento->liquidacion_destinatario_emails;
+        if (is_array($raw)) {
+            $emails = $raw;
+        } elseif (is_string($raw) && trim($raw) !== '') {
+            $decoded = json_decode($raw, true);
+            if (is_array($decoded)) {
+                $emails = $decoded;
+            } else {
+                $emails = [$raw];
+            }
+        } else {
+            $emails = [];
+        }
+
+        $normalized = array_map(function ($email) {
+            return is_string($email) ? $this->normalizeEmailValue($email) : null;
+        }, $emails);
+
+        return array_values(array_unique(array_filter($normalized)));
+    }
+
+    protected function resolveLiquidacionRecipients(Persona $persona, ?string $requestedType = null, bool $strict = true): array
+    {
+        $persona->loadMissing('dueno:id,persona_id,email');
+
+        $providerEmail = $this->normalizeEmailValue($persona->email);
+        $collectorEmail = $this->normalizeEmailValue($persona->cobrador_email ?: $persona->dueno?->email);
+
+        $validTypes = ['proveedor', 'cobrador', 'ambos'];
+        $type = is_string($requestedType) ? strtolower(trim($requestedType)) : null;
+        if (! in_array($type, $validTypes, true)) {
+            if ($providerEmail && $collectorEmail && $providerEmail !== $collectorEmail) {
+                $type = 'ambos';
+            } elseif ($providerEmail) {
+                $type = 'proveedor';
+            } elseif ($collectorEmail) {
+                $type = 'cobrador';
+            } else {
+                $type = 'proveedor';
+            }
+        }
+
+        $emails = [];
+
+        if (in_array($type, ['proveedor', 'ambos'], true)) {
+            if (! $providerEmail && $strict) {
+                throw ValidationException::withMessages([
+                    'destinatarioTipo' => ['El proveedor no tiene email configurado para enviar la liquidación.'],
+                ]);
+            }
+            if ($providerEmail) {
+                $emails[] = $providerEmail;
+            }
+        }
+
+        if (in_array($type, ['cobrador', 'ambos'], true)) {
+            if (! $collectorEmail && $strict) {
+                throw ValidationException::withMessages([
+                    'destinatarioTipo' => ['El cobrador no tiene email configurado para enviar la liquidación.'],
+                ]);
+            }
+            if ($collectorEmail) {
+                $emails[] = $collectorEmail;
+            }
+        }
+
+        $emails = array_values(array_unique(array_filter($emails)));
+
+        if (empty($emails) && $strict) {
+            throw ValidationException::withMessages([
+                'destinatarioTipo' => ['No hay emails disponibles para enviar la liquidación.'],
+            ]);
+        }
+
+        return [
+            'type' => $type,
+            'emails' => $emails,
+        ];
     }
 
     public function update(Request $request, FileType $tipo): JsonResponse
