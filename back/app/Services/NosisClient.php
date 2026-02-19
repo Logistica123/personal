@@ -11,26 +11,50 @@ class NosisClient
 {
     public function validateCbu(string $documento, string $cbu, ?int $grupoVid = null, ?string $fechaNacimiento = null): array
     {
+        $groupId = $grupoVid ?? config('nosis.group_id');
+
+        return $this->request([
+            'documento' => $documento,
+            'CBU' => $cbu,
+            'NroGrupoVID' => $groupId,
+            'FechaNacimiento' => $fechaNacimiento ?: null,
+        ]);
+    }
+
+    public function lookupDocumento(string $documento, ?int $grupoVid = null, ?string $fechaNacimiento = null): array
+    {
+        $groupId = $grupoVid ?? config('nosis.group_id');
+
+        return $this->request([
+            'documento' => $documento,
+            'NroGrupoVID' => $groupId,
+            'FechaNacimiento' => $fechaNacimiento ?: null,
+        ]);
+    }
+
+    private function request(array $params): array
+    {
         $baseUrl = config('nosis.base_url');
         $username = config('nosis.username');
         $token = config('nosis.token');
-        $groupId = $grupoVid ?? config('nosis.group_id');
         $timeout = config('nosis.timeout', 10);
 
         if (!$baseUrl || !$username || !$token) {
             throw new RuntimeException('Faltan credenciales de Nosis (NOSIS_BASE_URL, NOSIS_USERNAME, NOSIS_TOKEN).');
         }
 
-        $response = Http::timeout($timeout)
-            ->retry(1, 300)
-            ->get($baseUrl, [
+        $query = array_filter(
+            [
                 'usuario' => $username,
                 'token' => $token,
-                'documento' => $documento,
-                'CBU' => $cbu,
-                'NroGrupoVID' => $groupId,
-                'FechaNacimiento' => $fechaNacimiento ?: null,
-            ]);
+                ...$params,
+            ],
+            static fn ($value) => $value !== null && $value !== ''
+        );
+
+        $response = Http::timeout($timeout)
+            ->retry(1, 300)
+            ->get($baseUrl, $query);
 
         if (!$response->ok()) {
             throw new RuntimeException("Nosis devolvió HTTP {$response->status()}");

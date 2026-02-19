@@ -44,4 +44,33 @@ class NosisController extends Controller
             ],
         ]);
     }
+
+    public function consultarDocumento(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'documento' => ['required', 'string', 'max:20'],
+            'grupoVid' => ['nullable', 'integer'],
+            'fechaNacimiento' => ['nullable', 'date'],
+        ]);
+
+        try {
+            $result = $this->client->lookupDocumento(
+                $validated['documento'],
+                $validated['grupoVid'] ?? null,
+                $validated['fechaNacimiento'] ?? null,
+            );
+        } catch (RuntimeException $e) {
+            return response()->json([
+                'message' => $e->getMessage(),
+            ], 502);
+        }
+
+        return response()->json([
+            'message' => $result['message'],
+            'valid' => $result['valid'],
+            'data' => [
+                'raw' => $result['raw'],
+            ],
+        ]);
+    }
 }

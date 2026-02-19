@@ -36953,6 +36953,10 @@ const PersonalCreatePage: React.FC = () => {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [nosisLookupLoading, setNosisLookupLoading] = useState(false);
+  const [nosisLookupError, setNosisLookupError] = useState<string | null>(null);
+  const [nosisLookupInfo, setNosisLookupInfo] = useState<string | null>(null);
+  const nosisLastLookupRef = useRef<string | null>(null);
   const normalizeEstadoNombre = useCallback((value: string | null | undefined): string => {
     return (value ?? '')
       .trim()
@@ -36962,6 +36966,66 @@ const PersonalCreatePage: React.FC = () => {
       .replace(/[_-]+/g, ' ')
       .replace(/\s+/g, ' ')
       .trim();
+  }, []);
+  const splitRazonSocial = useCallback((razonSocial: string | null | undefined) => {
+    if (!razonSocial) {
+      return null;
+    }
+    const raw = razonSocial.trim();
+    if (!raw) {
+      return null;
+    }
+    const parts = raw.split(',');
+    if (parts.length >= 2) {
+      return { apellidos: parts[0].trim(), nombres: parts.slice(1).join(' ').trim() };
+    }
+    const tokens = raw.split(/\s+/);
+    if (tokens.length >= 2) {
+      return { apellidos: tokens[0], nombres: tokens.slice(1).join(' ').trim() };
+    }
+    return { apellidos: '', nombres: raw };
+  }, []);
+  const parseNosisXml = useCallback((payload: string) => {
+    try {
+      const parser = new DOMParser();
+      const doc = parser.parseFromString(payload, 'application/xml');
+
+      const getText = (selector: string) => doc.getElementsByTagName(selector)?.[0]?.textContent?.trim() ?? '';
+      const contenido = doc.getElementsByTagName('Contenido')?.[0] ?? null;
+      const resultado = contenido?.getElementsByTagName('Resultado')?.[0] ?? null;
+      const datos = contenido?.getElementsByTagName('Datos')?.[0] ?? null;
+      const persona = datos?.getElementsByTagName('Persona')?.[0] ?? null;
+
+      const razonSocial = persona ? (persona.getElementsByTagName('RazonSocial')[0]?.textContent?.trim() ?? '') : '';
+      const documento = persona ? (persona.getElementsByTagName('Documento')[0]?.textContent?.trim() ?? '') : '';
+      const fechaNacimiento = persona ? (persona.getElementsByTagName('FechaNacimiento')[0]?.textContent?.trim() ?? '') : '';
+      const resultadoNovedad = resultado ? (resultado.getElementsByTagName('Novedad')[0]?.textContent?.trim() ?? '') : '';
+      const message = resultadoNovedad || getText('Novedad') || payload;
+
+      return {
+        message,
+        razonSocial,
+        documento,
+        fechaNacimiento,
+      };
+    } catch {
+      return null;
+    }
+  }, []);
+  const normalizeNosisDate = useCallback((value: string | null | undefined): string => {
+    const raw = (value ?? '').trim();
+    if (!raw) {
+      return '';
+    }
+    if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+      return raw;
+    }
+    const slashMatch = raw.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+    if (slashMatch) {
+      const [, day, month, year] = slashMatch;
+      return `${year}-${month}-${day}`;
+    }
+    return '';
   }, []);
 
   const [formValues, setFormValues] = useState({
@@ -37109,6 +37173,105 @@ const PersonalCreatePage: React.FC = () => {
     }));
   };
 
+  const lookupNosisByDocumento = useCallback(
+    async (showValidationError = true) => {
+      if (nosisLookupLoading) {
+        return;
+      }
+
+      const documento = formValues.cuil.replace(/\D+/g, '');
+      if (!documento) {
+        if (showValidationError) {
+          setNosisLookupError('Ingresá un CUIL para consultar en Nosis.');
+        }
+        return;
+      }
+      if (documento.length !== 11) {
+        if (showValidationError) {
+          setNosisLookupError('Ingresá un CUIL válido de 11 dígitos.');
+        }
+        return;
+      }
+
+      if (!showValidationError && nosisLastLookupRef.current === documento) {
+        return;
+      }
+
+      const url = new URL(`${apiBaseUrl}/api/nosis/consultar-documento`);
+      url.searchParams.set('documento', documento);
+
+      try {
+        setNosisLookupLoading(true);
+        setNosisLookupError(null);
+        setNosisLookupInfo(null);
+
+        const response = await fetch(url.toString(), {
+          headers: {
+            Accept: 'application/json',
+            ...actorHeaders,
+          },
+        });
+
+        if (!response.ok) {
+          throw new Error(`Error ${response.status}: ${response.statusText}`);
+        }
+
+        const payload = await response.json();
+        const raw = payload?.data?.raw;
+        const parsed = typeof raw === 'string' ? parseNosisXml(raw) : null;
+        const razonSocial = parsed?.razonSocial ?? '';
+        const razonSplit = splitRazonSocial(razonSocial);
+        const fullName = razonSocial.trim();
+        const nombresFromNosis = razonSplit?.nombres ?? '';
+        const apellidosFromNosis = razonSplit?.apellidos ?? '';
+        const documentoFromNosis = (parsed?.documento ?? '').replace(/\D+/g, '');
+        const fechaNacimientoFromNosis = normalizeNosisDate(parsed?.fechaNacimiento ?? '');
+
+        setFormValues((prev) => {
+          const next = { ...prev };
+          const profileIsCobrador = prev.perfilValue === 2;
+          if (!prev.nombres.trim()) {
+            if (profileIsCobrador) {
+              const fullNameFallback = fullName || [nombresFromNosis, apellidosFromNosis].filter(Boolean).join(' ').trim();
+              if (fullNameFallback) {
+                next.nombres = fullNameFallback;
+              }
+            } else if (nombresFromNosis) {
+              next.nombres = nombresFromNosis;
+            }
+          }
+          if (!profileIsCobrador && !prev.apellidos.trim() && apellidosFromNosis) {
+            next.apellidos = apellidosFromNosis;
+          }
+          if (!prev.cuil.trim() && documentoFromNosis) {
+            next.cuil = documentoFromNosis;
+          }
+          if (profileIsCobrador && !prev.duenoFechaNacimiento && fechaNacimientoFromNosis) {
+            next.duenoFechaNacimiento = fechaNacimientoFromNosis;
+          }
+          return next;
+        });
+
+        nosisLastLookupRef.current = documento;
+        const nosisMessage = parsed?.message || payload?.message || 'Datos consultados en Nosis.';
+        setNosisLookupInfo(nosisMessage);
+      } catch (err) {
+        setNosisLookupError((err as Error).message ?? 'No se pudo consultar Nosis.');
+      } finally {
+        setNosisLookupLoading(false);
+      }
+    },
+    [
+      actorHeaders,
+      apiBaseUrl,
+      formValues.cuil,
+      normalizeNosisDate,
+      nosisLookupLoading,
+      parseNosisXml,
+      splitRazonSocial,
+    ]
+  );
+
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
 
@@ -37239,7 +37402,7 @@ const PersonalCreatePage: React.FC = () => {
               {renderInput('Correo electrónico', 'email', false, 'email')}
               {renderCheckbox('Tarifa especial', 'tarifaEspecial', 'Tiene tarifa especial')}
               {renderInput('Observación tarifa', 'observacionTarifa')}
-              {renderInput('CUIL', 'cuil')}
+              {renderCuilInput()}
               {renderInput('CBU/Alias', 'cbuAlias')}
               {renderPagoSelect()}
               {renderCheckbox('Combustible', 'combustible', 'Cuenta corrientes combustible')}
@@ -37291,7 +37454,7 @@ const PersonalCreatePage: React.FC = () => {
               {renderInput('Teléfono', 'telefono')}
               {renderCheckbox('Tarifa especial', 'tarifaEspecial', 'Tiene tarifa especial')}
               {renderInput('Observación tarifa', 'observacionTarifa')}
-              {renderInput('CUIL', 'cuil')}
+              {renderCuilInput()}
               {renderInput('CBU/Alias', 'cbuAlias')}
               {renderPagoSelect()}
               {renderCheckbox('Combustible', 'combustible', 'Cuenta corrientes combustible')}
@@ -37342,7 +37505,7 @@ const PersonalCreatePage: React.FC = () => {
               {renderInput('Nombres', 'nombres', true)}
               {renderInput('Apellidos', 'apellidos', true)}
               {renderInput('Legajo', 'legajo')}
-              {renderInput('CUIL', 'cuil')}
+              {renderCuilInput()}
               {renderInput('Correo electrónico', 'email', false, 'email')}
               {renderInput('Teléfono', 'telefono')}
               {renderCheckbox('Combustible', 'combustible', 'Cuenta corrientes combustible')}
@@ -37383,6 +37546,45 @@ const PersonalCreatePage: React.FC = () => {
         return null;
     }
   };
+
+  const renderCuilInput = () => (
+    <label className="input-control">
+      <span>CUIL</span>
+      <input
+        type="text"
+        value={formValues.cuil}
+        onChange={(event) => {
+          const nextValue = event.target.value.replace(/\D+/g, '').slice(0, 11);
+          setFormValues((prev) => ({ ...prev, cuil: nextValue }));
+          setNosisLookupError(null);
+          setNosisLookupInfo(null);
+          nosisLastLookupRef.current = null;
+        }}
+        onBlur={() => {
+          const documento = formValues.cuil.replace(/\D+/g, '');
+          if (documento.length === 11) {
+            void lookupNosisByDocumento(false);
+          }
+        }}
+        placeholder="Ingresar"
+        inputMode="numeric"
+        maxLength={11}
+      />
+      <button
+        type="button"
+        className="secondary-action"
+        onClick={() => {
+          void lookupNosisByDocumento(true);
+        }}
+        disabled={nosisLookupLoading}
+        style={{ alignSelf: 'flex-start' }}
+      >
+        {nosisLookupLoading ? 'Consultando...' : 'Autocompletar'}
+      </button>
+      {nosisLookupError ? <span className="form-info form-info--error">{nosisLookupError}</span> : null}
+      {!nosisLookupError && nosisLookupInfo ? <span className="form-info form-info--success">{nosisLookupInfo}</span> : null}
+    </label>
+  );
 
   const renderInput = (
     label: string,

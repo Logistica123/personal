@@ -135,6 +135,7 @@ Route::middleware('auth.api')->group(function () {
     Route::get('/chat/messages', [ChatMessageController::class, 'index']);
     Route::post('/chat/messages', [ChatMessageController::class, 'store']);
     Route::get('/nosis/validar-cbu', [NosisController::class, 'validarCbu']);
+    Route::get('/nosis/consultar-documento', [NosisController::class, 'consultarDocumento']);
 
     Route::get('/auditoria', [AuditController::class, 'index']);
     Route::get('/team-groups', [TeamGroupController::class, 'index']);
