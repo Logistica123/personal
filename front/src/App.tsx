@@ -25538,6 +25538,21 @@ const ApprovalsRequestsPage: React.FC = () => {
       return null;
     }
   }, []);
+  const normalizeNosisDate = useCallback((value: string | null | undefined): string => {
+    const raw = (value ?? '').trim();
+    if (!raw) {
+      return '';
+    }
+    if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+      return raw;
+    }
+    const slashMatch = raw.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+    if (slashMatch) {
+      const [, day, month, year] = slashMatch;
+      return `${year}-${month}-${day}`;
+    }
+    return '';
+  }, []);
   const [meta, setMeta] = useState<PersonalMeta | null>(null);
   const [rejectedIds, setRejectedIds] = useState<Set<number>>(() => readRejectedIds());
   const [solicitudCreatedCache, setSolicitudCreatedCache] = useState<Map<number, string>>(
@@ -26207,6 +26222,14 @@ const ApprovalsRequestsPage: React.FC = () => {
   const altaNosisLastLookupRef = useRef<{ cuil: string; cbu: string; fechaNacimiento: string } | null>(null);
   const [altaNosisLoading, setAltaNosisLoading] = useState(false);
   const [altaNosisError, setAltaNosisError] = useState<string | null>(null);
+  const altaNosisTitularLastLookupRef = useRef<string | null>(null);
+  const altaNosisCobradorLastLookupRef = useRef<string | null>(null);
+  const [altaNosisTitularLoading, setAltaNosisTitularLoading] = useState(false);
+  const [altaNosisTitularError, setAltaNosisTitularError] = useState<string | null>(null);
+  const [altaNosisTitularInfo, setAltaNosisTitularInfo] = useState<string | null>(null);
+  const [altaNosisCobradorLoading, setAltaNosisCobradorLoading] = useState(false);
+  const [altaNosisCobradorError, setAltaNosisCobradorError] = useState<string | null>(null);
+  const [altaNosisCobradorInfo, setAltaNosisCobradorInfo] = useState<string | null>(null);
   const [altaForm, setAltaForm] = useState<AltaRequestForm>(() => ({
     perfilValue: 0,
     nombres: '',
@@ -26456,8 +26479,8 @@ const ApprovalsRequestsPage: React.FC = () => {
         const razonSplit = razonSocial ? splitRazonSocial(razonSocial) : null;
         const nombresFromNosis = razonSplit?.nombres ?? '';
         const apellidosFromNosis = razonSplit?.apellidos ?? '';
-        const documentoFromNosis = parsed?.documento ?? '';
-        const fechaNacimientoFromNosis = parsed?.fechaNacimiento ?? '';
+        const documentoFromNosis = (parsed?.documento ?? '').replace(/\D+/g, '');
+        const fechaNacimientoFromNosis = normalizeNosisDate(parsed?.fechaNacimiento ?? '');
 
         if (razonSplit || parsed?.message || payload?.message) {
           setFlash({
@@ -26491,7 +26514,7 @@ const ApprovalsRequestsPage: React.FC = () => {
     return () => {
       controller.abort();
     };
-  }, [activeTab, altaForm.cuil, altaForm.cbuAlias, altaForm.duenoFechaNacimiento, apiBaseUrl, actorHeaders, parseNosisXml, splitRazonSocial]);
+  }, [activeTab, altaForm.cuil, altaForm.cbuAlias, altaForm.duenoFechaNacimiento, apiBaseUrl, actorHeaders, normalizeNosisDate, parseNosisXml, splitRazonSocial]);
 
   useEffect(() => {
     if (!personaIdFromQuery) {
@@ -27043,6 +27066,126 @@ const sucursalOptions = useMemo(() => {
         ...(field === 'clienteId' ? { sucursalId: '' } : {}),
       }));
     };
+
+  const lookupAltaNosisByDocumento = useCallback(
+    async (target: 'titular' | 'cobrador', showValidationError = true) => {
+      const isTitular = target === 'titular';
+      const rawValue = isTitular ? altaForm.cuil : altaForm.cobradorCuil;
+      const documento = rawValue.replace(/\D+/g, '');
+      const setLoading = isTitular ? setAltaNosisTitularLoading : setAltaNosisCobradorLoading;
+      const setError = isTitular ? setAltaNosisTitularError : setAltaNosisCobradorError;
+      const setInfo = isTitular ? setAltaNosisTitularInfo : setAltaNosisCobradorInfo;
+      const currentLoading = isTitular ? altaNosisTitularLoading : altaNosisCobradorLoading;
+      const lastLookupRef = isTitular ? altaNosisTitularLastLookupRef : altaNosisCobradorLastLookupRef;
+
+      if (currentLoading) {
+        return;
+      }
+
+      if (!documento) {
+        if (showValidationError) {
+          setError('Ingresá un CUIL para consultar en Nosis.');
+        }
+        return;
+      }
+
+      if (documento.length !== 11) {
+        if (showValidationError) {
+          setError('Ingresá un CUIL válido de 11 dígitos.');
+        }
+        return;
+      }
+
+      if (!showValidationError && lastLookupRef.current === documento) {
+        return;
+      }
+
+      const url = new URL(`${apiBaseUrl}/api/nosis/consultar-documento`);
+      url.searchParams.set('documento', documento);
+
+      try {
+        setLoading(true);
+        setError(null);
+        setInfo(null);
+
+        const response = await fetch(url.toString(), {
+          headers: {
+            Accept: 'application/json',
+            ...actorHeaders,
+          },
+        });
+
+        if (!response.ok) {
+          throw new Error(`Error ${response.status}: ${response.statusText}`);
+        }
+
+        const payload = await response.json();
+        const raw = payload?.data?.raw;
+        const parsed = typeof raw === 'string' ? parseNosisXml(raw) : null;
+        const razonSocial = parsed?.razonSocial ?? '';
+        const razonSplit = splitRazonSocial(razonSocial);
+        const fullName = razonSocial.trim() || [razonSplit?.nombres ?? '', razonSplit?.apellidos ?? ''].filter(Boolean).join(' ').trim();
+        const nombresFromNosis = razonSplit?.nombres ?? '';
+        const apellidosFromNosis = razonSplit?.apellidos ?? '';
+        const documentoFromNosis = (parsed?.documento ?? '').replace(/\D+/g, '');
+        const fechaNacimientoFromNosis = normalizeNosisDate(parsed?.fechaNacimiento ?? '');
+
+        setAltaFormDirty(true);
+        setAltaForm((prev) => {
+          const next = { ...prev };
+          if (isTitular) {
+            const profileIsCobrador = prev.perfilValue === 2;
+            if (!prev.nombres.trim()) {
+              if (profileIsCobrador) {
+                if (fullName) {
+                  next.nombres = fullName;
+                }
+              } else if (nombresFromNosis) {
+                next.nombres = nombresFromNosis;
+              }
+            }
+            if (!profileIsCobrador && !prev.apellidos.trim() && apellidosFromNosis) {
+              next.apellidos = apellidosFromNosis;
+            }
+            if (!prev.cuil.trim() && documentoFromNosis) {
+              next.cuil = documentoFromNosis;
+            }
+          } else {
+            if (!prev.cobradorNombre.trim() && fullName) {
+              next.cobradorNombre = fullName;
+            }
+            if (!prev.cobradorCuil.trim() && documentoFromNosis) {
+              next.cobradorCuil = documentoFromNosis;
+            }
+          }
+
+          if (!prev.duenoFechaNacimiento && fechaNacimientoFromNosis) {
+            next.duenoFechaNacimiento = fechaNacimientoFromNosis;
+          }
+
+          return next;
+        });
+
+        lastLookupRef.current = documento;
+        setInfo(parsed?.message || payload?.message || 'Datos consultados en Nosis.');
+      } catch (err) {
+        setError((err as Error).message ?? 'No se pudo consultar Nosis.');
+      } finally {
+        setLoading(false);
+      }
+    },
+    [
+      actorHeaders,
+      altaForm.cobradorCuil,
+      altaForm.cuil,
+      altaNosisCobradorLoading,
+      altaNosisTitularLoading,
+      apiBaseUrl,
+      normalizeNosisDate,
+      parseNosisXml,
+      splitRazonSocial,
+    ]
+  );
 
   const filesFromEvent = (fileList: FileList | null) => (fileList ? Array.from(fileList) : []);
 
@@ -29434,6 +29577,70 @@ const sucursalOptions = useMemo(() => {
     );
   };
 
+  const renderAltaCuilInput = (
+    label: string,
+    field: 'cuil' | 'cobradorCuil',
+    target: 'titular' | 'cobrador',
+    required = false,
+    disabled = false
+  ) => {
+    const isTitular = target === 'titular';
+    const loading = isTitular ? altaNosisTitularLoading : altaNosisCobradorLoading;
+    const error = isTitular ? altaNosisTitularError : altaNosisCobradorError;
+    const info = isTitular ? altaNosisTitularInfo : altaNosisCobradorInfo;
+
+    return (
+      <label className="input-control">
+        <span>{label}</span>
+        <input
+          type="text"
+          value={altaForm[field]}
+          onChange={(event) => {
+            const nextValue = event.target.value.replace(/\D+/g, '').slice(0, 11);
+            setAltaFormDirty(true);
+            setAltaForm((prev) => ({ ...prev, [field]: nextValue }));
+            if (isTitular) {
+              setAltaNosisTitularError(null);
+              setAltaNosisTitularInfo(null);
+              altaNosisTitularLastLookupRef.current = null;
+            } else {
+              setAltaNosisCobradorError(null);
+              setAltaNosisCobradorInfo(null);
+              altaNosisCobradorLastLookupRef.current = null;
+            }
+          }}
+          onBlur={() => {
+            if (disabled) {
+              return;
+            }
+            const documento = altaForm[field].replace(/\D+/g, '');
+            if (documento.length === 11) {
+              void lookupAltaNosisByDocumento(target, false);
+            }
+          }}
+          placeholder="Ingresar"
+          required={required}
+          inputMode="numeric"
+          maxLength={11}
+          disabled={disabled}
+        />
+        <button
+          type="button"
+          className="secondary-action"
+          style={{ alignSelf: 'flex-start' }}
+          onClick={() => {
+            void lookupAltaNosisByDocumento(target, true);
+          }}
+          disabled={disabled || loading}
+        >
+          {loading ? 'Consultando...' : 'Autocompletar'}
+        </button>
+        {error ? <span className="form-info form-info--error">{error}</span> : null}
+        {!error && info ? <span className="form-info form-info--success">{info}</span> : null}
+      </label>
+    );
+  };
+
   const renderAltaCheckbox = (label: string, field: 'tarifaEspecial' | 'combustible', text: string) => (
     <label className="input-control">
       <span>{label}</span>
@@ -30503,7 +30710,7 @@ const sucursalOptions = useMemo(() => {
               {renderAltaInput('Correo electrónico', 'email', true, 'email')}
               {renderAltaCheckbox('Tarifa especial', 'tarifaEspecial', 'Tiene tarifa especial')}
               {renderAltaInput('Observación tarifa', 'observacionTarifa')}
-              {renderAltaInput('CUIL', 'cuil')}
+              {renderAltaCuilInput('CUIL', 'cuil', 'titular')}
               {renderAltaInput('CBU/Alias', 'cbuAlias')}
               {renderAltaSelect('Pago', 'pago', PAGO_SELECT_OPTIONS, { placeholder: 'S/N factura' })}
               {renderAltaInput('Fecha de nacimiento', 'duenoFechaNacimiento', false, 'date')}
@@ -30524,7 +30731,7 @@ const sucursalOptions = useMemo(() => {
                 </label>
                 {renderAltaInput('Nombre completo del cobrador', 'cobradorNombre', altaForm.esCobrador)}
                 {renderAltaInput('Correo del cobrador', 'cobradorEmail', false, 'email')}
-                {renderAltaInput('CUIL del cobrador', 'cobradorCuil', altaForm.esCobrador)}
+                {renderAltaCuilInput('CUIL del cobrador', 'cobradorCuil', 'cobrador', altaForm.esCobrador, !altaForm.esCobrador)}
                 {renderAltaInput('CBU/Alias del cobrador', 'cobradorCbuAlias', altaForm.esCobrador)}
               </div>
             </div>
@@ -30540,7 +30747,7 @@ const sucursalOptions = useMemo(() => {
               {renderAltaInput('Teléfono', 'telefono', false, 'tel')}
               {renderAltaCheckbox('Tarifa especial', 'tarifaEspecial', 'Tiene tarifa especial')}
               {renderAltaInput('Observación tarifa', 'observacionTarifa')}
-              {renderAltaInput('CUIL', 'cuil')}
+              {renderAltaCuilInput('CUIL', 'cuil', 'titular')}
               {renderAltaInput('CBU/Alias', 'cbuAlias')}
               {renderAltaSelect('Pago', 'pago', PAGO_SELECT_OPTIONS, { placeholder: 'S/N factura' })}
               {renderAltaInput('Fecha de nacimiento', 'duenoFechaNacimiento', false, 'date')}
@@ -30666,7 +30873,7 @@ const sucursalOptions = useMemo(() => {
             <div className="form-grid">
               {renderAltaInput('Nombres', 'nombres', true)}
               {renderAltaInput('Apellidos', 'apellidos', true)}
-              {renderAltaInput('CUIL', 'cuil')}
+              {renderAltaCuilInput('CUIL', 'cuil', 'titular')}
               {renderAltaInput('Correo electrónico', 'email', true, 'email')}
               {renderAltaInput('Teléfono', 'telefono', false, 'tel')}
               {renderAltaCheckbox('Combustible', 'combustible', 'Cuenta corrientes combustible')}
@@ -30700,7 +30907,7 @@ const sucursalOptions = useMemo(() => {
               {renderAltaInput('Correo electrónico', 'email', true, 'email')}
               {renderAltaCheckbox('Tarifa especial', 'tarifaEspecial', 'Tiene tarifa especial')}
               {renderAltaInput('Observación tarifa', 'observacionTarifa')}
-              {renderAltaInput('CUIL', 'cuil')}
+              {renderAltaCuilInput('CUIL', 'cuil', 'titular')}
               {renderAltaInput('CBU/Alias', 'cbuAlias')}
               {renderAltaSelect('Pago', 'pago', PAGO_SELECT_OPTIONS, { placeholder: 'S/N factura' })}
               {renderAltaCheckbox('Combustible', 'combustible', 'Cuenta corrientes combustible')}
