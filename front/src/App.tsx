@@ -22254,22 +22254,27 @@ const LiquidacionesPage: React.FC = () => {
 
         {detail && liquidacionRecipientOptions.length > 0 ? (
           <>
-            <div className="form-grid" style={{ marginTop: '0.75rem' }}>
-              <label className="input-control">
-                <span>Enviar liquidación a</span>
-                <select
-                  value={liquidacionRecipientType}
-                  onChange={(event) =>
-                    setLiquidacionRecipientType(event.target.value as 'proveedor' | 'cobrador' | 'ambos')
-                  }
-                >
-                  {liquidacionRecipientOptions.map((option) => (
-                    <option key={`destinatario-liquidacion-${option.value}`} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
+            <div className="liquidacion-recipient-selector">
+              <span className="liquidacion-recipient-selector__label">Enviar liquidación a</span>
+              <div className="liquidacion-recipient-picker" role="radiogroup" aria-label="Enviar liquidación a">
+                {liquidacionRecipientOptions.map((option) => {
+                  const isActive = liquidacionRecipientType === option.value;
+
+                  return (
+                    <button
+                      key={`destinatario-liquidacion-${option.value}`}
+                      type="button"
+                      role="radio"
+                      aria-checked={isActive}
+                      className={`liquidacion-recipient-card${isActive ? ' is-active' : ''}`}
+                      onClick={() => setLiquidacionRecipientType(option.value)}
+                    >
+                      <span className="liquidacion-recipient-card__title">{option.label}</span>
+                      <span className="liquidacion-recipient-card__meta">{option.emails.join(', ')}</span>
+                    </button>
+                  );
+                })}
+              </div>
             </div>
             {selectedLiquidacionRecipient ? (
               <p className="form-info">Se enviará a: {selectedLiquidacionRecipient.emails.join(', ')}</p>

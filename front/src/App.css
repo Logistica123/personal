@@ -480,6 +480,41 @@ body {
   opacity: 0.9;
 }
 
+[data-theme='dark'] .liquidacion-recipient-selector__label {
+  color: #9fb0cc;
+}
+
+[data-theme='dark'] .liquidacion-recipient-card {
+  border-color: #2d3a52;
+  background-color: #121a28;
+  color: #d5dfef;
+}
+
+[data-theme='dark'] .liquidacion-recipient-card:hover {
+  border-color: #3a5f97;
+  background-color: #162235;
+}
+
+[data-theme='dark'] .liquidacion-recipient-card:focus-visible {
+  border-color: #4b8ef9;
+  box-shadow: 0 0 0 4px rgba(75, 142, 249, 0.22);
+  background-color: #16253b;
+}
+
+[data-theme='dark'] .liquidacion-recipient-card.is-active {
+  border-color: #4b8ef9;
+  background-color: #16253b;
+  box-shadow: 0 12px 24px rgba(3, 11, 24, 0.5);
+}
+
+[data-theme='dark'] .liquidacion-recipient-card__title {
+  color: #dbe7ff;
+}
+
+[data-theme='dark'] .liquidacion-recipient-card__meta {
+  color: #a4b6d3;
+}
+
 .sidebar-nav {
   display: flex;
   flex-direction: column;
@@ -2068,6 +2103,72 @@ tbody tr:hover {
   gap: 1rem;
   margin: 1rem 0;
   flex-wrap: wrap;
+}
+
+.liquidacion-recipient-selector {
+  margin-top: 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+}
+
+.liquidacion-recipient-selector__label {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #516277;
+}
+
+.liquidacion-recipient-picker {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 0.75rem;
+}
+
+.liquidacion-recipient-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.35rem;
+  width: 100%;
+  text-align: left;
+  padding: 0.85rem 1rem;
+  border-radius: 12px;
+  border: 1px solid #d7deeb;
+  background-color: #f4f7fb;
+  color: #243a63;
+  cursor: pointer;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease, background-color 0.2s ease, transform 0.2s ease;
+}
+
+.liquidacion-recipient-card:hover {
+  border-color: #b7c8e7;
+  background-color: #ffffff;
+  transform: translateY(-1px);
+}
+
+.liquidacion-recipient-card:focus-visible {
+  outline: none;
+  border-color: #1d74f5;
+  box-shadow: 0 0 0 4px rgba(29, 116, 245, 0.12);
+  background-color: #ffffff;
+}
+
+.liquidacion-recipient-card.is-active {
+  border-color: #1d74f5;
+  background-color: #ffffff;
+  box-shadow: 0 10px 24px rgba(29, 116, 245, 0.2);
+}
+
+.liquidacion-recipient-card__title {
+  font-size: 0.93rem;
+  font-weight: 700;
+  color: #1d3565;
+}
+
+.liquidacion-recipient-card__meta {
+  font-size: 0.78rem;
+  color: #5f7391;
+  line-height: 1.35;
 }
 
 .quincena-filters label {
