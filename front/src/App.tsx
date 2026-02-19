@@ -21995,6 +21995,16 @@ const LiquidacionesPage: React.FC = () => {
 
     const options: Array<{ value: 'proveedor' | 'cobrador' | 'ambos'; label: string; emails: string[] }> = [];
 
+    if (providerEmail && collectorEmail && providerEmail === collectorEmail) {
+      return [
+        {
+          value: 'ambos' as const,
+          label: 'Proveedor y cobrador',
+          emails: [providerEmail],
+        },
+      ];
+    }
+
     if (providerEmail) {
       options.push({
         value: 'proveedor',
