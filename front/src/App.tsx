@@ -21986,38 +21986,64 @@ const LiquidacionesPage: React.FC = () => {
 
   const liquidacionRecipientOptions = useMemo(() => {
     if (!detail) {
-      return [] as Array<{ value: 'proveedor' | 'cobrador' | 'ambos'; label: string; emails: string[] }>;
+      return [] as Array<{
+        value: 'proveedor' | 'cobrador' | 'ambos';
+        label: string;
+        emails: string[];
+        identities: string[];
+      }>;
     }
 
     const providerName = [detail.nombres, detail.apellidos].filter(Boolean).join(' ').trim() || 'Proveedor';
+    const providerCuil = (detail.cuil ?? '').trim();
+    const providerCbu = (detail.cbuAlias ?? '').trim();
     const providerEmail = normalizeRecipientEmail(detail.email);
+    const collectorName = (detail.cobradorNombre ?? detail.duenoNombre ?? '').trim() || 'Cobrador';
+    const collectorCuil = (detail.cobradorCuil ?? detail.duenoCuilCobrador ?? detail.duenoCuil ?? '').trim();
+    const collectorCbu = (detail.cobradorCbuAlias ?? detail.duenoCbuAlias ?? '').trim();
     const collectorEmail = normalizeRecipientEmail(detail.cobradorEmail ?? detail.duenoEmail);
 
-    const options: Array<{ value: 'proveedor' | 'cobrador' | 'ambos'; label: string; emails: string[] }> = [];
-
-    if (providerEmail && collectorEmail && providerEmail === collectorEmail) {
-      return [
-        {
-          value: 'ambos' as const,
-          label: 'Proveedor y cobrador',
-          emails: [providerEmail],
-        },
-      ];
+    const providerIdentityParts = [providerName];
+    if (providerCuil) {
+      providerIdentityParts.push(`CUIL ${providerCuil}`);
     }
+    if (providerCbu) {
+      providerIdentityParts.push(`CBU ${providerCbu}`);
+    }
+
+    const collectorIdentityParts = [collectorName];
+    if (collectorCuil) {
+      collectorIdentityParts.push(`CUIL ${collectorCuil}`);
+    }
+    if (collectorCbu) {
+      collectorIdentityParts.push(`CBU ${collectorCbu}`);
+    }
+
+    const providerIdentity = providerIdentityParts.join(' · ');
+    const collectorIdentity = collectorIdentityParts.join(' · ');
+
+    const options: Array<{
+      value: 'proveedor' | 'cobrador' | 'ambos';
+      label: string;
+      emails: string[];
+      identities: string[];
+    }> = [];
 
     if (providerEmail) {
       options.push({
         value: 'proveedor',
         label: `Proveedor (${providerName})`,
         emails: [providerEmail],
+        identities: [providerIdentity],
       });
     }
 
     if (collectorEmail) {
       options.push({
         value: 'cobrador',
-        label: 'Cobrador',
+        label: `Cobrador (${collectorName})`,
         emails: [collectorEmail],
+        identities: [collectorIdentity],
       });
     }
 
@@ -22026,6 +22052,7 @@ const LiquidacionesPage: React.FC = () => {
         value: 'ambos',
         label: 'Proveedor y cobrador',
         emails: Array.from(new Set([providerEmail, collectorEmail])),
+        identities: [providerIdentity, collectorIdentity],
       });
     }
 
@@ -22280,6 +22307,7 @@ const LiquidacionesPage: React.FC = () => {
                       onClick={() => setLiquidacionRecipientType(option.value)}
                     >
                       <span className="liquidacion-recipient-card__title">{option.label}</span>
+                      <span className="liquidacion-recipient-card__identity">{option.identities.join(' / ')}</span>
                       <span className="liquidacion-recipient-card__meta">{option.emails.join(', ')}</span>
                     </button>
                   );
@@ -22287,7 +22315,11 @@ const LiquidacionesPage: React.FC = () => {
               </div>
             </div>
             {selectedLiquidacionRecipient ? (
-              <p className="form-info">Se enviará a: {selectedLiquidacionRecipient.emails.join(', ')}</p>
+              <p className="form-info">
+                Se enviará a: {selectedLiquidacionRecipient.emails.join(', ')}
+                {` · `}
+                Destino: {selectedLiquidacionRecipient.identities.join(' / ')}
+              </p>
             ) : null}
           </>
         ) : null}
@@ -25866,6 +25898,7 @@ const ApprovalsRequestsPage: React.FC = () => {
   const [solicitudesLoading, setSolicitudesLoading] = useState(true);
   const [solicitudesError, setSolicitudesError] = useState<string | null>(null);
   const [solicitudesSearchTerm, setSolicitudesSearchTerm] = useState('');
+  const [solicitudesTipoFilter, setSolicitudesTipoFilter] = useState('');
   const [solicitudesPerfilFilter, setSolicitudesPerfilFilter] = useState('');
   const [solicitudesAgenteFilter, setSolicitudesAgenteFilter] = useState('');
   const [solicitudesEstadoFilter, setSolicitudesEstadoFilter] = useState('');
@@ -29479,6 +29512,42 @@ const sucursalOptions = useMemo(() => {
     [isSolicitudPersonalView, localSolicitudes, backendSolicitudes, personalSolicitudes]
   );
 
+  const resolveSolicitudTipoMeta = useCallback((registro: PersonalRecord): { key: string; label: string } => {
+    if (!registro.esSolicitud) {
+      return { key: 'registro_personal', label: 'Registro de personal' };
+    }
+
+    switch (registro.solicitudTipo) {
+      case 'alta':
+        return { key: 'alta', label: 'Solicitud de alta' };
+      case 'combustible':
+        return { key: 'combustible', label: 'Solicitud de combustible' };
+      case 'aumento_combustible':
+        return { key: 'aumento_combustible', label: 'Aumento de combustible' };
+      case 'adelanto':
+        return { key: 'adelanto', label: 'Adelanto de pago' };
+      case 'poliza':
+        return { key: 'poliza', label: 'Solicitud de póliza' };
+      case 'prestamo':
+        return { key: 'prestamo', label: 'Solicitud de préstamo' };
+      case 'vacaciones':
+        return { key: 'vacaciones', label: 'Solicitud de vacaciones' };
+      default:
+        return { key: 'solicitud_registrada', label: 'Solicitud registrada' };
+    }
+  }, []);
+
+  const solicitudesTipoOptions = useMemo(() => {
+    const labels = new Map<string, string>();
+    combinedSolicitudes.forEach((registro) => {
+      const meta = resolveSolicitudTipoMeta(registro);
+      labels.set(meta.key, meta.label);
+    });
+    return Array.from(labels.entries())
+      .map(([value, label]) => ({ value, label }))
+      .sort((a, b) => a.label.localeCompare(b.label, 'es-AR'));
+  }, [combinedSolicitudes, resolveSolicitudTipoMeta]);
+
   const solicitudesPerfilOptions = useMemo(() => {
     const labels = new Set<string>();
     combinedSolicitudes.forEach((registro) => {
@@ -29637,6 +29706,7 @@ const sucursalOptions = useMemo(() => {
     return combinedSolicitudes.filter((registro) => {
       const data = registro.solicitudData as any;
       const origin = data?.origin ?? null;
+      const solicitudTipoMeta = resolveSolicitudTipoMeta(registro);
       if (!isSolicitudPersonalView) {
         if (origin === 'solicitud-personal') {
           return false;
@@ -29667,6 +29737,10 @@ const sucursalOptions = useMemo(() => {
         }
       }
       const perfilLabel = perfilNames[registro.perfilValue ?? 0] ?? registro.perfil ?? '';
+
+      if (solicitudesTipoFilter && solicitudTipoMeta.key !== solicitudesTipoFilter) {
+        return false;
+      }
 
       if (solicitudesPerfilFilter && perfilLabel !== solicitudesPerfilFilter) {
         return false;
@@ -29705,6 +29779,7 @@ const sucursalOptions = useMemo(() => {
         registro.sucursal,
         registro.unidadDetalle,
         registro.unidad,
+        solicitudTipoMeta.label,
         perfilLabel,
         registro.agente,
         registro.estado,
@@ -29715,6 +29790,7 @@ const sucursalOptions = useMemo(() => {
   }, [
     combinedSolicitudes,
     solicitudesSearchTerm,
+    solicitudesTipoFilter,
     solicitudesPerfilFilter,
     solicitudesAgenteFilter,
     solicitudesEstadoFilter,
@@ -29724,6 +29800,7 @@ const sucursalOptions = useMemo(() => {
     solicitudesFechaFrom,
     solicitudesFechaTo,
     perfilNames,
+    resolveSolicitudTipoMeta,
     resolveSolicitudCreated,
     authUser?.id,
     isSolicitudPersonalView,
@@ -29751,6 +29828,7 @@ const sucursalOptions = useMemo(() => {
 
   const handleSolicitudesReset = () => {
     setSolicitudesSearchTerm('');
+    setSolicitudesTipoFilter('');
     setSolicitudesPerfilFilter('');
     setSolicitudesAgenteFilter('');
     setSolicitudesEstadoFilter('');
@@ -30154,6 +30232,20 @@ const sucursalOptions = useMemo(() => {
       <div className="filters-bar filters-bar--reclamos">
         <div className="filters-grid filters-grid--reclamos">
           <label className="filter-field">
+            <span>Tipo solicitud</span>
+            <select
+              value={solicitudesTipoFilter}
+              onChange={(event) => setSolicitudesTipoFilter(event.target.value)}
+            >
+              <option value="">Tipo</option>
+              {solicitudesTipoOptions.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="filter-field">
             <span>Perfil</span>
             <select
               value={solicitudesPerfilFilter}
@@ -30296,29 +30388,7 @@ const sucursalOptions = useMemo(() => {
             ) : (
               filteredSolicitudes.map((registro) => {
                 const perfilLabel = perfilNames[registro.perfilValue ?? 0] ?? registro.perfil ?? '—';
-                const solicitudTipoLabel = (() => {
-                  if (!registro.esSolicitud) {
-                    return 'Registro de personal';
-                  }
-                  switch (registro.solicitudTipo) {
-                    case 'alta':
-                      return 'Solicitud de alta';
-                    case 'combustible':
-                      return 'Solicitud de combustible';
-                    case 'aumento_combustible':
-                      return 'Aumento de combustible';
-                    case 'adelanto':
-                      return 'Adelanto de pago';
-                    case 'poliza':
-                      return 'Solicitud de póliza';
-                    case 'prestamo':
-                      return 'Solicitud de préstamo';
-                    case 'vacaciones':
-                      return 'Solicitud de vacaciones';
-                    default:
-                      return 'Solicitud registrada';
-                  }
-                })();
+                const solicitudTipoLabel = resolveSolicitudTipoMeta(registro).label;
                 const data = registro.solicitudData as any;
                 const solicitanteLabel =
                   data?.form?.solicitanteNombre ??
