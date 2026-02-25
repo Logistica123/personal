@@ -189,9 +189,11 @@ class FuelExtractController extends Controller
                 $normalizedSwappedDates += 1;
                 continue;
             }
-            if ($this->isDuplicateMovement($hash, $legacyHash, $domainNorm, $occurredAt, $amount, $liters, $station)) {
-                $movementStatus = 'DUPLICATE';
-                $observations = trim($observations . ' Duplicado.');
+            $isDuplicate = $movementStatus === 'DUPLICATE'
+                || $this->isDuplicateMovement($hash, $legacyHash, $domainNorm, $occurredAt, $amount, $liters, $station);
+            if ($isDuplicate) {
+                $ignoredDuplicates += 1;
+                continue;
             }
 
             $distributorId = $domainNorm !== '' ? $this->resolveDistributorId($domainNorm, $conductor, $autoAssign) : null;
@@ -221,10 +223,7 @@ class FuelExtractController extends Controller
                 $movementStatus = 'OBSERVED';
                 $lateCharges += 1;
             }
-            if ($movementStatus === 'DUPLICATE') {
-                $ignoredDuplicates += 1;
-                continue;
-            } elseif ($movementStatus === 'OBSERVED') {
+            if ($movementStatus === 'OBSERVED') {
                 $observed += 1;
             }
 

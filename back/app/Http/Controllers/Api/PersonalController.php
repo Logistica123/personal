@@ -1071,10 +1071,33 @@ class PersonalController extends Controller
         $trackedFields = [
             'nombres',
             'apellidos',
+            'legajo',
             'cuil',
             'telefono',
             'email',
+            'tipo',
+            'agente_id',
+            'agente_responsable_id',
+            'agentes_responsables_ids',
+            'cliente_id',
+            'sucursal_id',
+            'unidad_id',
+            'estado_id',
+            'pago',
             'cbu_alias',
+            'patente',
+            'combustible_estado',
+            'es_cobrador',
+            'cobrador_nombre',
+            'cobrador_email',
+            'cobrador_cuil',
+            'cobrador_cbu_alias',
+            'observaciontarifa',
+            'observaciones',
+            'fecha_alta',
+            'fecha_baja',
+            'combustible',
+            'tarifaespecial',
             'dueno_cbu_alias',
             'dueno_cuil',
             'dueno_cuil_cobrador',
@@ -2346,6 +2369,7 @@ class PersonalController extends Controller
         return [
             'nombres' => ['label' => 'Nombre'],
             'apellidos' => ['label' => 'Apellido'],
+            'legajo' => ['label' => 'Legajo'],
             'cuil' => ['label' => 'CUIL'],
             'telefono' => ['label' => 'Teléfono'],
             'email' => ['label' => 'Email'],
@@ -2363,6 +2387,23 @@ class PersonalController extends Controller
             'agente_responsable_id' => [
                 'label' => 'Agente responsable',
                 'formatter' => fn ($value) => $this->resolveUserName($value),
+            ],
+            'agentes_responsables_ids' => [
+                'label' => 'Agentes responsables',
+                'formatter' => function ($value) {
+                    $ids = $this->normalizeResponsableIds($value);
+                    if (empty($ids)) {
+                        return null;
+                    }
+
+                    $names = $this->resolveResponsableNames($ids);
+                    return !empty($names) ? implode(' · ', $names) : implode(', ', $ids);
+                },
+                'normalizer' => function ($value) {
+                    $ids = $this->normalizeResponsableIds($value);
+                    sort($ids);
+                    return empty($ids) ? null : $ids;
+                },
             ],
             'cliente_id' => [
                 'label' => 'Cliente',
@@ -2383,10 +2424,26 @@ class PersonalController extends Controller
             'pago' => ['label' => 'Pago pactado'],
             'cbu_alias' => ['label' => 'CBU / Alias'],
             'patente' => ['label' => 'Patente'],
+            'combustible_estado' => [
+                'label' => 'Estado combustible',
+                'formatter' => fn ($value) => $value ? ucfirst((string) $value) : null,
+            ],
+            'es_cobrador' => [
+                'label' => 'Es cobrador',
+                'type' => 'boolean',
+            ],
+            'cobrador_nombre' => ['label' => 'Nombre del cobrador'],
+            'cobrador_email' => ['label' => 'Correo del cobrador'],
+            'cobrador_cuil' => ['label' => 'CUIL del cobrador'],
+            'cobrador_cbu_alias' => ['label' => 'CBU/Alias del cobrador'],
             'observaciontarifa' => ['label' => 'Observación tarifa'],
             'observaciones' => ['label' => 'Observaciones'],
             'fecha_alta' => [
                 'label' => 'Fecha de alta',
+                'type' => 'date',
+            ],
+            'fecha_baja' => [
+                'label' => 'Fecha de baja',
                 'type' => 'date',
             ],
             'combustible' => [

@@ -9,6 +9,7 @@ use App\Models\FacturaOcr;
 use App\Models\FacturaValidacion;
 use App\Models\FileType;
 use App\Models\Persona;
+use App\Models\PersonalNotification;
 use App\Services\FacturaAi\FacturaValidationService;
 use App\Services\FacturaAi\OpenAiFacturaParser;
 use App\Services\FacturaAi\PdfTextExtractor;
@@ -433,6 +434,16 @@ class PersonalDocumentController extends Controller
             'origin' => $request->header('User-Agent'),
         ]);
 
+        if ($isLiquidacion && ! $isPending) {
+            $this->createLiquidacionNotification(
+                $persona,
+                $documento->id,
+                $documento->nombre_original,
+                $recipientPayload['type'] ?? null,
+                $recipientPayload['emails'] ?? []
+            );
+        }
+
         $isLiquidacionDoc = $request->boolean('esLiquidacion')
             || Str::contains(Str::lower($documento->tipo?->nombre ?? ''), 'liquid');
 
@@ -535,11 +546,24 @@ class PersonalDocumentController extends Controller
             $enviadaQuery->whereIn('id', $validated['documentIds']);
         }
 
+        $publishedLiquidaciones = (clone $enviadaQuery)
+            ->get(['id', 'nombre_original']);
+
         $enviadaQuery->update([
             'enviada' => true,
             'liquidacion_destinatario_tipo' => $recipientPayload['type'],
             'liquidacion_destinatario_emails' => json_encode($recipientPayload['emails'], JSON_UNESCAPED_UNICODE),
         ]);
+
+        foreach ($publishedLiquidaciones as $publishedLiquidacion) {
+            $this->createLiquidacionNotification(
+                $persona,
+                (int) $publishedLiquidacion->id,
+                $publishedLiquidacion->nombre_original,
+                $recipientPayload['type'] ?? null,
+                $recipientPayload['emails'] ?? []
+            );
+        }
 
         if ($request->boolean('marcarRecibido')) {
             $liquidacionIds = $enviadaQuery->pluck('id');
@@ -1083,6 +1107,28 @@ class PersonalDocumentController extends Controller
             $liquidacion->recibido = true;
             $liquidacion->save();
         }
+    }
+
+    protected function createLiquidacionNotification(
+        Persona $persona,
+        int $documentId,
+        ?string $documentName = null,
+        ?string $recipientType = null,
+        array $recipientEmails = []
+    ): void {
+        $nombre = trim((string) ($documentName ?: 'Liquidación'));
+
+        PersonalNotification::query()->create([
+            'persona_id' => $persona->id,
+            'type' => 'liquidacion',
+            'title' => 'Nueva liquidación disponible',
+            'message' => 'Se cargó una nueva liquidación: '.$nombre,
+            'metadata' => [
+                'documentId' => $documentId,
+                'recipientType' => $recipientType,
+                'recipientEmails' => array_values($recipientEmails),
+            ],
+        ]);
     }
 
     protected function resolveFuelTypeIds()
