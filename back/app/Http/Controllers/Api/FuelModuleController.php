@@ -391,9 +391,15 @@ class FuelModuleController extends Controller
             'not_taken' => (int) (clone $baseQuery)->where('discounted', false)->count(),
         ];
 
+        $rowsLimit = 500;
+
+        $aggregateTotals = (clone $baseQuery)
+            ->selectRaw('COUNT(*) as movements, COALESCE(SUM(liters), 0) as liters, COALESCE(SUM(amount), 0) as amount')
+            ->first();
+
         $rows = (clone $baseQuery)
             ->orderByDesc('occurred_at')
-            ->limit(500)
+            ->limit($rowsLimit)
             ->get()
             ->map(fn (FuelMovement $movement) => [
             'id' => $movement->id,
@@ -414,9 +420,11 @@ class FuelModuleController extends Controller
         ]);
 
         $totals = [
-            'movements' => $rows->count(),
-            'liters' => $rows->sum('liters'),
-            'amount' => $rows->sum('amount'),
+            'movements' => (int) ($aggregateTotals?->movements ?? 0),
+            'liters' => (float) ($aggregateTotals?->liters ?? 0),
+            'amount' => (float) ($aggregateTotals?->amount ?? 0),
+            'returned' => $rows->count(),
+            'limit' => $rowsLimit,
             'discount_counts' => $discountCounts,
             'status_counts' => $statusCounts,
         ];

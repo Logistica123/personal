@@ -4581,12 +4581,16 @@ tbody tr:hover {
 
 .review-comments__body {
   max-height: 260px;
-  overflow: hidden;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-right: 0.25rem;
   transition: max-height 0.2s ease;
 }
 
 .review-comments__body.is-open {
-  max-height: 1200px;
+  max-height: none;
+  overflow: visible;
+  padding-right: 0;
 }
 
 .review-comment-list {

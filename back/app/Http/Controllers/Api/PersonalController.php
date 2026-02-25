@@ -186,6 +186,27 @@ class PersonalController extends Controller
         }
     }
 
+    protected function normalizeEstadoNombre(?string $estadoNombre): string
+    {
+        return Str::of((string) $estadoNombre)
+            ->lower()
+            ->trim()
+            ->replace(['-', '_'], ' ')
+            ->replaceMatches('/\s+/', ' ')
+            ->toString();
+    }
+
+    protected function isEstadoActivoNombre(?string $estadoNombre): bool
+    {
+        return $this->normalizeEstadoNombre($estadoNombre) === 'activo';
+    }
+
+    protected function isEstadoBajaNombre(?string $estadoNombre): bool
+    {
+        $normalized = $this->normalizeEstadoNombre($estadoNombre);
+        return $normalized !== '' && Str::contains($normalized, 'baja');
+    }
+
     protected function matchesPersonaEmail(Persona $persona, ?string $email): bool
     {
         if (! is_string($email) || trim($email) === '') {
@@ -869,17 +890,14 @@ class PersonalController extends Controller
         ]);
 
         $targetEstadoId = array_key_exists('estadoId', $validated) ? $validated['estadoId'] : $persona->estado_id;
-        $targetEstadoNombre = '';
-        if ($targetEstadoId) {
-            $estado = Estado::query()->find($targetEstadoId);
-            $targetEstadoNombre = $estado?->nombre ?? '';
-        } else {
-            $targetEstadoNombre = $persona->estado?->nombre ?? '';
-        }
-        $currentEstadoNombre = (string) ($persona->estado?->nombre ?? '');
-        $isTargetBaja = Str::contains(Str::lower($targetEstadoNombre), 'baja');
-        $isCurrentBaja = Str::contains(Str::lower($currentEstadoNombre), 'baja');
-        $isCurrentActivo = Str::contains(Str::lower($currentEstadoNombre), 'activo') || (bool) $persona->aprobado;
+        $currentEstadoNombre = $persona->estado?->nombre ?? $this->resolveEstadoName($persona->estado_id);
+        $targetEstadoNombre = $targetEstadoId
+            ? (Estado::query()->find($targetEstadoId)?->nombre ?? $this->resolveEstadoName($targetEstadoId))
+            : $currentEstadoNombre;
+        $isTargetBaja = $this->isEstadoBajaNombre($targetEstadoNombre);
+        $isCurrentBaja = $this->isEstadoBajaNombre($currentEstadoNombre);
+        $isCurrentActivo = $this->isEstadoActivoNombre($currentEstadoNombre);
+        $isTargetActivo = $this->isEstadoActivoNombre($targetEstadoNombre);
         $requiresFechaBaja = $isTargetBaja && ! $isCurrentBaja && $isCurrentActivo;
 
         if ($requiresFechaBaja && empty($validated['fechaBaja'])) {
@@ -982,6 +1000,11 @@ class PersonalController extends Controller
             $persona->fecha_alta = $validated['fechaAltaVinculacion']
                 ? Carbon::parse($validated['fechaAltaVinculacion'])
                 : null;
+        }
+
+        $hasFechaAltaInput = array_key_exists('fechaAlta', $validated) || array_key_exists('fechaAltaVinculacion', $validated);
+        if (! $hasFechaAltaInput && ! $persona->fecha_alta && ! $isCurrentActivo && $isTargetActivo) {
+            $persona->fecha_alta = Carbon::now();
         }
 
         if (array_key_exists('fechaBaja', $validated)) {
@@ -1404,6 +1427,8 @@ class PersonalController extends Controller
         if ($estadoId === null) {
             $estadoId = $this->resolveDefaultApprovedEstadoId();
         }
+        $estadoNombre = $estadoId ? $this->resolveEstadoName((int) $estadoId) : null;
+        $isTargetActivo = $this->isEstadoActivoNombre($estadoNombre);
 
         $persona->aprobado = true;
         $persona->aprobado_at = Carbon::now();
@@ -1414,7 +1439,7 @@ class PersonalController extends Controller
             $persona->estado_id = $estadoId;
         }
 
-        if (! $persona->fecha_alta) {
+        if ($isTargetActivo && ! $persona->fecha_alta) {
             $persona->fecha_alta = Carbon::now();
         }
 

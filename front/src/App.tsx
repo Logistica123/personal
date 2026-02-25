@@ -16064,6 +16064,8 @@ const CombustibleDistribuidorPage: React.FC = () => {
     movements: number;
     liters: number;
     amount: number;
+    returned?: number;
+    limit?: number;
     discount_counts?: { taken: number; not_taken: number };
     status_counts?: Record<string, number>;
   } | null>(null);
@@ -16214,6 +16216,8 @@ const CombustibleDistribuidorPage: React.FC = () => {
           movements: Number(payload.totals.movements) || 0,
           liters: Number(payload.totals.liters) || 0,
           amount: Number(payload.totals.amount) || 0,
+          returned: Number(payload.totals.returned) || 0,
+          limit: Number(payload.totals.limit) || 0,
           discount_counts: payload.totals.discount_counts ?? undefined,
           status_counts: payload.totals.status_counts ?? undefined,
         });
@@ -16698,6 +16702,12 @@ const CombustibleDistribuidorPage: React.FC = () => {
           </strong>
         </div>
       </div>
+      {(totals?.movements ?? rows.length) > rows.length ? (
+        <p className="helper-text">
+          Mostrando {rows.length} de {totals?.movements ?? rows.length} movimientos (límite {totals?.limit ?? 500} por
+          consulta).
+        </p>
+      ) : null}
 
       <div className="table-wrapper">
         <table>
@@ -18127,6 +18137,8 @@ const CombustibleConsumosPage: React.FC = () => {
     movements: number;
     liters: number;
     amount: number;
+    returned?: number;
+    limit?: number;
     discount_counts?: { taken: number; not_taken: number };
     status_counts?: Record<string, number>;
   } | null>(null);
@@ -18209,6 +18221,8 @@ const CombustibleConsumosPage: React.FC = () => {
           movements: Number(payload.totals.movements) || 0,
           liters: Number(payload.totals.liters) || 0,
           amount: Number(payload.totals.amount) || 0,
+          returned: Number(payload.totals.returned) || 0,
+          limit: Number(payload.totals.limit) || 0,
           discount_counts: payload.totals.discount_counts ?? undefined,
           status_counts: payload.totals.status_counts ?? undefined,
         });
@@ -18397,6 +18411,12 @@ const CombustibleConsumosPage: React.FC = () => {
           <p className="helper-text">
             Última fecha cargada: {latestOccurredAt ? formatDateTime(latestOccurredAt) : '—'}
           </p>
+          {(totals?.movements ?? rows.length) > rows.length ? (
+            <p className="helper-text">
+              Mostrando {rows.length} de {totals?.movements ?? rows.length} movimientos (límite {totals?.limit ?? 500}{' '}
+              por consulta).
+            </p>
+          ) : null}
         </header>
         <div className="table-wrapper">
           <table>
@@ -28976,7 +28996,7 @@ const sucursalOptions = useMemo(() => {
       const resolvedFechaAlta =
         payload.data?.personalRecord?.fechaAlta ??
         reviewPersonaDetail.fechaAlta ??
-        new Date().toISOString().slice(0, 10);
+        null;
 
       const resolvedAprobadoPorId =
         payload.data?.aprobadoPorId ?? reviewPersonaDetail.aprobadoPorId ?? (authUser?.id ?? null);
