@@ -15988,6 +15988,7 @@ const CombustibleDistribuidorPage: React.FC = () => {
   const apiBaseUrl = useMemo(() => resolveApiBaseUrl(), []);
   const [distributors, setDistributors] = useState<Array<{ id: number; name: string; code?: string | null }>>([]);
   const [distributorId, setDistributorId] = useState('');
+  const [manualDistributorName, setManualDistributorName] = useState('');
   const [newDistributorName, setNewDistributorName] = useState('');
   const [newDistributorCode, setNewDistributorCode] = useState('');
   const [domain, setDomain] = useState('');
@@ -16017,7 +16018,12 @@ const CombustibleDistribuidorPage: React.FC = () => {
     status_counts?: Record<string, number>;
   } | null>(null);
   const [loading, setLoading] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [actionMessage, setActionMessage] = useState<string | null>(null);
+  const [selectedMovementIds, setSelectedMovementIds] = useState<Set<number>>(() => new Set());
+  const selectAllRef = useRef<HTMLInputElement | null>(null);
 
   const applyPeriodPreset = useCallback(
     (preset: 'Q1' | 'Q2' | 'MONTH', baseDate?: string) => {
@@ -16044,6 +16050,15 @@ const CombustibleDistribuidorPage: React.FC = () => {
     },
     []
   );
+
+  const normalizeDistributorSearch = useCallback((value?: string | null) => {
+    return (value ?? '')
+      .toString()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .trim()
+      .toLowerCase();
+  }, []);
 
   useEffect(() => {
     const loadDistributors = async () => {
@@ -16095,8 +16110,34 @@ const CombustibleDistribuidorPage: React.FC = () => {
     setError(null);
     try {
       const url = new URL(`${apiBaseUrl}/api/combustible/consumos`);
-      if (distributorId) {
-        url.searchParams.set('distributor_id', distributorId);
+      let resolvedDistributorId = distributorId.trim();
+
+      if (!resolvedDistributorId && manualDistributorName.trim()) {
+        const term = normalizeDistributorSearch(manualDistributorName);
+        const exactMatches = distributors.filter((item) => {
+          const byName = normalizeDistributorSearch(item.name) === term;
+          const byCode = normalizeDistributorSearch(item.code ?? '') === term;
+          return byName || byCode;
+        });
+        const partialMatches = distributors.filter((item) => {
+          const byName = normalizeDistributorSearch(item.name).includes(term);
+          const byCode = normalizeDistributorSearch(item.code ?? '').includes(term);
+          return byName || byCode;
+        });
+        const matches = exactMatches.length > 0 ? exactMatches : partialMatches;
+        if (matches.length === 0) {
+          throw new Error('No se encontró distribuidor con ese nombre/código.');
+        }
+        if (matches.length > 1) {
+          throw new Error('Hay más de un distribuidor con ese texto. Especificá un poco más.');
+        }
+        resolvedDistributorId = String(matches[0].id);
+        setDistributorId(resolvedDistributorId);
+        setManualDistributorName(matches[0].name ?? manualDistributorName);
+      }
+
+      if (resolvedDistributorId) {
+        url.searchParams.set('distributor_id', resolvedDistributorId);
       }
       if (domain.trim()) {
         url.searchParams.set('domain', domain.trim());
@@ -16136,7 +16177,146 @@ const CombustibleDistribuidorPage: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  }, [apiBaseUrl, distributorId, domain, dateFrom, dateTo]);
+  }, [apiBaseUrl, distributorId, manualDistributorName, distributors, normalizeDistributorSearch, domain, sourceFile, dateFrom, dateTo]);
+
+  useEffect(() => {
+    setSelectedMovementIds((prev) => {
+      if (prev.size === 0) {
+        return prev;
+      }
+      const visibleIds = new Set(rows.map((row) => row.id));
+      const next = new Set<number>();
+      prev.forEach((id) => {
+        if (visibleIds.has(id)) {
+          next.add(id);
+        }
+      });
+      return next;
+    });
+  }, [rows]);
+
+  const visibleMovementIds = useMemo(() => rows.map((row) => row.id), [rows]);
+  const allVisibleSelected =
+    visibleMovementIds.length > 0 && visibleMovementIds.every((id) => selectedMovementIds.has(id));
+  const someVisibleSelected = visibleMovementIds.some((id) => selectedMovementIds.has(id)) && !allVisibleSelected;
+
+  useEffect(() => {
+    if (!selectAllRef.current) {
+      return;
+    }
+    selectAllRef.current.indeterminate = someVisibleSelected;
+  }, [someVisibleSelected]);
+
+  const toggleSelectAllMovements = useCallback(() => {
+    setSelectedMovementIds((prev) => {
+      if (visibleMovementIds.length === 0) {
+        return prev;
+      }
+      const next = new Set(prev);
+      const shouldUnselectAll = visibleMovementIds.every((id) => next.has(id));
+      if (shouldUnselectAll) {
+        visibleMovementIds.forEach((id) => next.delete(id));
+      } else {
+        visibleMovementIds.forEach((id) => next.add(id));
+      }
+      return next;
+    });
+  }, [visibleMovementIds]);
+
+  const toggleSelectMovement = useCallback((movementId: number) => {
+    setSelectedMovementIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(movementId)) {
+        next.delete(movementId);
+      } else {
+        next.add(movementId);
+      }
+      return next;
+    });
+  }, []);
+
+  const handleDeleteSelectedMovements = useCallback(async () => {
+    if (selectedMovementIds.size === 0) {
+      return;
+    }
+    const confirmed = window.confirm(
+      `Se van a eliminar ${selectedMovementIds.size} consumo(s) seleccionados. Esta acción no se puede deshacer.`
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    setDeleting(true);
+    setActionError(null);
+    setActionMessage(null);
+    try {
+      const response = await fetch(`${apiBaseUrl}/api/combustible/movimientos`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({
+          movement_ids: Array.from(selectedMovementIds),
+        }),
+      });
+      if (!response.ok) {
+        const payload = await parseJsonSafe(response).catch(() => null);
+        throw new Error(payload?.message ?? `No se pudieron eliminar los consumos (${response.status}).`);
+      }
+      const payload = await parseJsonSafe(response);
+      const deleted = Number(payload?.deleted ?? 0);
+      setActionMessage(`Consumos eliminados: ${deleted}.`);
+      setSelectedMovementIds(new Set());
+      await fetchConsumos();
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : 'No se pudieron eliminar los consumos seleccionados.');
+    } finally {
+      setDeleting(false);
+    }
+  }, [apiBaseUrl, fetchConsumos, selectedMovementIds]);
+
+  const handleDeleteAllMovements = useCallback(async () => {
+    const confirmed = window.confirm(
+      'Vas a limpiar TODA la base de combustible (consumos y reportes). Esta acción es irreversible. ¿Continuar?'
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    const typed = window.prompt('Para confirmar, escribí: BORRAR TODO');
+    if (typed?.trim().toUpperCase() !== 'BORRAR TODO') {
+      window.alert('Confirmación cancelada.');
+      return;
+    }
+
+    setDeleting(true);
+    setActionError(null);
+    setActionMessage(null);
+    try {
+      const response = await fetch(`${apiBaseUrl}/api/combustible/movimientos`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({
+          delete_all: true,
+          confirm_token: 'BORRAR_TODO_COMBUSTIBLE',
+        }),
+      });
+      if (!response.ok) {
+        const payload = await parseJsonSafe(response).catch(() => null);
+        throw new Error(payload?.message ?? `No se pudo limpiar la base de combustible (${response.status}).`);
+      }
+      const payload = await parseJsonSafe(response);
+      const deleted = Number(payload?.deleted ?? 0);
+      const reportsDeleted = Number(payload?.reports_deleted ?? 0);
+      setActionMessage(`Base limpiada. Consumos eliminados: ${deleted}. Reportes eliminados: ${reportsDeleted}.`);
+      setSelectedMovementIds(new Set());
+      await fetchConsumos();
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : 'No se pudo limpiar toda la base de combustible.');
+    } finally {
+      setDeleting(false);
+    }
+  }, [apiBaseUrl, fetchConsumos]);
 
   const selectedDistributor = distributors.find((item) => String(item.id) === distributorId);
   const periodLabel = `${dateFrom || '—'} - ${dateTo || '—'}`;
@@ -16310,7 +16490,15 @@ const CombustibleDistribuidorPage: React.FC = () => {
       <div className="form-grid">
         <label className="input-control">
           <span>Distribuidor</span>
-          <select value={distributorId} onChange={(event) => setDistributorId(event.target.value)}>
+          <select
+            value={distributorId}
+            onChange={(event) => {
+              const value = event.target.value;
+              setDistributorId(value);
+              const selected = distributors.find((item) => String(item.id) === value);
+              setManualDistributorName(selected?.name ?? '');
+            }}
+          >
             <option value="">Seleccionar</option>
             {distributors.map((distributor) => (
               <option key={`dist-${distributor.id}`} value={distributor.id}>
@@ -16318,6 +16506,29 @@ const CombustibleDistribuidorPage: React.FC = () => {
               </option>
             ))}
           </select>
+        </label>
+        <label className="input-control">
+          <span>Distribuidor manual</span>
+          <input
+            list="combustible-distribuidores-manual"
+            value={manualDistributorName}
+            onChange={(event) => {
+              setManualDistributorName(event.target.value);
+              if (event.target.value.trim() !== '' && distributorId) {
+                setDistributorId('');
+              }
+            }}
+            placeholder="Nombre o código"
+          />
+          <datalist id="combustible-distribuidores-manual">
+            {distributors.map((distributor) => (
+              <option
+                key={`dist-manual-${distributor.id}`}
+                value={distributor.name}
+                label={distributor.code ? `${distributor.name} (${distributor.code})` : distributor.name}
+              />
+            ))}
+          </datalist>
         </label>
         <label className="input-control">
           <span>Dominio</span>
@@ -16366,16 +16577,49 @@ const CombustibleDistribuidorPage: React.FC = () => {
         </label>
       </div>
       <div className="filters-actions">
-        <button type="button" className="primary-action" onClick={fetchConsumos}>
+        <button type="button" className="primary-action" onClick={fetchConsumos} disabled={loading || deleting}>
           Buscar
         </button>
-        <button type="button" className="secondary-action secondary-action--ghost" onClick={exportConsumosExcel} disabled={!rows.length}>
+        <button
+          type="button"
+          className="secondary-action secondary-action--ghost"
+          onClick={exportConsumosExcel}
+          disabled={!rows.length || loading || deleting}
+        >
           Exportar Excel
         </button>
-        <button type="button" className="secondary-action secondary-action--ghost" onClick={exportConsumosPdf} disabled={!rows.length}>
+        <button
+          type="button"
+          className="secondary-action secondary-action--ghost"
+          onClick={exportConsumosPdf}
+          disabled={!rows.length || loading || deleting}
+        >
           Exportar PDF
         </button>
+        <button
+          type="button"
+          className="secondary-action secondary-action--danger"
+          onClick={handleDeleteSelectedMovements}
+          disabled={selectedMovementIds.size === 0 || loading || deleting}
+        >
+          {deleting ? 'Eliminando...' : 'Desaparecer seleccionados'}
+        </button>
+        <button
+          type="button"
+          className="secondary-action secondary-action--danger"
+          onClick={handleDeleteAllMovements}
+          disabled={loading || deleting}
+        >
+          {deleting ? 'Limpiando...' : 'Limpiar toda la base'}
+        </button>
+        {selectedMovementIds.size > 0 ? (
+          <span className="form-info">
+            {`${selectedMovementIds.size} seleccionado${selectedMovementIds.size === 1 ? '' : 's'}`}
+          </span>
+        ) : null}
       </div>
+      {actionMessage ? <p className="form-info form-info--success">{actionMessage}</p> : null}
+      {actionError ? <p className="form-info form-info--error">{actionError}</p> : null}
 
       <div className="summary-cards">
         <div className="summary-card">
@@ -16409,6 +16653,16 @@ const CombustibleDistribuidorPage: React.FC = () => {
         <table>
           <thead>
             <tr>
+              <th>
+                <input
+                  ref={selectAllRef}
+                  type="checkbox"
+                  aria-label="Seleccionar todos los consumos visibles"
+                  checked={allVisibleSelected}
+                  onChange={toggleSelectAllMovements}
+                  disabled={!rows.length || loading || deleting}
+                />
+              </th>
               <th>Fecha</th>
               <th>Estación</th>
               <th>Dominio</th>
@@ -16422,25 +16676,34 @@ const CombustibleDistribuidorPage: React.FC = () => {
           <tbody>
             {loading && (
               <tr>
-                <td colSpan={8}>Cargando consumos...</td>
+                <td colSpan={9}>Cargando consumos...</td>
               </tr>
             )}
             {error && !loading && (
               <tr>
-                <td colSpan={8} className="error-cell">
+                <td colSpan={9} className="error-cell">
                   {error}
                 </td>
               </tr>
             )}
             {!loading && !error && rows.length === 0 && (
               <tr>
-                <td colSpan={8}>No hay consumos para mostrar.</td>
+                <td colSpan={9}>No hay consumos para mostrar.</td>
               </tr>
             )}
             {!loading &&
               !error &&
               rows.map((row) => (
                 <tr key={row.id}>
+                  <td>
+                    <input
+                      type="checkbox"
+                      aria-label={`Seleccionar consumo ${row.id}`}
+                      checked={selectedMovementIds.has(row.id)}
+                      onChange={() => toggleSelectMovement(row.id)}
+                      disabled={deleting}
+                    />
+                  </td>
                   <td>{formatDateTime(row.occurred_at)}</td>
                   <td>{row.station ?? '—'}</td>
                   <td>{row.domain_norm ?? '—'}</td>

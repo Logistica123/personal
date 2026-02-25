@@ -8,8 +8,10 @@ use App\Models\Distributor;
 use App\Models\DistributorDomain;
 use App\Models\FileType;
 use App\Models\FuelMovement;
+use App\Models\FuelReport;
 use App\Services\AuditLogger;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 class FuelModuleController extends Controller
 {
@@ -509,10 +511,74 @@ class FuelModuleController extends Controller
     public function deleteMovimientos(Request $request)
     {
         $validated = $request->validate([
-            'source_file' => ['required', 'string', 'max:255'],
+            'source_file' => ['nullable', 'string', 'max:255'],
+            'movement_ids' => ['nullable', 'array', 'min:1'],
+            'movement_ids.*' => ['integer', 'min:1'],
+            'delete_all' => ['nullable', 'boolean'],
+            'confirm_token' => ['nullable', 'string', 'max:64'],
         ]);
 
-        $sourceFile = trim($validated['source_file']);
+        $sourceFile = trim((string) ($validated['source_file'] ?? ''));
+        $movementIds = collect($validated['movement_ids'] ?? [])
+            ->map(fn ($id) => (int) $id)
+            ->filter(fn ($id) => $id > 0)
+            ->unique()
+            ->values();
+        $deleteAll = (bool) ($validated['delete_all'] ?? false);
+
+        if (! $deleteAll && $sourceFile === '' && $movementIds->isEmpty()) {
+            return response()->json([
+                'message' => 'Debes enviar source_file, movement_ids o delete_all.',
+            ], 422);
+        }
+
+        if ($deleteAll) {
+            $confirmToken = trim((string) ($validated['confirm_token'] ?? ''));
+            if ($confirmToken !== 'BORRAR_TODO_COMBUSTIBLE') {
+                return response()->json([
+                    'message' => 'Confirmación inválida para eliminar toda la base de combustible.',
+                ], 422);
+            }
+
+            $result = DB::transaction(function () {
+                $reportsDeleted = FuelReport::query()->delete();
+                $movementsDeleted = FuelMovement::query()->delete();
+
+                return [
+                    'reports_deleted' => $reportsDeleted,
+                    'deleted' => $movementsDeleted,
+                ];
+            });
+
+            AuditLogger::log($request, 'fuel.movements.delete_all', 'fuel_movement', null, [
+                'deleted' => $result['deleted'],
+                'reports_deleted' => $result['reports_deleted'],
+            ]);
+
+            return response()->json([
+                'deleted' => $result['deleted'],
+                'reports_deleted' => $result['reports_deleted'],
+                'scope' => 'all',
+            ]);
+        }
+
+        if ($movementIds->isNotEmpty()) {
+            $deleted = FuelMovement::query()
+                ->whereIn('id', $movementIds->all())
+                ->delete();
+
+            AuditLogger::log($request, 'fuel.movements.delete_selected', 'fuel_movement', null, [
+                'movement_ids' => $movementIds->all(),
+                'deleted' => $deleted,
+            ]);
+
+            return response()->json([
+                'deleted' => $deleted,
+                'requested' => $movementIds->count(),
+                'scope' => 'selected',
+            ]);
+        }
+
         $deleted = FuelMovement::query()
             ->where('source_file', $sourceFile)
             ->delete();
@@ -524,6 +590,7 @@ class FuelModuleController extends Controller
 
         return response()->json([
             'deleted' => $deleted,
+            'scope' => 'source_file',
         ]);
     }
 }
