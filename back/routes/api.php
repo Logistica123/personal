@@ -67,6 +67,8 @@ Route::middleware('auth.api')->group(function () {
     Route::post('/solicitud-personal', [SolicitudPersonalController::class, 'store']);
     Route::put('/solicitud-personal/{solicitudPersonal}', [SolicitudPersonalController::class, 'update']);
     Route::post('/solicitud-personal/{solicitudPersonal}', [SolicitudPersonalController::class, 'update']);
+    Route::post('/solicitud-personal/{solicitudPersonal}/aprobar', [SolicitudPersonalController::class, 'approve']);
+    Route::post('/solicitud-personal/{solicitudPersonal}/rechazar', [SolicitudPersonalController::class, 'reject']);
     Route::delete('/solicitud-personal/{solicitudPersonal}', [SolicitudPersonalController::class, 'destroy']);
     Route::get('/vacaciones-dias', [VacacionesDiasController::class, 'index']);
     Route::put('/vacaciones-dias', [VacacionesDiasController::class, 'update']);

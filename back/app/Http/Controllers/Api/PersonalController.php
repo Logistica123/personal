@@ -169,6 +169,23 @@ class PersonalController extends Controller
         }
     }
 
+    protected function ensureEnviadoEstadoExists(): void
+    {
+        if (! Schema::hasTable('estados')) {
+            return;
+        }
+
+        $exists = Estado::query()
+            ->whereRaw('LOWER(TRIM(nombre)) = ?', ['enviado'])
+            ->exists();
+
+        if (! $exists) {
+            Estado::query()->create([
+                'nombre' => 'Enviado',
+            ]);
+        }
+    }
+
     protected function matchesPersonaEmail(Persona $persona, ?string $email): bool
     {
         if (! is_string($email) || trim($email) === '') {
@@ -1157,6 +1174,7 @@ class PersonalController extends Controller
     public function meta(): JsonResponse
     {
         $this->ensurePreActivoEstadoExists();
+        $this->ensureEnviadoEstadoExists();
 
         return response()->json([
             'perfiles' => [

@@ -2053,6 +2053,31 @@ tbody tr:hover {
   color: #3e84c6;
 }
 
+.estado-badge--pendiente {
+  background-color: rgba(255, 193, 7, 0.2);
+  color: #b58100;
+}
+
+.estado-badge--enviado {
+  background-color: rgba(62, 132, 198, 0.16);
+  color: #2f6faa;
+}
+
+.estado-badge--aprobado {
+  background-color: rgba(40, 167, 69, 0.12);
+  color: #1f8a3e;
+}
+
+.estado-badge--rechazado {
+  background-color: rgba(220, 53, 69, 0.12);
+  color: #c5303f;
+}
+
+.estado-badge--pagado {
+  background-color: rgba(32, 201, 151, 0.16);
+  color: #178a68;
+}
+
 .liquidaciones-table table tr.attachment-row {
   background-color: #f5f8ff;
 }
@@ -2556,8 +2581,17 @@ tbody tr:hover {
   color: #516277;
 }
 
+.filter-field__hint {
+  font-size: 0.72rem;
+  color: #6d7f97;
+}
+
 [data-theme='dark'] .filter-field span {
   color: var(--muted);
+}
+
+[data-theme='dark'] .filter-field__hint {
+  color: #8ca3c2;
 }
 
 .filter-field select {
@@ -2567,6 +2601,11 @@ tbody tr:hover {
   background-color: #f4f7fb;
   font-size: 0.9rem;
   transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.filter-field select.reclamos-multi-select {
+  min-height: 7.2rem;
+  padding: 0.45rem;
 }
 
 [data-theme='dark'] .filter-field select {

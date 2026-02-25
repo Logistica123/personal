@@ -7,6 +7,7 @@ use App\Models\Notification;
 use App\Models\NotificationDeletion;
 use App\Models\Persona;
 use App\Models\Reclamo;
+use App\Models\SolicitudPersonal;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
@@ -83,6 +84,26 @@ class NotificationController extends Controller
             ->unique()
             ->values();
 
+        $solicitudPersonalIds = $notifications
+            ->map(function (Notification $notification) use ($hasEntityColumns) {
+                if (
+                    $hasEntityColumns &&
+                    $notification->entity_type === 'solicitud_personal' &&
+                    $notification->entity_id
+                ) {
+                    return (int) $notification->entity_id;
+                }
+
+                if (is_array($notification->metadata) && isset($notification->metadata['solicitud_personal_id'])) {
+                    return (int) $notification->metadata['solicitud_personal_id'];
+                }
+
+                return null;
+            })
+            ->filter()
+            ->unique()
+            ->values();
+
         $reclamos = $reclamoIds->isEmpty()
             ? collect()
             : Reclamo::query()
@@ -99,6 +120,14 @@ class NotificationController extends Controller
                 ->get()
                 ->keyBy('id');
 
+        $solicitudesPersonal = $solicitudPersonalIds->isEmpty()
+            ? collect()
+            : SolicitudPersonal::query()
+                ->select('id', 'tipo')
+                ->whereIn('id', $solicitudPersonalIds)
+                ->get()
+                ->keyBy('id');
+
         $notifications = $notifications
             ->map(function (Notification $notification) use (
                 $hasMessageColumn,
@@ -107,6 +136,7 @@ class NotificationController extends Controller
                 $hasEntityColumns,
                 $reclamos,
                 $personas,
+                $solicitudesPersonal,
                 $hasMetadataColumn
             ) {
                 $metadata = $hasMetadataColumn && is_array($notification->metadata) ? $notification->metadata : null;
@@ -178,6 +208,25 @@ class NotificationController extends Controller
                     $workflowTaskLabel = $metadataTaskLabel ?: 'Tarea asignada';
                 }
 
+                $solicitudPersonalId = null;
+                if (
+                    $hasEntityColumns &&
+                    $notification->entity_type === 'solicitud_personal' &&
+                    $notification->entity_id
+                ) {
+                    $solicitudPersonalId = (int) $notification->entity_id;
+                } elseif (is_array($metadata) && isset($metadata['solicitud_personal_id'])) {
+                    $solicitudPersonalId = (int) $metadata['solicitud_personal_id'];
+                }
+
+                $solicitudPersonalTipo = null;
+                if (is_array($metadata) && isset($metadata['tipo']) && is_string($metadata['tipo'])) {
+                    $solicitudPersonalTipo = (string) $metadata['tipo'];
+                } elseif ($solicitudPersonalId && $solicitudesPersonal->has($solicitudPersonalId)) {
+                    $solicitud = $solicitudesPersonal->get($solicitudPersonalId);
+                    $solicitudPersonalTipo = $solicitud?->tipo;
+                }
+
                 return [
                     'id' => $notification->id,
                     'message' => $message,
@@ -188,6 +237,8 @@ class NotificationController extends Controller
                     'personaNombre' => $personaNombre,
                     'workflowTaskId' => $workflowTaskId,
                     'workflowTaskLabel' => $workflowTaskLabel,
+                    'solicitudPersonalId' => $solicitudPersonalId,
+                    'solicitudPersonalTipo' => $solicitudPersonalTipo,
                     'readAt' => $notification->read_at?->toIso8601String(),
                     'createdAt' => $notification->created_at?->toIso8601String(),
                     'createdAtLabel' => $notification->created_at?->timezone(config('app.timezone', 'UTC'))?->format('d/m/Y H:i'),

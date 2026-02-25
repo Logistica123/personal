@@ -487,7 +487,15 @@ type PersonalRecord = {
   createdAt?: string | null;
   createdAtLabel?: string | null;
   esSolicitud: boolean;
-  solicitudTipo?: 'alta' | 'combustible' | 'aumento_combustible' | 'adelanto' | 'poliza' | 'prestamo' | 'vacaciones';
+  solicitudTipo?:
+    | 'alta'
+    | 'combustible'
+    | 'aumento_combustible'
+    | 'adelanto'
+    | 'poliza'
+    | 'prestamo'
+    | 'vacaciones'
+    | 'cambio_asignacion';
   solicitudData?: unknown;
   duenoNombre?: string | null;
   duenoFechaNacimiento?: string | null;
@@ -1491,6 +1499,8 @@ type NotificationRecord = {
   personaNombre: string | null;
   workflowTaskId?: number | null;
   workflowTaskLabel?: string | null;
+  solicitudPersonalId?: number | null;
+  solicitudPersonalTipo?: string | null;
   readAt: string | null;
   createdAt: string | null;
   createdAtLabel?: string | null;
@@ -1724,6 +1734,32 @@ const getEstadoBadgeClass = (estado?: string | null) => {
     default:
       return 'estado-badge--default';
   }
+};
+
+const getSolicitudEstadoBadgeClass = (estado?: string | null) => {
+  const normalized = (estado ?? '')
+    .trim()
+    .toLowerCase()
+    .replace(/[_-]+/g, ' ')
+    .replace(/\s+/g, ' ');
+
+  if (normalized.startsWith('aprob')) {
+    return 'estado-badge--aprobado';
+  }
+  if (normalized.startsWith('rechaz')) {
+    return 'estado-badge--rechazado';
+  }
+  if (normalized === 'enviado') {
+    return 'estado-badge--enviado';
+  }
+  if (normalized === 'pagado') {
+    return 'estado-badge--pagado';
+  }
+  if (normalized === 'pendiente') {
+    return 'estado-badge--pendiente';
+  }
+
+  return 'estado-badge--default';
 };
 
 const tipoLabelOverrides: Record<string, string> = {
@@ -10638,7 +10674,7 @@ const ReclamosPage: React.FC = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [deletingReclamoId, setDeletingReclamoId] = useState<number | null>(null);
   const [agenteFilter, setAgenteFilter] = useState('');
-  const [creatorFilter, setCreatorFilter] = useState('');
+  const [creatorFilter, setCreatorFilter] = useState<string[]>([]);
   const [transportistaFilter, setTransportistaFilter] = useState('');
   const [clienteFilter, setClienteFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
@@ -10859,7 +10895,7 @@ const ReclamosPage: React.FC = () => {
         return false;
       }
 
-      if (creatorFilter && reclamo.creator !== creatorFilter) {
+      if (creatorFilter.length > 0 && !creatorFilter.includes(reclamo.creator ?? '')) {
         return false;
       }
 
@@ -11049,7 +11085,7 @@ const ReclamosPage: React.FC = () => {
   const handleResetFilters = () => {
     setSearchTerm('');
     setAgenteFilter('');
-    setCreatorFilter('');
+    setCreatorFilter([]);
     setTransportistaFilter('');
     setClienteFilter('');
     setStatusFilter('');
@@ -11085,14 +11121,21 @@ const ReclamosPage: React.FC = () => {
           </label>
           <label className="filter-field">
             <span>Agente creador</span>
-            <select value={creatorFilter} onChange={(event) => setCreatorFilter(event.target.value)}>
-              <option value="">Agente creador</option>
+            <select
+              className="reclamos-multi-select"
+              multiple
+              value={creatorFilter}
+              onChange={(event) =>
+                setCreatorFilter(Array.from(event.target.selectedOptions).map((option) => option.value))
+              }
+            >
               {creatorOptions.map((option) => (
                 <option key={option} value={option}>
                   {option}
                 </option>
               ))}
             </select>
+            <small className="filter-field__hint">Podés elegir varios (Ctrl/Cmd + clic).</small>
           </label>
           <label className="filter-field">
             <span>Transportista</span>
@@ -24431,64 +24474,109 @@ const NotificationsPage: React.FC = () => {
 
               {!loading &&
                 !error &&
-                notifications.map((notification) => (
-                  <tr key={notification.id}>
-                    <td>{notification.createdAtLabel ?? notification.createdAt ?? '—'}</td>
-                    <td>{notification.message ?? '—'}</td>
-                    <td>
-                      {notification.reclamoId ? (
-                        <button
-                          type="button"
-                          className="secondary-action secondary-action--ghost"
-                          onClick={() => navigate(`/reclamos/${notification.reclamoId}`)}
-                        >
-                          {notification.reclamoCodigo ?? `Reclamo #${notification.reclamoId}`}
-                        </button>
-                      ) : notification.workflowTaskId ? (
-                        <button
-                          type="button"
-                          className="secondary-action secondary-action--ghost"
-                          onClick={() => navigate('/flujo-trabajo')}
-                        >
-                          {notification.workflowTaskLabel ?? 'Tarea asignada'}
-                        </button>
-                      ) : notification.personaId ? (
-                        <button
-                          type="button"
-                          className="secondary-action secondary-action--ghost"
-                          onClick={() => navigate(`/aprobaciones?personaId=${notification.personaId}`)}
-                        >
-                          {notification.personaNombre?.trim().length
-                            ? notification.personaNombre
-                            : `Personal #${notification.personaId}`}
-                        </button>
-                      ) : (
-                        '—'
-                      )}
-                    </td>
-                    <td>{renderStatusBadge(notification)}</td>
-                    <td>
-                      <div className="action-buttons">
-                        <button
-                          type="button"
-                          onClick={() => handleMarkAsRead(notification)}
-                          disabled={Boolean(notification.readAt)}
-                          aria-label="Marcar como leída"
-                        >
-                          ✅
-                        </button>
-                        <button
-                          type="button"
-                          className="secondary-action secondary-action--danger"
-                          onClick={() => handleDeleteNotification(notification)}
-                          aria-label="Eliminar notificación"
-                        >
-                          🗑️
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
+                notifications.map((notification) => {
+                  const solicitudPersonalIdFromMetadataRaw = notification.metadata?.solicitud_personal_id;
+                  const solicitudPersonalIdFromMetadata =
+                    typeof solicitudPersonalIdFromMetadataRaw === 'number'
+                      ? solicitudPersonalIdFromMetadataRaw
+                      : typeof solicitudPersonalIdFromMetadataRaw === 'string' &&
+                        solicitudPersonalIdFromMetadataRaw.trim().length > 0
+                      ? Number(solicitudPersonalIdFromMetadataRaw)
+                      : null;
+                  const solicitudPersonalId =
+                    notification.solicitudPersonalId
+                    ?? (solicitudPersonalIdFromMetadata !== null && Number.isFinite(solicitudPersonalIdFromMetadata)
+                      ? Number(solicitudPersonalIdFromMetadata)
+                      : null);
+                  const solicitudTipoFromMetadata = notification.metadata?.tipo;
+                  const solicitudPersonalTipo =
+                    notification.solicitudPersonalTipo
+                    ?? (typeof solicitudTipoFromMetadata === 'string' ? solicitudTipoFromMetadata : null);
+                  const solicitudPersonalTipoLabel =
+                    solicitudPersonalTipo === 'cambio_asignacion'
+                      ? 'Cambio de asignación'
+                      : solicitudPersonalTipo === 'prestamo'
+                      ? 'Préstamo'
+                      : solicitudPersonalTipo === 'adelanto'
+                      ? 'Adelanto'
+                      : solicitudPersonalTipo === 'vacaciones'
+                      ? 'Vacaciones'
+                      : solicitudPersonalTipo
+                      ? 'Solicitud personal'
+                      : null;
+                  const isSolicitudPersonalNotification =
+                    solicitudPersonalId !== null
+                    || Boolean(solicitudPersonalTipo)
+                    || /solicitud personal/i.test(notification.message ?? '');
+
+                  return (
+                    <tr key={notification.id}>
+                      <td>{notification.createdAtLabel ?? notification.createdAt ?? '—'}</td>
+                      <td>{notification.message ?? '—'}</td>
+                      <td>
+                        {notification.reclamoId ? (
+                          <button
+                            type="button"
+                            className="secondary-action secondary-action--ghost"
+                            onClick={() => navigate(`/reclamos/${notification.reclamoId}`)}
+                          >
+                            {notification.reclamoCodigo ?? `Reclamo #${notification.reclamoId}`}
+                          </button>
+                        ) : notification.workflowTaskId ? (
+                          <button
+                            type="button"
+                            className="secondary-action secondary-action--ghost"
+                            onClick={() => navigate('/flujo-trabajo')}
+                          >
+                            {notification.workflowTaskLabel ?? 'Tarea asignada'}
+                          </button>
+                        ) : notification.personaId ? (
+                          <button
+                            type="button"
+                            className="secondary-action secondary-action--ghost"
+                            onClick={() => navigate(`/aprobaciones?personaId=${notification.personaId}`)}
+                          >
+                            {notification.personaNombre?.trim().length
+                              ? notification.personaNombre
+                              : `Personal #${notification.personaId}`}
+                          </button>
+                        ) : isSolicitudPersonalNotification ? (
+                          <button
+                            type="button"
+                            className="secondary-action secondary-action--ghost"
+                            onClick={() => navigate('/aprobaciones')}
+                          >
+                            {solicitudPersonalTipoLabel
+                              ?? (solicitudPersonalId ? `Solicitud #${solicitudPersonalId}` : 'Ir a aprobaciones')}
+                          </button>
+                        ) : (
+                          '—'
+                        )}
+                      </td>
+                      <td>{renderStatusBadge(notification)}</td>
+                      <td>
+                        <div className="action-buttons">
+                          <button
+                            type="button"
+                            onClick={() => handleMarkAsRead(notification)}
+                            disabled={Boolean(notification.readAt)}
+                            aria-label="Marcar como leída"
+                          >
+                            ✅
+                          </button>
+                          <button
+                            type="button"
+                            className="secondary-action secondary-action--danger"
+                            onClick={() => handleDeleteNotification(notification)}
+                            aria-label="Eliminar notificación"
+                          >
+                            🗑️
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
             </tbody>
           </table>
           <section className="notifications-history">
@@ -26066,7 +26154,15 @@ const ApprovalsRequestsPage: React.FC = () => {
   const actorHeaders = useMemo(() => buildActorHeaders(authUser), [authUser]);
   const isSolicitudPersonalView = location.pathname === '/solicitud-personal';
   const [activeTab, setActiveTab] = useState<
-    'list' | 'altas' | 'combustible' | 'aumento_combustible' | 'adelanto' | 'poliza' | 'prestamo' | 'vacaciones'
+    | 'list'
+    | 'altas'
+    | 'combustible'
+    | 'aumento_combustible'
+    | 'adelanto'
+    | 'poliza'
+    | 'prestamo'
+    | 'vacaciones'
+    | 'cambio_asignacion'
   >('list');
   const splitRazonSocial = useCallback((razonSocial: string | null | undefined) => {
     if (!razonSocial) {
@@ -26390,7 +26486,8 @@ const ApprovalsRequestsPage: React.FC = () => {
     };
   };
 
-  const mapSolicitudPersonalToRecord = (item: {
+  const mapSolicitudPersonalToRecord = (
+    item: {
     id: number;
     tipo: string;
     estado?: string | null;
@@ -26402,7 +26499,9 @@ const ApprovalsRequestsPage: React.FC = () => {
     destinatarioNombre?: string | null;
     destinatarioNombres?: string[] | null;
     createdAt?: string | null;
-  }): PersonalRecord => {
+    },
+    origin: 'solicitud-personal' | 'aprobaciones-solicitud-personal' = 'solicitud-personal'
+  ): PersonalRecord => {
     const tipo = item.tipo as PersonalRecord['solicitudTipo'];
     const perfilLabel =
       tipo === 'prestamo'
@@ -26411,6 +26510,8 @@ const ApprovalsRequestsPage: React.FC = () => {
         ? 'Adelanto de pago'
         : tipo === 'vacaciones'
         ? 'Solicitud de vacaciones'
+        : tipo === 'cambio_asignacion'
+        ? 'Cambio de asignación'
         : 'Solicitud personal';
     const createdAt = item.createdAt ?? null;
     const createdAtLabel = createdAt
@@ -26426,16 +26527,29 @@ const ApprovalsRequestsPage: React.FC = () => {
       : item.destinatarioNombre
       ? [item.destinatarioNombre]
       : [];
+    const personaNombre =
+      item.form?.personaNombre
+      ?? item.form?.transportista
+      ?? item.solicitanteNombre
+      ?? null;
+    const clienteLabel =
+      item.form?.clienteNombreNuevo
+      ?? item.form?.clienteNombreActual
+      ?? null;
+    const sucursalLabel =
+      item.form?.sucursalNombreNueva
+      ?? item.form?.sucursalNombreActual
+      ?? null;
     const base: PersonalRecord = {
       id: item.id,
-      nombre: item.solicitanteNombre ?? null,
-      cuil: null,
+      nombre: tipo === 'cambio_asignacion' ? personaNombre : (item.solicitanteNombre ?? null),
+      cuil: tipo === 'cambio_asignacion' ? (item.form?.personaCuil ?? null) : null,
       telefono: null,
       email: null,
-      cliente: null,
+      cliente: tipo === 'cambio_asignacion' ? clienteLabel : null,
       unidad: null,
       unidadDetalle: null,
-      sucursal: null,
+      sucursal: tipo === 'cambio_asignacion' ? sucursalLabel : null,
       fechaAlta: null,
       perfil: perfilLabel,
       perfilValue: null,
@@ -26462,7 +26576,7 @@ const ApprovalsRequestsPage: React.FC = () => {
           solicitanteNombre: item.solicitanteNombre ?? item.form?.solicitanteNombre ?? null,
           empleadoNombre: item.form?.empleadoNombre ?? null,
         },
-        origin: 'solicitud-personal',
+        origin,
       },
       createdAt,
       createdAtLabel,
@@ -26641,8 +26755,8 @@ const ApprovalsRequestsPage: React.FC = () => {
     );
   };
 
-  const SOLICITUD_ESTADO_OPTIONS = ['Pendiente', 'Aprobado', 'Pagado', 'Rechazado'];
-  const VACACIONES_ESTADO_OPTIONS = ['Pendiente', 'Aprobado', 'Rechazado'];
+  const SOLICITUD_ESTADO_OPTIONS = ['Pendiente', 'Enviado', 'Aprobado', 'Pagado', 'Rechazado'];
+  const VACACIONES_ESTADO_OPTIONS = ['Pendiente', 'Enviado', 'Aprobado', 'Rechazado'];
 
   useEffect(() => {
     if (typeof window === 'undefined') {
@@ -26667,6 +26781,8 @@ const ApprovalsRequestsPage: React.FC = () => {
   const [reviewCommentInfo, setReviewCommentInfo] = useState<string | null>(null);
   const [reviewChatOpen, setReviewChatOpen] = useState(false);
   const [reviewEditMode, setReviewEditMode] = useState(false);
+  const [selectedCambioAsignacion, setSelectedCambioAsignacion] = useState<PersonalRecord | null>(null);
+  const [resolvingCambioAsignacion, setResolvingCambioAsignacion] = useState(false);
   const [reviewDeletingDocumentIds, setReviewDeletingDocumentIds] = useState<Set<number>>(() => new Set());
   const personaIdFromQuery = useMemo(() => {
     const searchParams = new URLSearchParams(location.search);
@@ -27382,20 +27498,46 @@ const ApprovalsRequestsPage: React.FC = () => {
           return;
         }
 
-        const response = await fetch(`${apiBaseUrl}/api/personal?esSolicitud=1`, {
+        const personalResponse = await fetch(`${apiBaseUrl}/api/personal?esSolicitud=1`, {
           signal: options?.signal,
         });
 
-        if (!response.ok) {
-          throw new Error(`Error ${response.status}: ${response.statusText}`);
+        if (!personalResponse.ok) {
+          throw new Error(`Error ${personalResponse.status}: ${personalResponse.statusText}`);
         }
 
-        const payload = (await response.json()) as { data: PersonalRecord[] };
-        if (!payload || !Array.isArray(payload.data)) {
+        const personalPayload = (await personalResponse.json()) as { data: PersonalRecord[] };
+        if (!personalPayload || !Array.isArray(personalPayload.data)) {
           throw new Error('Formato de respuesta inesperado');
         }
 
-        setBackendSolicitudes(payload.data.map((item) => normalizeSolicitudRecord(item)));
+        let cambioAsignacionRecords: PersonalRecord[] = [];
+        try {
+          const solicitudesResponse = await fetch(`${apiBaseUrl}/api/solicitud-personal?scope=assigned`, {
+            signal: options?.signal,
+            headers: {
+              Accept: 'application/json',
+              ...actorHeaders,
+            },
+          });
+
+          if (solicitudesResponse.ok) {
+            const solicitudesPayload = (await solicitudesResponse.json()) as { data?: any[] };
+            if (Array.isArray(solicitudesPayload?.data)) {
+              cambioAsignacionRecords = solicitudesPayload.data
+                .filter((item) => (item?.tipo ?? '') === 'cambio_asignacion')
+                .map((item) => mapSolicitudPersonalToRecord(item, 'aprobaciones-solicitud-personal'))
+                .map((item) => normalizeSolicitudRecord(item));
+            }
+          }
+        } catch {
+          // Si falla el listado auxiliar, seguimos mostrando las solicitudes principales.
+        }
+
+        setBackendSolicitudes([
+          ...personalPayload.data.map((item) => normalizeSolicitudRecord(item)),
+          ...cambioAsignacionRecords,
+        ]);
       } catch (err) {
         if ((err as Error).name === 'AbortError') {
           return;
@@ -27405,7 +27547,7 @@ const ApprovalsRequestsPage: React.FC = () => {
         setSolicitudesLoading(false);
       }
     },
-    [apiBaseUrl, isSolicitudPersonalView]
+    [apiBaseUrl, actorHeaders, isSolicitudPersonalView]
   );
 
   const fetchVacacionesDias = useCallback(
@@ -28633,6 +28775,143 @@ const sucursalOptions = useMemo(() => {
           ? Number(resolvedDefaultEstadoId)
           : null);
 
+      const normalizeEstadoLabel = (value: string | null | undefined) =>
+        (value ?? '')
+          .trim()
+          .toLowerCase()
+          .replace(/[_-]+/g, ' ')
+          .replace(/\s+/g, ' ');
+
+      const selectedEstadoNombre = effectiveEstadoId
+        ? meta?.estados?.find((estado) => String(estado.id) === String(effectiveEstadoId))?.nombre ?? null
+        : null;
+      const isEstadoEnviadoSelected = normalizeEstadoLabel(selectedEstadoNombre) === 'enviado';
+
+      if (isEstadoEnviadoSelected && effectiveEstadoId) {
+        const endpoint = `${apiBaseUrl}/api/personal/${reviewPersonaDetail.id}`;
+        const requestInit: RequestInit = {
+          method: 'PUT',
+          headers: {
+            Accept: 'application/json',
+            'Content-Type': 'application/json',
+            ...actorHeaders,
+          },
+          body: JSON.stringify({ estadoId: effectiveEstadoId }),
+        };
+        let response = await fetch(endpoint, requestInit);
+        if (
+          response.status === 405 ||
+          (response.ok &&
+            !((response.headers.get('content-type') ?? '').toLowerCase().includes('application/json')))
+        ) {
+          response = await fetch(endpoint, { ...requestInit, method: 'POST' });
+        }
+
+        if (!response.ok) {
+          let message = `Error ${response.status}: ${response.statusText}`;
+          const payload = (await parseJsonSafe(response).catch(() => null)) as { message?: string } | null;
+          if (typeof payload?.message === 'string') {
+            message = payload.message;
+          }
+
+          throw new Error(message);
+        }
+
+        const payload = (await parseJsonSafe(response)) as { message?: string; data?: PersonalDetail };
+        const estadoEnviadoNombre = payload.data?.estado ?? selectedEstadoNombre ?? 'Enviado';
+        const payloadComments = Array.isArray(payload.data?.comments)
+          ? payload.data?.comments ?? []
+          : null;
+        const updatedRecord = {
+          ...reviewPersonaDetail,
+          ...payload.data,
+          nombre:
+            [
+              payload.data?.nombres ?? reviewPersonaDetail.nombres,
+              payload.data?.apellidos ?? reviewPersonaDetail.apellidos,
+            ]
+              .filter((part) => part && part.trim().length > 0)
+              .join(' ')
+              .trim() || null,
+          estadoId: effectiveEstadoId,
+          estado: estadoEnviadoNombre,
+          esSolicitud: true,
+          aprobado: false,
+          aprobadoAt: null,
+          aprobadoPor: null,
+          aprobadoPorId: null,
+          aprobadoPorNombre: null,
+        } as PersonalRecord;
+
+        setReviewPersonaDetail((prev) =>
+          prev
+            ? {
+                ...prev,
+                ...payload.data,
+                estadoId: effectiveEstadoId,
+                estado: estadoEnviadoNombre,
+                esSolicitud: true,
+                aprobado: false,
+                aprobadoAt: null,
+                aprobadoPor: null,
+                aprobadoPorId: null,
+                aprobadoPorNombre: null,
+                comments: payloadComments
+                  ? payloadComments
+                  : Array.isArray(prev.comments)
+                  ? prev.comments
+                  : [],
+              }
+            : prev
+        );
+        setBackendSolicitudes((prev) =>
+          prev.map((item) =>
+            item.id === reviewPersonaDetail.id
+              ? {
+                  ...item,
+                  estadoId: effectiveEstadoId,
+                  estado: estadoEnviadoNombre,
+                  esSolicitud: true,
+                  aprobado: false,
+                  aprobadoAt: null,
+                  aprobadoPor: null,
+                }
+              : item
+          )
+        );
+        setLocalSolicitudes((prev) =>
+          prev.map((item) =>
+            item.id === reviewPersonaDetail.id
+              ? {
+                  ...item,
+                  estadoId: effectiveEstadoId,
+                  estado: estadoEnviadoNombre,
+                  esSolicitud: true,
+                  aprobado: false,
+                  aprobadoAt: null,
+                  aprobadoPor: null,
+                }
+              : item
+          )
+        );
+        setRejectedIds((prev) => {
+          const next = new Set(prev);
+          next.delete(reviewPersonaDetail.id);
+          return next;
+        });
+
+        setFlash({
+          type: 'success',
+          message: payload.message ?? 'Solicitud marcada como enviada.',
+        });
+        window.dispatchEvent(
+          new CustomEvent('personal:updated', {
+            detail: { persona: updatedRecord },
+          })
+        );
+        return;
+      }
+
       if (effectiveEstadoId) {
         payloadBody.estadoId = effectiveEstadoId;
       }
@@ -29720,7 +29999,7 @@ const sucursalOptions = useMemo(() => {
 
   const persistSolicitudPersonal = async (
     payload: {
-      tipo: 'prestamo' | 'adelanto' | 'vacaciones';
+      tipo: 'prestamo' | 'adelanto' | 'vacaciones' | 'cambio_asignacion';
       estado?: string | null;
       destinatarioIds?: Array<string | number> | null;
       form?: Record<string, any>;
@@ -30326,6 +30605,8 @@ const sucursalOptions = useMemo(() => {
         return { key: 'prestamo', label: 'Solicitud de préstamo' };
       case 'vacaciones':
         return { key: 'vacaciones', label: 'Solicitud de vacaciones' };
+      case 'cambio_asignacion':
+        return { key: 'cambio_asignacion', label: 'Cambio de asignación' };
       default:
         return { key: 'solicitud_registrada', label: 'Solicitud registrada' };
     }
@@ -30796,8 +31077,11 @@ const sucursalOptions = useMemo(() => {
 
     try {
       setDeletingSolicitudId(registro.id);
+      const solicitudData = registro.solicitudData as { origin?: string } | null | undefined;
+      const isSolicitudPersonalBacked =
+        isSolicitudPersonalView || solicitudData?.origin === 'aprobaciones-solicitud-personal';
 
-      const deleteUrl = isSolicitudPersonalView
+      const deleteUrl = isSolicitudPersonalBacked
         ? `${apiBaseUrl}/api/solicitud-personal/${registro.id}`
         : `${apiBaseUrl}/api/personal/${registro.id}`;
 
@@ -30819,11 +31103,10 @@ const sucursalOptions = useMemo(() => {
         throw new Error(message);
       }
 
-      if (isSolicitudPersonalView) {
+      if (isSolicitudPersonalBacked) {
         setPersonalSolicitudes((prev) => prev.filter((item) => item.id !== registro.id));
-      } else {
-        setBackendSolicitudes((prev) => prev.filter((item) => item.id !== registro.id));
       }
+      setBackendSolicitudes((prev) => prev.filter((item) => item.id !== registro.id));
       setRejectedIds((prev) => {
         const next = new Set(prev);
         next.delete(registro.id);
@@ -30839,6 +31122,7 @@ const sucursalOptions = useMemo(() => {
 
   const handleGoToList = () => {
     setActiveTab('list');
+    setSelectedCambioAsignacion(null);
     setReviewPersonaDetail(null);
     setReviewError(null);
     setApprovalEstadoId('');
@@ -30861,8 +31145,14 @@ const sucursalOptions = useMemo(() => {
     setReviewCommentText('');
     setReviewCommentError(null);
     setReviewCommentInfo(null);
+    setSelectedCambioAsignacion(null);
 
     switch (registro.solicitudTipo) {
+      case 'cambio_asignacion': {
+        setSelectedCambioAsignacion(registro);
+        setActiveTab('cambio_asignacion');
+        return;
+      }
       case 'combustible': {
         setActiveTab('combustible');
         const data = (registro.solicitudData as { form?: CombustibleRequestForm }) ?? {};
@@ -30988,6 +31278,208 @@ const sucursalOptions = useMemo(() => {
         }
       }
     }
+  };
+
+  const selectedCambioAsignacionForm = useMemo(() => {
+    const data = selectedCambioAsignacion?.solicitudData as { form?: Record<string, any> } | null | undefined;
+    if (!data || typeof data.form !== 'object' || data.form === null) {
+      return {} as Record<string, any>;
+    }
+    return data.form;
+  }, [selectedCambioAsignacion]);
+
+  const handleResolverCambioAsignacion = async (action: 'aprobar' | 'rechazar') => {
+    if (!selectedCambioAsignacion) {
+      return;
+    }
+
+    if (selectedCambioAsignacion.id <= 0) {
+      setFlash({
+        type: 'error',
+        message: 'La solicitud seleccionada no tiene un identificador válido.',
+      });
+      return;
+    }
+
+    const confirmMessage =
+      action === 'aprobar'
+        ? '¿Aprobar este cambio de asignación?'
+        : '¿Rechazar este cambio de asignación?';
+    const confirmed = window.confirm(confirmMessage);
+    if (!confirmed) {
+      return;
+    }
+
+    let motivoRechazo: string | null = null;
+    if (action === 'rechazar') {
+      const promptValue = window.prompt('Motivo del rechazo (opcional):', '');
+      motivoRechazo = promptValue != null ? promptValue.trim() : null;
+    }
+
+    try {
+      setResolvingCambioAsignacion(true);
+      setFlash(null);
+
+      const endpoint = `${apiBaseUrl}/api/solicitud-personal/${selectedCambioAsignacion.id}/${action}`;
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+          Accept: 'application/json',
+          'Content-Type': 'application/json',
+          ...actorHeaders,
+        },
+        body: JSON.stringify(
+          action === 'rechazar'
+            ? {
+                motivo: motivoRechazo,
+              }
+            : {}
+        ),
+      });
+
+      if (!response.ok) {
+        let message = `Error ${response.status}: ${response.statusText}`;
+        const payload = (await parseJsonSafe(response).catch(() => null)) as { message?: string } | null;
+        if (typeof payload?.message === 'string') {
+          message = payload.message;
+        }
+        throw new Error(message);
+      }
+
+      const payload = (await parseJsonSafe(response)) as { message?: string };
+      setFlash({
+        type: 'success',
+        message:
+          payload?.message
+          ?? (action === 'aprobar'
+            ? 'Cambio de asignación aprobado correctamente.'
+            : 'Cambio de asignación rechazado.'),
+      });
+
+      setBackendSolicitudes((prev) => prev.filter((item) => item.id !== selectedCambioAsignacion.id));
+      setSelectedCambioAsignacion(null);
+      setActiveTab('list');
+      window.dispatchEvent(new CustomEvent('personal:updated'));
+      fetchSolicitudes();
+    } catch (err) {
+      setFlash({
+        type: 'error',
+        message: (err as Error).message ?? 'No se pudo resolver la solicitud.',
+      });
+    } finally {
+      setResolvingCambioAsignacion(false);
+    }
+  };
+
+  const renderCambioAsignacionTab = () => {
+    if (!selectedCambioAsignacion) {
+      return (
+        <section className="approvals-section">
+          <p className="form-info">Seleccioná una solicitud de cambio de asignación desde la lista.</p>
+        </section>
+      );
+    }
+
+    const form = selectedCambioAsignacionForm;
+    const documentos = Array.isArray(form.documentos) ? form.documentos : [];
+    const nombreProveedor = selectedCambioAsignacion.nombre ?? form.personaNombre ?? '—';
+    const cuilProveedor = selectedCambioAsignacion.cuil ?? form.personaCuil ?? '—';
+    const clienteActual = form.clienteNombreActual ?? '—';
+    const sucursalActual = form.sucursalNombreActual ?? '—';
+    const clienteNuevo = form.clienteNombreNuevo ?? '—';
+    const sucursalNueva = form.sucursalNombreNueva ?? '—';
+    const responsable =
+      selectedCambioAsignacion.agente
+      ?? form.agenteResponsableNombre
+      ?? '—';
+    const creada = selectedCambioAsignacion.createdAt
+      ? new Date(selectedCambioAsignacion.createdAt).toLocaleString('es-AR', {
+          dateStyle: 'short',
+          timeStyle: 'short',
+        })
+      : '—';
+
+    return (
+      <section className="approvals-section approvals-section--review">
+        <h2>Revisión de cambio de asignación</h2>
+        <div className="personal-section">
+          <div className="review-summary-grid">
+            <p><strong>Solicitud:</strong> #{selectedCambioAsignacion.id}</p>
+            <p><strong>Proveedor:</strong> {nombreProveedor}</p>
+            <p><strong>CUIL:</strong> {cuilProveedor}</p>
+            <p><strong>ID Proveedor:</strong> {form.personaId ?? '—'}</p>
+            <p><strong>Responsable:</strong> {responsable}</p>
+            <p><strong>Creada:</strong> {creada}</p>
+            <p>
+              <strong>Estado:</strong>{' '}
+              <span className={`estado-badge ${getSolicitudEstadoBadgeClass(selectedCambioAsignacion.estado ?? 'Pendiente')}`}>
+                {selectedCambioAsignacion.estado ?? 'Pendiente'}
+              </span>
+            </p>
+          </div>
+
+          <div className="review-text-group">
+            <div className="review-text">
+              <strong>Asignación actual</strong>
+              <p>Cliente: {clienteActual}</p>
+              <p>Sucursal: {sucursalActual}</p>
+            </div>
+            <div className="review-text">
+              <strong>Asignación solicitada</strong>
+              <p>Cliente: {clienteNuevo}</p>
+              <p>Sucursal: {sucursalNueva}</p>
+            </div>
+          </div>
+
+          <div className="review-documents">
+            <h3>Documentación del proveedor (snapshot)</h3>
+            {documentos.length === 0 ? (
+              <p className="form-info">No se adjuntó detalle de documentación en esta solicitud.</p>
+            ) : (
+              <ul className="file-list">
+                {documentos.map((doc, index) => {
+                  const nombre = doc?.nombre ?? doc?.name ?? `Documento ${index + 1}`;
+                  const tipo = doc?.tipoNombre ?? doc?.tipo ?? 'Sin tipo';
+                  const vencimiento = doc?.fechaVencimiento ?? null;
+                  return (
+                    <li key={`${nombre}-${index}`}>
+                      {tipo} - {nombre}{vencimiento ? ` (Vence: ${vencimiento})` : ''}
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </div>
+
+          <div className="review-actions">
+            <button
+              type="button"
+              className="secondary-action"
+              onClick={handleGoToList}
+              disabled={resolvingCambioAsignacion}
+            >
+              Volver a lista
+            </button>
+            <button
+              type="button"
+              className="primary-action"
+              onClick={() => handleResolverCambioAsignacion('aprobar')}
+              disabled={resolvingCambioAsignacion}
+            >
+              {resolvingCambioAsignacion ? 'Procesando...' : 'Aprobar cambio'}
+            </button>
+            <button
+              type="button"
+              className="danger-action"
+              onClick={() => handleResolverCambioAsignacion('rechazar')}
+              disabled={resolvingCambioAsignacion}
+            >
+              Rechazar cambio
+            </button>
+          </div>
+        </div>
+      </section>
+    );
   };
 
   const renderSolicitudesList = () => {
@@ -31223,7 +31715,13 @@ const sucursalOptions = useMemo(() => {
                     {!isSolicitudPersonalView ? <td>{registro.cliente ?? '—'}</td> : null}
                     {!isSolicitudPersonalView ? <td>{registro.sucursal ?? '—'}</td> : null}
                     <td>{registro.agente ?? '—'}</td>
-                    <td>{registro.estado ?? '—'}</td>
+                    <td>
+                      {registro.estado ? (
+                        <span className={`estado-badge ${getSolicitudEstadoBadgeClass(registro.estado)}`}>
+                          {registro.estado}
+                        </span>
+                      ) : '—'}
+                    </td>
                     {isSolicitudPersonalView ? <td>{formatCurrency(importeSolicitado)}</td> : null}
                     <td>
                       {(() => {
@@ -31507,6 +32005,22 @@ const sucursalOptions = useMemo(() => {
     }
   };
 
+  const selectedApprovalEstadoNombre = useMemo(() => {
+    if (!approvalEstadoId || Number.isNaN(Number(approvalEstadoId))) {
+      return null;
+    }
+    return meta?.estados?.find((estado) => String(estado.id) === String(approvalEstadoId))?.nombre ?? null;
+  }, [approvalEstadoId, meta?.estados]);
+
+  const isSelectedApprovalEstadoEnviado = useMemo(() => {
+    const normalized = (selectedApprovalEstadoNombre ?? '')
+      .trim()
+      .toLowerCase()
+      .replace(/[_-]+/g, ' ')
+      .replace(/\s+/g, ' ');
+    return normalized === 'enviado';
+  }, [selectedApprovalEstadoNombre]);
+
   const renderReviewSection = () => {
     if (!personaIdFromQuery) {
       return null;
@@ -31648,7 +32162,12 @@ const sucursalOptions = useMemo(() => {
                       <p><strong>Teléfono:</strong> {reviewPersonaDetail.telefono || '—'}</p>
                       <p><strong>Cliente:</strong> {reviewPersonaDetail.cliente || '—'}</p>
                       <p><strong>Sucursal:</strong> {reviewPersonaDetail.sucursal || '—'}</p>
-                      <p><strong>Estado actual:</strong> {reviewPersonaDetail.estado || 'Sin estado'}</p>
+                      <p>
+                        <strong>Estado actual:</strong>{' '}
+                        <span className={`estado-badge ${getSolicitudEstadoBadgeClass(reviewPersonaDetail.estado || 'Sin estado')}`}>
+                          {reviewPersonaDetail.estado || 'Sin estado'}
+                        </span>
+                      </p>
                       <p><strong>Agente responsable:</strong> {agentesResponsablesLabel}</p>
                       <p><strong>Fecha de alta:</strong> {reviewPersonaDetail.fechaAlta || '—'}</p>
                       {reviewPersonaDetail.aprobado ? (
@@ -31910,8 +32429,8 @@ const sucursalOptions = useMemo(() => {
                   {reviewPersonaDetail.aprobado
                     ? 'Solicitud aprobada'
                     : approveLoading
-                    ? 'Aprobando...'
-                    : 'Aprobar solicitud'}
+                    ? (isSelectedApprovalEstadoEnviado ? 'Guardando...' : 'Aprobando...')
+                    : (isSelectedApprovalEstadoEnviado ? 'Marcar enviado' : 'Aprobar solicitud')}
                 </button>
                 <button
                   type="button"
@@ -33408,6 +33927,8 @@ const sucursalOptions = useMemo(() => {
         return renderPrestamoTab();
       case 'vacaciones':
         return renderVacacionesTab();
+      case 'cambio_asignacion':
+        return renderCambioAsignacionTab();
       case 'poliza':
         return renderPolizaTab();
       case 'altas':
@@ -33545,6 +34066,15 @@ const sucursalOptions = useMemo(() => {
             >
               Solicitud de póliza
             </button>
+            {selectedCambioAsignacion ? (
+              <button
+                type="button"
+                className={`approvals-tab${activeTab === 'cambio_asignacion' ? ' is-active' : ''}`}
+                onClick={() => setActiveTab('cambio_asignacion')}
+              >
+                Cambio de asignación
+              </button>
+            ) : null}
           </>
         )}
       </div>
@@ -35737,6 +36267,9 @@ const PersonalEditPage: React.FC = () => {
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saveSuccess, setSaveSuccess] = useState<string | null>(null);
+  const [assignmentRequestSubmitting, setAssignmentRequestSubmitting] = useState(false);
+  const [assignmentRequestError, setAssignmentRequestError] = useState<string | null>(null);
+  const [assignmentRequestInfo, setAssignmentRequestInfo] = useState<string | null>(null);
   const [selectedDocumentId, setSelectedDocumentId] = useState<number | null>(null);
   const [pendingUploads, setPendingUploads] = useState<PendingPersonalUpload[]>([]);
   const [uploading, setUploading] = useState(false);
@@ -36129,6 +36662,8 @@ const PersonalEditPage: React.FC = () => {
       });
       setSaveSuccess(null);
       setSaveError(null);
+      setAssignmentRequestError(null);
+      setAssignmentRequestInfo(null);
       if (documents.length > 0) {
         setSelectedDocumentId(documents[0].id);
       } else {
@@ -36291,6 +36826,71 @@ const PersonalEditPage: React.FC = () => {
     return estadoNombre.trim().toLowerCase().includes('baja');
   }, [meta, formValues.estadoId, detail?.estado]);
 
+  const assignmentDraft = useMemo(() => {
+    const currentClienteId = detail?.clienteId ?? null;
+    const currentSucursalId = detail?.sucursalId ?? null;
+    const newClienteId = formValues.clienteId ? Number(formValues.clienteId) : null;
+    const newSucursalId = formValues.sucursalId ? Number(formValues.sucursalId) : null;
+    const responsableId = formValues.agenteResponsableId
+      ? Number(formValues.agenteResponsableId)
+      : (detail?.agenteResponsableId ?? null);
+
+    const clientes = meta?.clientes ?? [];
+    const sucursales = meta?.sucursales ?? [];
+    const agentes = meta?.agentes ?? [];
+
+    const currentClienteNombre =
+      detail?.cliente
+      ?? clientes.find((cliente) => cliente.id === currentClienteId)?.nombre
+      ?? null;
+    const currentSucursalNombre =
+      detail?.sucursal
+      ?? sucursales.find((sucursal) => sucursal.id === currentSucursalId)?.nombre
+      ?? null;
+    const newClienteNombre =
+      clientes.find((cliente) => cliente.id === newClienteId)?.nombre
+      ?? null;
+    const newSucursalNombre =
+      sucursales.find((sucursal) => sucursal.id === newSucursalId)?.nombre
+      ?? null;
+    const responsableNombre =
+      agentes.find((agente) => agente.id === responsableId)?.name
+      ?? detail?.agenteResponsable
+      ?? null;
+
+    const hasClienteChange = String(currentClienteId ?? '') !== String(newClienteId ?? '');
+    const hasSucursalChange = String(currentSucursalId ?? '') !== String(newSucursalId ?? '');
+
+    return {
+      currentClienteId,
+      currentSucursalId,
+      newClienteId,
+      newSucursalId,
+      responsableId,
+      currentClienteNombre,
+      currentSucursalNombre,
+      newClienteNombre,
+      newSucursalNombre,
+      responsableNombre,
+      hasClienteChange,
+      hasSucursalChange,
+      hasAssignmentChange: hasClienteChange || hasSucursalChange,
+    };
+  }, [
+    detail?.agenteResponsable,
+    detail?.agenteResponsableId,
+    detail?.cliente,
+    detail?.clienteId,
+    detail?.sucursal,
+    detail?.sucursalId,
+    formValues.agenteResponsableId,
+    formValues.clienteId,
+    formValues.sucursalId,
+    meta?.agentes,
+    meta?.clientes,
+    meta?.sucursales,
+  ]);
+
   const handleDownloadFicha = useCallback((record: PersonalDetail) => {
     const lines = [
       ['Nombre', [record.nombres, record.apellidos].filter(Boolean).join(' ').trim()],
@@ -36345,6 +36945,128 @@ const PersonalEditPage: React.FC = () => {
     </div>
   );
 
+  const handleSubmitCambioAsignacion = async () => {
+    if (!detail) {
+      return;
+    }
+    if (isReadOnly) {
+      setAssignmentRequestError('Solo los usuarios autorizados pueden enviar solicitudes.');
+      return;
+    }
+
+    setAssignmentRequestError(null);
+    setAssignmentRequestInfo(null);
+    setSaveError(null);
+
+    if (!assignmentDraft.hasAssignmentChange) {
+      setAssignmentRequestError('No hay cambios de cliente o sucursal para solicitar.');
+      return;
+    }
+
+    if (!assignmentDraft.responsableId || Number.isNaN(assignmentDraft.responsableId)) {
+      setAssignmentRequestError('Seleccioná un agente responsable para enviar la solicitud.');
+      return;
+    }
+
+    if (!assignmentDraft.newClienteId || Number.isNaN(assignmentDraft.newClienteId)) {
+      setAssignmentRequestError('Seleccioná el cliente nuevo para continuar.');
+      return;
+    }
+
+    if (!assignmentDraft.newSucursalId || Number.isNaN(assignmentDraft.newSucursalId)) {
+      setAssignmentRequestError('Seleccioná la sucursal nueva para continuar.');
+      return;
+    }
+
+    const confirmed = window.confirm(
+      'Se enviará una solicitud al agente responsable para aprobar el cambio de asignación. ¿Continuar?'
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    const documentosSnapshot = (detail.documents ?? []).map((doc) => ({
+      id: doc.id,
+      nombre: doc.nombre ?? null,
+      tipoNombre: doc.tipoNombre ?? null,
+      fechaVencimiento: doc.fechaVencimiento ?? null,
+      mime: doc.mime ?? null,
+    }));
+
+    try {
+      setAssignmentRequestSubmitting(true);
+
+      const payload = {
+        tipo: 'cambio_asignacion',
+        estado: 'Pendiente',
+        destinatarioIds: [assignmentDraft.responsableId],
+        form: {
+          personaId: detail.id,
+          personaNombre: [detail.nombres, detail.apellidos].filter(Boolean).join(' ').trim() || null,
+          personaCuil: detail.cuil ?? null,
+          agenteResponsableId: assignmentDraft.responsableId,
+          agenteResponsableNombre: assignmentDraft.responsableNombre,
+          clienteIdActual: assignmentDraft.currentClienteId,
+          clienteNombreActual: assignmentDraft.currentClienteNombre,
+          sucursalIdActual: assignmentDraft.currentSucursalId,
+          sucursalNombreActual: assignmentDraft.currentSucursalNombre,
+          clienteIdNuevo: assignmentDraft.newClienteId,
+          clienteNombreNuevo: assignmentDraft.newClienteNombre,
+          sucursalIdNueva: assignmentDraft.newSucursalId,
+          sucursalNombreNueva: assignmentDraft.newSucursalNombre,
+          documentos: documentosSnapshot,
+          requestedAt: new Date().toISOString(),
+          origin: 'personal-edit',
+        },
+      };
+
+      const response = await fetch(`${apiBaseUrl}/api/solicitud-personal`, {
+        method: 'POST',
+        headers: {
+          Accept: 'application/json',
+          'Content-Type': 'application/json',
+          ...actorHeaders,
+        },
+        body: JSON.stringify(payload),
+      });
+
+      if (!response.ok) {
+        let message = `Error ${response.status}: ${response.statusText}`;
+        try {
+          const errorPayload = await response.json();
+          if (typeof errorPayload?.message === 'string') {
+            message = errorPayload.message;
+          } else if (errorPayload?.errors) {
+            const firstError = Object.values(errorPayload.errors)[0];
+            if (Array.isArray(firstError) && firstError[0]) {
+              message = String(firstError[0]);
+            }
+          }
+        } catch {
+          // ignore parse errors
+        }
+        throw new Error(message);
+      }
+
+      const responsePayload = (await response.json()) as { message?: string };
+      setAssignmentRequestInfo(
+        responsePayload?.message
+          ?? 'Solicitud de cambio de asignación enviada correctamente.'
+      );
+      setFormValues((prev) => ({
+        ...prev,
+        clienteId: assignmentDraft.currentClienteId ? String(assignmentDraft.currentClienteId) : '',
+        sucursalId: assignmentDraft.currentSucursalId ? String(assignmentDraft.currentSucursalId) : '',
+      }));
+    } catch (err) {
+      setAssignmentRequestError(
+        (err as Error).message ?? 'No se pudo enviar la solicitud de cambio de asignación.'
+      );
+    } finally {
+      setAssignmentRequestSubmitting(false);
+    }
+  };
+
   const handleSave = async () => {
     if (isReadOnly) {
       setSaveError(
@@ -36355,6 +37077,12 @@ const PersonalEditPage: React.FC = () => {
       return;
     }
     if (!personaId) {
+      return;
+    }
+    if (assignmentDraft.hasAssignmentChange) {
+      setSaveError(
+        'Para cambiar cliente o sucursal usá el botón "Solicitar cambio de asignación".'
+      );
       return;
     }
     if (isEstadoBaja && !formValues.fechaBaja) {
@@ -37259,10 +37987,25 @@ const PersonalEditPage: React.FC = () => {
       </label>
       {saveError ? <p className="form-info form-info--error">{saveError}</p> : null}
       {saveSuccess ? <p className="form-info form-info--success">{saveSuccess}</p> : null}
+      {assignmentDraft.hasAssignmentChange ? (
+        <p className="form-info">
+          Detectamos cambios en cliente/sucursal. Enviá solicitud para que la apruebe el agente responsable.
+        </p>
+      ) : null}
+      {assignmentRequestError ? <p className="form-info form-info--error">{assignmentRequestError}</p> : null}
+      {assignmentRequestInfo ? <p className="form-info form-info--success">{assignmentRequestInfo}</p> : null}
       {disapproveError ? <p className="form-info form-info--error">{disapproveError}</p> : null}
       <div className="form-actions">
         <button type="button" className="secondary-action" onClick={() => navigate('/personal')}>
           Cancelar
+        </button>
+        <button
+          type="button"
+          className="secondary-action"
+          onClick={handleSubmitCambioAsignacion}
+          disabled={assignmentRequestSubmitting || isReadOnly || !assignmentDraft.hasAssignmentChange}
+        >
+          {assignmentRequestSubmitting ? 'Enviando...' : 'Solicitar cambio de asignación'}
         </button>
         {detail.aprobado ? (
           <button

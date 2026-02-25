@@ -3,16 +3,187 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Models\Cliente;
 use App\Models\Notification;
+use App\Models\Persona;
 use App\Models\SolicitudPersonal;
+use App\Models\Sucursal;
 use App\Models\User;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Support\Collection;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 
 class SolicitudPersonalController extends Controller
 {
+    private function resolveDestinatarioIds(SolicitudPersonal $item): Collection
+    {
+        $destinatarioIds = collect($item->destinatario_ids ?? []);
+        if ($item->destinatario_id) {
+            $destinatarioIds->push($item->destinatario_id);
+        }
+
+        return $destinatarioIds
+            ->filter()
+            ->map(fn ($id) => (int) $id)
+            ->unique()
+            ->values();
+    }
+
+    private function ensureCanResolveCambioAsignacion(Request $request, SolicitudPersonal $solicitudPersonal): void
+    {
+        $user = $request->user();
+        $destinatarioIds = $this->resolveDestinatarioIds($solicitudPersonal);
+        if ($destinatarioIds->isEmpty()) {
+            abort(response()->json([
+                'message' => 'La solicitud no tiene agente responsable asignado.',
+            ], 422));
+        }
+
+        $isDestinatario = $user?->id && $destinatarioIds->contains((int) $user->id);
+        if ($isDestinatario) {
+            return;
+        }
+
+        abort(response()->json([
+            'message' => 'Solo el agente responsable puede resolver esta solicitud.',
+        ], 403));
+    }
+
+    private function applyCambioAsignacion(SolicitudPersonal $solicitudPersonal, Request $request): array
+    {
+        $form = is_array($solicitudPersonal->form) ? $solicitudPersonal->form : [];
+        $personaId = isset($form['personaId']) ? (int) $form['personaId'] : 0;
+        if ($personaId <= 0) {
+            throw ValidationException::withMessages([
+                'form.personaId' => 'La solicitud no tiene un proveedor válido para aplicar el cambio.',
+            ]);
+        }
+
+        /** @var Persona|null $persona */
+        $persona = Persona::query()->find($personaId);
+        if (! $persona) {
+            throw ValidationException::withMessages([
+                'form.personaId' => 'El proveedor asociado a la solicitud no existe.',
+            ]);
+        }
+
+        $hasNewCliente = array_key_exists('clienteIdNuevo', $form);
+        $hasNewSucursal = array_key_exists('sucursalIdNueva', $form);
+        $newClienteId = $hasNewCliente && $form['clienteIdNuevo'] !== null && $form['clienteIdNuevo'] !== ''
+            ? (int) $form['clienteIdNuevo']
+            : null;
+        $newSucursalId = $hasNewSucursal && $form['sucursalIdNueva'] !== null && $form['sucursalIdNueva'] !== ''
+            ? (int) $form['sucursalIdNueva']
+            : null;
+
+        if (! $hasNewCliente && ! $hasNewSucursal) {
+            throw ValidationException::withMessages([
+                'form' => 'La solicitud no contiene cambios de cliente o sucursal para aplicar.',
+            ]);
+        }
+
+        if ($newClienteId !== null && ! Cliente::query()->whereKey($newClienteId)->exists()) {
+            throw ValidationException::withMessages([
+                'form.clienteIdNuevo' => 'El cliente nuevo no existe.',
+            ]);
+        }
+
+        if ($newSucursalId !== null) {
+            $sucursal = Sucursal::query()->find($newSucursalId);
+            if (! $sucursal) {
+                throw ValidationException::withMessages([
+                    'form.sucursalIdNueva' => 'La sucursal nueva no existe.',
+                ]);
+            }
+            if ($newClienteId !== null && (int) $sucursal->cliente_id !== $newClienteId) {
+                throw ValidationException::withMessages([
+                    'form.sucursalIdNueva' => 'La sucursal nueva no pertenece al cliente seleccionado.',
+                ]);
+            }
+        }
+
+        $oldClienteId = $persona->cliente_id;
+        $oldSucursalId = $persona->sucursal_id;
+        $oldCliente = $oldClienteId ? Cliente::query()->find($oldClienteId) : null;
+        $oldSucursal = $oldSucursalId ? Sucursal::query()->find($oldSucursalId) : null;
+        $newCliente = $newClienteId ? Cliente::query()->find($newClienteId) : null;
+        $newSucursal = $newSucursalId ? Sucursal::query()->find($newSucursalId) : null;
+
+        $changes = [];
+
+        if ((string) ($oldClienteId ?? '') !== (string) ($newClienteId ?? '')) {
+            $changes[] = [
+                'field' => 'cliente_id',
+                'label' => 'Cliente',
+                'oldValue' => $oldCliente?->nombre,
+                'newValue' => $newCliente?->nombre,
+            ];
+            $persona->cliente_id = $newClienteId;
+        }
+
+        if ((string) ($oldSucursalId ?? '') !== (string) ($newSucursalId ?? '')) {
+            $changes[] = [
+                'field' => 'sucursal_id',
+                'label' => 'Sucursal',
+                'oldValue' => $oldSucursal?->nombre,
+                'newValue' => $newSucursal?->nombre,
+            ];
+            $persona->sucursal_id = $newSucursalId;
+        }
+
+        if (empty($changes)) {
+            throw ValidationException::withMessages([
+                'form' => 'No hay diferencias para aplicar en cliente o sucursal.',
+            ]);
+        }
+
+        $persona->save();
+
+        $persona->histories()->create([
+            'user_id' => $request->user()?->id,
+            'description' => 'Cambio de asignación aprobado',
+            'changes' => $changes,
+        ]);
+
+        $form['estado'] = 'Aprobado';
+        $form['resueltoAt'] = now()->toIso8601String();
+        $form['resueltoPorId'] = $request->user()?->id;
+        $form['resultado'] = [
+            'clienteId' => $persona->cliente_id,
+            'clienteNombre' => $newCliente?->nombre,
+            'sucursalId' => $persona->sucursal_id,
+            'sucursalNombre' => $newSucursal?->nombre,
+        ];
+
+        $solicitudPersonal->form = $form;
+
+        return [
+            'persona' => $persona,
+            'clienteId' => $persona->cliente_id,
+            'clienteNombre' => $newCliente?->nombre,
+            'sucursalId' => $persona->sucursal_id,
+            'sucursalNombre' => $newSucursal?->nombre,
+        ];
+    }
+
+    private function normalizeResolutionEstado(?string $estado): string
+    {
+        $normalized = Str::lower(trim((string) $estado));
+
+        if ($normalized === 'aprobado') {
+            return 'Aprobado';
+        }
+        if ($normalized === 'rechazado') {
+            return 'Rechazado';
+        }
+
+        return 'Pendiente';
+    }
+
     private function normalizePrestamoForm(array $form): array
     {
         if (! array_key_exists('cantidadCuotas', $form)) {
@@ -129,7 +300,7 @@ class SolicitudPersonalController extends Controller
     public function store(Request $request): JsonResponse
     {
         $validated = $request->validate([
-            'tipo' => ['required', 'string', 'in:prestamo,adelanto,vacaciones'],
+            'tipo' => ['required', 'string', 'in:prestamo,adelanto,vacaciones,cambio_asignacion'],
             'estado' => ['nullable', 'string', 'max:50'],
             'form' => ['nullable', 'array'],
             'destinatarioId' => ['nullable', 'integer', 'exists:users,id'],
@@ -147,14 +318,21 @@ class SolicitudPersonalController extends Controller
         }
         $destinatarioId = $destinatarioIds->first();
         $estado = $validated['estado'] ?? 'Pendiente';
+        $tipo = $validated['tipo'] ?? null;
+
+        if ($tipo === 'cambio_asignacion' && $destinatarioIds->isEmpty()) {
+            throw ValidationException::withMessages([
+                'destinatarioIds' => 'Debes asignar un agente responsable para esta solicitud.',
+            ]);
+        }
 
         $form = $validated['form'] ?? [];
-        if (($validated['tipo'] ?? null) === 'prestamo') {
+        if ($tipo === 'prestamo') {
             $form = $this->normalizePrestamoForm($form);
         }
 
         $item = SolicitudPersonal::create([
-            'tipo' => $validated['tipo'],
+            'tipo' => $tipo,
             'estado' => $estado,
             'form' => $form,
             'solicitante_id' => $user?->id,
@@ -225,6 +403,86 @@ class SolicitudPersonalController extends Controller
                 'createdAt' => $item->created_at?->toIso8601String(),
             ],
         ], 201);
+    }
+
+    public function approve(Request $request, SolicitudPersonal $solicitudPersonal): JsonResponse
+    {
+        if ($solicitudPersonal->tipo !== 'cambio_asignacion') {
+            return response()->json([
+                'message' => 'Solo se puede aprobar con este endpoint una solicitud de cambio de asignación.',
+            ], 422);
+        }
+
+        $this->ensureCanResolveCambioAsignacion($request, $solicitudPersonal);
+
+        if ($this->normalizeResolutionEstado($solicitudPersonal->estado) === 'Aprobado') {
+            return response()->json([
+                'message' => 'La solicitud ya estaba aprobada.',
+                'data' => [
+                    'id' => $solicitudPersonal->id,
+                    'estado' => $solicitudPersonal->estado,
+                ],
+            ]);
+        }
+
+        $resolutionData = DB::transaction(function () use ($solicitudPersonal, $request) {
+            $resolutionData = $this->applyCambioAsignacion($solicitudPersonal, $request);
+            $solicitudPersonal->estado = 'Aprobado';
+            $solicitudPersonal->save();
+            return $resolutionData;
+        });
+
+        return response()->json([
+            'message' => 'Cambio de asignación aprobado correctamente.',
+            'data' => [
+                'id' => $solicitudPersonal->id,
+                'tipo' => $solicitudPersonal->tipo,
+                'estado' => $solicitudPersonal->estado,
+                'personaId' => $resolutionData['persona']->id,
+                'clienteId' => $resolutionData['clienteId'],
+                'clienteNombre' => $resolutionData['clienteNombre'],
+                'sucursalId' => $resolutionData['sucursalId'],
+                'sucursalNombre' => $resolutionData['sucursalNombre'],
+                'resueltoPorId' => $request->user()?->id,
+                'resueltoAt' => now()->toIso8601String(),
+            ],
+        ]);
+    }
+
+    public function reject(Request $request, SolicitudPersonal $solicitudPersonal): JsonResponse
+    {
+        if ($solicitudPersonal->tipo !== 'cambio_asignacion') {
+            return response()->json([
+                'message' => 'Solo se puede rechazar con este endpoint una solicitud de cambio de asignación.',
+            ], 422);
+        }
+
+        $this->ensureCanResolveCambioAsignacion($request, $solicitudPersonal);
+
+        $validated = $request->validate([
+            'motivo' => ['nullable', 'string', 'max:1000'],
+        ]);
+
+        $form = is_array($solicitudPersonal->form) ? $solicitudPersonal->form : [];
+        $form['estado'] = 'Rechazado';
+        $form['resueltoAt'] = now()->toIso8601String();
+        $form['resueltoPorId'] = $request->user()?->id;
+        $form['motivoRechazo'] = $validated['motivo'] ?? null;
+
+        $solicitudPersonal->form = $form;
+        $solicitudPersonal->estado = 'Rechazado';
+        $solicitudPersonal->save();
+
+        return response()->json([
+            'message' => 'Cambio de asignación rechazado.',
+            'data' => [
+                'id' => $solicitudPersonal->id,
+                'tipo' => $solicitudPersonal->tipo,
+                'estado' => $solicitudPersonal->estado,
+                'resueltoPorId' => $request->user()?->id,
+                'resueltoAt' => now()->toIso8601String(),
+            ],
+        ]);
     }
 
     public function update(Request $request, SolicitudPersonal $solicitudPersonal): JsonResponse
