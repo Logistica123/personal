@@ -4655,6 +4655,12 @@ tbody tr:hover {
   background-color: #f8fafc;
   text-align: center;
   color: #516277;
+  transition: border-color 0.15s ease, background-color 0.15s ease;
+}
+
+.file-dropzone.is-dragover {
+  border-color: #1d74f5;
+  background-color: #eef4ff;
 }
 
 .file-dropzone__icon {

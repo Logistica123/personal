@@ -335,6 +335,8 @@ class FuelModuleController extends Controller
         $distributorId = $request->query('distributor_id');
         $dateFrom = $request->query('date_from');
         $dateTo = $request->query('date_to');
+        $requestedPage = max(1, (int) $request->query('page', 1));
+        $perPage = max(1, min(500, (int) $request->query('per_page', 500)));
         $onlyImputed = $request->boolean('only_imputed');
         $onlyPending = $request->boolean('only_pending');
         $includeDuplicates = $request->boolean('include_duplicates');
@@ -391,15 +393,19 @@ class FuelModuleController extends Controller
             'not_taken' => (int) (clone $baseQuery)->where('discounted', false)->count(),
         ];
 
-        $rowsLimit = 500;
-
         $aggregateTotals = (clone $baseQuery)
             ->selectRaw('COUNT(*) as movements, COALESCE(SUM(liters), 0) as liters, COALESCE(SUM(amount), 0) as amount')
             ->first();
 
+        $totalMovements = (int) ($aggregateTotals?->movements ?? 0);
+        $totalPages = $totalMovements > 0 ? (int) ceil($totalMovements / $perPage) : 1;
+        $page = min($requestedPage, $totalPages);
+        $offset = ($page - 1) * $perPage;
+
         $rows = (clone $baseQuery)
             ->orderByDesc('occurred_at')
-            ->limit($rowsLimit)
+            ->offset($offset)
+            ->limit($perPage)
             ->get()
             ->map(fn (FuelMovement $movement) => [
             'id' => $movement->id,
@@ -420,11 +426,11 @@ class FuelModuleController extends Controller
         ]);
 
         $totals = [
-            'movements' => (int) ($aggregateTotals?->movements ?? 0),
+            'movements' => $totalMovements,
             'liters' => (float) ($aggregateTotals?->liters ?? 0),
             'amount' => (float) ($aggregateTotals?->amount ?? 0),
             'returned' => $rows->count(),
-            'limit' => $rowsLimit,
+            'limit' => $perPage,
             'discount_counts' => $discountCounts,
             'status_counts' => $statusCounts,
         ];
@@ -432,6 +438,14 @@ class FuelModuleController extends Controller
         return response()->json([
             'data' => $rows,
             'totals' => $totals,
+            'pagination' => [
+                'page' => $page,
+                'per_page' => $perPage,
+                'total' => $totalMovements,
+                'total_pages' => $totalPages,
+                'has_next_page' => $page < $totalPages,
+                'has_prev_page' => $page > 1,
+            ],
         ]);
     }
 

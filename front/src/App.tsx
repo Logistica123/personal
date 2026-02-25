@@ -14914,6 +14914,8 @@ const CombustibleCargaPage: React.FC = () => {
   const apiBaseUrl = useMemo(() => resolveApiBaseUrl(), []);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const fuelExtractDropDepthRef = useRef(0);
+  const [isFuelExtractDropActive, setIsFuelExtractDropActive] = useState(false);
   const [previewColumns, setPreviewColumns] = useState<string[]>([]);
   const [previewRows, setPreviewRows] = useState<Array<string[]>>([]);
   const [previewMeta, setPreviewMeta] = useState<{ rowCount: number; previewCount: number } | null>(null);
@@ -14961,44 +14963,93 @@ const CombustibleCargaPage: React.FC = () => {
   const [duplicateLoading, setDuplicateLoading] = useState(false);
   const [duplicateError, setDuplicateError] = useState<string | null>(null);
 
+  const resetFuelExtractMessages = () => {
+    setPreviewColumns([]);
+    setPreviewRows([]);
+    setPreviewMeta(null);
+    setPreviewUnmappedColumns([]);
+    setPreviewMapped(false);
+    setPreviewStats(null);
+    setPreviewError(null);
+    setProcessMessage(null);
+    setProcessError(null);
+    setDuplicateRows([]);
+    setDuplicateTotals(null);
+    setDuplicateError(null);
+  };
+
+  const setFuelExtractFile = (file: File | null) => {
+    setSelectedFile(file);
+    resetFuelExtractMessages();
+  };
+
+  const isSupportedFuelExtractFile = (file: File) => /\.(xlsx|csv)$/i.test(file.name);
+
   const handleFilePicker = () => {
     fileInputRef.current?.click();
   };
 
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0] ?? null;
-    setSelectedFile(file);
-    setPreviewColumns([]);
-    setPreviewRows([]);
-    setPreviewMeta(null);
-    setPreviewUnmappedColumns([]);
-    setPreviewMapped(false);
-    setPreviewStats(null);
-    setPreviewError(null);
-    setProcessMessage(null);
-    setProcessError(null);
-    setDuplicateRows([]);
-    setDuplicateTotals(null);
-    setDuplicateError(null);
+    if (file && !isSupportedFuelExtractFile(file)) {
+      setFuelExtractFile(null);
+      setPreviewError('Formato no soportado. Usa .xlsx o .csv.');
+      return;
+    }
+    setFuelExtractFile(file);
+  };
+
+  const handleFuelExtractDragEnter = (event: React.DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    fuelExtractDropDepthRef.current += 1;
+    setIsFuelExtractDropActive(true);
+  };
+
+  const handleFuelExtractDragOver = (event: React.DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    event.dataTransfer.dropEffect = 'copy';
+    setIsFuelExtractDropActive(true);
+  };
+
+  const handleFuelExtractDragLeave = (event: React.DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    fuelExtractDropDepthRef.current = Math.max(0, fuelExtractDropDepthRef.current - 1);
+    if (fuelExtractDropDepthRef.current === 0) {
+      setIsFuelExtractDropActive(false);
+    }
+  };
+
+  const handleFuelExtractDrop = (event: React.DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    fuelExtractDropDepthRef.current = 0;
+    setIsFuelExtractDropActive(false);
+
+    const droppedFiles = Array.from(event.dataTransfer.files ?? []);
+    if (droppedFiles.length === 0) {
+      return;
+    }
+
+    const nextFile = droppedFiles.find((file) => isSupportedFuelExtractFile(file)) ?? null;
+    if (!nextFile) {
+      setFuelExtractFile(null);
+      setPreviewError('Formato no soportado. Usa .xlsx o .csv.');
+      return;
+    }
+
+    setFuelExtractFile(nextFile);
   };
 
   const handleClearFile = () => {
-    setSelectedFile(null);
+    setFuelExtractFile(null);
+    fuelExtractDropDepthRef.current = 0;
+    setIsFuelExtractDropActive(false);
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
     }
-    setPreviewColumns([]);
-    setPreviewRows([]);
-    setPreviewMeta(null);
-    setPreviewUnmappedColumns([]);
-    setPreviewMapped(false);
-    setPreviewStats(null);
-    setPreviewError(null);
-    setProcessMessage(null);
-    setProcessError(null);
-    setDuplicateRows([]);
-    setDuplicateTotals(null);
-    setDuplicateError(null);
   };
 
   const handlePreview = async () => {
@@ -15289,7 +15340,14 @@ const CombustibleCargaPage: React.FC = () => {
             Auto-asignar por conductor
           </label>
 
-          <div className="file-dropzone">
+          <div
+            className={`file-dropzone${isFuelExtractDropActive ? ' is-dragover' : ''}`}
+            role="presentation"
+            onDragEnter={handleFuelExtractDragEnter}
+            onDragOver={handleFuelExtractDragOver}
+            onDragLeave={handleFuelExtractDragLeave}
+            onDrop={handleFuelExtractDrop}
+          >
             <span className="file-dropzone__icon" aria-hidden="true">
               ⛽
             </span>
@@ -16036,6 +16094,7 @@ const CombustiblePendientesPage: React.FC = () => {
 
 const CombustibleDistribuidorPage: React.FC = () => {
   const apiBaseUrl = useMemo(() => resolveApiBaseUrl(), []);
+  const CONSUMOS_PER_PAGE = 500;
   const [distributors, setDistributors] = useState<Array<{ id: number; name: string; code?: string | null }>>([]);
   const [distributorId, setDistributorId] = useState('');
   const [manualDistributorName, setManualDistributorName] = useState('');
@@ -16068,6 +16127,15 @@ const CombustibleDistribuidorPage: React.FC = () => {
     limit?: number;
     discount_counts?: { taken: number; not_taken: number };
     status_counts?: Record<string, number>;
+  } | null>(null);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pagination, setPagination] = useState<{
+    page: number;
+    per_page: number;
+    total: number;
+    total_pages: number;
+    has_next_page: boolean;
+    has_prev_page: boolean;
   } | null>(null);
   const [loading, setLoading] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -16157,81 +16225,131 @@ const CombustibleDistribuidorPage: React.FC = () => {
     }
   };
 
-  const fetchConsumos = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const url = new URL(`${apiBaseUrl}/api/combustible/consumos`);
-      let resolvedDistributorId = distributorId.trim();
+  const fetchConsumos = useCallback(
+    async (requestedPage?: number) => {
+      const nextPage = Math.max(1, Math.trunc(requestedPage ?? currentPage) || 1);
+      setLoading(true);
+      setError(null);
+      try {
+        const url = new URL(`${apiBaseUrl}/api/combustible/consumos`);
+        let resolvedDistributorId = distributorId.trim();
 
-      if (!resolvedDistributorId && manualDistributorName.trim()) {
-        const term = normalizeDistributorSearch(manualDistributorName);
-        const exactMatches = distributors.filter((item) => {
-          const byName = normalizeDistributorSearch(item.name) === term;
-          const byCode = normalizeDistributorSearch(item.code ?? '') === term;
-          return byName || byCode;
-        });
-        const partialMatches = distributors.filter((item) => {
-          const byName = normalizeDistributorSearch(item.name).includes(term);
-          const byCode = normalizeDistributorSearch(item.code ?? '').includes(term);
-          return byName || byCode;
-        });
-        const matches = exactMatches.length > 0 ? exactMatches : partialMatches;
-        if (matches.length === 0) {
-          throw new Error('No se encontró distribuidor con ese nombre/código.');
+        if (!resolvedDistributorId && manualDistributorName.trim()) {
+          const term = normalizeDistributorSearch(manualDistributorName);
+          const exactMatches = distributors.filter((item) => {
+            const byName = normalizeDistributorSearch(item.name) === term;
+            const byCode = normalizeDistributorSearch(item.code ?? '') === term;
+            return byName || byCode;
+          });
+          const partialMatches = distributors.filter((item) => {
+            const byName = normalizeDistributorSearch(item.name).includes(term);
+            const byCode = normalizeDistributorSearch(item.code ?? '').includes(term);
+            return byName || byCode;
+          });
+          const matches = exactMatches.length > 0 ? exactMatches : partialMatches;
+          if (matches.length === 0) {
+            throw new Error('No se encontró distribuidor con ese nombre/código.');
+          }
+          if (matches.length > 1) {
+            throw new Error('Hay más de un distribuidor con ese texto. Especificá un poco más.');
+          }
+          resolvedDistributorId = String(matches[0].id);
+          setDistributorId(resolvedDistributorId);
+          setManualDistributorName(matches[0].name ?? manualDistributorName);
         }
-        if (matches.length > 1) {
-          throw new Error('Hay más de un distribuidor con ese texto. Especificá un poco más.');
-        }
-        resolvedDistributorId = String(matches[0].id);
-        setDistributorId(resolvedDistributorId);
-        setManualDistributorName(matches[0].name ?? manualDistributorName);
-      }
 
-      if (resolvedDistributorId) {
-        url.searchParams.set('distributor_id', resolvedDistributorId);
-      }
-      if (domain.trim()) {
-        url.searchParams.set('domain', domain.trim());
-      }
-      if (sourceFile.trim()) {
-        url.searchParams.set('source_file', sourceFile.trim());
-      }
-      if (dateFrom) {
-        url.searchParams.set('date_from', dateFrom);
-      }
-      if (dateTo) {
-        url.searchParams.set('date_to', dateTo);
-      }
-      url.searchParams.set('only_pending', '1');
-      url.searchParams.set('only_imputed', '1');
-      const response = await fetch(url.toString(), { credentials: 'include' });
-      if (!response.ok) {
-        throw new Error(`No se pudieron cargar los consumos (${response.status}).`);
-      }
-      const payload = await parseJsonSafe(response);
-      setRows(Array.isArray(payload.data) ? payload.data : []);
-      if (payload.totals && typeof payload.totals === 'object') {
-        setTotals({
-          movements: Number(payload.totals.movements) || 0,
-          liters: Number(payload.totals.liters) || 0,
-          amount: Number(payload.totals.amount) || 0,
-          returned: Number(payload.totals.returned) || 0,
-          limit: Number(payload.totals.limit) || 0,
-          discount_counts: payload.totals.discount_counts ?? undefined,
-          status_counts: payload.totals.status_counts ?? undefined,
-        });
-      } else {
+        if (resolvedDistributorId) {
+          url.searchParams.set('distributor_id', resolvedDistributorId);
+        }
+
+        if (domain.trim()) {
+          url.searchParams.set('domain', domain.trim());
+        }
+        if (sourceFile.trim()) {
+          url.searchParams.set('source_file', sourceFile.trim());
+        }
+        if (dateFrom) {
+          url.searchParams.set('date_from', dateFrom);
+        }
+        if (dateTo) {
+          url.searchParams.set('date_to', dateTo);
+        }
+        url.searchParams.set('only_pending', '1');
+        url.searchParams.set('only_imputed', '1');
+        url.searchParams.set('page', String(nextPage));
+        url.searchParams.set('per_page', String(CONSUMOS_PER_PAGE));
+        const response = await fetch(url.toString(), { credentials: 'include' });
+        if (!response.ok) {
+          throw new Error(`No se pudieron cargar los consumos (${response.status}).`);
+        }
+        const payload = await parseJsonSafe(response);
+        setRows(Array.isArray(payload.data) ? payload.data : []);
+        if (payload.totals && typeof payload.totals === 'object') {
+          setTotals({
+            movements: Number(payload.totals.movements) || 0,
+            liters: Number(payload.totals.liters) || 0,
+            amount: Number(payload.totals.amount) || 0,
+            returned: Number(payload.totals.returned) || 0,
+            limit: Number(payload.totals.limit) || 0,
+            discount_counts: payload.totals.discount_counts ?? undefined,
+            status_counts: payload.totals.status_counts ?? undefined,
+          });
+        } else {
+          setTotals(null);
+        }
+        if (payload.pagination && typeof payload.pagination === 'object') {
+          const parsedPage = Math.max(1, Math.trunc(Number(payload.pagination.page) || 1));
+          const parsedPerPage = Math.max(1, Math.trunc(Number(payload.pagination.per_page) || CONSUMOS_PER_PAGE));
+          const parsedTotal = Math.max(0, Math.trunc(Number(payload.pagination.total) || 0));
+          const parsedTotalPages = Math.max(1, Math.trunc(Number(payload.pagination.total_pages) || 1));
+          const hasPrevPage = Boolean(payload.pagination.has_prev_page) || parsedPage > 1;
+          const hasNextPage = Boolean(payload.pagination.has_next_page) || parsedPage < parsedTotalPages;
+          setPagination({
+            page: parsedPage,
+            per_page: parsedPerPage,
+            total: parsedTotal,
+            total_pages: parsedTotalPages,
+            has_next_page: hasNextPage,
+            has_prev_page: hasPrevPage,
+          });
+          setCurrentPage(parsedPage);
+        } else {
+          const total = Number(payload?.totals?.movements) || (Array.isArray(payload.data) ? payload.data.length : 0);
+          const totalPages = Math.max(1, Math.ceil(total / CONSUMOS_PER_PAGE));
+          const safePage = Math.min(nextPage, totalPages);
+          setPagination({
+            page: safePage,
+            per_page: CONSUMOS_PER_PAGE,
+            total,
+            total_pages: totalPages,
+            has_next_page: safePage < totalPages,
+            has_prev_page: safePage > 1,
+          });
+          setCurrentPage(safePage);
+        }
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'No se pudieron cargar los consumos.');
+        setRows([]);
         setTotals(null);
+        setPagination(null);
+      } finally {
+        setLoading(false);
       }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'No se pudieron cargar los consumos.');
-      setRows([]);
-      setTotals(null);
-    } finally {
-      setLoading(false);
-    }
-  }, [apiBaseUrl, distributorId, manualDistributorName, distributors, normalizeDistributorSearch, domain, sourceFile, dateFrom, dateTo]);
+    },
+    [
+      CONSUMOS_PER_PAGE,
+      apiBaseUrl,
+      currentPage,
+      distributorId,
+      manualDistributorName,
+      distributors,
+      normalizeDistributorSearch,
+      domain,
+      sourceFile,
+      dateFrom,
+      dateTo,
+    ]
+  );
 
   useEffect(() => {
     setSelectedMovementIds((prev) => {
@@ -16320,60 +16438,21 @@ const CombustibleDistribuidorPage: React.FC = () => {
       const deleted = Number(payload?.deleted ?? 0);
       setActionMessage(`Consumos eliminados: ${deleted}.`);
       setSelectedMovementIds(new Set());
-      await fetchConsumos();
+      await fetchConsumos(currentPage);
     } catch (err) {
       setActionError(err instanceof Error ? err.message : 'No se pudieron eliminar los consumos seleccionados.');
     } finally {
       setDeleting(false);
     }
-  }, [apiBaseUrl, fetchConsumos, selectedMovementIds]);
-
-  const handleDeleteAllMovements = useCallback(async () => {
-    const confirmed = window.confirm(
-      'Vas a limpiar TODA la base de combustible (consumos y reportes). Esta acción es irreversible. ¿Continuar?'
-    );
-    if (!confirmed) {
-      return;
-    }
-
-    const typed = window.prompt('Para confirmar, escribí: BORRAR TODO');
-    if (typed?.trim().toUpperCase() !== 'BORRAR TODO') {
-      window.alert('Confirmación cancelada.');
-      return;
-    }
-
-    setDeleting(true);
-    setActionError(null);
-    setActionMessage(null);
-    try {
-      const response = await fetch(`${apiBaseUrl}/api/combustible/movimientos`, {
-        method: 'DELETE',
-        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({
-          delete_all: true,
-          confirm_token: 'BORRAR_TODO_COMBUSTIBLE',
-        }),
-      });
-      if (!response.ok) {
-        const payload = await parseJsonSafe(response).catch(() => null);
-        throw new Error(payload?.message ?? `No se pudo limpiar la base de combustible (${response.status}).`);
-      }
-      const payload = await parseJsonSafe(response);
-      const deleted = Number(payload?.deleted ?? 0);
-      const reportsDeleted = Number(payload?.reports_deleted ?? 0);
-      setActionMessage(`Base limpiada. Consumos eliminados: ${deleted}. Reportes eliminados: ${reportsDeleted}.`);
-      setSelectedMovementIds(new Set());
-      await fetchConsumos();
-    } catch (err) {
-      setActionError(err instanceof Error ? err.message : 'No se pudo limpiar toda la base de combustible.');
-    } finally {
-      setDeleting(false);
-    }
-  }, [apiBaseUrl, fetchConsumos]);
+  }, [apiBaseUrl, currentPage, fetchConsumos, selectedMovementIds]);
 
   const selectedDistributor = distributors.find((item) => String(item.id) === distributorId);
   const periodLabel = `${dateFrom || '—'} - ${dateTo || '—'}`;
+  const activePage = pagination?.page ?? currentPage;
+  const inferredTotalPages = Math.max(1, Math.ceil((totals?.movements ?? rows.length) / CONSUMOS_PER_PAGE));
+  const totalPages = pagination?.total_pages ?? inferredTotalPages;
+  const hasPrevPage = pagination ? pagination.has_prev_page : activePage > 1;
+  const hasNextPage = pagination ? pagination.has_next_page : activePage < totalPages;
 
   const exportConsumosExcel = () => {
     if (rows.length === 0) {
@@ -16631,7 +16710,15 @@ const CombustibleDistribuidorPage: React.FC = () => {
         </label>
       </div>
       <div className="filters-actions">
-        <button type="button" className="primary-action" onClick={fetchConsumos} disabled={loading || deleting}>
+        <button
+          type="button"
+          className="primary-action"
+          onClick={() => {
+            setCurrentPage(1);
+            fetchConsumos(1);
+          }}
+          disabled={loading || deleting}
+        >
           Buscar
         </button>
         <button
@@ -16657,14 +16744,6 @@ const CombustibleDistribuidorPage: React.FC = () => {
           disabled={selectedMovementIds.size === 0 || loading || deleting}
         >
           {deleting ? 'Eliminando...' : 'Desaparecer seleccionados'}
-        </button>
-        <button
-          type="button"
-          className="secondary-action secondary-action--danger"
-          onClick={handleDeleteAllMovements}
-          disabled={loading || deleting}
-        >
-          {deleting ? 'Limpiando...' : 'Limpiar toda la base'}
         </button>
         {selectedMovementIds.size > 0 ? (
           <span className="form-info">
@@ -16704,8 +16783,8 @@ const CombustibleDistribuidorPage: React.FC = () => {
       </div>
       {(totals?.movements ?? rows.length) > rows.length ? (
         <p className="helper-text">
-          Mostrando {rows.length} de {totals?.movements ?? rows.length} movimientos (límite {totals?.limit ?? 500} por
-          consulta).
+          Mostrando {rows.length} de {totals?.movements ?? rows.length} movimientos (página {activePage} de{' '}
+          {Math.max(1, pagination?.total_pages ?? totalPages)}).
         </p>
       ) : null}
 
@@ -16777,6 +16856,33 @@ const CombustibleDistribuidorPage: React.FC = () => {
           </tbody>
         </table>
       </div>
+      <footer className="table-footer">
+        <span>
+          {loading
+            ? 'Cargando consumos...'
+            : `Página ${activePage} de ${totalPages} · ${totals?.movements ?? rows.length} movimiento${
+                (totals?.movements ?? rows.length) === 1 ? '' : 's'
+              }`}
+        </span>
+        <div className="pagination">
+          <button
+            type="button"
+            aria-label="Página anterior"
+            onClick={() => fetchConsumos(activePage - 1)}
+            disabled={loading || deleting || !hasPrevPage}
+          >
+            ‹
+          </button>
+          <button
+            type="button"
+            aria-label="Página siguiente"
+            onClick={() => fetchConsumos(activePage + 1)}
+            disabled={loading || deleting || !hasNextPage}
+          >
+            ›
+          </button>
+        </div>
+      </footer>
     </DashboardLayout>
   );
 };
@@ -18110,6 +18216,7 @@ const CombustibleTardiasPage: React.FC = () => {
 
 const CombustibleConsumosPage: React.FC = () => {
   const apiBaseUrl = useMemo(() => resolveApiBaseUrl(), []);
+  const CONSUMOS_PER_PAGE = 500;
   const [distributors, setDistributors] = useState<Array<{ id: number; name: string; code?: string | null }>>([]);
   const [distributorId, setDistributorId] = useState('');
   const [domain, setDomain] = useState('');
@@ -18141,6 +18248,15 @@ const CombustibleConsumosPage: React.FC = () => {
     limit?: number;
     discount_counts?: { taken: number; not_taken: number };
     status_counts?: Record<string, number>;
+  } | null>(null);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pagination, setPagination] = useState<{
+    page: number;
+    per_page: number;
+    total: number;
+    total_pages: number;
+    has_next_page: boolean;
+    has_prev_page: boolean;
   } | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -18187,56 +18303,107 @@ const CombustibleConsumosPage: React.FC = () => {
     loadDistributors();
   }, [apiBaseUrl]);
 
-  const fetchConsumos = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const url = new URL(`${apiBaseUrl}/api/combustible/consumos`);
-      if (distributorId) {
-        url.searchParams.set('distributor_id', distributorId);
-      }
-      if (domain.trim()) {
-        url.searchParams.set('domain', domain.trim());
-      }
-      if (dateFrom) {
-        url.searchParams.set('date_from', dateFrom);
-      }
-      if (dateTo) {
-        url.searchParams.set('date_to', dateTo);
-      }
-      if (onlyPending) {
-        url.searchParams.set('only_pending', '1');
-      }
-      if (onlyImputed) {
-        url.searchParams.set('only_imputed', '1');
-      }
-      const response = await fetch(url.toString(), { credentials: 'include' });
-      if (!response.ok) {
-        throw new Error(`No se pudieron cargar los consumos (${response.status}).`);
-      }
-      const payload = await parseJsonSafe(response);
-      setRows(Array.isArray(payload.data) ? payload.data : []);
-      if (payload.totals && typeof payload.totals === 'object') {
-        setTotals({
-          movements: Number(payload.totals.movements) || 0,
-          liters: Number(payload.totals.liters) || 0,
-          amount: Number(payload.totals.amount) || 0,
-          returned: Number(payload.totals.returned) || 0,
-          limit: Number(payload.totals.limit) || 0,
-          discount_counts: payload.totals.discount_counts ?? undefined,
-          status_counts: payload.totals.status_counts ?? undefined,
-        });
-      } else {
+  const fetchConsumos = useCallback(
+    async (requestedPage?: number) => {
+      const nextPage = Math.max(1, Math.trunc(requestedPage ?? currentPage) || 1);
+      setLoading(true);
+      setError(null);
+      try {
+        const url = new URL(`${apiBaseUrl}/api/combustible/consumos`);
+        if (distributorId) {
+          url.searchParams.set('distributor_id', distributorId);
+        }
+        if (domain.trim()) {
+          url.searchParams.set('domain', domain.trim());
+        }
+        if (sourceFile.trim()) {
+          url.searchParams.set('source_file', sourceFile.trim());
+        }
+        if (dateFrom) {
+          url.searchParams.set('date_from', dateFrom);
+        }
+        if (dateTo) {
+          url.searchParams.set('date_to', dateTo);
+        }
+        if (onlyPending) {
+          url.searchParams.set('only_pending', '1');
+        }
+        if (onlyImputed) {
+          url.searchParams.set('only_imputed', '1');
+        }
+        url.searchParams.set('page', String(nextPage));
+        url.searchParams.set('per_page', String(CONSUMOS_PER_PAGE));
+        const response = await fetch(url.toString(), { credentials: 'include' });
+        if (!response.ok) {
+          throw new Error(`No se pudieron cargar los consumos (${response.status}).`);
+        }
+        const payload = await parseJsonSafe(response);
+        setRows(Array.isArray(payload.data) ? payload.data : []);
+        if (payload.totals && typeof payload.totals === 'object') {
+          setTotals({
+            movements: Number(payload.totals.movements) || 0,
+            liters: Number(payload.totals.liters) || 0,
+            amount: Number(payload.totals.amount) || 0,
+            returned: Number(payload.totals.returned) || 0,
+            limit: Number(payload.totals.limit) || 0,
+            discount_counts: payload.totals.discount_counts ?? undefined,
+            status_counts: payload.totals.status_counts ?? undefined,
+          });
+        } else {
+          setTotals(null);
+        }
+        if (payload.pagination && typeof payload.pagination === 'object') {
+          const parsedPage = Math.max(1, Math.trunc(Number(payload.pagination.page) || 1));
+          const parsedPerPage = Math.max(1, Math.trunc(Number(payload.pagination.per_page) || CONSUMOS_PER_PAGE));
+          const parsedTotal = Math.max(0, Math.trunc(Number(payload.pagination.total) || 0));
+          const parsedTotalPages = Math.max(1, Math.trunc(Number(payload.pagination.total_pages) || 1));
+          const hasPrevPage = Boolean(payload.pagination.has_prev_page) || parsedPage > 1;
+          const hasNextPage = Boolean(payload.pagination.has_next_page) || parsedPage < parsedTotalPages;
+          setPagination({
+            page: parsedPage,
+            per_page: parsedPerPage,
+            total: parsedTotal,
+            total_pages: parsedTotalPages,
+            has_next_page: hasNextPage,
+            has_prev_page: hasPrevPage,
+          });
+          setCurrentPage(parsedPage);
+        } else {
+          const total = Number(payload?.totals?.movements) || (Array.isArray(payload.data) ? payload.data.length : 0);
+          const totalPages = Math.max(1, Math.ceil(total / CONSUMOS_PER_PAGE));
+          const safePage = Math.min(nextPage, totalPages);
+          setPagination({
+            page: safePage,
+            per_page: CONSUMOS_PER_PAGE,
+            total,
+            total_pages: totalPages,
+            has_next_page: safePage < totalPages,
+            has_prev_page: safePage > 1,
+          });
+          setCurrentPage(safePage);
+        }
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'No se pudieron cargar los consumos.');
+        setRows([]);
         setTotals(null);
+        setPagination(null);
+      } finally {
+        setLoading(false);
       }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'No se pudieron cargar los consumos.');
-      setRows([]);
-      setTotals(null);
-    } finally {
-      setLoading(false);
-    }
-  }, [apiBaseUrl, distributorId, domain, sourceFile, dateFrom, dateTo, onlyPending, onlyImputed]);
+    },
+    [
+      CONSUMOS_PER_PAGE,
+      apiBaseUrl,
+      currentPage,
+      distributorId,
+      domain,
+      sourceFile,
+      dateFrom,
+      dateTo,
+      onlyPending,
+      onlyImputed,
+    ]
+  );
 
   useEffect(() => {
     fetchConsumos();
@@ -18248,6 +18415,11 @@ const CombustibleConsumosPage: React.FC = () => {
     totals?.discount_counts?.not_taken ?? rows.filter((row) => !row.discounted && row.status !== 'DISCOUNTED').length;
   const statusEntries = Object.entries(totals?.status_counts ?? {}).sort((a, b) => b[1] - a[1]);
   const latestOccurredAt = rows.length > 0 ? rows[0]?.occurred_at ?? null : null;
+  const activePage = pagination?.page ?? currentPage;
+  const inferredTotalPages = Math.max(1, Math.ceil((totals?.movements ?? rows.length) / CONSUMOS_PER_PAGE));
+  const totalPages = pagination?.total_pages ?? inferredTotalPages;
+  const hasPrevPage = pagination ? pagination.has_prev_page : activePage > 1;
+  const hasNextPage = pagination ? pagination.has_next_page : activePage < totalPages;
 
   return (
     <DashboardLayout title="Combustible" subtitle="Consumos registrados" headerContent={<CombustibleTabs />}>
@@ -18259,7 +18431,13 @@ const CombustibleConsumosPage: React.FC = () => {
           <div className="form-grid">
             <label className="input-control">
               <span>Distribuidor</span>
-              <select value={distributorId} onChange={(event) => setDistributorId(event.target.value)}>
+              <select
+                value={distributorId}
+                onChange={(event) => {
+                  setDistributorId(event.target.value);
+                  setCurrentPage(1);
+                }}
+              >
                 <option value="">Todos</option>
                 {distributors.map((distributor) => (
                   <option key={`consumos-dist-${distributor.id}`} value={distributor.id}>
@@ -18270,13 +18448,23 @@ const CombustibleConsumosPage: React.FC = () => {
             </label>
             <label className="input-control">
               <span>Dominio</span>
-              <input value={domain} onChange={(event) => setDomain(event.target.value)} placeholder="ABC123" />
+              <input
+                value={domain}
+                onChange={(event) => {
+                  setDomain(event.target.value);
+                  setCurrentPage(1);
+                }}
+                placeholder="ABC123"
+              />
             </label>
             <label className="input-control">
               <span>Archivo</span>
               <input
                 value={sourceFile}
-                onChange={(event) => setSourceFile(event.target.value)}
+                onChange={(event) => {
+                  setSourceFile(event.target.value);
+                  setCurrentPage(1);
+                }}
                 placeholder="ReporteConsumos-2026-01-22T094110.xlsx"
               />
             </label>
@@ -18287,6 +18475,7 @@ const CombustibleConsumosPage: React.FC = () => {
                 onChange={(event) => {
                   const value = event.target.value as 'Q1' | 'Q2' | 'MONTH' | '';
                   setPeriodPreset(value);
+                  setCurrentPage(1);
                   if (value) {
                     const baseDate = dateFrom || dateTo || new Date().toISOString().slice(0, 10);
                     applyPeriodPreset(value, baseDate);
@@ -18307,6 +18496,7 @@ const CombustibleConsumosPage: React.FC = () => {
                 onChange={(event) => {
                   setDateFrom(event.target.value);
                   setPeriodPreset('');
+                  setCurrentPage(1);
                 }}
               />
             </label>
@@ -18318,20 +18508,43 @@ const CombustibleConsumosPage: React.FC = () => {
                 onChange={(event) => {
                   setDateTo(event.target.value);
                   setPeriodPreset('');
+                  setCurrentPage(1);
                 }}
               />
             </label>
           </div>
           <div className="filters-actions">
             <label className="checkbox-control">
-              <input type="checkbox" checked={onlyPending} onChange={(event) => setOnlyPending(event.target.checked)} />
+              <input
+                type="checkbox"
+                checked={onlyPending}
+                onChange={(event) => {
+                  setOnlyPending(event.target.checked);
+                  setCurrentPage(1);
+                }}
+              />
               <span>Solo no descontados</span>
             </label>
             <label className="checkbox-control">
-              <input type="checkbox" checked={onlyImputed} onChange={(event) => setOnlyImputed(event.target.checked)} />
+              <input
+                type="checkbox"
+                checked={onlyImputed}
+                onChange={(event) => {
+                  setOnlyImputed(event.target.checked);
+                  setCurrentPage(1);
+                }}
+              />
               <span>Solo imputados</span>
             </label>
-            <button type="button" className="primary-action" onClick={fetchConsumos} disabled={loading}>
+            <button
+              type="button"
+              className="primary-action"
+              onClick={() => {
+                setCurrentPage(1);
+                fetchConsumos(1);
+              }}
+              disabled={loading}
+            >
               {loading ? 'Cargando…' : 'Buscar'}
             </button>
             {error ? <span className="helper-text">{error}</span> : null}
@@ -18413,8 +18626,8 @@ const CombustibleConsumosPage: React.FC = () => {
           </p>
           {(totals?.movements ?? rows.length) > rows.length ? (
             <p className="helper-text">
-              Mostrando {rows.length} de {totals?.movements ?? rows.length} movimientos (límite {totals?.limit ?? 500}{' '}
-              por consulta).
+              Mostrando {rows.length} de {totals?.movements ?? rows.length} movimientos (página {activePage} de{' '}
+              {Math.max(1, pagination?.total_pages ?? totalPages)}).
             </p>
           ) : null}
         </header>
@@ -18459,6 +18672,33 @@ const CombustibleConsumosPage: React.FC = () => {
             </tbody>
           </table>
         </div>
+        <footer className="table-footer">
+          <span>
+            {loading
+              ? 'Cargando movimientos...'
+              : `Página ${activePage} de ${totalPages} · ${totals?.movements ?? rows.length} movimiento${
+                  (totals?.movements ?? rows.length) === 1 ? '' : 's'
+                }`}
+          </span>
+          <div className="pagination">
+            <button
+              type="button"
+              aria-label="Página anterior"
+              onClick={() => setCurrentPage((page) => Math.max(1, page - 1))}
+              disabled={loading || !hasPrevPage}
+            >
+              ‹
+            </button>
+            <button
+              type="button"
+              aria-label="Página siguiente"
+              onClick={() => setCurrentPage((page) => Math.min(totalPages, page + 1))}
+              disabled={loading || !hasNextPage}
+            >
+              ›
+            </button>
+          </div>
+        </footer>
       </section>
     </DashboardLayout>
   );
