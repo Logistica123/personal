@@ -10673,7 +10673,7 @@ const ReclamosPage: React.FC = () => {
   const [flashMessage, setFlashMessage] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [deletingReclamoId, setDeletingReclamoId] = useState<number | null>(null);
-  const [agenteFilter, setAgenteFilter] = useState('');
+  const [agenteFilter, setAgenteFilter] = useState<string[]>([]);
   const [creatorFilter, setCreatorFilter] = useState<string[]>([]);
   const [transportistaFilter, setTransportistaFilter] = useState('');
   const [clienteFilter, setClienteFilter] = useState('');
@@ -10891,7 +10891,7 @@ const ReclamosPage: React.FC = () => {
     const term = searchTerm.trim().toLowerCase();
 
     return reclamos.filter((reclamo) => {
-      if (agenteFilter && reclamo.agente !== agenteFilter) {
+      if (agenteFilter.length > 0 && !agenteFilter.includes(reclamo.agente ?? '')) {
         return false;
       }
 
@@ -11084,7 +11084,7 @@ const ReclamosPage: React.FC = () => {
 
   const handleResetFilters = () => {
     setSearchTerm('');
-    setAgenteFilter('');
+    setAgenteFilter([]);
     setCreatorFilter([]);
     setTransportistaFilter('');
     setClienteFilter('');
@@ -11110,14 +11110,21 @@ const ReclamosPage: React.FC = () => {
         <div className="filters-grid filters-grid--reclamos">
           <label className="filter-field">
             <span>Agente responsable</span>
-            <select value={agenteFilter} onChange={(event) => setAgenteFilter(event.target.value)}>
-              <option value="">Agente responsable</option>
+            <select
+              className="reclamos-multi-select"
+              multiple
+              value={agenteFilter}
+              onChange={(event) =>
+                setAgenteFilter(Array.from(event.target.selectedOptions).map((option) => option.value))
+              }
+            >
               {agenteOptions.map((option) => (
                 <option key={option} value={option}>
                   {option}
                 </option>
               ))}
             </select>
+            <small className="filter-field__hint">Podés elegir varios (Ctrl/Cmd + clic).</small>
           </label>
           <label className="filter-field">
             <span>Agente creador</span>
