@@ -4252,6 +4252,7 @@ const DashboardLayout: React.FC<{
                     { value: 'pre_activo', label: 'Pre activos' },
                     { value: 'baja', label: 'Baja' },
                     { value: 'suspendido', label: 'Suspendido' },
+                    { value: 'cancelado', label: 'Cancelado' },
                     { value: 'no_citado', label: 'No citado' },
                     { value: 'sin_estado', label: 'Sin estado' },
                   ].map((item) => (
@@ -13523,6 +13524,9 @@ const PersonalPage: React.FC = () => {
       }
       if (normalized === 'suspendido') {
         return 'Suspendido';
+      }
+      if (normalized === 'cancelado') {
+        return 'Cancelado';
       }
       return normalized;
     },

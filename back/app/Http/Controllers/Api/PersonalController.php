@@ -186,6 +186,23 @@ class PersonalController extends Controller
         }
     }
 
+    protected function ensureCanceladoEstadoExists(): void
+    {
+        if (! Schema::hasTable('estados')) {
+            return;
+        }
+
+        $exists = Estado::query()
+            ->whereRaw('LOWER(TRIM(nombre)) = ?', ['cancelado'])
+            ->exists();
+
+        if (! $exists) {
+            Estado::query()->create([
+                'nombre' => 'Cancelado',
+            ]);
+        }
+    }
+
     protected function normalizeEstadoNombre(?string $estadoNombre): string
     {
         return Str::of((string) $estadoNombre)
@@ -1198,6 +1215,7 @@ class PersonalController extends Controller
     {
         $this->ensurePreActivoEstadoExists();
         $this->ensureEnviadoEstadoExists();
+        $this->ensureCanceladoEstadoExists();
 
         return response()->json([
             'perfiles' => [
