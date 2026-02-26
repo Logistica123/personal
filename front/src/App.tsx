@@ -10667,6 +10667,11 @@ const ReclamosPage: React.FC = () => {
   const apiBaseUrl = useMemo(() => resolveApiBaseUrl(), []);
   const authUser = useStoredAuthUser();
   const userRole = useMemo(() => getUserRole(authUser), [authUser]);
+  const canViewReclamoImportes = useMemo(
+    () => isElevatedRole(userRole) && userRole !== 'asesor',
+    [userRole]
+  );
+  const reclamosColumnCount = canViewReclamoImportes ? 13 : 11;
   const [reclamos, setReclamos] = useState<ReclamoRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -11014,7 +11019,7 @@ const ReclamosPage: React.FC = () => {
       'Cliente',
       'Tipo de reclamo',
       'Estado',
-      ...(isElevatedRole(userRole)
+      ...(canViewReclamoImportes
         ? ['Pagado', 'Importe pagado', 'Importe facturado']
         : ['Pagado']),
       'Demora',
@@ -11028,7 +11033,7 @@ const ReclamosPage: React.FC = () => {
       sortedReclamos.forEach((reclamo) => {
         const transportistaDisplay = formatTransportistaDisplay(reclamo);
         const canSeeFacturado =
-          isElevatedRole(userRole) && (reclamo.status ?? '').trim().toLowerCase() === 'finalizado';
+          canViewReclamoImportes && (reclamo.status ?? '').trim().toLowerCase() === 'finalizado';
         rows.push([
           reclamo.fechaReclamo ?? '',
           reclamo.codigo ?? `#${reclamo.id}`,
@@ -11042,7 +11047,7 @@ const ReclamosPage: React.FC = () => {
           formatReclamoTipoLabel(reclamo.tipo),
           reclamo.statusLabel ?? reclamo.status ?? '',
           reclamo.pagado ? 'Sí' : 'No',
-          ...(isElevatedRole(userRole)
+          ...(canViewReclamoImportes
             ? [
                 reclamo.pagado
                   ? reclamo.importePagadoLabel ?? formatCurrency(reclamo.importePagado)
@@ -11060,7 +11065,7 @@ const ReclamosPage: React.FC = () => {
 
     const today = new Date().toISOString().slice(0, 10);
     downloadCsv(`reclamos-${today}.csv`, rows);
-  }, [sortedReclamos, formatTransportistaDisplay, resolveReclamoDemora]);
+  }, [canViewReclamoImportes, sortedReclamos, formatTransportistaDisplay, resolveReclamoDemora]);
 
   const footerLabel = useMemo(() => {
     if (loading) {
@@ -11324,7 +11329,7 @@ const ReclamosPage: React.FC = () => {
               <th>Tipo de reclamo</th>
               <th>Estado</th>
               <th>Pagado</th>
-              {isElevatedRole(userRole) ? (
+              {canViewReclamoImportes ? (
                 <>
                   <th>Importe pagado</th>
                   <th>Importe facturado</th>
@@ -11337,13 +11342,13 @@ const ReclamosPage: React.FC = () => {
           <tbody>
             {loading && (
               <tr>
-                <td colSpan={13}>Cargando reclamos...</td>
+                <td colSpan={reclamosColumnCount}>Cargando reclamos...</td>
               </tr>
             )}
 
             {error && !loading && (
               <tr>
-                <td colSpan={13} className="error-cell">
+                <td colSpan={reclamosColumnCount} className="error-cell">
                   {error}
                 </td>
               </tr>
@@ -11351,7 +11356,7 @@ const ReclamosPage: React.FC = () => {
 
             {!loading && !error && sortedReclamos.length === 0 && (
               <tr>
-                <td colSpan={13}>No hay reclamos para mostrar.</td>
+                <td colSpan={reclamosColumnCount}>No hay reclamos para mostrar.</td>
               </tr>
             )}
 
@@ -11360,8 +11365,7 @@ const ReclamosPage: React.FC = () => {
               sortedReclamos.map((reclamo) => {
                 const transportistaDisplay = formatTransportistaDisplay(reclamo);
                 const canSeeFacturado =
-                  isElevatedRole(userRole) && (reclamo.status ?? '').trim().toLowerCase() === 'finalizado';
-                const canEditTicket = isElevatedRole(userRole);
+                  canViewReclamoImportes && (reclamo.status ?? '').trim().toLowerCase() === 'finalizado';
                 return (
                   <tr key={reclamo.id}>
                   <td>{reclamo.fechaReclamo ?? '—'}</td>
@@ -11396,7 +11400,7 @@ const ReclamosPage: React.FC = () => {
                       {reclamo.pagadoLabel ?? (reclamo.pagado ? 'Sí' : 'No')}
                     </span>
                   </td>
-                  {isElevatedRole(userRole) ? (
+                  {canViewReclamoImportes ? (
                     <>
                       <td>
                         {reclamo.pagado
@@ -12442,6 +12446,10 @@ const ReclamoDetailPage: React.FC = () => {
   const apiBaseUrl = useMemo(() => resolveApiBaseUrl(), []);
   const authUser = useStoredAuthUser();
   const userRole = useMemo(() => getUserRole(authUser), [authUser]);
+  const canViewReclamoImportes = useMemo(
+    () => isElevatedRole(userRole) && userRole !== 'asesor',
+    [userRole]
+  );
   const [detail, setDetail] = useState<ReclamoDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -12659,7 +12667,7 @@ const ReclamoDetailPage: React.FC = () => {
     }
 
     let normalizedImporte: number | null = null;
-    if (formValues.pagado === 'true') {
+    if (formValues.pagado === 'true' && canViewReclamoImportes) {
       const trimmedImporte = formValues.importePagado.trim();
       if (!trimmedImporte) {
         setSaveError('Ingresa el importe pagado.');
@@ -12681,7 +12689,7 @@ const ReclamoDetailPage: React.FC = () => {
     }
 
     const isFinalizado = (formValues.status || detail.status || '').trim().toLowerCase() === 'finalizado';
-    const canEditFacturado = isFinalizado && isElevatedRole(userRole);
+    const canEditFacturado = isFinalizado && canViewReclamoImportes;
 
     let normalizedImporteFacturado: number | null | undefined = undefined;
     if (canEditFacturado) {
@@ -12714,7 +12722,7 @@ const ReclamoDetailPage: React.FC = () => {
           tipoId: detail.tipoId,
           status: targetStatus,
           pagado: formValues.pagado === 'true',
-          importePagado: normalizedImporte,
+          ...(canViewReclamoImportes ? { importePagado: normalizedImporte } : {}),
           ...(normalizedImporteFacturado !== undefined ? { importeFacturado: normalizedImporteFacturado } : {}),
           fechaReclamo: formValues.fechaReclamo || null,
         }),
@@ -12996,14 +13004,18 @@ const ReclamoDetailPage: React.FC = () => {
       ['Agente del alta', detail.creator ?? info?.agente ?? ''],
       ['Responsable actual', detail.agente ?? ''],
       ['Pagado', detail.pagado ? 'Sí' : 'No'],
-      [
-        'Importe pagado',
-        detail.pagado ? detail.importePagadoLabel ?? formatCurrency(detail.importePagado) : '',
-      ],
-      [
-        'Importe facturado',
-        detail.importeFacturadoLabel ?? (detail.importeFacturado ? formatCurrency(detail.importeFacturado) : ''),
-      ],
+      ...(canViewReclamoImportes
+        ? ([
+            [
+              'Importe pagado',
+              detail.pagado ? detail.importePagadoLabel ?? formatCurrency(detail.importePagado) : '',
+            ],
+            [
+              'Importe facturado',
+              detail.importeFacturadoLabel ?? (detail.importeFacturado ? formatCurrency(detail.importeFacturado) : ''),
+            ],
+          ] as Array<[string, string]>)
+        : []),
       ['Fecha del alta', info?.fechaAlta ?? ''],
       ['Fecha del reclamo', detail.fechaReclamo ?? ''],
       ['Teléfono', info?.telefono ?? ''],
@@ -13012,7 +13024,7 @@ const ReclamoDetailPage: React.FC = () => {
 
     const filename = `transportista-${detail.transportistaId ?? detail.id ?? 'reclamo'}.csv`;
     downloadCsv(filename, rows);
-  }, [detail]);
+  }, [canViewReclamoImportes, detail]);
 
   const renderReadOnlyField = (label: string, value: string | null) => (
     <label className="input-control">
@@ -13127,13 +13139,13 @@ const ReclamoDetailPage: React.FC = () => {
               {renderReadOnlyField('Responsable actual', detail.agente ?? '')}
               {renderReadOnlyField('Fecha del alta', transportistaInfo?.fechaAlta ?? '')}
               {renderReadOnlyField('Fecha del reclamo', formValues.fechaReclamo || detail.fechaReclamo || '')}
-              {detail.pagado
+              {canViewReclamoImportes && detail.pagado
                 ? renderReadOnlyField(
                     'Importe pagado',
                     detail.importePagadoLabel ?? detail.importePagado ?? ''
                   )
                 : null}
-              {(detail.status ?? '').trim().toLowerCase() === 'finalizado' && isElevatedRole(userRole)
+              {canViewReclamoImportes && (detail.status ?? '').trim().toLowerCase() === 'finalizado'
                 ? renderReadOnlyField(
                     'Importe facturado',
                     detail.importeFacturadoLabel ??
@@ -13320,13 +13332,14 @@ const ReclamoDetailPage: React.FC = () => {
                     importePagado: nextValue === 'true' ? prev.importePagado : '',
                   }));
                 }}
+                disabled={!canViewReclamoImportes}
               >
                 <option value="false">No</option>
                 <option value="true">Sí</option>
               </select>
             </label>
 
-            {formValues.pagado === 'true' ? (
+            {canViewReclamoImportes && formValues.pagado === 'true' ? (
               <label className="input-control">
                 <span>Importe pagado</span>
                 <input
@@ -13344,7 +13357,7 @@ const ReclamoDetailPage: React.FC = () => {
             ) : null}
 
             {(formValues.status || detail.status || '').trim().toLowerCase() === 'finalizado' &&
-            isElevatedRole(userRole) ? (
+            canViewReclamoImportes ? (
               <label className="input-control">
                 <span>Importe facturado</span>
                 <input
@@ -13452,6 +13465,7 @@ const PersonalPage: React.FC = () => {
       { key: 'sucursal', label: 'Sucursal' },
       { key: 'fechaAlta', label: 'Fecha alta' },
       { key: 'fechaBaja', label: 'Fecha baja' },
+      { key: 'fechaNacimientoProveedor', label: 'Fecha nacimiento' },
       { key: 'docs', label: 'Docs' },
       { key: 'acciones', label: 'Acciones', locked: true },
     ],
@@ -14165,7 +14179,7 @@ const PersonalPage: React.FC = () => {
             { header: 'Es solicitud', resolve: (registro) => booleanLabel(registro.esSolicitud) },
             { header: 'Tipo de solicitud', resolve: (registro) => registro.solicitudTipo ?? '' },
             { header: 'Dueño nombre', resolve: (registro) => registro.duenoNombre ?? '' },
-            { header: 'Dueño fecha nacimiento', resolve: (registro) => registro.duenoFechaNacimiento ?? '' },
+            { header: 'Fecha nacimiento proveedor', resolve: (registro) => registro.duenoFechaNacimiento ?? '' },
             { header: 'Dueño CUIL', resolve: (registro) => registro.duenoCuil ?? '' },
             { header: 'Dueño CUIL cobrador', resolve: (registro) => registro.duenoCuilCobrador ?? '' },
             { header: 'Dueño CBU alias', resolve: (registro) => registro.duenoCbuAlias ?? '' },
@@ -14644,6 +14658,7 @@ const PersonalPage: React.FC = () => {
               {isColumnVisible('sucursal') ? <th>Sucursal</th> : null}
               {isColumnVisible('fechaAlta') ? <th>Fecha alta</th> : null}
               {isColumnVisible('fechaBaja') ? <th>Fecha baja</th> : null}
+              {isColumnVisible('fechaNacimientoProveedor') ? <th>Fecha nacimiento</th> : null}
               {isColumnVisible('docs') ? (
                 <th>
                   <button
@@ -14740,6 +14755,7 @@ const PersonalPage: React.FC = () => {
                   {isColumnVisible('sucursal') ? <td>{registro.sucursal ?? '—'}</td> : null}
                   {isColumnVisible('fechaAlta') ? <td>{registro.fechaAlta ?? '—'}</td> : null}
                   {isColumnVisible('fechaBaja') ? <td>{registro.fechaBaja ?? '—'}</td> : null}
+                  {isColumnVisible('fechaNacimientoProveedor') ? <td>{registro.duenoFechaNacimiento ?? '—'}</td> : null}
                   {isColumnVisible('docs') ? (
                     <td>
                       {(() => {
@@ -39094,7 +39110,7 @@ const PersonalCreatePage: React.FC = () => {
           if (!prev.cuil.trim() && documentoFromNosis) {
             next.cuil = documentoFromNosis;
           }
-          if (profileIsCobrador && !prev.duenoFechaNacimiento && fechaNacimientoFromNosis) {
+          if (!prev.duenoFechaNacimiento && fechaNacimientoFromNosis) {
             next.duenoFechaNacimiento = fechaNacimientoFromNosis;
           }
           return next;

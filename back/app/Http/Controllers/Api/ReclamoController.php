@@ -25,8 +25,10 @@ use Illuminate\Validation\Rule;
 
 class ReclamoController extends Controller
 {
-    public function index(): JsonResponse
+    public function index(Request $request): JsonResponse
     {
+        $canViewImportes = $this->canViewReclamoImportes($request);
+
         $reclamos = Reclamo::query()
             ->with([
                 'creator:id,name',
@@ -43,7 +45,7 @@ class ReclamoController extends Controller
             ->orderByDesc('fecha_alta')
             ->orderByDesc('created_at')
             ->get()
-            ->map(fn (Reclamo $reclamo) => $this->transformReclamo($reclamo))
+            ->map(fn (Reclamo $reclamo) => $this->transformReclamo($reclamo, false, $canViewImportes))
             ->values();
 
         return response()->json(['data' => $reclamos]);
@@ -51,6 +53,8 @@ class ReclamoController extends Controller
 
     public function distriappIndex(Request $request): JsonResponse
     {
+        $canViewImportes = $this->canViewReclamoImportes($request);
+
         $validated = $request->validate([
             'personaId' => ['nullable', 'integer', 'exists:personas,id'],
             'cuil' => ['nullable', 'string', 'max:32'],
@@ -105,7 +109,7 @@ class ReclamoController extends Controller
             ->orderByDesc('created_at')
             ->limit($limit)
             ->get()
-            ->map(fn (Reclamo $reclamo) => $this->transformReclamo($reclamo))
+            ->map(fn (Reclamo $reclamo) => $this->transformReclamo($reclamo, false, $canViewImportes))
             ->values();
 
         return response()->json([
@@ -179,6 +183,8 @@ class ReclamoController extends Controller
 
     public function store(Request $request): JsonResponse
     {
+        $canViewImportes = $this->canViewReclamoImportes($request);
+
         $validated = $request->validate([
             'detalle' => ['nullable', 'string'],
             'agenteId' => ['nullable', 'integer', 'exists:users,id'],
@@ -191,13 +197,13 @@ class ReclamoController extends Controller
                 'nullable',
                 'numeric',
                 'min:0',
-                Rule::requiredIf(fn () => (bool) $request->input('pagado')),
+                Rule::requiredIf(fn () => $canViewImportes && (bool) $request->input('pagado')),
             ],
             'importeFacturado' => ['nullable', 'numeric', 'min:0'],
             'fechaReclamo' => ['nullable', 'date'],
         ]);
 
-        $reclamo = DB::transaction(function () use ($request, $validated) {
+        $reclamo = DB::transaction(function () use ($request, $validated, $canViewImportes) {
             /** @var \App\Models\User|null $authenticated */
             $authenticated = $request->user();
             $creatorId = $validated['creatorId'] ?? $authenticated?->id ?? null;
@@ -214,9 +220,11 @@ class ReclamoController extends Controller
                 'status' => $validated['status'],
                 'pagado' => (bool) $validated['pagado'],
                 'importe_pagado' => (bool) $validated['pagado']
-                    ? $this->normalizeImportePagado($validated['importePagado'] ?? null)
+                    ? ($canViewImportes
+                        ? $this->normalizeImportePagado($validated['importePagado'] ?? null)
+                        : null)
                     : null,
-                'importe_facturado' => isset($validated['importeFacturado'])
+                'importe_facturado' => $canViewImportes && isset($validated['importeFacturado'])
                     ? $this->normalizeImportePagado($validated['importeFacturado'])
                     : null,
             ]);
@@ -273,12 +281,14 @@ class ReclamoController extends Controller
 
         return response()->json([
             'message' => 'Reclamo creado correctamente.',
-            'data' => $this->transformReclamo($reclamo, true),
+            'data' => $this->transformReclamo($reclamo, true, $canViewImportes),
         ], 201);
     }
 
-    public function show(Reclamo $reclamo): JsonResponse
+    public function show(Request $request, Reclamo $reclamo): JsonResponse
     {
+        $canViewImportes = $this->canViewReclamoImportes($request);
+
         $showRelations = [
             'creator:id,name',
             'agente:id,name',
@@ -316,12 +326,14 @@ class ReclamoController extends Controller
         $reclamo->loadMissing($showRelations);
 
         return response()->json([
-            'data' => $this->transformReclamo($reclamo, true),
+            'data' => $this->transformReclamo($reclamo, true, $canViewImportes),
         ]);
     }
 
     public function update(Request $request, Reclamo $reclamo): JsonResponse
     {
+        $canViewImportes = $this->canViewReclamoImportes($request);
+
         $validated = $request->validate([
             'detalle' => ['nullable', 'string'],
             'agenteId' => ['nullable', 'integer', 'exists:users,id'],
@@ -334,7 +346,7 @@ class ReclamoController extends Controller
                 'nullable',
                 'numeric',
                 'min:0',
-                Rule::requiredIf(fn () => (bool) $request->input('pagado')),
+                Rule::requiredIf(fn () => $canViewImportes && (bool) $request->input('pagado')),
             ],
             'importeFacturado' => ['nullable', 'numeric', 'min:0'],
             'fechaReclamo' => ['nullable', 'date'],
@@ -349,7 +361,7 @@ class ReclamoController extends Controller
         $originalImportePagado = $this->normalizeImportePagado($reclamo->importe_pagado);
         $originalImporteFacturado = $this->normalizeImportePagado($reclamo->importe_facturado);
 
-        DB::transaction(function () use ($reclamo, $validated, $originalAgente, $originalAgenteName, &$agentChanged, &$newAgenteId, $originalImportePagado) {
+        DB::transaction(function () use ($reclamo, $validated, $originalAgente, $originalAgenteName, &$agentChanged, &$newAgenteId, $originalImportePagado, $canViewImportes) {
             $originalStatus = $reclamo->status;
             $originalPagado = (bool) $reclamo->pagado;
             $originalImporteFacturado = $this->normalizeImportePagado($reclamo->importe_facturado);
@@ -364,12 +376,16 @@ class ReclamoController extends Controller
                 : null;
             $reclamo->status = $validated['status'];
             $reclamo->pagado = (bool) $validated['pagado'];
-            $reclamo->importe_pagado = $reclamo->pagado
-                ? $this->normalizeImportePagado($validated['importePagado'] ?? null)
-                : null;
-            $reclamo->importe_facturado = array_key_exists('importeFacturado', $validated)
-                ? $this->normalizeImportePagado($validated['importeFacturado'])
-                : $reclamo->importe_facturado;
+            if ($canViewImportes) {
+                $reclamo->importe_pagado = $reclamo->pagado
+                    ? $this->normalizeImportePagado($validated['importePagado'] ?? null)
+                    : null;
+                $reclamo->importe_facturado = array_key_exists('importeFacturado', $validated)
+                    ? $this->normalizeImportePagado($validated['importeFacturado'])
+                    : $reclamo->importe_facturado;
+            } else {
+                $reclamo->importe_pagado = $reclamo->pagado ? $reclamo->importe_pagado : null;
+            }
 
             $reclamo->save();
             $this->promotePersonaFromPreActivo($reclamo->persona_id);
@@ -394,36 +410,38 @@ class ReclamoController extends Controller
                 );
             }
 
-            $currentImportePagado = $this->normalizeImportePagado($reclamo->importe_pagado);
-            if ($originalImportePagado !== $currentImportePagado) {
-                $this->recordComment(
-                    $reclamo,
-                    $currentImportePagado
-                        ? sprintf('Importe pagado actualizado a %s', $this->formatImportePagadoLabel($currentImportePagado))
-                        : 'Importe pagado eliminado.',
-                    [
-                        'old' => $originalImportePagado,
-                        'new' => $currentImportePagado,
-                        'field' => 'importe_pagado',
-                    ],
-                    $actorId
-                );
-            }
+            if ($canViewImportes) {
+                $currentImportePagado = $this->normalizeImportePagado($reclamo->importe_pagado);
+                if ($originalImportePagado !== $currentImportePagado) {
+                    $this->recordComment(
+                        $reclamo,
+                        $currentImportePagado
+                            ? sprintf('Importe pagado actualizado a %s', $this->formatImportePagadoLabel($currentImportePagado))
+                            : 'Importe pagado eliminado.',
+                        [
+                            'old' => $originalImportePagado,
+                            'new' => $currentImportePagado,
+                            'field' => 'importe_pagado',
+                        ],
+                        $actorId
+                    );
+                }
 
-            $currentImporteFacturado = $this->normalizeImportePagado($reclamo->importe_facturado);
-            if ($originalImporteFacturado !== $currentImporteFacturado) {
-                $this->recordComment(
-                    $reclamo,
-                    $currentImporteFacturado
-                        ? sprintf('Importe facturado actualizado a %s', $this->formatImportePagadoLabel($currentImporteFacturado))
-                        : 'Importe facturado eliminado.',
-                    [
-                        'old' => $originalImporteFacturado,
-                        'new' => $currentImporteFacturado,
-                        'field' => 'importe_facturado',
-                    ],
-                    $actorId
-                );
+                $currentImporteFacturado = $this->normalizeImportePagado($reclamo->importe_facturado);
+                if ($originalImporteFacturado !== $currentImporteFacturado) {
+                    $this->recordComment(
+                        $reclamo,
+                        $currentImporteFacturado
+                            ? sprintf('Importe facturado actualizado a %s', $this->formatImportePagadoLabel($currentImporteFacturado))
+                            : 'Importe facturado eliminado.',
+                        [
+                            'old' => $originalImporteFacturado,
+                            'new' => $currentImporteFacturado,
+                            'field' => 'importe_facturado',
+                        ],
+                        $actorId
+                    );
+                }
             }
 
             if ($originalAgente !== $reclamo->agente_id) {
@@ -481,7 +499,7 @@ class ReclamoController extends Controller
 
         return response()->json([
             'message' => 'Reclamo actualizado correctamente.',
-            'data' => $this->transformReclamo($reclamo, true),
+            'data' => $this->transformReclamo($reclamo, true, $canViewImportes),
         ]);
     }
 
@@ -541,7 +559,7 @@ class ReclamoController extends Controller
 
         return response()->json([
             'message' => 'Comentario agregado correctamente.',
-            'data' => $this->transformReclamo($reclamo, true),
+            'data' => $this->transformReclamo($reclamo, true, $this->canViewReclamoImportes($request)),
         ], 201);
     }
 
@@ -697,7 +715,7 @@ class ReclamoController extends Controller
 
         return response()->json([
             'message' => $message,
-            'data' => $this->transformReclamo($reclamo, true),
+            'data' => $this->transformReclamo($reclamo, true, $this->canViewReclamoImportes($request)),
         ], 201);
     }
 
@@ -765,7 +783,7 @@ class ReclamoController extends Controller
 
         return response()->json([
             'message' => 'Documento eliminado correctamente.',
-            'data' => $this->transformReclamo($reclamo, true),
+            'data' => $this->transformReclamo($reclamo, true, $this->canViewReclamoImportes($request)),
         ]);
     }
 
@@ -813,7 +831,17 @@ class ReclamoController extends Controller
         return Storage::disk($disk)->download($documento->path, $filename);
     }
 
-    protected function transformReclamo(Reclamo $reclamo, bool $withHistory = false): array
+    protected function canViewReclamoImportes(Request $request): bool
+    {
+        $role = strtolower(trim((string) ($request->user()?->role ?? '')));
+        if ($role === '') {
+            return true;
+        }
+
+        return ! Str::contains($role, 'asesor');
+    }
+
+    protected function transformReclamo(Reclamo $reclamo, bool $withHistory = false, bool $includeImportes = true): array
     {
         $statusLabels = $this->statusLabels();
         $statusLabel = $statusLabels[$reclamo->status] ?? Str::title(str_replace('_', ' ', (string) $reclamo->status));
@@ -852,10 +880,10 @@ class ReclamoController extends Controller
             'statusLabel' => $statusLabel,
             'pagado' => (bool) $reclamo->pagado,
             'pagadoLabel' => $reclamo->pagado ? 'Sí' : 'No',
-            'importePagado' => $this->normalizeImportePagado($reclamo->importe_pagado),
-            'importePagadoLabel' => $this->formatImportePagadoLabel($reclamo->importe_pagado),
-            'importeFacturado' => $this->normalizeImportePagado($reclamo->importe_facturado),
-            'importeFacturadoLabel' => $this->formatImportePagadoLabel($reclamo->importe_facturado),
+            'importePagado' => $includeImportes ? $this->normalizeImportePagado($reclamo->importe_pagado) : null,
+            'importePagadoLabel' => $includeImportes ? $this->formatImportePagadoLabel($reclamo->importe_pagado) : null,
+            'importeFacturado' => $includeImportes ? $this->normalizeImportePagado($reclamo->importe_facturado) : null,
+            'importeFacturadoLabel' => $includeImportes ? $this->formatImportePagadoLabel($reclamo->importe_facturado) : null,
             'creator' => $reclamo->creator?->name,
             'creatorId' => $reclamo->creator_id,
             'agente' => $reclamo->agente?->name,
