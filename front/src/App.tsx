@@ -14149,6 +14149,7 @@ const PersonalPage: React.FC = () => {
             { header: 'Unidad ID', resolve: (registro) => registro.unidadId ?? '' },
             { header: 'Unidad detalle', resolve: (registro) => registro.unidadDetalle ?? '' },
             { header: 'Fecha alta', resolve: (registro) => registro.fechaAlta ?? '' },
+            { header: 'Fecha baja', resolve: (registro) => registro.fechaBaja ?? '' },
             { header: 'Combustible', resolve: (registro) => booleanLabel(registro.combustibleValue) },
             { header: 'Estado combustible', resolve: (registro) => registro.combustibleEstado ?? '' },
             { header: 'Tarifa especial', resolve: (registro) => booleanLabel(registro.tarifaEspecialValue) },
