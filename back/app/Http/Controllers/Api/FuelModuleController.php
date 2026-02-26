@@ -342,6 +342,7 @@ class FuelModuleController extends Controller
         $includeDuplicates = $request->boolean('include_duplicates');
         $status = $request->query('status');
         $sourceFile = $request->query('source_file');
+        $invoiceNumber = $request->query('invoice_number');
 
         $baseQuery = FuelMovement::query();
         $normalizedStatus = is_string($status) ? strtoupper(trim($status)) : '';
@@ -373,6 +374,10 @@ class FuelModuleController extends Controller
 
         if (is_string($sourceFile) && trim($sourceFile) !== '') {
             $baseQuery->where('source_file', trim($sourceFile));
+        }
+
+        if (is_string($invoiceNumber) && trim($invoiceNumber) !== '') {
+            $baseQuery->where('invoice_number', 'like', '%' . trim($invoiceNumber) . '%');
         }
 
         if ($onlyPending) {
@@ -415,6 +420,7 @@ class FuelModuleController extends Controller
             'station' => $movement->station,
             'domain_norm' => $movement->domain_norm,
             'product' => $movement->product,
+            'invoice_number' => $movement->invoice_number,
             'liters' => $movement->liters,
             'amount' => $movement->amount,
             'price_per_liter' => $movement->price_per_liter,

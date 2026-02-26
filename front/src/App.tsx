@@ -16101,6 +16101,7 @@ const CombustibleDistribuidorPage: React.FC = () => {
   const [newDistributorName, setNewDistributorName] = useState('');
   const [newDistributorCode, setNewDistributorCode] = useState('');
   const [domain, setDomain] = useState('');
+  const [invoiceNumber, setInvoiceNumber] = useState('');
   const [sourceFile, setSourceFile] = useState('');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
@@ -16112,6 +16113,7 @@ const CombustibleDistribuidorPage: React.FC = () => {
       station: string | null;
       domain_norm: string | null;
       product: string | null;
+      invoice_number?: string | null;
       liters: number | null;
       amount: number | null;
       price_per_liter: number | null;
@@ -16265,6 +16267,9 @@ const CombustibleDistribuidorPage: React.FC = () => {
         if (domain.trim()) {
           url.searchParams.set('domain', domain.trim());
         }
+        if (invoiceNumber.trim()) {
+          url.searchParams.set('invoice_number', invoiceNumber.trim());
+        }
         if (sourceFile.trim()) {
           url.searchParams.set('source_file', sourceFile.trim());
         }
@@ -16345,6 +16350,7 @@ const CombustibleDistribuidorPage: React.FC = () => {
       distributors,
       normalizeDistributorSearch,
       domain,
+      invoiceNumber,
       sourceFile,
       dateFrom,
       dateTo,
@@ -16471,6 +16477,7 @@ const CombustibleDistribuidorPage: React.FC = () => {
     const summaryRows = [
       ['Distribuidor', selectedDistributor?.name ?? '—'],
       ['Dominio', domain.trim() || '—'],
+      ['Nro. factura', invoiceNumber.trim() || '—'],
       ['Período', periodLabel],
       [],
       ['Movimientos', String(totals?.movements ?? 0)],
@@ -16479,12 +16486,13 @@ const CombustibleDistribuidorPage: React.FC = () => {
       [],
     ];
 
-    const headerRow = ['Fecha', 'Estación', 'Dominio', 'Producto', 'Litros', 'Precio/Litro', 'Importe', 'Estado'];
+    const headerRow = ['Fecha', 'Estación', 'Dominio', 'Producto', 'Nro. factura', 'Litros', 'Precio/Litro', 'Importe', 'Estado'];
     const dataRows = rows.map((row) => [
       formatDateTime(row.occurred_at),
       row.station ?? '',
       row.domain_norm ?? '',
       row.product ?? '',
+      row.invoice_number ?? '',
       formatNumber(row.liters),
       formatNumber(row.price_per_liter),
       formatCurrency(row.amount ?? 0),
@@ -16533,7 +16541,9 @@ const CombustibleDistribuidorPage: React.FC = () => {
       <body>
         <h1>Consumo de combustible</h1>
         <div class="meta">
-          Distribuidor: ${selectedDistributor?.name ?? '—'} · Dominio: ${domain.trim() || '—'} · Período: ${periodLabel}
+          Distribuidor: ${selectedDistributor?.name ?? '—'} · Dominio: ${domain.trim() || '—'} · Nro. factura: ${
+            invoiceNumber.trim() || '—'
+          } · Período: ${periodLabel}
         </div>
         <div class="summary">
           <span>Movimientos: ${totals?.movements ?? 0}</span>
@@ -16547,6 +16557,7 @@ const CombustibleDistribuidorPage: React.FC = () => {
               <th>Estación</th>
               <th>Dominio</th>
               <th>Producto</th>
+              <th>Nro. factura</th>
               <th>Litros</th>
               <th>Precio/Litro</th>
               <th>Importe</th>
@@ -16562,6 +16573,7 @@ const CombustibleDistribuidorPage: React.FC = () => {
                 <td>${row.station ?? ''}</td>
                 <td>${row.domain_norm ?? ''}</td>
                 <td>${row.product ?? ''}</td>
+                <td>${row.invoice_number ?? ''}</td>
                 <td>${formatNumber(row.liters)}</td>
                 <td>${formatNumber(row.price_per_liter)}</td>
                 <td>${formatCurrency(row.amount ?? 0)}</td>
@@ -16666,6 +16678,14 @@ const CombustibleDistribuidorPage: React.FC = () => {
         <label className="input-control">
           <span>Dominio</span>
           <input value={domain} onChange={(event) => setDomain(event.target.value)} placeholder="ABC123" />
+        </label>
+        <label className="input-control">
+          <span>Nro. factura</span>
+          <input
+            value={invoiceNumber}
+            onChange={(event) => setInvoiceNumber(event.target.value)}
+            placeholder="Ej: 001-00012345"
+          />
         </label>
         <label className="input-control">
           <span>Período</span>
@@ -16806,6 +16826,7 @@ const CombustibleDistribuidorPage: React.FC = () => {
               <th>Estación</th>
               <th>Dominio</th>
               <th>Producto</th>
+              <th>Nro. factura</th>
               <th>Litros</th>
               <th>Precio/Litro</th>
               <th>Importe</th>
@@ -16815,19 +16836,19 @@ const CombustibleDistribuidorPage: React.FC = () => {
           <tbody>
             {loading && (
               <tr>
-                <td colSpan={9}>Cargando consumos...</td>
+                <td colSpan={10}>Cargando consumos...</td>
               </tr>
             )}
             {error && !loading && (
               <tr>
-                <td colSpan={9} className="error-cell">
+                <td colSpan={10} className="error-cell">
                   {error}
                 </td>
               </tr>
             )}
             {!loading && !error && rows.length === 0 && (
               <tr>
-                <td colSpan={9}>No hay consumos para mostrar.</td>
+                <td colSpan={10}>No hay consumos para mostrar.</td>
               </tr>
             )}
             {!loading &&
@@ -16847,6 +16868,7 @@ const CombustibleDistribuidorPage: React.FC = () => {
                   <td>{row.station ?? '—'}</td>
                   <td>{row.domain_norm ?? '—'}</td>
                   <td>{row.product ?? '—'}</td>
+                  <td>{row.invoice_number ?? '—'}</td>
                   <td>{formatNumber(row.liters)}</td>
                   <td>{formatNumber(row.price_per_liter)}</td>
                   <td>{formatCurrency(row.amount ?? 0)}</td>
@@ -18220,6 +18242,7 @@ const CombustibleConsumosPage: React.FC = () => {
   const [distributors, setDistributors] = useState<Array<{ id: number; name: string; code?: string | null }>>([]);
   const [distributorId, setDistributorId] = useState('');
   const [domain, setDomain] = useState('');
+  const [invoiceNumber, setInvoiceNumber] = useState('');
   const [sourceFile, setSourceFile] = useState('');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
@@ -18233,6 +18256,7 @@ const CombustibleConsumosPage: React.FC = () => {
       station: string | null;
       domain_norm: string | null;
       product: string | null;
+      invoice_number?: string | null;
       liters: number | null;
       amount: number | null;
       price_per_liter: number | null;
@@ -18316,6 +18340,9 @@ const CombustibleConsumosPage: React.FC = () => {
         if (domain.trim()) {
           url.searchParams.set('domain', domain.trim());
         }
+        if (invoiceNumber.trim()) {
+          url.searchParams.set('invoice_number', invoiceNumber.trim());
+        }
         if (sourceFile.trim()) {
           url.searchParams.set('source_file', sourceFile.trim());
         }
@@ -18397,6 +18424,7 @@ const CombustibleConsumosPage: React.FC = () => {
       currentPage,
       distributorId,
       domain,
+      invoiceNumber,
       sourceFile,
       dateFrom,
       dateTo,
@@ -18455,6 +18483,17 @@ const CombustibleConsumosPage: React.FC = () => {
                   setCurrentPage(1);
                 }}
                 placeholder="ABC123"
+              />
+            </label>
+            <label className="input-control">
+              <span>Nro. factura</span>
+              <input
+                value={invoiceNumber}
+                onChange={(event) => {
+                  setInvoiceNumber(event.target.value);
+                  setCurrentPage(1);
+                }}
+                placeholder="Ej: 001-00012345"
               />
             </label>
             <label className="input-control">
@@ -18619,7 +18658,7 @@ const CombustibleConsumosPage: React.FC = () => {
           <h3>Detalle</h3>
           <p className="helper-text">
             Distribuidor: {selectedDistributor?.name ?? 'Todos'} · Dominio: {domain.trim() || '—'} · Archivo:{' '}
-            {sourceFile.trim() || '—'}
+            {sourceFile.trim() || '—'} · Nro. factura: {invoiceNumber.trim() || '—'}
           </p>
           <p className="helper-text">
             Última fecha cargada: {latestOccurredAt ? formatDateTime(latestOccurredAt) : '—'}
@@ -18639,6 +18678,7 @@ const CombustibleConsumosPage: React.FC = () => {
                 <th>Estación</th>
                 <th>Dominio</th>
                 <th>Producto</th>
+                <th>Nro. factura</th>
                 <th>Litros</th>
                 <th>Precio/Litro</th>
                 <th>Importe</th>
@@ -18648,12 +18688,12 @@ const CombustibleConsumosPage: React.FC = () => {
             <tbody>
               {loading && (
                 <tr>
-                  <td colSpan={8}>Cargando movimientos...</td>
+                  <td colSpan={9}>Cargando movimientos...</td>
                 </tr>
               )}
               {!loading && rows.length === 0 && (
                 <tr>
-                  <td colSpan={8}>No hay movimientos para el filtro actual.</td>
+                  <td colSpan={9}>No hay movimientos para el filtro actual.</td>
                 </tr>
               )}
               {!loading &&
@@ -18663,6 +18703,7 @@ const CombustibleConsumosPage: React.FC = () => {
                     <td>{row.station ?? '—'}</td>
                     <td>{row.domain_norm ?? '—'}</td>
                     <td>{row.product ?? '—'}</td>
+                    <td>{row.invoice_number ?? '—'}</td>
                     <td>{formatNumber(row.liters)}</td>
                     <td>{formatNumber(row.price_per_liter)}</td>
                     <td>{formatCurrency(row.amount ?? 0)}</td>
@@ -28304,6 +28345,7 @@ const sucursalOptions = useMemo(() => {
 
         const requestPayload = {
           ...buildAltaRequestPayload(altaForm),
+          estadoId: null,
           esSolicitud: true,
         };
 
@@ -28615,6 +28657,7 @@ const sucursalOptions = useMemo(() => {
 
       const requestPayload = {
         ...buildAltaRequestPayload(altaForm),
+        estadoId: null,
         esSolicitud: true,
       };
 

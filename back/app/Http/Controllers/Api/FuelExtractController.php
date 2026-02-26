@@ -157,6 +157,7 @@ class FuelExtractController extends Controller
             $dateRaw = $this->getRowValue($row, $columnIndexes, 'Fecha');
             $station = $this->getRowValue($row, $columnIndexes, 'Estación');
             $product = $this->getRowValue($row, $columnIndexes, 'Producto');
+            $invoiceNumber = $this->getRowValue($row, $columnIndexes, 'Nro. Factura');
             $conductor = $this->getRowValue($row, $columnIndexes, 'Conductor');
             $litersRaw = $this->getRowValue($row, $columnIndexes, 'Litros');
             $amountRaw = $this->getRowValue($row, $columnIndexes, 'Importe');
@@ -233,6 +234,7 @@ class FuelExtractController extends Controller
                 'domain_raw' => $domainRaw,
                 'domain_norm' => $domainNorm,
                 'product' => $product,
+                'invoice_number' => $invoiceNumber !== '' ? $invoiceNumber : null,
                 'conductor' => $conductor,
                 'liters' => $liters,
                 'amount' => $amount,
@@ -720,7 +722,7 @@ class FuelExtractController extends Controller
 
     private function mapPreviewRows(array $columns, array $rows): array
     {
-        $standardColumns = ['Fecha', 'Estación', 'Dominio', 'Producto', 'Conductor', 'Litros', 'Importe', 'Precio/Litro'];
+        $standardColumns = ['Fecha', 'Estación', 'Dominio', 'Producto', 'Nro. Factura', 'Conductor', 'Litros', 'Importe', 'Precio/Litro'];
         $indexMap = [];
         $unmapped = [];
 
@@ -911,6 +913,13 @@ class FuelExtractController extends Controller
             strpos($normalized, 'valor') !== false
         ) {
             return 'Importe';
+        }
+        if (
+            strpos($normalized, 'factura') !== false ||
+            strpos($normalized, 'comprobante') !== false ||
+            strpos($normalized, 'ticket') !== false
+        ) {
+            return 'Nro. Factura';
         }
 
         return null;

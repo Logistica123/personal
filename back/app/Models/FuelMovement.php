@@ -14,6 +14,7 @@ class FuelMovement extends Model
         'domain_raw',
         'domain_norm',
         'product',
+        'invoice_number',
         'conductor',
         'liters',
         'amount',

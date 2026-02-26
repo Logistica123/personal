@@ -1322,7 +1322,7 @@ class PersonalController extends Controller
             'cliente_id' => $validated['clienteId'] ?? null,
             'sucursal_id' => $validated['sucursalId'] ?? null,
             'unidad_id' => $validated['unidadId'] ?? null,
-            'estado_id' => $validated['estadoId'] ?? null,
+            'estado_id' => $autoApprove ? ($validated['estadoId'] ?? null) : null,
             'pago' => $validated['pago'] ?? null,
             'cbu_alias' => $validated['cbuAlias'] ?? null,
             'patente' => $validated['patente'] ?? null,
