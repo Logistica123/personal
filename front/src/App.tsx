@@ -10679,6 +10679,7 @@ const ReclamosPage: React.FC = () => {
   const [flashMessage, setFlashMessage] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [deletingReclamoId, setDeletingReclamoId] = useState<number | null>(null);
+  const [agentesCatalog, setAgentesCatalog] = useState<string[]>([]);
   const [agenteFilter, setAgenteFilter] = useState<string[]>([]);
   const [creatorFilter, setCreatorFilter] = useState<string[]>([]);
   const [transportistaFilter, setTransportistaFilter] = useState('');
@@ -10826,16 +10827,46 @@ const ReclamosPage: React.FC = () => {
     return () => controller.abort();
   }, [apiBaseUrl]);
 
+  useEffect(() => {
+    const controller = new AbortController();
+
+    const fetchAgentesCatalog = async () => {
+      try {
+        const response = await fetch(`${apiBaseUrl}/api/reclamos/meta`, {
+          signal: controller.signal,
+        });
+
+        if (!response.ok) {
+          throw new Error(`Error ${response.status}: ${response.statusText}`);
+        }
+
+        const payload = (await response.json()) as { data?: ReclamoMeta };
+        const agentes = payload?.data?.agentes ?? [];
+        const names = Array.from(
+          new Set(agentes.map((agente) => agente.nombre?.trim()).filter((value): value is string => Boolean(value)))
+        ).sort((a, b) => a.localeCompare(b));
+
+        setAgentesCatalog(names);
+      } catch (err) {
+        if ((err as Error).name === 'AbortError') {
+          return;
+        }
+      }
+    };
+
+    fetchAgentesCatalog();
+
+    return () => controller.abort();
+  }, [apiBaseUrl]);
+
   const agenteOptions = useMemo(
-    () =>
-      Array.from(
-        new Set(
-          reclamos
-            .map((reclamo) => reclamo.agente)
-            .filter((value): value is string => Boolean(value))
-        )
-      ).sort((a, b) => a.localeCompare(b)),
-    [reclamos]
+    () => {
+      const fromReclamos = reclamos
+        .map((reclamo) => reclamo.agente?.trim())
+        .filter((value): value is string => Boolean(value));
+      return Array.from(new Set([...agentesCatalog, ...fromReclamos])).sort((a, b) => a.localeCompare(b));
+    },
+    [agentesCatalog, reclamos]
   );
 
   const creatorOptions = useMemo(
