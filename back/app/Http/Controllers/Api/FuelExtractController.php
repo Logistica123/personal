@@ -53,7 +53,8 @@ class FuelExtractController extends Controller
             [$columns, $rows, $rowCount, $meta] = $this->parseXlsxPreview($path, 20, $preferredSheet);
         }
 
-        $mapping = $this->mapPreviewRows($columns, $rows);
+        $format = $request->input('format');
+        $mapping = $this->mapPreviewRows($columns, $rows, is_string($format) ? $format : null);
         $columns = $mapping['mapped'] ? $mapping['columns'] : $columns;
         $rows = $mapping['mapped'] ? $mapping['rows'] : $rows;
         $stats = null;
@@ -112,7 +113,8 @@ class FuelExtractController extends Controller
             [$columns, $rows, $rowCount] = $this->parseXlsxPreview($path, 1000000, $preferredSheet);
         }
 
-        $mapping = $this->mapPreviewRows($columns, $rows);
+        $format = $request->input('format');
+        $mapping = $this->mapPreviewRows($columns, $rows, is_string($format) ? $format : null);
         if (!$mapping['mapped']) {
             return response()->json(
                 ['message' => 'No se pudieron mapear columnas al formato general.'],
@@ -133,7 +135,6 @@ class FuelExtractController extends Controller
 
         $importedBy = $request->user()?->id;
         $provider = $request->input('provider');
-        $format = $request->input('format');
         $dateFrom = $request->input('date_from');
         $dateTo = $request->input('date_to');
         $originalName = $file->getClientOriginalName();
@@ -720,7 +721,7 @@ class FuelExtractController extends Controller
         return $columns;
     }
 
-    private function mapPreviewRows(array $columns, array $rows): array
+    private function mapPreviewRows(array $columns, array $rows, ?string $format = null): array
     {
         $standardColumns = ['Fecha', 'Estación', 'Dominio', 'Producto', 'Nro. Factura', 'Conductor', 'Litros', 'Importe', 'Precio/Litro'];
         $indexMap = [];
@@ -736,6 +737,8 @@ class FuelExtractController extends Controller
                 $unmapped[] = (string) $header;
             }
         }
+
+        $indexMap = $this->applyFormatColumnOverrides($columns, $rows, $indexMap, $format);
 
         if (count($indexMap) === 0) {
             return [
@@ -764,6 +767,62 @@ class FuelExtractController extends Controller
             'rows' => $mappedRows,
             'unmappedColumns' => $unmapped,
         ];
+    }
+
+    private function applyFormatColumnOverrides(array $columns, array $rows, array $indexMap, ?string $format): array
+    {
+        $normalizedFormat = strtolower(trim((string) $format));
+        if ($normalizedFormat !== 'custom') {
+            return $indexMap;
+        }
+
+        $productColumnIndex = $this->columnLettersToZeroIndex('V');
+        $maxColumns = max(count($columns), $this->maxRowWidth($rows));
+        if ($productColumnIndex >= $maxColumns) {
+            return $indexMap;
+        }
+
+        if (!$this->columnHasAnyValue($rows, $productColumnIndex)) {
+            return $indexMap;
+        }
+
+        $indexMap['Producto'] = $productColumnIndex;
+
+        return $indexMap;
+    }
+
+    private function columnLettersToZeroIndex(string $letters): int
+    {
+        $value = strtoupper(trim($letters));
+        if ($value === '' || preg_match('/[^A-Z]/', $value)) {
+            return -1;
+        }
+
+        $index = 0;
+        for ($i = 0, $len = strlen($value); $i < $len; $i++) {
+            $index = $index * 26 + (ord($value[$i]) - 64);
+        }
+
+        return $index - 1;
+    }
+
+    private function columnHasAnyValue(array $rows, int $columnIndex): bool
+    {
+        if ($columnIndex < 0) {
+            return false;
+        }
+
+        foreach ($rows as $row) {
+            if (!array_key_exists($columnIndex, $row)) {
+                continue;
+            }
+
+            if (trim((string) $row[$columnIndex]) !== '') {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private function validateMappedRows(array $columns, array $rows): array
