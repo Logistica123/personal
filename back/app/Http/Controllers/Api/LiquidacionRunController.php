@@ -258,7 +258,8 @@ class LiquidacionRunController extends Controller
     public function assignImportacionProvider(Request $request, LiquidacionImportRun $run)
     {
         $validated = $request->validate([
-            'patente_norm' => ['required', 'string', 'max:30'],
+            'patente_norm' => ['nullable', 'string', 'max:30'],
+            'distribuidor_norm' => ['nullable', 'string', 'max:255'],
             'nombre_excel_norm' => ['nullable', 'string', 'max:255'],
             'proveedor_id' => ['required', 'integer', 'min:1'],
             'actualizar_patente_en_proveedor' => ['nullable', 'boolean'],
@@ -278,10 +279,11 @@ class LiquidacionRunController extends Controller
             ], Response::HTTP_UNPROCESSABLE_ENTITY);
         }
 
-        $patenteNorm = $this->normalizeDomain((string) $validated['patente_norm']);
-        if ($patenteNorm === null) {
+        $patenteNorm = $this->normalizeDomain((string) ($validated['patente_norm'] ?? ''));
+        $distribuidorNorm = $this->normalizeEpsaDistributorName((string) ($validated['distribuidor_norm'] ?? ''));
+        if ($patenteNorm === null && $distribuidorNorm === null) {
             return response()->json([
-                'message' => 'La patente informada es inválida.',
+                'message' => 'Debés informar patente_norm o distribuidor_norm.',
             ], Response::HTTP_UNPROCESSABLE_ENTITY);
         }
 
@@ -305,33 +307,44 @@ class LiquidacionRunController extends Controller
         $actorId = $request->user()?->id;
         $providerFullName = $this->buildProviderDisplayName($provider);
 
-        $rowsToAssign = LiquidacionStagingRow::query()
+        $rowsQuery = LiquidacionStagingRow::query()
             ->where('run_id', $run->id)
-            ->where('domain_norm', $patenteNorm)
             ->orderBy('row_number')
-            ->orderBy('id')
-            ->get();
+            ->orderBy('id');
+        if ($patenteNorm !== null) {
+            $rowsQuery->where('domain_norm', $patenteNorm);
+        } else {
+            $rowsQuery->where('name_excel_norm', $distribuidorNorm);
+        }
+        $rowsToAssign = $rowsQuery->get();
         if ($rowsToAssign->isEmpty()) {
             return response()->json([
-                'message' => 'No hay filas con la patente indicada en este run.',
+                'message' => $patenteNorm !== null
+                    ? 'No hay filas con la patente indicada en este run.'
+                    : 'No hay filas con el distribuidor indicado en este run.',
             ], Response::HTTP_NOT_FOUND);
         }
+
+        $assignCode = $patenteNorm ?? $distribuidorNorm;
+        $shouldUpdateProviderPatente = $updateProviderPatente && $patenteNorm !== null;
 
         $result = DB::transaction(function () use (
             $run,
             $patenteNorm,
+            $distribuidorNorm,
+            $assignCode,
             $nameExcelNorm,
             $provider,
             $providerFullName,
             $actorId,
-            $updateProviderPatente,
+            $shouldUpdateProviderPatente,
             $overwriteProviderPatente,
             $motivo,
             $rowsToAssign
         ) {
             foreach ($rowsToAssign as $row) {
                 $row->distributor_id = $provider->id;
-                $row->distributor_code = $patenteNorm;
+                $row->distributor_code = $assignCode;
                 $row->distributor_name = $providerFullName;
                 $row->match_provider_persona_id = $provider->id;
                 $row->match_status = self::PROVIDER_MATCH_MANUAL;
@@ -341,13 +354,25 @@ class LiquidacionRunController extends Controller
                 $this->refreshStagingRowValidationStatus($run->id, $row);
             }
 
-            $aliasSaved = $this->upsertClientIdentifierAlias(
-                (string) ($run->client_code ?? ''),
-                'PATENTE',
-                $patenteNorm,
-                (int) $provider->id,
-                $actorId
-            );
+            $aliasSaved = false;
+            if ($patenteNorm !== null) {
+                $aliasSaved = $this->upsertClientIdentifierAlias(
+                    (string) ($run->client_code ?? ''),
+                    'PATENTE',
+                    $patenteNorm,
+                    (int) $provider->id,
+                    $actorId
+                ) || $aliasSaved;
+            }
+            if ($distribuidorNorm !== null) {
+                $aliasSaved = $this->upsertClientIdentifierAlias(
+                    (string) ($run->client_code ?? ''),
+                    'DISTRIBUIDOR',
+                    $distribuidorNorm,
+                    (int) $provider->id,
+                    $actorId
+                ) || $aliasSaved;
+            }
 
             if ($nameExcelNorm !== null) {
                 $this->upsertClientIdentifierAlias(
@@ -363,7 +388,7 @@ class LiquidacionRunController extends Controller
                 'updated' => false,
                 'message' => null,
             ];
-            if ($updateProviderPatente) {
+            if ($shouldUpdateProviderPatente) {
                 $patenteUpdate = $this->tryUpdateProviderPatente(
                     $provider,
                     $patenteNorm,
@@ -388,6 +413,7 @@ class LiquidacionRunController extends Controller
 
         AuditLogger::log($request, 'liquidaciones.importacion.assign_provider', 'liq_import_run', $run->id, [
             'patente_norm' => $patenteNorm,
+            'distribuidor_norm' => $distribuidorNorm,
             'proveedor_id' => (int) $provider->id,
             'actualizar_patente_en_proveedor' => $updateProviderPatente,
             'sobreescribir_patente_existente' => $overwriteProviderPatente,
@@ -794,29 +820,56 @@ class LiquidacionRunController extends Controller
 
         $sheet = $this->normalizeNullableString($validated['sheet'] ?? null);
         $format = $this->normalizeNullableString($validated['format'] ?? null);
+        $isEpsaMode = $this->isEpsaUploadMode($validated['client_code'] ?? null, $format);
+        if ($isEpsaMode && $extension !== 'csv') {
+            $sheet = 'Table';
+        }
         $autoObservations = array_key_exists('auto_observations', $validated)
             ? (bool) $validated['auto_observations']
             : true;
 
         [$columns, $rawRows, $rowCount, $parseMeta] = $extension === 'csv'
             ? $this->parseUploadCsv($storedAbsolutePath)
-            : $this->parseUploadXlsx($storedAbsolutePath, $sheet);
+            : $this->parseUploadXlsx($storedAbsolutePath, $sheet, $isEpsaMode);
 
-        $mapping = $this->mapUploadRows($columns, $rawRows, $format);
-        if (!$mapping['mapped']) {
+        if ($isEpsaMode && (bool) ($parseMeta['sheet_not_found'] ?? false)) {
             return response()->json([
-                'message' => 'No se pudieron mapear columnas al formato general.',
-                'unmappedColumns' => $mapping['unmappedColumns'],
+                'message' => sprintf(
+                    'Para EPSA la hoja obligatoria es "%s". No fue encontrada en el archivo.',
+                    (string) ($parseMeta['requested_sheet'] ?? 'Table')
+                ),
+                'availableSheets' => array_values((array) ($parseMeta['available_sheets'] ?? [])),
             ], Response::HTTP_UNPROCESSABLE_ENTITY);
         }
 
-        $prepared = $this->prepareUploadStagingAndValidations($mapping['columns'], $mapping['rows'], [
-            'client_code' => $validated['client_code'] ?? null,
-            'period_from' => $validated['period_from'] ?? null,
-            'period_to' => $validated['period_to'] ?? null,
-            'mapped_fields' => $mapping['mappedFields'] ?? [],
-            'format' => $mapping['format'] ?? null,
-        ]);
+        $mapping = $isEpsaMode
+            ? $this->mapEpsaUploadRows($columns, $rawRows)
+            : $this->mapUploadRows($columns, $rawRows, $format);
+        if (!$mapping['mapped']) {
+            return response()->json([
+                'message' => $isEpsaMode
+                    ? 'No se pudieron mapear columnas requeridas para EPSA.'
+                    : 'No se pudieron mapear columnas al formato general.',
+                'unmappedColumns' => $mapping['unmappedColumns'],
+                'missingColumns' => $mapping['missingColumns'] ?? [],
+            ], Response::HTTP_UNPROCESSABLE_ENTITY);
+        }
+
+        $prepared = $isEpsaMode
+            ? $this->prepareEpsaUploadStagingAndValidations($mapping['columns'], $mapping['rows'], [
+                'client_code' => $validated['client_code'] ?? null,
+                'period_from' => $validated['period_from'] ?? null,
+                'period_to' => $validated['period_to'] ?? null,
+                'mapped_fields' => $mapping['mappedFields'] ?? [],
+                'format' => $mapping['format'] ?? null,
+            ])
+            : $this->prepareUploadStagingAndValidations($mapping['columns'], $mapping['rows'], [
+                'client_code' => $validated['client_code'] ?? null,
+                'period_from' => $validated['period_from'] ?? null,
+                'period_to' => $validated['period_to'] ?? null,
+                'mapped_fields' => $mapping['mappedFields'] ?? [],
+                'format' => $mapping['format'] ?? null,
+            ]);
 
         $run = DB::transaction(function () use (
             $validated,
@@ -828,7 +881,8 @@ class LiquidacionRunController extends Controller
             $mapping,
             $prepared,
             $parseMeta,
-            $autoObservations
+            $autoObservations,
+            $isEpsaMode
         ) {
             $run = LiquidacionImportRun::query()->create([
                 'source_system' => $validated['source_system'] ?? 'powerbi',
@@ -851,8 +905,11 @@ class LiquidacionRunController extends Controller
                         'mapped' => true,
                         'unmappedColumns' => $mapping['unmappedColumns'],
                         'format' => $mapping['format'],
-                        'productColumn' => $mapping['productColumn'],
+                        'mode' => $isEpsaMode ? 'EPSA_TABLE' : 'GENERIC',
+                        'productColumn' => $mapping['productColumn'] ?? null,
                         'sheet' => $parseMeta['sheet'] ?? null,
+                        'sheetName' => $parseMeta['sheet_name'] ?? null,
+                        'missingColumns' => $mapping['missingColumns'] ?? [],
                     ],
                     'rules' => [
                         'clientCode' => $validated['client_code'] ?? null,
@@ -873,6 +930,14 @@ class LiquidacionRunController extends Controller
                         'anio' => $validated['anio'] ?? null,
                         'mes' => $validated['mes'] ?? null,
                     ],
+                    'epsa' => $isEpsaMode
+                        ? [
+                            'input_rows_count' => (int) ($prepared['stats']['input_rows_count'] ?? 0),
+                            'imported_rows_count' => (int) ($prepared['stats']['imported_rows_count'] ?? 0),
+                            'ignored_rows_count' => (int) ($prepared['stats']['ignored_rows_count'] ?? 0),
+                            'sheet' => $parseMeta['sheet_name'] ?? ($parseMeta['sheet'] ?? null),
+                        ]
+                        : null,
                 ],
                 'created_by' => $request->user()?->id,
             ]);
@@ -953,12 +1018,31 @@ class LiquidacionRunController extends Controller
 
         $sheet = $this->normalizeNullableString($validated['sheet'] ?? null);
         $format = $this->normalizeNullableString($validated['format'] ?? null) ?? 'custom';
+        $isEpsaMode = $this->isEpsaUploadMode($validated['client_code'] ?? null, $format);
+        if ($isEpsaMode && $extension !== 'csv') {
+            $sheet = 'Table';
+        }
 
         [$columns, $rawRows, $rowCount, $parseMeta] = $extension === 'csv'
             ? $this->parseUploadCsv($path)
-            : $this->parseUploadXlsx($path, $sheet);
+            : $this->parseUploadXlsx($path, $sheet, $isEpsaMode);
 
-        $mapping = $this->mapUploadRows($columns, $rawRows, $format);
+        if ($isEpsaMode && (bool) ($parseMeta['sheet_not_found'] ?? false)) {
+            return response()->json([
+                'mapped' => false,
+                'message' => sprintf(
+                    'Para EPSA la hoja obligatoria es "%s".',
+                    (string) ($parseMeta['requested_sheet'] ?? 'Table')
+                ),
+                'sheetNotFound' => true,
+                'requestedSheet' => (string) ($parseMeta['requested_sheet'] ?? 'Table'),
+                'availableSheets' => array_values((array) ($parseMeta['available_sheets'] ?? [])),
+            ], Response::HTTP_UNPROCESSABLE_ENTITY);
+        }
+
+        $mapping = $isEpsaMode
+            ? $this->mapEpsaUploadRows($columns, $rawRows)
+            : $this->mapUploadRows($columns, $rawRows, $format);
         if (!$mapping['mapped']) {
             return response()->json([
                 'mapped' => false,
@@ -968,18 +1052,27 @@ class LiquidacionRunController extends Controller
                     static fn ($column) => $column !== ''
                 )),
                 'unmappedColumns' => $mapping['unmappedColumns'] ?? [],
+                'missingColumns' => $mapping['missingColumns'] ?? [],
                 'productColumn' => null,
                 'sampleRows' => [],
             ]);
         }
 
-        $prepared = $this->prepareUploadStagingAndValidations($mapping['columns'], $mapping['rows'], [
-            'client_code' => $validated['client_code'] ?? null,
-            'period_from' => $validated['period_from'] ?? null,
-            'period_to' => $validated['period_to'] ?? null,
-            'mapped_fields' => $mapping['mappedFields'] ?? [],
-            'format' => $mapping['format'] ?? null,
-        ]);
+        $prepared = $isEpsaMode
+            ? $this->prepareEpsaUploadStagingAndValidations($mapping['columns'], $mapping['rows'], [
+                'client_code' => $validated['client_code'] ?? null,
+                'period_from' => $validated['period_from'] ?? null,
+                'period_to' => $validated['period_to'] ?? null,
+                'mapped_fields' => $mapping['mappedFields'] ?? [],
+                'format' => $mapping['format'] ?? null,
+            ])
+            : $this->prepareUploadStagingAndValidations($mapping['columns'], $mapping['rows'], [
+                'client_code' => $validated['client_code'] ?? null,
+                'period_from' => $validated['period_from'] ?? null,
+                'period_to' => $validated['period_to'] ?? null,
+                'mapped_fields' => $mapping['mappedFields'] ?? [],
+                'format' => $mapping['format'] ?? null,
+            ]);
         $rowsByStatus = [
             'ok' => 0,
             'error' => 0,
@@ -1000,34 +1093,42 @@ class LiquidacionRunController extends Controller
         }
 
         $sampleRows = [];
-        foreach (array_slice($mapping['rows'], 0, 5) as $row) {
-            $sampleRows[] = [
-                'fecha' => (string) ($row[0] ?? ''),
-                'estacion' => (string) ($row[1] ?? ''),
-                'dominio' => (string) ($row[2] ?? ''),
-                'producto' => (string) ($row[3] ?? ''),
-                'litros' => (string) ($row[6] ?? ''),
-                'importe' => (string) ($row[7] ?? ''),
-            ];
+        if ($isEpsaMode) {
+            $sampleRows = array_slice($prepared['sample_rows'] ?? [], 0, 5);
+        } else {
+            foreach (array_slice($mapping['rows'], 0, 5) as $row) {
+                $sampleRows[] = [
+                    'fecha' => (string) ($row[0] ?? ''),
+                    'estacion' => (string) ($row[1] ?? ''),
+                    'dominio' => (string) ($row[2] ?? ''),
+                    'producto' => (string) ($row[3] ?? ''),
+                    'litros' => (string) ($row[6] ?? ''),
+                    'importe' => (string) ($row[7] ?? ''),
+                ];
+            }
         }
 
         return response()->json([
             'mapped' => true,
             'rowCount' => $rowCount,
             'previewCount' => count($sampleRows),
+            'mode' => $isEpsaMode ? 'EPSA_TABLE' : 'GENERIC',
             'sheet' => $parseMeta['sheet'] ?? null,
+            'sheetName' => $parseMeta['sheet_name'] ?? null,
             'detectedColumns' => array_values(array_filter(
                 array_map(static fn ($column) => trim((string) $column), $columns),
                 static fn ($column) => $column !== ''
             )),
             'mappedColumns' => $mapping['columns'],
             'unmappedColumns' => $mapping['unmappedColumns'] ?? [],
+            'missingColumns' => $mapping['missingColumns'] ?? [],
             'productColumn' => $mapping['productColumn'] ?? null,
             'productColumnMessage' => ($mapping['productColumn'] ?? null) === 'V'
                 ? 'Concepto tomado desde columna V.'
-                : 'Concepto tomado por encabezado detectado.',
+                : ($isEpsaMode ? 'Importación EPSA desde hoja Table.' : 'Concepto tomado por encabezado detectado.'),
             'rowsByStatus' => $rowsByStatus,
             'sampleRows' => $sampleRows,
+            'epsaSummary' => $isEpsaMode ? ($prepared['stats'] ?? null) : null,
             'rules' => [
                 'source' => $prepared['rules_source'] ?? 'default',
                 'blockingRules' => $prepared['rules']['blocking_rules'] ?? [],
@@ -2321,12 +2422,89 @@ class LiquidacionRunController extends Controller
         ];
     }
 
+    private function resolveEpsaProviderMatch(?string $clientCode, ?string $distribuidorNorm): array
+    {
+        if (!Schema::hasTable('personas') || $distribuidorNorm === null) {
+            return [
+                'status' => self::PROVIDER_MATCH_NONE,
+                'provider_id' => null,
+                'provider_name' => null,
+                'candidates' => [],
+            ];
+        }
+
+        $providerByAlias = $this->findProviderByAlias($clientCode, 'DISTRIBUIDOR', $distribuidorNorm);
+        if ($providerByAlias) {
+            return [
+                'status' => 'DISTRIBUIDOR_ALIAS_OK',
+                'provider_id' => $providerByAlias->id,
+                'provider_name' => $this->buildProviderDisplayName($providerByAlias),
+                'candidates' => [],
+            ];
+        }
+
+        $providerByExactName = $this->findProviderByExactNormalizedName($distribuidorNorm);
+        if ($providerByExactName) {
+            return [
+                'status' => 'DISTRIBUIDOR_OK',
+                'provider_id' => $providerByExactName->id,
+                'provider_name' => $this->buildProviderDisplayName($providerByExactName),
+                'candidates' => [],
+            ];
+        }
+
+        $candidates = $this->findProviderCandidatesByName($distribuidorNorm, 10);
+        if (!empty($candidates)) {
+            return [
+                'status' => self::PROVIDER_MATCH_PENDING,
+                'provider_id' => null,
+                'provider_name' => null,
+                'candidates' => $candidates,
+            ];
+        }
+
+        return [
+            'status' => self::PROVIDER_MATCH_NONE,
+            'provider_id' => null,
+            'provider_name' => null,
+            'candidates' => [],
+        ];
+    }
+
     private function findProviderByPatenteNorm(string $patenteNorm): ?Persona
     {
         return Persona::query()
             ->whereRaw($this->sqlNormalizePlateExpression('patente') . ' = ?', [$patenteNorm])
             ->orderBy('id')
             ->first();
+    }
+
+    private function findProviderByExactNormalizedName(string $targetNameNorm): ?Persona
+    {
+        $tokens = $this->tokenizeNormalizedName($targetNameNorm);
+        if (empty($tokens)) {
+            return null;
+        }
+
+        $query = Persona::query()
+            ->select(['id', 'nombres', 'apellidos', 'cuil', 'patente'])
+            ->where(function ($subQuery) use ($tokens) {
+                foreach ($tokens as $token) {
+                    $like = '%' . $token . '%';
+                    $subQuery->orWhere('nombres', 'like', $like)
+                        ->orWhere('apellidos', 'like', $like);
+                }
+            })
+            ->limit(500);
+
+        foreach ($query->get() as $persona) {
+            $providerNameNorm = $this->normalizePersonName($this->buildProviderDisplayName($persona));
+            if ($providerNameNorm === $targetNameNorm) {
+                return $persona;
+            }
+        }
+
+        return null;
     }
 
     private function findProviderByAlias(?string $clientCode, string $aliasType, string $aliasNorm): ?Persona
@@ -2781,6 +2959,7 @@ class LiquidacionRunController extends Controller
         $defaults = $this->defaultClientRuleSet();
         $normalizedClientCode = $this->normalizeClientCode($clientCode);
         $intermedioDefaults = $this->defaultIntermedioClientRuleSet();
+        $epsaDefaults = $this->defaultEpsaClientRuleSet();
         if ($normalizedClientCode === null) {
             return [
                 'rules' => $defaults,
@@ -2797,6 +2976,12 @@ class LiquidacionRunController extends Controller
                 return [
                     'rules' => $intermedioDefaults,
                     'source' => 'default_intermedio',
+                ];
+            }
+            if ($this->isEpsaClientCode($normalizedClientCode)) {
+                return [
+                    'rules' => $epsaDefaults,
+                    'source' => 'default_epsa',
                 ];
             }
             return [
@@ -2816,9 +3001,18 @@ class LiquidacionRunController extends Controller
         if (isset($payload['tariffs']) && is_array($payload['tariffs'])) {
             $rules['tariffs'] = array_values(array_filter($payload['tariffs'], fn ($row) => is_array($row)));
         }
+        if (isset($payload['epsa']) && is_array($payload['epsa'])) {
+            $rules['epsa'] = array_replace_recursive(
+                is_array($rules['epsa'] ?? null) ? $rules['epsa'] : [],
+                $payload['epsa']
+            );
+        }
 
         if ($this->isIntermedioClientCode($normalizedClientCode)) {
             $rules = $this->mergeIntermedioTariffDefaults($rules, $intermedioDefaults);
+        }
+        if ($this->isEpsaClientCode($normalizedClientCode)) {
+            $rules = $this->mergeEpsaDefaults($rules, $epsaDefaults);
         }
 
         return [
@@ -2851,6 +3045,16 @@ class LiquidacionRunController extends Controller
 
         $normalized = strtoupper(trim($clientCode));
         return str_contains($normalized, 'INTERMEDIO') || preg_match('/^INT\d*$/', $normalized) === 1;
+    }
+
+    private function isEpsaClientCode(?string $clientCode): bool
+    {
+        if ($clientCode === null) {
+            return false;
+        }
+
+        $normalized = strtoupper(trim($clientCode));
+        return str_contains($normalized, 'EPSA');
     }
 
     private function defaultIntermedioClientRuleSet(): array
@@ -2961,6 +3165,39 @@ class LiquidacionRunController extends Controller
             $matrix['zones'] = $matrixZones;
             $rules['tariff_matrix'] = $matrix;
         }
+        return $rules;
+    }
+
+    private function defaultEpsaClientRuleSet(): array
+    {
+        $rules = $this->defaultClientRuleSet();
+        $rules['blocking_rules'] = array_merge($rules['blocking_rules'], [
+            'duplicate_row' => true,
+            'outside_period' => false,
+            'tariff_mismatch' => false,
+        ]);
+        $rules['epsa'] = [
+            'sheet_name' => 'Table',
+            'tipo_unidad' => 'UT_CHICO',
+            'match_alias_type' => 'DISTRIBUIDOR',
+            'tarifario_ut_chico' => [
+                ['km_desde' => 0, 'km_hasta' => 90, 'la_jornada' => 92636.70],
+                ['km_desde' => 90.00001, 'km_hasta' => 120, 'la_jornada' => 104216.29],
+                ['km_desde' => 120.00001, 'km_hasta' => 150, 'la_jornada' => 115795.88],
+                ['km_desde' => 150.00001, 'km_hasta' => 170, 'la_jornada' => 127375.47],
+                ['km_desde' => 170.00001, 'km_hasta' => 200, 'la_jornada' => 127375.47],
+            ],
+        ];
+
+        return $rules;
+    }
+
+    private function mergeEpsaDefaults(array $rules, array $defaults): array
+    {
+        $base = is_array($rules['epsa'] ?? null) ? $rules['epsa'] : [];
+        $defaultEpsa = is_array($defaults['epsa'] ?? null) ? $defaults['epsa'] : [];
+        $rules['epsa'] = array_replace_recursive($defaultEpsa, $base);
+
         return $rules;
     }
 
@@ -3084,7 +3321,7 @@ class LiquidacionRunController extends Controller
         ]];
     }
 
-    private function parseUploadXlsx(string $path, ?string $preferredSheet = null): array
+    private function parseUploadXlsx(string $path, ?string $preferredSheet = null, bool $strictPreferred = false): array
     {
         $zip = new ZipArchive();
         if ($zip->open($path) !== true) {
@@ -3098,7 +3335,32 @@ class LiquidacionRunController extends Controller
             return [[], [], 0, []];
         }
 
-        $sheetPath = $this->resolveUploadPreferredSheet($preferredSheet, $sheetEntries) ?? $sheetEntries[0]['path'];
+        $resolvedPreferredSheet = $this->resolveUploadPreferredSheet($preferredSheet, $sheetEntries);
+        if ($strictPreferred && $preferredSheet !== null && $resolvedPreferredSheet === null) {
+            $availableSheets = array_values(array_filter(
+                array_map(static fn ($entry) => (string) ($entry['name'] ?? ''), $sheetEntries),
+                static fn ($sheetName) => $sheetName !== ''
+            ));
+            $zip->close();
+            return [[], [], 0, [
+                'sheet' => null,
+                'sheet_name' => null,
+                'sheet_not_found' => true,
+                'requested_sheet' => $preferredSheet,
+                'available_sheets' => $availableSheets,
+            ]];
+        }
+
+        $sheetPath = $resolvedPreferredSheet ?? $sheetEntries[0]['path'];
+        $sheetName = basename($sheetPath, '.xml');
+        foreach ($sheetEntries as $sheetEntry) {
+            if (($sheetEntry['path'] ?? null) !== $sheetPath) {
+                continue;
+            }
+            $sheetName = (string) ($sheetEntry['name'] ?? $sheetName);
+            break;
+        }
+
         $sheetXml = $zip->getFromName($sheetPath);
         $zip->close();
         if (!$sheetXml) {
@@ -3134,6 +3396,13 @@ class LiquidacionRunController extends Controller
         return [$columns, $rows, count($rows), [
             'headerIndex' => $headerIndex,
             'sheet' => $sheetPath,
+            'sheet_name' => $sheetName,
+            'sheet_not_found' => false,
+            'requested_sheet' => $preferredSheet,
+            'available_sheets' => array_values(array_filter(
+                array_map(static fn ($entry) => (string) ($entry['name'] ?? ''), $sheetEntries),
+                static fn ($sheetName) => $sheetName !== ''
+            )),
         ]];
     }
 
@@ -3190,6 +3459,477 @@ class LiquidacionRunController extends Controller
             'format' => strtolower(trim((string) ($format ?? 'custom'))),
             'productColumn' => $productColumn,
         ];
+    }
+
+    private function mapEpsaUploadRows(array $columns, array $rows): array
+    {
+        $standardColumns = [
+            'NRO.PLANILLA',
+            'FECHA PLANILLA',
+            'DISTRIBUIDOR',
+            'ZONA RECORRIDO',
+            'KMS',
+            'Tarifa (EPSA)',
+            'LOGISTICA ARG (EPSA)',
+            'VEHICULO',
+            'TURNO',
+            'SUCURSAL',
+        ];
+
+        $requiredColumns = ['NRO.PLANILLA', 'FECHA PLANILLA', 'DISTRIBUIDOR', 'ZONA RECORRIDO', 'KMS'];
+        $indexMap = $this->buildEpsaIndexMapFromColumns($columns);
+        $missing = $this->resolveEpsaMissingRequiredColumns($indexMap, $requiredColumns);
+        if (!empty($missing) && !empty($rows)) {
+            $firstRow = array_values(array_map(
+                static fn ($value) => trim((string) $value),
+                $rows[0]
+            ));
+            $firstRowIndexMap = $this->buildEpsaIndexMapFromColumns($firstRow);
+            $firstRowMissing = $this->resolveEpsaMissingRequiredColumns($firstRowIndexMap, $requiredColumns);
+            if (empty($firstRowMissing)) {
+                $columns = $firstRow;
+                $rows = array_slice($rows, 1);
+                $indexMap = $firstRowIndexMap;
+                $missing = [];
+            }
+        }
+
+        $usedIndexes = [];
+        foreach ($indexMap as $index) {
+            if ($index !== null) {
+                $usedIndexes[(int) $index] = true;
+            }
+        }
+
+        $unmapped = [];
+        foreach ($columns as $index => $header) {
+            if (isset($usedIndexes[(int) $index])) {
+                continue;
+            }
+
+            $normalizedHeader = $this->normalizeNullableString((string) $header);
+            if ($normalizedHeader !== null) {
+                $unmapped[] = $normalizedHeader;
+            }
+        }
+
+        if (!empty($missing)) {
+            return [
+                'mapped' => false,
+                'columns' => $columns,
+                'rows' => $rows,
+                'mappedFields' => [],
+                'unmappedColumns' => array_values(array_unique($unmapped)),
+                'missingColumns' => $missing,
+                'format' => 'epsa',
+                'productColumn' => null,
+            ];
+        }
+
+        $mappedRows = [];
+        foreach ($rows as $row) {
+            $mapped = [];
+            foreach ($standardColumns as $standardColumn) {
+                $sourceIndex = $indexMap[$standardColumn] ?? null;
+                $mapped[] = $sourceIndex !== null && array_key_exists($sourceIndex, $row)
+                    ? (string) $row[$sourceIndex]
+                    : '';
+            }
+            $mappedRows[] = $mapped;
+        }
+
+        return [
+            'mapped' => true,
+            'columns' => $standardColumns,
+            'rows' => $mappedRows,
+            'mappedFields' => array_values(array_keys(array_filter($indexMap, static fn ($idx) => $idx !== null))),
+            'unmappedColumns' => array_values(array_unique($unmapped)),
+            'missingColumns' => [],
+            'format' => 'epsa',
+            'productColumn' => null,
+        ];
+    }
+
+    private function buildEpsaIndexMapFromColumns(array $columns): array
+    {
+        return [
+            'NRO.PLANILLA' => $this->resolveUploadHeaderIndexByAliases($columns, ['nro planilla', 'nro planillas', 'planilla nro', 'planilla numero']),
+            'FECHA PLANILLA' => $this->resolveUploadHeaderIndexByAliases($columns, ['fecha planilla', 'fecha']),
+            'DISTRIBUIDOR' => $this->resolveUploadHeaderIndexByAliases($columns, ['distribuidor']),
+            'ZONA RECORRIDO' => $this->resolveUploadHeaderIndexByAliases($columns, ['zona recorrido', 'zona de recorrido', 'recorrido', 'zona']),
+            'KMS' => $this->resolveUploadHeaderIndexByAliases($columns, ['kms', 'km', 'kilometros', 'kilometraje']),
+            'Tarifa (EPSA)' => $this->resolveUploadHeaderIndexByAliases($columns, ['tarifa', 'tarifa epsa']),
+            'LOGISTICA ARG (EPSA)' => $this->resolveUploadHeaderIndexByAliases($columns, ['logistica arg', 'logistica argentina', 'logistica']),
+            'VEHICULO' => $this->resolveUploadHeaderIndexByAliases($columns, ['vehiculo', 'unidad', 'tipo unidad']),
+            'TURNO' => $this->resolveUploadHeaderIndexByAliases($columns, ['turno']),
+            'SUCURSAL' => $this->resolveUploadHeaderIndexByAliases($columns, ['sucursal']),
+        ];
+    }
+
+    private function resolveEpsaMissingRequiredColumns(array $indexMap, array $requiredColumns): array
+    {
+        $missing = [];
+        foreach ($requiredColumns as $requiredColumn) {
+            if (($indexMap[$requiredColumn] ?? null) === null) {
+                $missing[] = $requiredColumn;
+            }
+        }
+
+        return $missing;
+    }
+
+    private function prepareEpsaUploadStagingAndValidations(array $columns, array $rows, array $context = []): array
+    {
+        $normalizedClientCode = $this->normalizeClientCode($context['client_code'] ?? null);
+        $rulesPayload = $this->resolveClientRuleSet($normalizedClientCode);
+        $rules = $rulesPayload['rules'];
+        $periodFrom = $this->parseDateOnlyOrNull($context['period_from'] ?? null);
+        $periodTo = $this->parseDateOnlyOrNull($context['period_to'] ?? null);
+
+        $columnIndexes = [];
+        foreach ($columns as $index => $name) {
+            $columnIndexes[$name] = $index;
+        }
+
+        $stagingRows = [];
+        $validationResults = [];
+        $sampleRows = [];
+        $seenPlanillas = [];
+        $ignoredRowsCount = 0;
+        $importedRowsCount = 0;
+        $totalLaEstimado = 0.0;
+        $uniqueDistributorCodes = [];
+
+        foreach ($rows as $index => $row) {
+            $rowNumber = $index + 1;
+
+            $nroPlanillaRaw = $this->getUploadRowValue($row, $columnIndexes, 'NRO.PLANILLA');
+            $nroPlanilla = $this->normalizeEpsaPlanillaNumber($nroPlanillaRaw);
+            if ($nroPlanilla === null) {
+                $ignoredRowsCount += 1;
+                continue;
+            }
+
+            $importedRowsCount += 1;
+
+            $fechaRaw = $this->getUploadRowValue($row, $columnIndexes, 'FECHA PLANILLA');
+            $distribuidorRaw = $this->getUploadRowValue($row, $columnIndexes, 'DISTRIBUIDOR');
+            $zonaRecorridoRaw = $this->getUploadRowValue($row, $columnIndexes, 'ZONA RECORRIDO');
+            $kmsRaw = $this->getUploadRowValue($row, $columnIndexes, 'KMS');
+            $tarifaEpsaRaw = $this->getUploadRowValue($row, $columnIndexes, 'Tarifa (EPSA)');
+            $logisticaArgRaw = $this->getUploadRowValue($row, $columnIndexes, 'LOGISTICA ARG (EPSA)');
+            $vehiculoRaw = $this->getUploadRowValue($row, $columnIndexes, 'VEHICULO');
+            $turnoRaw = $this->getUploadRowValue($row, $columnIndexes, 'TURNO');
+            $sucursalRaw = $this->getUploadRowValue($row, $columnIndexes, 'SUCURSAL');
+
+            $fecha = $this->parseUploadDate($fechaRaw, 'dmy');
+            $kms = $this->parseFloatOrNull($kmsRaw);
+            $tarifaEpsa = $this->parseFloatOrNull($tarifaEpsaRaw);
+            $logisticaArg = $this->parseFloatOrNull($logisticaArgRaw);
+            $distribuidorNorm = $this->normalizeEpsaDistributorName($distribuidorRaw);
+            $factorResult = $this->resolveEpsaFactorJornada($zonaRecorridoRaw);
+            $factorJornada = (float) ($factorResult['factor'] ?? 1.0);
+            $motivoFactor = (string) ($factorResult['motivo'] ?? 'NORMAL');
+            $tarifaLookup = $this->resolveEpsaTarifaByKms($rules, $kms);
+            $laJornadaBase = $tarifaLookup['la_jornada'] ?? null;
+            $importeLa = $laJornadaBase !== null ? round(((float) $laJornadaBase) * $factorJornada, 2) : null;
+
+            $providerMatch = $this->resolveEpsaProviderMatch($normalizedClientCode, $distribuidorNorm);
+            $matchStatus = (string) ($providerMatch['status'] ?? self::PROVIDER_MATCH_NONE);
+            $providerId = isset($providerMatch['provider_id']) ? (int) $providerMatch['provider_id'] : null;
+            $providerName = $this->normalizeNullableString((string) ($providerMatch['provider_name'] ?? ''));
+            $matchCandidates = is_array($providerMatch['candidates'] ?? null) ? $providerMatch['candidates'] : [];
+
+            $criticalIssues = [];
+            $warningIssues = [];
+            $hasDifference = false;
+
+            if ($distribuidorNorm === null) {
+                $criticalIssues[] = 'Distribuidor vacío o inválido.';
+                $this->addUploadValidationFail(
+                    $validationResults,
+                    $rowNumber,
+                    'EPSA_DISTRIBUIDOR_REQUIRED',
+                    'CRITICAL',
+                    'Distribuidor no vacío',
+                    $distribuidorRaw,
+                    'El distribuidor es obligatorio para vincular proveedor.'
+                );
+            } elseif ($matchStatus === self::PROVIDER_MATCH_PENDING) {
+                $warningIssues[] = 'Distribuidor pendiente de asignación manual.';
+                $this->addUploadValidationFail(
+                    $validationResults,
+                    $rowNumber,
+                    'PROVIDER_MATCH_PENDING',
+                    'WARNING',
+                    'Proveedor identificado',
+                    $distribuidorRaw,
+                    'No se pudo resolver proveedor exacto por distribuidor. Requiere asignación manual.'
+                );
+            } elseif ($matchStatus === self::PROVIDER_MATCH_NONE) {
+                $warningIssues[] = 'Distribuidor sin proveedor vinculado.';
+                $this->addUploadValidationFail(
+                    $validationResults,
+                    $rowNumber,
+                    'PROVIDER_MATCH_REQUIRED',
+                    'WARNING',
+                    'Proveedor identificado',
+                    $distribuidorRaw,
+                    'Sin match por distribuidor ni candidatos válidos.'
+                );
+            }
+
+            if ($fecha === null) {
+                $criticalIssues[] = 'Fecha inválida';
+                $this->addUploadValidationFail(
+                    $validationResults,
+                    $rowNumber,
+                    'EPSA_FECHA_PLANILLA_VALID',
+                    'CRITICAL',
+                    'Fecha planilla válida',
+                    $fechaRaw,
+                    'Fecha planilla inválida o no reconocida.'
+                );
+            }
+
+            if ($kms === null || $kms <= 0) {
+                $criticalIssues[] = 'Kms inválidos';
+                $this->addUploadValidationFail(
+                    $validationResults,
+                    $rowNumber,
+                    'EPSA_KM_VALID',
+                    'CRITICAL',
+                    'Kms > 0',
+                    $kmsRaw,
+                    'Kms inválidos para aplicar tarifario.'
+                );
+            }
+
+            if (($tarifaLookup['error'] ?? null) !== null) {
+                $criticalIssues[] = (string) $tarifaLookup['error'];
+                $this->addUploadValidationFail(
+                    $validationResults,
+                    $rowNumber,
+                    'EPSA_KM_RANGE',
+                    'CRITICAL',
+                    'Kms dentro de rango tarifario UT.Chico',
+                    $kmsRaw,
+                    (string) $tarifaLookup['error']
+                );
+            }
+
+            if ($fecha !== null) {
+                $outsidePeriodBlocking = (bool) ($rules['blocking_rules']['outside_period'] ?? true);
+                $isOutsideFrom = $periodFrom !== null && $fecha->copy()->startOfDay()->lt($periodFrom->copy()->startOfDay());
+                $isOutsideTo = $periodTo !== null && $fecha->copy()->startOfDay()->gt($periodTo->copy()->startOfDay());
+                if ($isOutsideFrom || $isOutsideTo) {
+                    $message = 'Fecha fuera del período del run.';
+                    if ($outsidePeriodBlocking) {
+                        $criticalIssues[] = $message;
+                    } else {
+                        $warningIssues[] = $message;
+                    }
+
+                    $this->addUploadValidationFail(
+                        $validationResults,
+                        $rowNumber,
+                        'PERIOD_RANGE',
+                        $outsidePeriodBlocking ? 'CRITICAL' : 'WARNING',
+                        trim(implode(' - ', array_filter([
+                            $periodFrom?->toDateString(),
+                            $periodTo?->toDateString(),
+                        ]))),
+                        $fecha->toDateString(),
+                        $message
+                    );
+                }
+            }
+
+            $duplicateKey = 'PLANILLA|' . $nroPlanilla;
+            $isDuplicate = isset($seenPlanillas[$duplicateKey]);
+            $seenPlanillas[$duplicateKey] = true;
+            if ($isDuplicate) {
+                $criticalIssues[] = 'NRO.PLANILLA duplicado dentro del archivo.';
+                $this->addUploadValidationFail(
+                    $validationResults,
+                    $rowNumber,
+                    'EPSA_DUPLICATE_PLANILLA',
+                    'CRITICAL',
+                    'NRO.PLANILLA único en importación',
+                    $nroPlanilla,
+                    'NRO.PLANILLA duplicado dentro del archivo.'
+                );
+            }
+
+            if ($importeLa !== null && $logisticaArg !== null && abs($importeLa - $logisticaArg) > 0.01) {
+                $warningIssues[] = 'Diferencia informativa entre importe LA y LOGISTICA ARG.';
+                $hasDifference = true;
+                $this->addUploadValidationFail(
+                    $validationResults,
+                    $rowNumber,
+                    'EPSA_LOGISTICA_ARG_DIFF',
+                    'WARNING',
+                    (string) $importeLa,
+                    (string) $logisticaArg,
+                    'LOGISTICA ARG es informativo y difiere de importe LA calculado.'
+                );
+            }
+
+            $missingInformativeFields = [];
+            if ($this->normalizeNullableString($tarifaEpsaRaw) === null) {
+                $missingInformativeFields[] = 'Tarifa';
+            }
+            if ($this->normalizeNullableString($logisticaArgRaw) === null) {
+                $missingInformativeFields[] = 'LOGISTICA ARG';
+            }
+            if ($this->normalizeNullableString($vehiculoRaw) === null) {
+                $missingInformativeFields[] = 'VEHICULO';
+            }
+            if (!empty($missingInformativeFields)) {
+                $warningIssues[] = 'Faltan campos informativos: ' . implode(', ', $missingInformativeFields) . '.';
+                $this->addUploadValidationFail(
+                    $validationResults,
+                    $rowNumber,
+                    'EPSA_INFO_MISSING',
+                    'WARNING',
+                    'Tarifa, LOGISTICA ARG y VEHICULO informativos',
+                    implode(', ', $missingInformativeFields),
+                    'Faltan campos informativos (no bloqueante).'
+                );
+            }
+
+            if (!empty($criticalIssues)) {
+                $validationStatus = 'ERROR_CRITICO';
+            } elseif (!empty($warningIssues)) {
+                $validationStatus = $hasDifference ? 'DIFERENCIA' : 'ALERTA';
+            } else {
+                $validationStatus = 'OK';
+            }
+
+            $severityMax = $validationStatus === 'ERROR_CRITICO' ? 'CRITICAL'
+                : ($validationStatus === 'OK' ? 'INFO' : 'WARNING');
+            $validationScore = $validationStatus === 'OK' ? 100.0
+                : ($validationStatus === 'ERROR_CRITICO' ? 0.0 : 75.0);
+
+            $distributorCode = $providerId !== null
+                ? ('PROV-' . $providerId)
+                : ($distribuidorNorm ?? ('EPSA-DIST-' . $rowNumber));
+            $observations = array_merge($criticalIssues, $warningIssues);
+
+            $stagingRows[] = [
+                'row_number' => $rowNumber,
+                'external_row_id' => $nroPlanilla,
+                'domain_norm' => null,
+                'occurred_at' => $fecha?->toIso8601String(),
+                'station' => $this->normalizeNullableString($zonaRecorridoRaw),
+                'product' => 'CAMIONETAS',
+                'invoice_number' => $nroPlanilla,
+                'conductor' => $this->normalizeNullableString($distribuidorRaw),
+                'name_excel_raw' => $this->normalizeNullableString($distribuidorRaw),
+                'name_excel_norm' => $distribuidorNorm,
+                'distributor_id' => $providerId,
+                'distributor_code' => $distributorCode,
+                'distributor_name' => $providerName ?? $this->normalizeNullableString($distribuidorRaw),
+                'liters' => $kms,
+                'amount' => $importeLa,
+                'price_per_liter' => $laJornadaBase,
+                'tariff_expected' => $laJornadaBase,
+                'amount_expected' => $importeLa,
+                'validation_status' => $validationStatus,
+                'validation_score' => $validationScore,
+                'severity_max' => $severityMax,
+                'match_status' => $matchStatus,
+                'match_provider_persona_id' => $providerId,
+                'is_duplicate' => $isDuplicate,
+                'duplicate_group_key' => $isDuplicate ? $duplicateKey : null,
+                'observations_auto' => !empty($observations) ? implode('; ', $observations) : null,
+                'raw_payload_json' => [
+                    'mapped' => [
+                        'NRO.PLANILLA' => $nroPlanillaRaw,
+                        'FECHA PLANILLA' => $fechaRaw,
+                        'DISTRIBUIDOR' => $distribuidorRaw,
+                        'ZONA RECORRIDO' => $zonaRecorridoRaw,
+                        'Kms' => $kmsRaw,
+                        'Tarifa (EPSA)' => $tarifaEpsaRaw,
+                        'LOGISTICA ARG (EPSA)' => $logisticaArgRaw,
+                        'VEHICULO' => $vehiculoRaw,
+                        'TURNO' => $turnoRaw,
+                        'SUCURSAL' => $sucursalRaw,
+                    ],
+                    'epsa' => [
+                        'nro_planilla' => $nroPlanilla,
+                        'distribuidor_norm' => $distribuidorNorm,
+                        'zona_recorrido_norm' => $this->normalizeRuleProduct($zonaRecorridoRaw),
+                        'kms' => $kms,
+                        'la_jornada_base' => $laJornadaBase,
+                        'factor_jornada' => $factorJornada,
+                        'motivo_factor' => $motivoFactor,
+                        'importe_la' => $importeLa,
+                        'tarifa_epsa' => $tarifaEpsa,
+                        'logistica_arg' => $logisticaArg,
+                        'tipo_unidad' => 'UT_CHICO',
+                    ],
+                ],
+                'match_candidates_json' => $matchCandidates,
+            ];
+
+            if ($importeLa !== null) {
+                $totalLaEstimado += $importeLa;
+            }
+            $uniqueDistributorCodes[$distributorCode] = true;
+
+            if (count($sampleRows) < 5) {
+                $sampleRows[] = [
+                    'nro_planilla' => $nroPlanilla,
+                    'fecha_planilla' => $fecha?->toDateString(),
+                    'distribuidor' => $this->normalizeNullableString($distribuidorRaw),
+                    'zona_recorrido' => $this->normalizeNullableString($zonaRecorridoRaw),
+                    'kms' => $kms,
+                    'la_jornada_base' => $laJornadaBase,
+                    'factor_jornada' => $factorJornada,
+                    'importe_la' => $importeLa,
+                    'match_status' => $matchStatus,
+                ];
+            }
+        }
+
+        return [
+            'staging_rows' => $stagingRows,
+            'validation_results' => $validationResults,
+            'rules' => $rules,
+            'rules_source' => $rulesPayload['source'] ?? 'default',
+            'sample_rows' => $sampleRows,
+            'stats' => [
+                'input_rows_count' => count($rows),
+                'imported_rows_count' => $importedRowsCount,
+                'ignored_rows_count' => $ignoredRowsCount,
+                'distributors_count' => count($uniqueDistributorCodes),
+                'total_la_estimado' => round($totalLaEstimado, 2),
+            ],
+        ];
+    }
+
+    private function resolveUploadHeaderIndexByAliases(array $columns, array $aliases): ?int
+    {
+        $normalizedAliases = array_values(array_filter(array_map(
+            fn ($alias) => $this->normalizeUploadHeader((string) $alias),
+            $aliases
+        )));
+        if (empty($normalizedAliases)) {
+            return null;
+        }
+
+        foreach ($columns as $index => $header) {
+            $normalizedHeader = $this->normalizeUploadHeader((string) $header);
+            if ($normalizedHeader === '') {
+                continue;
+            }
+            if (in_array($normalizedHeader, $normalizedAliases, true)) {
+                return (int) $index;
+            }
+        }
+
+        return null;
     }
 
     private function selectBestUploadColumnIndexes(array $candidates, array $rows): array
@@ -3331,7 +4071,12 @@ class LiquidacionRunController extends Controller
 
         $productColumnIndex = $this->columnLettersToZeroIndex('V');
         $maxColumns = max(count($columns), $this->maxUploadRowWidth($rows));
-        if ($productColumnIndex >= 0 && $productColumnIndex < $maxColumns && $this->uploadColumnHasAnyValue($rows, $productColumnIndex)) {
+        if (
+            $productColumnIndex >= 0
+            && $productColumnIndex < $maxColumns
+            && $this->uploadColumnHasAnyValue($rows, $productColumnIndex)
+            && $this->uploadColumnLooksLikeProduct($rows, $productColumnIndex)
+        ) {
             $indexMap['Producto'] = $productColumnIndex;
             return [$indexMap, 'V'];
         }
@@ -3365,6 +4110,43 @@ class LiquidacionRunController extends Controller
         }
 
         return false;
+    }
+
+    private function uploadColumnLooksLikeProduct(array $rows, int $columnIndex): bool
+    {
+        if ($columnIndex < 0) {
+            return false;
+        }
+
+        $nonEmpty = 0;
+        $numeric = 0;
+        $withLetters = 0;
+
+        foreach ($rows as $row) {
+            if (!array_key_exists($columnIndex, $row)) {
+                continue;
+            }
+            $value = trim((string) $row[$columnIndex]);
+            if ($value === '') {
+                continue;
+            }
+            $nonEmpty += 1;
+            if ($this->parseFloatOrNull($value) !== null) {
+                $numeric += 1;
+            }
+            if (preg_match('/[A-Za-zÁÉÍÓÚáéíóúÑñ]/u', $value)) {
+                $withLetters += 1;
+            }
+        }
+
+        if ($nonEmpty === 0) {
+            return false;
+        }
+
+        $numericRatio = $numeric / $nonEmpty;
+        $lettersRatio = $withLetters / $nonEmpty;
+
+        return $lettersRatio >= 0.30 && $numericRatio <= 0.70;
     }
 
     private function columnLettersToZeroIndex(string $letters): int
@@ -3409,7 +4191,12 @@ class LiquidacionRunController extends Controller
         ) {
             return 'Dominio';
         }
-        if (strpos($normalized, 'producto') !== false || strpos($normalized, 'combustible') !== false) {
+        if (
+            strpos($normalized, 'producto') !== false
+            || strpos($normalized, 'combustible') !== false
+            || strpos($normalized, 'unidad') !== false
+            || strpos($normalized, 'tipo unidad') !== false
+        ) {
             return 'Producto';
         }
         if (strpos($normalized, 'factura') !== false || strpos($normalized, 'comprobante') !== false || strpos($normalized, 'ticket') !== false) {
@@ -4160,8 +4947,19 @@ class LiquidacionRunController extends Controller
 
                 $rowRawPayload = is_array($row->raw_payload_json) ? $row->raw_payload_json : [];
                 $mapped = is_array($rowRawPayload['mapped'] ?? null) ? $rowRawPayload['mapped'] : [];
-                $linea->id_ruta = $this->normalizeNullableString((string) ($mapped['ID RUTA'] ?? $mapped['RUTA'] ?? ''));
-                $linea->svc = $this->normalizeNullableString((string) ($mapped['SVC'] ?? ''));
+                $epsa = is_array($rowRawPayload['epsa'] ?? null) ? $rowRawPayload['epsa'] : [];
+                $linea->id_ruta = $this->normalizeNullableString((string) (
+                    $mapped['ID RUTA']
+                    ?? $mapped['RUTA']
+                    ?? $epsa['nro_planilla']
+                    ?? ''
+                ));
+                $linea->svc = $this->normalizeNullableString((string) (
+                    $mapped['SVC']
+                    ?? $mapped['ZONA RECORRIDO']
+                    ?? $row->station
+                    ?? ''
+                ));
 
                 $factorJornada = $this->resolveLineFactorJornada($row);
                 $lineTurno = $this->resolveLineTurno($row);
@@ -4210,6 +5008,7 @@ class LiquidacionRunController extends Controller
     {
         return $this->normalizeNullableString($row->distributor_code)
             ?? $this->normalizeNullableString($row->domain_norm)
+            ?? $this->normalizeNullableString($row->name_excel_norm)
             ?? ('SIN-PROVEEDOR-' . $row->id);
     }
 
@@ -4237,6 +5036,11 @@ class LiquidacionRunController extends Controller
     private function resolveLineFactorJornada(LiquidacionStagingRow $row): float
     {
         $rawPayload = is_array($row->raw_payload_json) ? $row->raw_payload_json : [];
+        $epsa = is_array($rawPayload['epsa'] ?? null) ? $rawPayload['epsa'] : [];
+        $epsaFactor = $this->parseFloatOrNull($epsa['factor_jornada'] ?? null);
+        if ($epsaFactor !== null && $epsaFactor > 0) {
+            return $epsaFactor;
+        }
         $mapped = is_array($rawPayload['mapped'] ?? null) ? $rawPayload['mapped'] : [];
         $candidate = $this->normalizeNullableString(
             (string) (
@@ -4325,6 +5129,13 @@ class LiquidacionRunController extends Controller
         ?string $turno,
         ?string $svc
     ): float {
+        $rawPayload = is_array($row->raw_payload_json) ? $row->raw_payload_json : [];
+        $epsa = is_array($rawPayload['epsa'] ?? null) ? $rawPayload['epsa'] : [];
+        $epsaTarifa = $this->parseFloatOrNull($epsa['la_jornada_base'] ?? null);
+        if ($epsaTarifa !== null && $epsaTarifa > 0) {
+            return round($epsaTarifa, 2);
+        }
+
         static $rulesCache = [];
         $clientCode = strtoupper((string) ($run->client_code ?? 'DEFAULT'));
         if (!isset($rulesCache[$clientCode])) {
@@ -4427,6 +5238,11 @@ class LiquidacionRunController extends Controller
             $serviceKey === 'ESCOBAR_PM' ? 'CORTO_PM_SC21' : null,
         ])));
 
+        $inferredKey = $this->inferServiceKeyFromOriginalAmount($zoneData, $row, $serviceKey);
+        if ($inferredKey !== null && !in_array($inferredKey, $keysToTry, true)) {
+            $keysToTry[] = $inferredKey;
+        }
+
         foreach ($keysToTry as $key) {
             $entry = $this->resolveMatrixTariffEntry($zoneData, (string) $key);
             if (!is_array($entry)) {
@@ -4448,6 +5264,80 @@ class LiquidacionRunController extends Controller
             if ($value !== null && $value > 0) {
                 return $value;
             }
+        }
+
+        return null;
+    }
+
+    private function inferServiceKeyFromOriginalAmount(
+        array $zoneData,
+        LiquidacionStagingRow $row,
+        ?string $currentServiceKey
+    ): ?string {
+        $rawPayload = is_array($row->raw_payload_json) ? $row->raw_payload_json : [];
+        $mapped = is_array($rawPayload['mapped'] ?? null) ? $rawPayload['mapped'] : [];
+        $amountCandidates = [
+            $this->parseFloatOrNull($mapped['Importe'] ?? null),
+            $this->parseFloatOrNull($mapped['Tarifa final'] ?? null),
+            $this->parseFloatOrNull($row->amount ?? null),
+            $this->parseFloatOrNull($row->tariff_expected ?? null),
+        ];
+
+        $amount = null;
+        foreach ($amountCandidates as $candidate) {
+            if ($candidate === null || abs($candidate) < 0.00001) {
+                continue;
+            }
+            $amount = abs($candidate);
+            break;
+        }
+        if ($amount === null) {
+            return null;
+        }
+
+        $serviceKeys = [
+            'CORTO_AM',
+            'CORTO_PM',
+            'CORTO_PM_SC21',
+            'CORTO',
+            'MEDIANO',
+            'LARGO',
+            'LARGO_2018',
+            'CHASIS',
+        ];
+        $bestKey = null;
+        $bestDiff = null;
+        foreach ($serviceKeys as $serviceKey) {
+            $entry = $this->resolveMatrixTariffEntry($zoneData, $serviceKey);
+            if (!is_array($entry)) {
+                continue;
+            }
+            $original = $this->parseFloatOrNull($entry['original'] ?? $entry['tarifa_original'] ?? null);
+            if ($original === null || $original <= 0) {
+                continue;
+            }
+            $diff = abs($amount - $original);
+            if ($bestDiff === null || $diff < $bestDiff) {
+                $bestDiff = $diff;
+                $bestKey = $serviceKey;
+            }
+        }
+
+        if ($bestKey === null || $bestDiff === null) {
+            return null;
+        }
+
+        $maxAllowedDiff = max(1.0, $amount * 0.10);
+        if ($bestDiff > $maxAllowedDiff) {
+            return null;
+        }
+
+        if ($currentServiceKey === 'CORTO' && str_starts_with($bestKey, 'CORTO_')) {
+            return $bestKey;
+        }
+
+        if ($currentServiceKey === null) {
+            return $bestKey;
         }
 
         return null;
@@ -4900,6 +5790,132 @@ class LiquidacionRunController extends Controller
             'DIFERENCIA' => 'DIFERENCIA',
             default => 'ALERTA',
         };
+    }
+
+    private function isEpsaUploadMode($clientCode, ?string $format): bool
+    {
+        if ($this->isEpsaClientCode($this->normalizeClientCode($clientCode))) {
+            return true;
+        }
+
+        $normalizedFormat = strtolower(trim((string) ($format ?? '')));
+        return in_array($normalizedFormat, ['epsa', 'epsa_table', 'epsa-table'], true);
+    }
+
+    private function normalizeEpsaPlanillaNumber($value): ?string
+    {
+        $numeric = $this->parseFloatOrNull($value);
+        if ($numeric === null || $numeric <= 0) {
+            return null;
+        }
+
+        $rounded = (int) round($numeric);
+        if (abs($numeric - $rounded) > 0.00001) {
+            return null;
+        }
+
+        $planilla = (string) $rounded;
+        if (in_array($planilla, ['81114101', '81115102'], true)) {
+            return null;
+        }
+
+        return $planilla;
+    }
+
+    private function normalizeEpsaDistributorName(string $value): ?string
+    {
+        $normalized = strtoupper(trim($value));
+        if ($normalized === '') {
+            return null;
+        }
+
+        $normalized = strtr($normalized, [
+            'Á' => 'A',
+            'É' => 'E',
+            'Í' => 'I',
+            'Ó' => 'O',
+            'Ú' => 'U',
+            'Ü' => 'U',
+            'Ñ' => 'N',
+        ]);
+        $normalized = str_replace(',', ' ', $normalized);
+        $normalized = preg_replace('/[^A-Z ]+/u', ' ', $normalized);
+        $normalized = preg_replace('/\s+/u', ' ', (string) $normalized);
+        $normalized = trim((string) $normalized);
+        if ($normalized === '') {
+            return null;
+        }
+
+        $stopwords = ['DE', 'DEL', 'LA', 'LAS', 'LOS', 'SRL', 'SA', 'S', 'A'];
+        $tokens = array_values(array_filter(
+            explode(' ', $normalized),
+            static fn ($token) => $token !== '' && !in_array($token, $stopwords, true)
+        ));
+
+        if (empty($tokens)) {
+            return null;
+        }
+
+        return implode(' ', $tokens);
+    }
+
+    private function resolveEpsaFactorJornada(string $zonaRecorridoRaw): array
+    {
+        $normalizedZone = $this->normalizeRuleProduct($zonaRecorridoRaw);
+        if ($normalizedZone !== '' && str_contains($normalizedZone, 'media ruta')) {
+            return [
+                'factor' => 0.5,
+                'motivo' => 'MEDIA_RUTA',
+            ];
+        }
+        if ($normalizedZone !== '' && str_contains($normalizedZone, 'ambulancia')) {
+            return [
+                'factor' => 0.5,
+                'motivo' => 'AMBULANCIA',
+            ];
+        }
+
+        return [
+            'factor' => 1.0,
+            'motivo' => 'NORMAL',
+        ];
+    }
+
+    private function resolveEpsaTarifaByKms(array $rules, ?float $kms): array
+    {
+        if ($kms === null || $kms <= 0) {
+            return [
+                'la_jornada' => null,
+                'error' => 'KM inválido.',
+            ];
+        }
+
+        $tarifarioRows = is_array($rules['epsa']['tarifario_ut_chico'] ?? null)
+            ? $rules['epsa']['tarifario_ut_chico']
+            : [];
+        foreach ($tarifarioRows as $row) {
+            if (!is_array($row)) {
+                continue;
+            }
+            $kmDesde = $this->parseFloatOrNull($row['km_desde'] ?? null);
+            $kmHasta = $this->parseFloatOrNull($row['km_hasta'] ?? null);
+            $laJornada = $this->parseFloatOrNull($row['la_jornada'] ?? null);
+            if ($kmDesde === null || $kmHasta === null || $laJornada === null || $laJornada <= 0) {
+                continue;
+            }
+
+            if ($kms >= $kmDesde && $kms <= $kmHasta) {
+                return [
+                    'la_jornada' => $laJornada,
+                    'error' => null,
+                ];
+            }
+        }
+
+        return [
+            'la_jornada' => null,
+            'error' => 'KM fuera de rango tarifario UT.Chico.',
+        ];
     }
 
     private function normalizeNullableString($value): ?string

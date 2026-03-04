@@ -21,6 +21,7 @@ use App\Models\FuelReport;
 use App\Models\PersonalMonthlySummary;
 use App\Models\PersonalNotification;
 use App\Models\ContactReveal;
+use App\Models\TransportistaQrAccessLog;
 use App\Services\AuditLogger;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -222,6 +223,175 @@ class PersonalController extends Controller
     {
         $normalized = $this->normalizeEstadoNombre($estadoNombre);
         return $normalized !== '' && Str::contains($normalized, 'baja');
+    }
+
+    protected function hasTransportistaQrAccessLogTable(): bool
+    {
+        static $hasTable = null;
+
+        if ($hasTable === null) {
+            $hasTable = Schema::hasTable('transportista_qr_access_logs');
+        }
+
+        return $hasTable;
+    }
+
+    protected function buildTransportistaQrSignature(int $personaId): string
+    {
+        $secret = (string) config('app.key', '');
+        return Str::upper(substr(hash_hmac('sha256', 'transportista-qr:' . $personaId, $secret), 0, 10));
+    }
+
+    protected function buildTransportistaQrCodeFromPersonaId(int $personaId): string
+    {
+        $encodedId = Str::upper(base_convert((string) max(1, $personaId), 10, 36));
+        return 'TP' . $encodedId . '-' . $this->buildTransportistaQrSignature($personaId);
+    }
+
+    protected function resolvePersonaIdFromTransportistaQrCode(string $code): ?int
+    {
+        if (! preg_match('/^TP([A-Z0-9]+)-([A-F0-9]{10})$/i', trim($code), $matches)) {
+            return null;
+        }
+
+        $encodedId = Str::upper((string) ($matches[1] ?? ''));
+        $signature = Str::upper((string) ($matches[2] ?? ''));
+        $decodedId = (int) base_convert($encodedId, 36, 10);
+
+        if ($decodedId <= 0) {
+            return null;
+        }
+
+        $expected = $this->buildTransportistaQrSignature($decodedId);
+        if (! hash_equals($expected, $signature)) {
+            return null;
+        }
+
+        return $decodedId;
+    }
+
+    protected function resolveTransportistaQrLandingBaseUrl(): string
+    {
+        $configured = trim((string) config('services.transportista_qr.landing_url', ''));
+        if ($configured === '') {
+            return 'https://www.logisticaargentinasrl.com.ar/';
+        }
+
+        if (! preg_match('#^https?://#i', $configured)) {
+            return 'https://' . $configured;
+        }
+
+        return $configured;
+    }
+
+    protected function normalizePublicBaseUrl(string $raw): ?string
+    {
+        $value = trim($raw);
+        if ($value === '') {
+            return null;
+        }
+
+        if (! preg_match('#^https?://#i', $value)) {
+            $value = 'https://' . $value;
+        }
+
+        try {
+            $host = strtolower((string) parse_url($value, PHP_URL_HOST));
+            if ($host === '' || in_array($host, ['localhost', '127.0.0.1'], true)) {
+                return null;
+            }
+            $scheme = strtolower((string) parse_url($value, PHP_URL_SCHEME));
+            $port = parse_url($value, PHP_URL_PORT);
+            $portSuffix = $port ? ':' . $port : '';
+            $normalizedScheme = $scheme !== '' ? $scheme : 'https';
+
+            return rtrim($normalizedScheme . '://' . $host . $portSuffix, '/');
+        } catch (\Throwable $exception) {
+            report($exception);
+            return null;
+        }
+    }
+
+    protected function resolveTransportistaQrRedirectBaseUrl(Request $request): ?string
+    {
+        $configured = $this->normalizePublicBaseUrl((string) config('services.transportista_qr.redirect_base_url', ''));
+        if ($configured !== null) {
+            return $configured;
+        }
+
+        $appUrl = $this->normalizePublicBaseUrl((string) config('app.url', ''));
+        if ($appUrl !== null) {
+            return $appUrl;
+        }
+
+        $requestBase = $this->normalizePublicBaseUrl($request->getSchemeAndHttpHost());
+        if ($requestBase !== null) {
+            return $requestBase;
+        }
+
+        return null;
+    }
+
+    protected function buildTransportistaQrLandingUrl(string $qrCode, ?int $personaId = null): string
+    {
+        $baseUrl = $this->resolveTransportistaQrLandingBaseUrl();
+        $query = [
+            'ref' => $qrCode,
+            'utm_source' => 'transportista_qr',
+            'utm_medium' => 'qr',
+            'utm_campaign' => 'transportistas',
+        ];
+
+        if ($personaId !== null && $personaId > 0) {
+            $query['transportista_id'] = $personaId;
+        }
+
+        $separator = str_contains($baseUrl, '?') ? '&' : '?';
+        return $baseUrl . $separator . http_build_query($query, '', '&', PHP_QUERY_RFC3986);
+    }
+
+    protected function buildTransportistaQrImageUrl(string $redirectUrl): string
+    {
+        $serviceBase = trim((string) config('services.transportista_qr.qr_service_base_url', ''));
+        if ($serviceBase === '') {
+            $serviceBase = 'https://api.qrserver.com/v1/create-qr-code/';
+        }
+
+        $query = http_build_query([
+            'size' => '320x320',
+            'format' => 'png',
+            'data' => $redirectUrl,
+        ], '', '&', PHP_QUERY_RFC3986);
+
+        $separator = str_contains($serviceBase, '?') ? '&' : '?';
+        return rtrim($serviceBase, '&?') . $separator . $query;
+    }
+
+    protected function buildTransportistaQrRedirectUrl(string $qrCode, Request $request): ?string
+    {
+        $base = $this->resolveTransportistaQrRedirectBaseUrl($request);
+        if ($base === null) {
+            return null;
+        }
+        $path = route('transportista.qr.redirect', ['code' => $qrCode], false);
+
+        return $base . $path;
+    }
+
+    protected function buildTransportistaQrPayload(Persona $persona, Request $request): array
+    {
+        $qrCode = $this->buildTransportistaQrCodeFromPersonaId((int) $persona->id);
+        $redirectUrl = $this->buildTransportistaQrRedirectUrl($qrCode, $request);
+        $landingUrl = $this->buildTransportistaQrLandingUrl($qrCode, (int) $persona->id);
+        $qrTargetUrl = $redirectUrl ?: $landingUrl;
+
+        return [
+            'transportistaQrCode' => $qrCode,
+            'transportistaQrRedirectUrl' => $redirectUrl,
+            'transportistaQrLandingUrl' => $landingUrl,
+            'transportistaQrImageUrl' => $this->buildTransportistaQrImageUrl($qrTargetUrl),
+            'transportistaQrTrackingEnabled' => $redirectUrl !== null,
+        ];
     }
 
     protected function matchesPersonaEmail(Persona $persona, ?string $email): bool
@@ -698,6 +868,12 @@ class PersonalController extends Controller
             ])
             ->orderByDesc('id');
 
+        if ($this->hasTransportistaQrAccessLogTable()) {
+            $query
+                ->withCount('transportistaQrAccessLogs as transportista_qr_scans_count')
+                ->withMax('transportistaQrAccessLogs as transportista_qr_last_scan_at', 'created_at');
+        }
+
         if ($request->has('esSolicitud')) {
             $rawValue = $request->input('esSolicitud');
             $truthy = [true, 1, '1', 'true', 'on', 'yes', 'si', 'sí'];
@@ -799,6 +975,11 @@ class PersonalController extends Controller
         ])
         ->find($id);
 
+        if ($persona && $this->hasTransportistaQrAccessLogTable()) {
+            $persona->loadCount('transportistaQrAccessLogs as transportista_qr_scans_count');
+            $persona->loadMax('transportistaQrAccessLogs as transportista_qr_last_scan_at', 'created_at');
+        }
+
     if (! $persona) {
         return response()->json([
             'message' => 'El personal solicitado no existe o fue eliminado permanentemente.',
@@ -808,6 +989,32 @@ class PersonalController extends Controller
         return response()->json([
             'data' => $this->buildPersonaDetail($persona, $includePending),
         ]);
+    }
+
+    public function redirectTransportistaQr(Request $request, string $code): \Illuminate\Http\RedirectResponse
+    {
+        $personaId = $this->resolvePersonaIdFromTransportistaQrCode($code);
+        $landingUrl = $this->buildTransportistaQrLandingUrl($code, $personaId);
+
+        if ($this->hasTransportistaQrAccessLogTable()) {
+            try {
+                TransportistaQrAccessLog::query()->create([
+                    'persona_id' => $personaId,
+                    'qr_code' => $code,
+                    'ip_address' => $request->ip(),
+                    'user_agent' => Str::limit((string) $request->userAgent(), 2000, ''),
+                    'referrer' => Str::limit((string) $request->headers->get('referer'), 2000, ''),
+                ]);
+            } catch (\Throwable $exception) {
+                report($exception);
+                Log::warning('No se pudo guardar acceso QR de transportista.', [
+                    'code' => $code,
+                    'persona_id' => $personaId,
+                ]);
+            }
+        }
+
+        return redirect()->away($landingUrl);
     }
 
     public function logContactReveal(Request $request, Persona $persona): JsonResponse
@@ -1857,6 +2064,9 @@ class PersonalController extends Controller
 
     protected function buildPersonaDetail(Persona $persona, bool $includePending = false): array
     {
+        $transportistaQr = $this->buildTransportistaQrPayload($persona, request());
+        $transportistaQrScansCount = (int) ($persona->transportista_qr_scans_count ?? 0);
+        $transportistaQrLastScanAt = $persona->transportista_qr_last_scan_at ?? null;
         $perfilMap = [
             1 => 'Dueño y chofer',
             2 => 'Chofer',
@@ -1949,6 +2159,13 @@ class PersonalController extends Controller
             'aprobadoPorNombre' => $persona->aprobadoPor?->name,
             'esSolicitud' => (bool) $persona->es_solicitud,
             'solicitudTipo' => $persona->es_solicitud ? 'alta' : null,
+            'transportistaQrCode' => $transportistaQr['transportistaQrCode'],
+            'transportistaQrRedirectUrl' => $transportistaQr['transportistaQrRedirectUrl'],
+            'transportistaQrLandingUrl' => $transportistaQr['transportistaQrLandingUrl'],
+            'transportistaQrImageUrl' => $transportistaQr['transportistaQrImageUrl'],
+            'transportistaQrScansCount' => $transportistaQrScansCount,
+            'transportistaQrLastScanAt' => $this->formatDateTimeIso($transportistaQrLastScanAt),
+            'transportistaQrLastScanAtLabel' => $this->formatDateTimeLabel($transportistaQrLastScanAt),
             'duenoNombre' => $persona->dueno?->nombreapellido,
             'duenoFechaNacimiento' => optional($persona->dueno?->fecha_nacimiento)->format('Y-m-d'),
             'duenoEmail' => $persona->dueno?->email,
@@ -2053,6 +2270,9 @@ class PersonalController extends Controller
 
     protected function transformPersonaListItem(Persona $persona): array
     {
+        $transportistaQr = $this->buildTransportistaQrPayload($persona, request());
+        $transportistaQrScansCount = (int) ($persona->transportista_qr_scans_count ?? 0);
+        $transportistaQrLastScanAt = $persona->transportista_qr_last_scan_at ?? null;
         $latestLiquidacion = $persona->documentos?->first();
         $liquidacionEnviada = $latestLiquidacion ? (bool) $latestLiquidacion->enviada : null;
         $liquidacionRecibido = $latestLiquidacion ? (bool) $latestLiquidacion->recibido : null;
@@ -2166,6 +2386,13 @@ class PersonalController extends Controller
             'aprobadoPorId' => $persona->aprobado_por,
             'esSolicitud' => (bool) $persona->es_solicitud,
             'solicitudTipo' => $persona->es_solicitud ? 'alta' : null,
+            'transportistaQrCode' => $transportistaQr['transportistaQrCode'],
+            'transportistaQrRedirectUrl' => $transportistaQr['transportistaQrRedirectUrl'],
+            'transportistaQrLandingUrl' => $transportistaQr['transportistaQrLandingUrl'],
+            'transportistaQrImageUrl' => $transportistaQr['transportistaQrImageUrl'],
+            'transportistaQrScansCount' => $transportistaQrScansCount,
+            'transportistaQrLastScanAt' => $this->formatDateTimeIso($transportistaQrLastScanAt),
+            'transportistaQrLastScanAtLabel' => $this->formatDateTimeLabel($transportistaQrLastScanAt),
             'duenoNombre' => $persona->dueno?->nombreapellido,
             'duenoFechaNacimiento' => optional($persona->dueno?->fecha_nacimiento)->format('Y-m-d'),
             'duenoEmail' => $persona->dueno?->email,
@@ -2405,6 +2632,44 @@ class PersonalController extends Controller
 
         try {
             return Carbon::parse($value)->format('Y-m-d');
+        } catch (\Throwable $exception) {
+            report($exception);
+            return null;
+        }
+    }
+
+    protected function formatDateTimeIso($value): ?string
+    {
+        if (! $value) {
+            return null;
+        }
+
+        if ($value instanceof Carbon) {
+            return $value->toIso8601String();
+        }
+
+        try {
+            return Carbon::parse($value)->toIso8601String();
+        } catch (\Throwable $exception) {
+            report($exception);
+            return null;
+        }
+    }
+
+    protected function formatDateTimeLabel($value): ?string
+    {
+        if (! $value) {
+            return null;
+        }
+
+        $timezone = config('app.timezone', 'UTC');
+
+        if ($value instanceof Carbon) {
+            return $value->timezone($timezone)?->format('d/m/Y H:i');
+        }
+
+        try {
+            return Carbon::parse($value)->timezone($timezone)?->format('d/m/Y H:i');
         } catch (\Throwable $exception) {
             report($exception);
             return null;

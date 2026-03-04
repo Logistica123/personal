@@ -501,6 +501,13 @@ type PersonalRecord = {
     | 'vacaciones'
     | 'cambio_asignacion';
   solicitudData?: unknown;
+  transportistaQrCode?: string | null;
+  transportistaQrRedirectUrl?: string | null;
+  transportistaQrLandingUrl?: string | null;
+  transportistaQrImageUrl?: string | null;
+  transportistaQrScansCount?: number | null;
+  transportistaQrLastScanAt?: string | null;
+  transportistaQrLastScanAtLabel?: string | null;
   duenoNombre?: string | null;
   duenoFechaNacimiento?: string | null;
   duenoEmail?: string | null;
@@ -578,6 +585,13 @@ type PersonalDetail = {
   aprobadoPorNombre: string | null;
   esSolicitud: boolean;
   solicitudData?: unknown;
+  transportistaQrCode?: string | null;
+  transportistaQrRedirectUrl?: string | null;
+  transportistaQrLandingUrl?: string | null;
+  transportistaQrImageUrl?: string | null;
+  transportistaQrScansCount?: number | null;
+  transportistaQrLastScanAt?: string | null;
+  transportistaQrLastScanAtLabel?: string | null;
   documentsDownloadAllUrl: string | null;
   documentsDownloadAllAbsoluteUrl?: string | null;
   duenoNombre: string | null;
@@ -13528,6 +13542,8 @@ const PersonalPage: React.FC = () => {
       { key: 'fechaBaja', label: 'Fecha baja' },
       { key: 'fechaNacimientoProveedor', label: 'Fecha nacimiento' },
       { key: 'docs', label: 'Docs' },
+      { key: 'qrIngresos', label: 'Ingresos QR' },
+      { key: 'qrUltimoIngreso', label: 'Último ingreso' },
       { key: 'acciones', label: 'Acciones', locked: true },
     ],
     []
@@ -13628,13 +13644,17 @@ const PersonalPage: React.FC = () => {
   const canCopyProtectedContacts = isElevatedRole(userRole);
 
   const fetchPersonal = useCallback(
-    async (options?: { signal?: AbortSignal }) => {
+    async (options?: { signal?: AbortSignal; silent?: boolean }) => {
+      const silent = options?.silent === true;
       try {
-        setLoading(true);
+        if (!silent) {
+          setLoading(true);
+        }
         setError(null);
 
-        const response = await fetch(`${apiBaseUrl}/api/personal?includePending=1`, {
+        const response = await fetch(`${apiBaseUrl}/api/personal?includePending=1&_=${Date.now()}`, {
           signal: options?.signal,
+          cache: 'no-store',
         });
 
         if (!response.ok) {
@@ -13654,7 +13674,9 @@ const PersonalPage: React.FC = () => {
 
         setError((err as Error).message ?? 'Error desconocido');
       } finally {
-        setLoading(false);
+        if (!silent) {
+          setLoading(false);
+        }
       }
     },
     [apiBaseUrl]
@@ -13664,6 +13686,18 @@ const PersonalPage: React.FC = () => {
     const controller = new AbortController();
     fetchPersonal({ signal: controller.signal });
     return () => controller.abort();
+  }, [fetchPersonal]);
+
+  useEffect(() => {
+    const intervalId = window.setInterval(() => {
+      if (document.visibilityState === 'visible') {
+        void fetchPersonal({ silent: true });
+      }
+    }, 45000);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
   }, [fetchPersonal]);
 
   useEffect(() => {
@@ -14133,6 +14167,32 @@ const PersonalPage: React.FC = () => {
     }
   };
 
+  const handleOpenTransportistaQr = async (registro: PersonalRecord) => {
+    const landingUrl = registro.transportistaQrLandingUrl?.trim() ?? '';
+    const redirectUrl = registro.transportistaQrRedirectUrl?.trim() ?? '';
+    // Priorizamos redirect para registrar ingresos en backend.
+    const qrTargetUrl = redirectUrl || landingUrl;
+    const imageUrl =
+      registro.transportistaQrImageUrl?.trim() ??
+      `https://api.qrserver.com/v1/create-qr-code/?size=320x320&format=png&data=${encodeURIComponent(qrTargetUrl)}`;
+
+    if (!qrTargetUrl) {
+      window.alert('No se pudo generar el enlace QR para este transportista.');
+      return;
+    }
+
+    const target = imageUrl;
+    window.open(target, '_blank', 'noopener');
+
+    if (navigator?.clipboard?.writeText) {
+      try {
+        await navigator.clipboard.writeText(qrTargetUrl);
+      } catch {
+        // Ignorado: algunos navegadores bloquean el portapapeles.
+      }
+    }
+  };
+
   const handleDeletePersonal = async (registro: PersonalRecord) => {
     if (!canManagePersonal) {
       window.alert('Solo los usuarios autorizados pueden eliminar proveedores.');
@@ -14250,6 +14310,8 @@ const PersonalPage: React.FC = () => {
             { header: 'Dueño correo', resolve: (registro) => registro.duenoEmail ?? '' },
             { header: 'Dueño teléfono', resolve: (registro) => registro.duenoTelefono ?? '' },
             { header: 'Dueño observaciones', resolve: (registro) => registro.duenoObservaciones ?? '' },
+            { header: 'Ingresos QR', resolve: (registro) => registro.transportistaQrScansCount ?? 0 },
+            { header: 'Último ingreso QR', resolve: (registro) => registro.transportistaQrLastScanAtLabel ?? '' },
     ];
 
     const sanitizeCell = (raw: string): string => {
@@ -14634,6 +14696,9 @@ const PersonalPage: React.FC = () => {
         <button type="button" className="secondary-action" onClick={clearFilters}>
           Limpiar
         </button>
+        <button type="button" className="secondary-action" onClick={() => void fetchPersonal()} disabled={loading}>
+          Actualizar
+        </button>
         <button type="button" className="secondary-action" onClick={handleExportCsv}>
           Exportar Excel
         </button>
@@ -14735,6 +14800,8 @@ const PersonalPage: React.FC = () => {
                   </button>
                 </th>
               ) : null}
+              {isColumnVisible('qrIngresos') ? <th>Ingresos QR</th> : null}
+              {isColumnVisible('qrUltimoIngreso') ? <th>Último ingreso</th> : null}
               {isColumnVisible('acciones') ? <th>Acciones</th> : null}
             </tr>
           </thead>
@@ -14839,9 +14906,29 @@ const PersonalPage: React.FC = () => {
                       })()}
                     </td>
                   ) : null}
+                  {isColumnVisible('qrIngresos') ? <td>{registro.transportistaQrScansCount ?? 0}</td> : null}
+                  {isColumnVisible('qrUltimoIngreso') ? (
+                    <td>{registro.transportistaQrLastScanAtLabel ?? '—'}</td>
+                  ) : null}
                   {isColumnVisible('acciones') ? (
                     <td>
                       <div className="action-buttons">
+                        <button
+                          type="button"
+                          aria-label={`QR de ${registro.nombre ?? 'transportista'}`}
+                          title={
+                            registro.transportistaQrScansCount
+                              ? `Ingresos QR: ${registro.transportistaQrScansCount}${
+                                  registro.transportistaQrLastScanAtLabel
+                                    ? ` · Último: ${registro.transportistaQrLastScanAtLabel}`
+                                    : ''
+                                }`
+                              : 'Abrir QR único del transportista'
+                          }
+                          onClick={() => void handleOpenTransportistaQr(registro)}
+                        >
+                          {`QR${(registro.transportistaQrScansCount ?? 0) > 0 ? ` (${registro.transportistaQrScansCount})` : ''}`}
+                        </button>
                         <button
                           type="button"
                           aria-label={`Editar proveedor ${registro.nombre ?? ''}`}
@@ -19347,6 +19434,11 @@ const CombustibleRunsPage: React.FC = () => {
     message?: string;
   };
 
+  type LiquidacionesClientOption = {
+    code: string;
+    label: string;
+  };
+
   type ClientTariffRuleEditor = {
     id: string;
     product: string;
@@ -19365,6 +19457,13 @@ const CombustibleRunsPage: React.FC = () => {
     special?: boolean;
   };
 
+  type EpsaTariffRangeEditor = {
+    id: string;
+    kmDesde: string;
+    kmHasta: string;
+    laJornada: string;
+  };
+
   type ClientRulesEditorState = {
     duplicateRowBlocking: boolean;
     outsidePeriodBlocking: boolean;
@@ -19374,6 +19473,7 @@ const CombustibleRunsPage: React.FC = () => {
     tariffs: ClientTariffRuleEditor[];
     intermedioSelectedZone: string;
     intermedioMatrix: Record<string, IntermedioTariffMatrixRowEditor[]>;
+    epsaTarifario: EpsaTariffRangeEditor[];
   };
 
   type ExtractUploadPreviewResponse = {
@@ -19418,6 +19518,46 @@ const CombustibleRunsPage: React.FC = () => {
     effectiveFrom: seed?.effectiveFrom ?? '',
     effectiveTo: seed?.effectiveTo ?? '',
   });
+
+  const RULE_TARIFF_PRODUCT_OPTIONS = [
+    'DIESEL',
+    'NAFTA',
+    'GNC',
+    'CAMIONETAS',
+    'UT_CHICO',
+    'CORTO AM',
+    'CORTO PM',
+    'ESCOBAR PM',
+    'MEDIANO',
+    'LARGO',
+    'LARGO +2018',
+    'CHASIS',
+  ];
+
+  const EPSA_TARIFF_DEFAULTS: Array<{ kmDesde: number; kmHasta: number; laJornada: number }> = [
+    { kmDesde: 0, kmHasta: 90, laJornada: 92636.7 },
+    { kmDesde: 90.00001, kmHasta: 120, laJornada: 104216.29 },
+    { kmDesde: 120.00001, kmHasta: 150, laJornada: 115795.88 },
+    { kmDesde: 150.00001, kmHasta: 170, laJornada: 127375.47 },
+    { kmDesde: 170.00001, kmHasta: 200, laJornada: 127375.47 },
+  ];
+
+  const createEpsaTariffRangeRow = (seed?: Partial<EpsaTariffRangeEditor>): EpsaTariffRangeEditor => ({
+    id: seed?.id ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    kmDesde: seed?.kmDesde ?? '',
+    kmHasta: seed?.kmHasta ?? '',
+    laJornada: seed?.laJornada ?? '',
+  });
+
+  const createDefaultEpsaTarifario = (): EpsaTariffRangeEditor[] =>
+    EPSA_TARIFF_DEFAULTS.map((row, index) =>
+      createEpsaTariffRangeRow({
+        id: `epsa-${index}`,
+        kmDesde: String(row.kmDesde),
+        kmHasta: String(row.kmHasta),
+        laJornada: String(row.laJornada),
+      })
+    );
 
   const INTERMEDIO_ZONES = ['AMBA', 'MDQ', 'ROSARIO', 'SANTA_FE', 'NEUQUEN', 'BARILOCHE'] as const;
   const INTERMEDIO_ROW_TEMPLATES: Array<{ key: string; label: string; special?: boolean }> = [
@@ -19582,11 +19722,29 @@ const CombustibleRunsPage: React.FC = () => {
       rules?.tariff_matrix && typeof rules.tariff_matrix === 'object'
         ? (rules.tariff_matrix as Record<string, unknown>)
         : null;
+    const epsaRaw =
+      rules?.epsa && typeof rules.epsa === 'object'
+        ? (rules.epsa as Record<string, unknown>)
+        : null;
+    const epsaTarifarioRaw = Array.isArray(epsaRaw?.tarifario_ut_chico)
+      ? (epsaRaw?.tarifario_ut_chico as Array<Record<string, unknown>>)
+      : [];
     const matrixZonesRaw =
       matrixRaw?.zones && typeof matrixRaw.zones === 'object'
         ? (matrixRaw.zones as Record<string, unknown>)
         : {};
     const matrixState = createDefaultIntermedioMatrixState();
+    const epsaTarifario =
+      epsaTarifarioRaw.length > 0
+        ? epsaTarifarioRaw.map((row, index) =>
+            createEpsaTariffRangeRow({
+              id: `epsa-loaded-${index}`,
+              kmDesde: toNumberString(row.km_desde),
+              kmHasta: toNumberString(row.km_hasta),
+              laJornada: toNumberString(row.la_jornada),
+            })
+          )
+        : createDefaultEpsaTarifario();
 
     Object.entries(matrixZonesRaw).forEach(([zoneName, zoneValue]) => {
       if (!zoneValue || typeof zoneValue !== 'object') {
@@ -19667,10 +19825,14 @@ const CombustibleRunsPage: React.FC = () => {
       ),
       intermedioSelectedZone: selectedZone,
       intermedioMatrix: matrixState,
+      epsaTarifario,
     };
   };
 
-  const editorStateToRulesObject = (editor: ClientRulesEditorState): Record<string, unknown> => {
+  const editorStateToRulesObject = (editor: ClientRulesEditorState, clientCodeRaw = ''): Record<string, unknown> => {
+    const normalizedClientCode = clientCodeRaw.trim().toUpperCase();
+    const isIntermedioClient = normalizedClientCode.includes('INTERMEDIO') || /^INT\d*$/.test(normalizedClientCode);
+    const isEpsaClient = normalizedClientCode.includes('EPSA');
     const tolerancePercent = parseOptionalNumber(editor.tolerancePercent);
     const toleranceAmount = parseOptionalNumber(editor.toleranceAmount);
 
@@ -19748,7 +19910,26 @@ const CombustibleRunsPage: React.FC = () => {
       })
       .filter((row): row is { product: string; price_per_liter: number } => row !== null);
 
-    return {
+    const epsaTarifario = (editor.epsaTarifario ?? [])
+      .map((row) => {
+        const kmDesde = parseOptionalNumber(row.kmDesde);
+        const kmHasta = parseOptionalNumber(row.kmHasta);
+        const laJornada = parseOptionalNumber(row.laJornada);
+        if (kmDesde === null || kmHasta === null || laJornada === null) {
+          return null;
+        }
+        if (kmHasta < kmDesde || laJornada <= 0) {
+          return null;
+        }
+        return {
+          km_desde: kmDesde,
+          km_hasta: kmHasta,
+          la_jornada: laJornada,
+        };
+      })
+      .filter((row): row is { km_desde: number; km_hasta: number; la_jornada: number } => row !== null);
+
+    const payload: Record<string, unknown> = {
       blocking_rules: {
         duplicate_row: editor.duplicateRowBlocking,
         outside_period: editor.outsidePeriodBlocking,
@@ -19758,16 +19939,34 @@ const CombustibleRunsPage: React.FC = () => {
         price_per_liter_percent: tolerancePercent ?? 0,
         price_per_liter_amount: toleranceAmount ?? 0,
       },
-      tariffs: intermedioTariffs.length > 0 ? intermedioTariffs : tariffs,
-      ...(Object.keys(matrixZonesPayload).length > 0
-        ? {
-            tariff_matrix: {
-              default_zone: selectedZoneKey,
-              zones: matrixZonesPayload,
-            },
-          }
-        : {}),
+      tariffs: isIntermedioClient
+        ? intermedioTariffs
+        : tariffs,
     };
+
+    if (isIntermedioClient && Object.keys(matrixZonesPayload).length > 0) {
+      payload.tariff_matrix = {
+        default_zone: selectedZoneKey,
+        zones: matrixZonesPayload,
+      };
+    }
+
+    if (isEpsaClient) {
+      payload.epsa = {
+        sheet_name: 'Table',
+        tipo_unidad: 'UT_CHICO',
+        match_alias_type: 'DISTRIBUIDOR',
+        tarifario_ut_chico: epsaTarifario.length > 0
+          ? epsaTarifario
+          : EPSA_TARIFF_DEFAULTS.map((row) => ({
+              km_desde: row.kmDesde,
+              km_hasta: row.kmHasta,
+              la_jornada: row.laJornada,
+            })),
+      };
+    }
+
+    return payload;
   };
 
   const apiBaseUrl = useMemo(() => resolveApiBaseUrl(), []);
@@ -19812,6 +20011,7 @@ const CombustibleRunsPage: React.FC = () => {
   const [createPreviewLoading, setCreatePreviewLoading] = useState(false);
   const [createPreviewError, setCreatePreviewError] = useState<string | null>(null);
   const [createLoading, setCreateLoading] = useState(false);
+  const [liquidacionesClients, setLiquidacionesClients] = useState<LiquidacionesClientOption[]>([]);
 
   const [rulesClientCode, setRulesClientCode] = useState('');
   const [rulesActive, setRulesActive] = useState(true);
@@ -19868,6 +20068,13 @@ const CombustibleRunsPage: React.FC = () => {
     }
     return normalized.includes('INTERMEDIO') || /^INT\d*$/.test(normalized);
   }, [rulesClientCode]);
+  const isEpsaRulesClient = useMemo(() => {
+    const normalized = rulesClientCode.trim().toUpperCase();
+    if (!normalized) {
+      return false;
+    }
+    return normalized.includes('EPSA');
+  }, [rulesClientCode]);
   const intermedioRulesZone = (() => {
     const normalized = (rulesEditor.intermedioSelectedZone || 'AMBA').trim().toUpperCase() || 'AMBA';
     return INTERMEDIO_ZONES.includes(normalized as (typeof INTERMEDIO_ZONES)[number]) ? normalized : 'AMBA';
@@ -19879,7 +20086,41 @@ const CombustibleRunsPage: React.FC = () => {
     }
     return createIntermedioMatrixRows(intermedioRulesZone, INTERMEDIO_ZONE_DEFAULTS[intermedioRulesZone]);
   })();
-  const rulesJsonText = JSON.stringify(editorStateToRulesObject(rulesEditor), null, 2);
+  const epsaRulesRows = Array.isArray(rulesEditor.epsaTarifario) && rulesEditor.epsaTarifario.length > 0
+    ? rulesEditor.epsaTarifario
+    : createDefaultEpsaTarifario();
+  const rulesJsonText = JSON.stringify(editorStateToRulesObject(rulesEditor, rulesClientCode), null, 2);
+  const clientOptions = useMemo(() => {
+    const map = new Map<string, string>();
+
+    liquidacionesClients.forEach((item) => {
+      const code = item.code.trim().toUpperCase();
+      if (!code) {
+        return;
+      }
+      map.set(code, item.label || code);
+    });
+
+    runs.forEach((run) => {
+      const code = String(run.clientCode ?? '').trim().toUpperCase();
+      if (!code || map.has(code)) {
+        return;
+      }
+      map.set(code, code);
+    });
+
+    [createClientCode, rulesClientCode, clientCodeFilter].forEach((value) => {
+      const code = value.trim().toUpperCase();
+      if (!code || map.has(code)) {
+        return;
+      }
+      map.set(code, code);
+    });
+
+    return Array.from(map.entries())
+      .map(([code, label]) => ({ code, label }))
+      .sort((a, b) => a.label.localeCompare(b.label, 'es', { sensitivity: 'base' }));
+  }, [clientCodeFilter, createClientCode, liquidacionesClients, rulesClientCode, runs]);
 
   const formatDateCell = useCallback((value?: string | null) => {
     if (!value) {
@@ -20076,6 +20317,50 @@ const CombustibleRunsPage: React.FC = () => {
   }, [loadRuns]);
 
   useEffect(() => {
+    let cancelled = false;
+
+    const loadClientOptions = async () => {
+      try {
+        const response = await fetch(`${apiBaseUrl}/api/clientes`, {
+          credentials: 'include',
+        });
+        const payload = (await parseJsonSafe(response)) as { data?: Array<{ codigo?: string | null; nombre?: string | null; id?: number }> };
+        if (!response.ok) {
+          return;
+        }
+        const options = Array.isArray(payload.data)
+          ? payload.data
+              .map((cliente) => {
+                const code = String(cliente?.codigo ?? '').trim().toUpperCase();
+                if (!code) {
+                  return null;
+                }
+                const name = String(cliente?.nombre ?? '').trim();
+                return {
+                  code,
+                  label: name ? `${code} - ${name}` : code,
+                } as LiquidacionesClientOption;
+              })
+              .filter((item): item is LiquidacionesClientOption => item !== null)
+          : [];
+
+        if (!cancelled) {
+          setLiquidacionesClients(options);
+        }
+      } catch {
+        if (!cancelled) {
+          setLiquidacionesClients([]);
+        }
+      }
+    };
+
+    loadClientOptions();
+    return () => {
+      cancelled = true;
+    };
+  }, [apiBaseUrl]);
+
+  useEffect(() => {
     if (selectedRunId == null) {
       setSelectedRun(null);
       setRunSummary(null);
@@ -20223,7 +20508,7 @@ const CombustibleRunsPage: React.FC = () => {
       return;
     }
 
-    const parsedRules = editorStateToRulesObject(rulesEditor);
+    const parsedRules = editorStateToRulesObject(rulesEditor, clientCode);
 
     setRulesSaving(true);
     setRulesError(null);
@@ -20265,6 +20550,7 @@ const CombustibleRunsPage: React.FC = () => {
   const handleLoadRulesTemplate = async () => {
     const clientCode = rulesClientCode.trim().toUpperCase();
     const isIntermedioClient = clientCode.includes('INTERMEDIO') || /^INT\d*$/.test(clientCode);
+    const isEpsaClient = clientCode.includes('EPSA');
     if (isIntermedioClient) {
       const matrixZones = INTERMEDIO_ZONES.reduce<Record<string, Record<string, Record<string, unknown>>>>(
         (acc, zone) => {
@@ -20310,6 +20596,36 @@ const CombustibleRunsPage: React.FC = () => {
       setRulesSourceLabel('template_intermedio');
       setRulesUpdatedAt(null);
       setRulesMessage('Plantilla INTERMEDIO cargada.');
+      setRulesError(null);
+      return;
+    }
+    if (isEpsaClient) {
+      const epsaTemplate: Record<string, unknown> = {
+        blocking_rules: {
+          duplicate_row: true,
+          outside_period: false,
+          tariff_mismatch: false,
+        },
+        tolerances: {
+          price_per_liter_percent: 3,
+          price_per_liter_amount: 0,
+        },
+        epsa: {
+          sheet_name: 'Table',
+          tipo_unidad: 'UT_CHICO',
+          match_alias_type: 'DISTRIBUIDOR',
+          tarifario_ut_chico: EPSA_TARIFF_DEFAULTS.map((row) => ({
+            km_desde: row.kmDesde,
+            km_hasta: row.kmHasta,
+            la_jornada: row.laJornada,
+          })),
+        },
+      };
+      setRulesEditor(rulesObjectToEditorState(epsaTemplate));
+      setRulesActive(true);
+      setRulesSourceLabel('template_epsa');
+      setRulesUpdatedAt(null);
+      setRulesMessage('Plantilla EPSA cargada.');
       setRulesError(null);
       return;
     }
@@ -20378,6 +20694,24 @@ const CombustibleRunsPage: React.FC = () => {
         },
       };
     });
+  };
+
+  const handleEpsaTarifarioValueChange = (
+    rowId: string,
+    field: 'kmDesde' | 'kmHasta' | 'laJornada',
+    value: string
+  ) => {
+    setRulesEditor((current) => ({
+      ...current,
+      epsaTarifario: (current.epsaTarifario ?? []).map((row) =>
+        row.id === rowId
+          ? {
+              ...row,
+              [field]: value,
+            }
+          : row
+      ),
+    }));
   };
 
   const handleCreateRun = async () => {
@@ -20989,11 +21323,17 @@ const CombustibleRunsPage: React.FC = () => {
             </label>
             <label className="input-control">
               <span>Cliente</span>
-              <input
+              <select
                 value={clientCodeFilter}
                 onChange={(event) => setClientCodeFilter(event.target.value)}
-                placeholder="Código cliente"
-              />
+              >
+                <option value="">Todos</option>
+                {clientOptions.map((option) => (
+                  <option key={`filter-client-${option.code}`} value={option.code}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
             </label>
           </div>
           <div className="filters-actions">
@@ -21031,11 +21371,17 @@ const CombustibleRunsPage: React.FC = () => {
           <div className="form-grid">
             <label className="input-control">
               <span>Cliente</span>
-              <input
+              <select
                 value={createClientCode}
                 onChange={(event) => setCreateClientCode(event.target.value)}
-                placeholder="CLIENTE-X"
-              />
+              >
+                <option value="">Seleccionar cliente</option>
+                {clientOptions.map((option) => (
+                  <option key={`create-client-${option.code}`} value={option.code}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
             </label>
             <label className="input-control">
               <span>Período desde</span>
@@ -21168,11 +21514,17 @@ const CombustibleRunsPage: React.FC = () => {
           <div className="form-grid">
             <label className="input-control">
               <span>Cliente</span>
-              <input
+              <select
                 value={rulesClientCode}
                 onChange={(event) => setRulesClientCode(event.target.value)}
-                placeholder="INTERMEDIO"
-              />
+              >
+                <option value="">Seleccionar cliente</option>
+                {clientOptions.map((option) => (
+                  <option key={`rules-client-${option.code}`} value={option.code}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
             </label>
             <label className="checkbox-control" style={{ alignSelf: 'end' }}>
               <input
@@ -21328,6 +21680,53 @@ const CombustibleRunsPage: React.FC = () => {
                 </table>
               </div>
             </>
+          ) : isEpsaRulesClient ? (
+            <>
+              <div className="form-grid" style={{ marginTop: 8 }}>
+                <div className="helper-text">
+                  Tarifario EPSA (UT.Chico/Camionetas) por rango de km. Hoja oficial: <strong>Table</strong>.
+                </div>
+              </div>
+
+              <div className="table-wrapper">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>KM desde</th>
+                      <th>KM hasta</th>
+                      <th>LA jornada</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {epsaRulesRows.map((row) => (
+                      <tr key={row.id}>
+                        <td>
+                          <input
+                            value={row.kmDesde}
+                            onChange={(event) => handleEpsaTarifarioValueChange(row.id, 'kmDesde', event.target.value)}
+                            placeholder="0"
+                          />
+                        </td>
+                        <td>
+                          <input
+                            value={row.kmHasta}
+                            onChange={(event) => handleEpsaTarifarioValueChange(row.id, 'kmHasta', event.target.value)}
+                            placeholder="90"
+                          />
+                        </td>
+                        <td>
+                          <input
+                            value={row.laJornada}
+                            onChange={(event) => handleEpsaTarifarioValueChange(row.id, 'laJornada', event.target.value)}
+                            placeholder="92636.70"
+                          />
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
           ) : (
             <>
               <div className="filters-actions" style={{ marginTop: 8 }}>
@@ -21368,7 +21767,7 @@ const CombustibleRunsPage: React.FC = () => {
                       rulesEditor.tariffs.map((row) => (
                         <tr key={row.id}>
                           <td>
-                            <input
+                            <select
                               value={row.product}
                               onChange={(event) =>
                                 setRulesEditor((current) => ({
@@ -21383,8 +21782,17 @@ const CombustibleRunsPage: React.FC = () => {
                                   ),
                                 }))
                               }
-                              placeholder="DIESEL"
-                            />
+                            >
+                              <option value="">Seleccionar tarifa</option>
+                              {RULE_TARIFF_PRODUCT_OPTIONS.map((option) => (
+                                <option key={`tariff-product-${row.id}-${option}`} value={option}>
+                                  {option}
+                                </option>
+                              ))}
+                              {row.product && !RULE_TARIFF_PRODUCT_OPTIONS.includes(row.product) ? (
+                                <option value={row.product}>{row.product}</option>
+                              ) : null}
+                            </select>
                           </td>
                           <td>
                             <input

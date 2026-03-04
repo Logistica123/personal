@@ -95,4 +95,10 @@ return [
         'base_url' => env('WHATSAPP_BASE_URL', 'https://wa.me'),
     ],
 
+    'transportista_qr' => [
+        'landing_url' => env('TRANSPORTISTA_QR_LANDING_URL', 'https://www.logisticaargentinasrl.com.ar/'),
+        'qr_service_base_url' => env('TRANSPORTISTA_QR_IMAGE_SERVICE_URL', 'https://api.qrserver.com/v1/create-qr-code/'),
+        'redirect_base_url' => env('TRANSPORTISTA_QR_REDIRECT_BASE_URL'),
+    ],
+
 ];

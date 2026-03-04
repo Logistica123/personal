@@ -806,4 +806,191 @@ class LiquidacionRunControllerTest extends TestCase
             ->assertJsonPath('data.0.id', $providerPatenteId)
             ->assertJsonPath('data.0.cuil', '2037060985');
     }
+
+    public function test_it_uploads_epsa_rows_with_km_tariff_and_media_jornada_rules(): void
+    {
+        $headers = $this->authHeaders();
+
+        DB::table('personas')->insert([
+            'apellidos' => 'LOGISTICA',
+            'nombres' => 'ACME',
+            'cuil' => '20999111222',
+            'patente' => null,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $headersRow = [
+            'NRO.PLANILLA',
+            'FECHA PLANILLA',
+            'DISTRIBUIDOR',
+            'ZONA RECORRIDO',
+            'Kms',
+            'Tarifa',
+            'LOGISTICA ARG',
+            'VEHICULO',
+            'TURNO',
+            'SUCURSAL',
+        ];
+
+        $rowOne = [
+            '1001',
+            '01/02/2026',
+            'Logistica Acme',
+            'MEDIA RUTA ZONA 1',
+            '100',
+            '104216.29',
+            '52108.15',
+            'CAMIONETAS',
+            'AM',
+            'AMBA',
+        ];
+
+        $rowTwo = [
+            '1002',
+            '02/02/2026',
+            'Distribuidor Sin Match',
+            'NORMAL',
+            '210',
+            '',
+            '',
+            '',
+            '',
+            '',
+        ];
+
+        $rowIgnored = [
+            '',
+            '02/02/2026',
+            'Fila Informativa',
+            '',
+            '',
+            '',
+            '',
+            '',
+            '',
+            '',
+        ];
+
+        $csv = implode("\n", [
+            implode(',', $headersRow),
+            implode(',', $rowOne),
+            implode(',', $rowTwo),
+            implode(',', $rowIgnored),
+        ]) . "\n";
+
+        $extract = UploadedFile::fake()->createWithContent('epsa-table.csv', $csv);
+
+        $response = $this->post('/api/liquidaciones/runs/upload', [
+            'source_system' => 'powerbi',
+            'client_code' => 'EPSA',
+            'period_from' => '2026-02-01',
+            'period_to' => '2026-02-28',
+            'status' => 'RECEIVED',
+            'extract_file' => $extract,
+        ], $headers);
+
+        $response
+            ->assertCreated()
+            ->assertJsonPath('data.clientCode', 'EPSA')
+            ->assertJsonPath('data.rowsTotal', 2)
+            ->assertJsonPath('data.rowsOk', 1)
+            ->assertJsonPath('data.rowsError', 1);
+
+        $runId = (int) $response->json('data.id');
+
+        $row = DB::table('liq_staging_rows')
+            ->where('run_id', $runId)
+            ->where('external_row_id', '1001')
+            ->first();
+
+        $this->assertNotNull($row);
+        $this->assertSame('OK', (string) $row->validation_status);
+        $this->assertSame('DISTRIBUIDOR_OK', (string) $row->match_status);
+        $this->assertEquals(100.0, (float) $row->liters);
+        $this->assertEquals(104216.29, (float) $row->price_per_liter);
+        $this->assertEquals(52108.15, (float) $row->amount);
+
+        $rawPayload = json_decode((string) $row->raw_payload_json, true);
+        $this->assertIsArray($rawPayload);
+        $this->assertSame('MEDIA_RUTA', data_get($rawPayload, 'epsa.motivo_factor'));
+        $this->assertEquals(0.5, (float) data_get($rawPayload, 'epsa.factor_jornada'));
+
+        $this->assertDatabaseHas('liq_validation_results', [
+            'run_id' => $runId,
+            'rule_code' => 'EPSA_KM_RANGE',
+            'severity' => 'CRITICAL',
+            'result' => 'FAIL',
+        ]);
+    }
+
+    public function test_it_assigns_provider_by_distribuidor_norm_without_patente(): void
+    {
+        $headers = $this->authHeaders();
+
+        $providerId = DB::table('personas')->insertGetId([
+            'apellidos' => 'PEREZ',
+            'nombres' => 'JUAN',
+            'cuil' => '20300111222',
+            'patente' => null,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $createResponse = $this->postJson('/api/liquidaciones/runs', [
+            'client_code' => 'EPSA',
+            'status' => 'PRELIQUIDACION',
+            'staging_rows' => [
+                [
+                    'row_number' => 1,
+                    'external_row_id' => '2001',
+                    'name_excel_raw' => 'Distribuidor Sur',
+                    'name_excel_norm' => 'DISTRIBUIDOR SUR',
+                    'distributor_code' => 'DISTRIBUIDOR SUR',
+                    'validation_status' => 'ALERTA',
+                    'match_status' => 'PENDIENTE_ASIGNACION',
+                    'liters' => 100,
+                    'amount' => 92636.70,
+                ],
+            ],
+            'validation_results' => [
+                [
+                    'row_number' => 1,
+                    'rule_code' => 'PROVIDER_MATCH_PENDING',
+                    'severity' => 'WARNING',
+                    'result' => 'FAIL',
+                    'message' => 'Proveedor pendiente',
+                ],
+            ],
+        ], $headers)->assertCreated();
+
+        $runId = (int) $createResponse->json('data.id');
+
+        $this->postJson('/api/liquidaciones/importaciones/' . $runId . '/asignar-proveedor', [
+            'distribuidor_norm' => 'Distribuidor Sur',
+            'proveedor_id' => $providerId,
+            'actualizar_patente_en_proveedor' => false,
+            'motivo' => 'Asignación manual EPSA',
+        ], $headers)
+            ->assertOk()
+            ->assertJsonPath('ok', true)
+            ->assertJsonPath('patente_actualizada', false)
+            ->assertJsonPath('alias_guardado', true);
+
+        $this->assertDatabaseHas('liq_staging_rows', [
+            'run_id' => $runId,
+            'name_excel_norm' => 'DISTRIBUIDOR SUR',
+            'distributor_id' => $providerId,
+            'match_status' => 'MANUAL_CONFIRMED',
+            'validation_status' => 'OK',
+        ]);
+
+        $this->assertDatabaseHas('liq_client_identifier_aliases', [
+            'client_code' => 'EPSA',
+            'alias_type' => 'DISTRIBUIDOR',
+            'alias_norm' => 'DISTRIBUIDOR SUR',
+            'provider_persona_id' => $providerId,
+            'active' => 1,
+        ]);
+    }
 }
