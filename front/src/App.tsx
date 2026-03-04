@@ -1674,12 +1674,15 @@ type EditableSucursal = {
 
 const resolveApiBaseUrl = (): string => {
   const remoteFallback = 'https://apibasepersonal.distriapp.com.ar';
-  const sameOriginFallback =
-    typeof window !== 'undefined' && window.location?.origin
-      ? window.location.origin
-      : remoteFallback;
-  const raw = (process.env.REACT_APP_API_BASE ?? '').trim();
-  const candidate = raw.length > 0 ? raw : sameOriginFallback;
+  const hasWindow = typeof window !== 'undefined' && Boolean(window.location?.origin);
+  const sameOriginFallback = hasWindow ? window.location.origin : remoteFallback;
+  const hostname = hasWindow ? (window.location.hostname ?? '').toLowerCase() : '';
+  const isDistriappProductionHost =
+    hostname === 'distriapp.com.ar' || hostname.endsWith('.distriapp.com.ar');
+  const raw = (process.env.REACT_APP_API_BASE ?? process.env.REACT_APP_API_BASE_URL ?? '').trim();
+  const candidate = raw.length > 0
+    ? raw
+    : (isDistriappProductionHost ? remoteFallback : sameOriginFallback);
 
   try {
     const parsed = new URL(candidate, sameOriginFallback);
@@ -1694,7 +1697,8 @@ const resolveApiBaseUrl = (): string => {
 
     return `${parsed.origin}${normalizedPath}`;
   } catch {
-    return sameOriginFallback.replace(/\/+$/, '').replace(/\/api$/i, '');
+    const fallback = isDistriappProductionHost ? remoteFallback : sameOriginFallback;
+    return fallback.replace(/\/+$/, '').replace(/\/api$/i, '');
   }
 };
 
