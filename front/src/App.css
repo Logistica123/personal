@@ -5577,6 +5577,240 @@ tbody tr:hover {
   color: #4c5c74;
 }
 
+.pending-match-section .card-header h4 {
+  margin: 0;
+}
+
+.pending-match-cards {
+  display: none;
+}
+
+.pending-match-table td {
+  vertical-align: middle;
+}
+
+.pending-match-candidate-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.pending-match-candidate-btn {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.35rem 0.55rem;
+  border: 1px solid #d9e3f3;
+  border-radius: 10px;
+  background: #f8fbff;
+  color: #1d3565;
+  font-size: 0.78rem;
+  cursor: pointer;
+  text-align: left;
+}
+
+.pending-match-candidate-btn strong {
+  font-size: 0.75rem;
+}
+
+.pending-match-candidate-btn span {
+  font-size: 0.72rem;
+  color: #5c6f90;
+}
+
+.pending-match-candidate-btn:hover {
+  background: #edf3ff;
+  border-color: #bfd4fb;
+}
+
+.pending-match-empty-candidates {
+  color: #6e7f98;
+  font-size: 0.84rem;
+}
+
+.pending-match-provider-grid {
+  display: grid;
+  gap: 0.5rem;
+  min-width: 260px;
+  padding: 0.5rem;
+  border: 1px solid #dce6f5;
+  border-radius: 12px;
+  background: #ffffff;
+}
+
+.pending-match-provider-grid input,
+.pending-match-provider-grid select {
+  width: 100%;
+  border: 1px solid #c8d6ee;
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 0.4rem 0.5rem;
+  font-size: 0.82rem;
+}
+
+.pending-match-provider-grid input:focus,
+.pending-match-provider-grid select:focus {
+  outline: none;
+  border-color: #5f8fe3;
+  box-shadow: 0 0 0 2px rgba(95, 143, 227, 0.16);
+}
+
+.pending-match-search-row {
+  display: grid;
+  grid-template-columns: minmax(140px, 1fr) auto;
+  gap: 0.45rem;
+}
+
+.pending-match-search-row .secondary-action {
+  padding: 0.45rem 0.75rem;
+  font-size: 0.78rem;
+  border-radius: 8px;
+  min-width: 74px;
+  white-space: nowrap;
+}
+
+.pending-match-manual-id {
+  display: grid;
+  grid-template-columns: 72px minmax(120px, 1fr);
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.pending-match-manual-id span {
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: #7082a0;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+.pending-match-provider-hint {
+  font-size: 0.72rem;
+  color: #5f7192;
+}
+
+.pending-match-provider-manual-input {
+  min-width: 0;
+}
+
+.pending-match-inline-error {
+  margin: 0;
+  font-size: 0.75rem;
+}
+
+.pending-match-assign-btn {
+  padding: 0.5rem 0.9rem;
+  font-size: 0.78rem;
+}
+
+.pending-match-card {
+  border: 1px solid #d9e3f3;
+  border-radius: 14px;
+  background: #fbfdff;
+  padding: 0.8rem;
+  display: grid;
+  gap: 0.7rem;
+}
+
+.pending-match-card__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.6rem;
+}
+
+.pending-match-card__body {
+  display: grid;
+  gap: 0.7rem;
+}
+
+.pending-match-card__field {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.pending-match-card__label {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: #6f82a2;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+.pending-match-card__actions {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0.5rem;
+}
+
+[data-theme='dark'] .pending-match-candidate-btn {
+  background: #18233b;
+  border-color: #2b3a59;
+  color: #d8e4ff;
+}
+
+[data-theme='dark'] .pending-match-candidate-btn span {
+  color: #9eb0d1;
+}
+
+[data-theme='dark'] .pending-match-candidate-btn:hover {
+  background: #1f2d49;
+  border-color: #3a4d78;
+}
+
+[data-theme='dark'] .pending-match-empty-candidates {
+  color: #98a8c3;
+}
+
+[data-theme='dark'] .pending-match-manual-id span {
+  color: #99abcb;
+}
+
+[data-theme='dark'] .pending-match-provider-grid {
+  border-color: #2c3d5f;
+  background: #131f35;
+}
+
+[data-theme='dark'] .pending-match-provider-grid input,
+[data-theme='dark'] .pending-match-provider-grid select {
+  border-color: #355078;
+  background: #0f1a2d;
+  color: #d9e5ff;
+}
+
+[data-theme='dark'] .pending-match-provider-hint {
+  color: #9ab0d4;
+}
+
+[data-theme='dark'] .pending-match-card {
+  border-color: #2b3a59;
+  background: #141f36;
+}
+
+[data-theme='dark'] .pending-match-card__label {
+  color: #9bb0d1;
+}
+
+@media (max-width: 1180px) {
+  .pending-match-table-wrapper {
+    display: none;
+  }
+
+  .pending-match-cards {
+    display: grid;
+    gap: 0.8rem;
+  }
+
+  .pending-match-provider-grid {
+    min-width: 0;
+  }
+}
+
 .summary-cards {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
@@ -7079,4 +7313,98 @@ tbody tr:hover {
   font-weight: 600;
   box-shadow: 0 4px 14px rgba(0, 0, 0, 0.06);
   border: 1px solid rgba(0, 0, 0, 0.05);
+}
+
+.webrtc-page {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 1rem;
+}
+
+.webrtc-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.webrtc-card h3 {
+  margin: 0;
+}
+
+.webrtc-row {
+  display: flex;
+  align-items: end;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.webrtc-row .input-control {
+  flex: 1 1 220px;
+  min-width: 220px;
+}
+
+.webrtc-row .primary-action,
+.webrtc-row .secondary-action,
+.webrtc-row .danger-action {
+  flex: 0 0 auto;
+}
+
+.webrtc-incoming-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 0.6rem 0.75rem;
+  background: var(--panel);
+}
+
+.webrtc-incoming-item small {
+  color: var(--muted);
+  display: block;
+  margin-top: 0.2rem;
+}
+
+.webrtc-active {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.webrtc-active p {
+  margin: 0;
+}
+
+.webrtc-status {
+  margin: 0;
+  color: var(--muted);
+}
+
+.webrtc-recording-controls {
+  margin-top: 0.25rem;
+}
+
+.webrtc-recording-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.webrtc-recording-preview audio {
+  width: 100%;
+}
+
+.webrtc-recording-preview a {
+  color: var(--primary);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.webrtc-recording-preview a:hover {
+  text-decoration: underline;
 }

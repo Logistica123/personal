@@ -1,0 +1,107 @@
+{
+  "version": "1.0.0",
+  "description": "Plantilla base de reglas para validacion de liquidaciones (Power BI + Automate + ERP).",
+  "defaultTolerance": {
+    "pricePerLiterAbs": 0.05,
+    "amountAbs": 1.0
+  },
+  "rules": [
+    {
+      "code": "R001_DOMINIO_REQUERIDO",
+      "name": "Dominio requerido",
+      "severity": "CRITICAL",
+      "enabled": true,
+      "expression": "NOT_EMPTY(domain_norm)",
+      "message": "Dominio vacio o invalido."
+    },
+    {
+      "code": "R002_FECHA_VALIDA",
+      "name": "Fecha valida",
+      "severity": "CRITICAL",
+      "enabled": true,
+      "expression": "IS_VALID_DATE(occurred_at) AND IN_PERIOD(occurred_at, period_from, period_to)",
+      "message": "Fecha invalida o fuera del periodo."
+    },
+    {
+      "code": "R003_LITROS_POSITIVOS",
+      "name": "Litros positivos",
+      "severity": "CRITICAL",
+      "enabled": true,
+      "expression": "liters > 0",
+      "message": "Litros debe ser mayor a 0."
+    },
+    {
+      "code": "R004_IMPORTE_VALIDO",
+      "name": "Importe valido",
+      "severity": "CRITICAL",
+      "enabled": true,
+      "expression": "amount >= 0",
+      "message": "Importe invalido."
+    },
+    {
+      "code": "R005_PRECIO_CONSISTENTE",
+      "name": "Precio consistente",
+      "severity": "WARNING",
+      "enabled": true,
+      "expression": "ABS((amount / liters) - price_per_liter) <= tolerance.pricePerLiterAbs",
+      "message": "Diferencia entre importe/litros y precio por litro."
+    },
+    {
+      "code": "R006_TARIFA_CLIENTE",
+      "name": "Tarifa por cliente",
+      "severity": "CRITICAL",
+      "enabled": true,
+      "expression": "IN_CLIENT_TARIFF(client_code, product, period_from, period_to, price_per_liter)",
+      "message": "Tarifa fuera de parametros para cliente/producto/periodo."
+    },
+    {
+      "code": "R007_DUPLICADO",
+      "name": "Duplicado",
+      "severity": "CRITICAL",
+      "enabled": true,
+      "expression": "NOT_DUPLICATE(duplicate_group_key)",
+      "message": "Registro duplicado en lote o historico."
+    },
+    {
+      "code": "R101_ESTACION_NO_HABITUAL",
+      "name": "Estacion no habitual",
+      "severity": "WARNING",
+      "enabled": true,
+      "expression": "IS_USUAL_STATION(domain_norm, station)",
+      "message": "Estacion fuera de patron historico."
+    },
+    {
+      "code": "R102_CONDUCTOR_NO_ASIGNADO",
+      "name": "Conductor no asignado",
+      "severity": "WARNING",
+      "enabled": true,
+      "expression": "HAS_DISTRIBUTOR_OR_DRIVER(distributor_id, conductor)",
+      "message": "Conductor/distribuidor no asignado."
+    },
+    {
+      "code": "R103_DESVIO_CONSUMO",
+      "name": "Desvio de consumo",
+      "severity": "WARNING",
+      "enabled": true,
+      "expression": "WITHIN_HISTORIC_CONSUMPTION(domain_norm, liters, amount)",
+      "message": "Consumo fuera del desvio esperado."
+    },
+    {
+      "code": "R104_FACTURA_FALTANTE",
+      "name": "Factura faltante",
+      "severity": "WARNING",
+      "enabled": true,
+      "expression": "NOT_EMPTY(invoice_number)",
+      "message": "Numero de factura/comprobante faltante."
+    },
+    {
+      "code": "R105_DIF_TOTALES_CLIENTE",
+      "name": "Diferencia de totales",
+      "severity": "WARNING",
+      "enabled": true,
+      "expression": "ABS(amount - amount_expected) <= tolerance.amountAbs",
+      "message": "Diferencia contra total esperado del cliente."
+    }
+  ]
+}
+

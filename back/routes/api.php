@@ -21,6 +21,8 @@ use App\Http\Controllers\Api\TarifaImagenController;
 use App\Http\Controllers\Api\SolicitudPersonalController;
 use App\Http\Controllers\Api\VacacionesDiasController;
 use App\Http\Controllers\Api\DistriappController;
+use App\Http\Controllers\Api\LiquidacionRunController;
+use App\Http\Controllers\Api\CallController;
 use Illuminate\Support\Facades\Route;
 
 Route::post('/login', [AuthController::class, 'login']);
@@ -152,6 +154,27 @@ Route::middleware('auth.api')->group(function () {
     Route::delete('/tarifas/imagen/{tarifaImagen}', [TarifaImagenController::class, 'destroy']);
 
     Route::post('/facturas/validar', [\App\Http\Controllers\Api\FacturaAiController::class, 'validar']);
+    Route::get('/liquidaciones/runs', [LiquidacionRunController::class, 'index']);
+    Route::post('/liquidaciones/runs/upload-preview', [LiquidacionRunController::class, 'uploadPreview']);
+    Route::post('/liquidaciones/runs/upload', [LiquidacionRunController::class, 'upload']);
+    Route::post('/liquidaciones/runs', [LiquidacionRunController::class, 'store']);
+    Route::get('/liquidaciones/runs/{run}', [LiquidacionRunController::class, 'show']);
+    Route::post('/liquidaciones/runs/{run}/upsert', [LiquidacionRunController::class, 'upsert']);
+    Route::post('/liquidaciones/runs/{run}/approve', [LiquidacionRunController::class, 'approve']);
+    Route::post('/liquidaciones/runs/{run}/publicar-erp', [LiquidacionRunController::class, 'publishToErp']);
+    Route::get('/liquidaciones/reglas-template', [LiquidacionRunController::class, 'rulesTemplate']);
+    Route::get('/liquidaciones/reglas-cliente/{clientCode}', [LiquidacionRunController::class, 'showClientRules']);
+    Route::put('/liquidaciones/reglas-cliente/{clientCode}', [LiquidacionRunController::class, 'upsertClientRules']);
+    Route::post('/liquidaciones/reglas-cliente/{clientCode}', [LiquidacionRunController::class, 'upsertClientRules']);
+    Route::get('/liquidaciones/proveedores/buscar', [LiquidacionRunController::class, 'searchProviders']);
+    Route::post('/liquidaciones/importaciones', [LiquidacionRunController::class, 'createImportacion']);
+    Route::get('/liquidaciones/importaciones/{run}/preview', [LiquidacionRunController::class, 'previewImportacion']);
+    Route::post('/liquidaciones/importaciones/{run}/asignar-proveedor', [LiquidacionRunController::class, 'assignImportacionProvider']);
+    Route::post('/liquidaciones/importaciones/{run}/approve', [LiquidacionRunController::class, 'approveImportacion']);
+    Route::post('/liquidaciones/importaciones/{run}/publish', [LiquidacionRunController::class, 'publishImportacion']);
+    Route::get('/liquidaciones/distribuidores/{distribuidor}', [LiquidacionRunController::class, 'showDistribuidor']);
+    Route::patch('/liquidaciones/distribuidores/{distribuidor}', [LiquidacionRunController::class, 'updateDistribuidor']);
+    Route::patch('/liquidaciones/lineas/{linea}', [LiquidacionRunController::class, 'updateLinea']);
     Route::post('/combustible/extractos/preview', [\App\Http\Controllers\Api\FuelExtractController::class, 'preview']);
     Route::post('/combustible/extractos/process', [\App\Http\Controllers\Api\FuelExtractController::class, 'process']);
     Route::get('/combustible/distribuidores', [\App\Http\Controllers\Api\FuelModuleController::class, 'distributors']);
@@ -180,6 +203,26 @@ Route::middleware('auth.api')->group(function () {
     Route::get('/distriapp/resumen', [DistriappController::class, 'resumen']);
     Route::get('/distriapp/mobile/overview', [DistriappController::class, 'mobileOverview']);
     Route::get('/distriapp/mobile/module/{module}', [DistriappController::class, 'mobileModule']);
+
+    Route::post('/calls/token', [CallController::class, 'token'])->middleware('throttle:20,1');
+    Route::post('/calls/whatsapp/start', [CallController::class, 'whatsappStart'])->middleware('throttle:20,1');
+    Route::get('/calls/webrtc/config', [CallController::class, 'webrtcConfig'])->middleware('throttle:30,1');
+    Route::get('/calls/sessions', [CallController::class, 'index'])->middleware('throttle:30,1');
+    Route::post('/calls/sessions', [CallController::class, 'store'])->middleware('throttle:20,1');
+    Route::get('/calls/sessions/{session}', [CallController::class, 'show'])->middleware('throttle:60,1');
+    Route::patch('/calls/sessions/{session}', [CallController::class, 'update'])->middleware('throttle:30,1');
+    Route::get('/calls/sessions/{session}/webrtc/sync', [CallController::class, 'webrtcSync'])->middleware('throttle:120,1');
+    Route::post('/calls/sessions/{session}/webrtc/offer', [CallController::class, 'webrtcOffer'])->middleware('throttle:120,1');
+    Route::post('/calls/sessions/{session}/webrtc/answer', [CallController::class, 'webrtcAnswer'])->middleware('throttle:120,1');
+    Route::post('/calls/sessions/{session}/webrtc/candidate', [CallController::class, 'webrtcCandidate'])->middleware('throttle:240,1');
+    Route::post('/calls/sessions/{session}/hangup', [CallController::class, 'hangup'])->middleware('throttle:60,1');
 });
+
+Route::post('/voice/twilio/status', [CallController::class, 'twilioStatusWebhook'])
+    ->name('voice.twilio.status')
+    ->middleware('throttle:120,1');
+Route::match(['GET', 'POST'], '/voice/twilio/twiml/outbound', [CallController::class, 'twilioOutboundTwiml'])
+    ->name('voice.twilio.twiml.outbound')
+    ->middleware('throttle:120,1');
 
 Route::options('/{any}', fn () => response()->noContent())->where('any', '.*');

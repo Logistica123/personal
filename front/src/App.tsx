@@ -286,6 +286,10 @@ const TARIFA_PORTE_OPTIONS = [
   { value: 'chico', label: 'Porte chico' },
   { value: 'mediano', label: 'Porte mediano' },
   { value: 'grande', label: 'Porte grande' },
+  { value: 'urbano_chico', label: 'Urbano - Porte chico' },
+  { value: 'urbano_grande', label: 'Urbano - Porte grande' },
+  { value: 'meli_urbano_chico', label: 'Tarifa Meli - Urbano - Porte chico' },
+  { value: 'meli_urbano_grande', label: 'Tarifa Meli - Urbano - Porte grande' },
 ];
 
 type FacturaAttachment = {
@@ -3180,7 +3184,10 @@ const DashboardLayout: React.FC<{
     location.pathname.startsWith('/liquidaciones') ||
     location.pathname.startsWith('/pagos') ||
     location.pathname.startsWith('/combustible');
-  const isLiquidacionesRoute = location.pathname.startsWith('/liquidaciones');
+  const isLiquidacionesExtractosRoute = location.pathname.startsWith('/liquidaciones/extractos');
+  const isLiquidacionesRoute =
+    (location.pathname === '/liquidaciones' || /^\/liquidaciones\/\d+$/.test(location.pathname)) &&
+    !isLiquidacionesExtractosRoute;
   const isPagosRoute = location.pathname.startsWith('/pagos');
   const isCombustibleRoute = location.pathname.startsWith('/combustible');
   const personalEstadoParam = useMemo(() => {
@@ -3204,6 +3211,12 @@ const DashboardLayout: React.FC<{
     () =>
       canAccessSection(userRole, 'liquidaciones', authUser?.permissions) ||
       canAccessSection(userRole, 'pagos', authUser?.permissions) ||
+      canAccessSection(userRole, 'combustible', authUser?.permissions),
+    [userRole, authUser?.permissions]
+  );
+  const canAccessLiquidacionesExtractos = useMemo(
+    () =>
+      canAccessSection(userRole, 'liquidaciones', authUser?.permissions) ||
       canAccessSection(userRole, 'combustible', authUser?.permissions),
     [userRole, authUser?.permissions]
   );
@@ -4213,6 +4226,9 @@ const DashboardLayout: React.FC<{
 
         <nav className="sidebar-nav" onClick={closeSidebar}>
           <span className="sidebar-title">Acciones</span>
+          <NavLink to="/llamadas" className={({ isActive }) => `sidebar-link${isActive ? ' is-active' : ''}`}>
+            Llamadas WebRTC
+          </NavLink>
           {canAccessSection(userRole, 'clientes', authUser?.permissions) ? (
             <NavLink to="/clientes" className={({ isActive }) => `sidebar-link${isActive ? ' is-active' : ''}`}>
               Gestión de clientes
@@ -4349,6 +4365,15 @@ const DashboardLayout: React.FC<{
                       onClick={() => navigate('/combustible')}
                     >
                       Combustible
+                    </button>
+                  ) : null}
+                  {canAccessLiquidacionesExtractos ? (
+                    <button
+                      type="button"
+                      className={`sidebar-sublink${isLiquidacionesExtractosRoute ? ' is-active' : ''}`}
+                      onClick={() => navigate('/liquidaciones/extractos')}
+                    >
+                      Extractos BI/ERP
                     </button>
                   ) : null}
                 </div>
@@ -19121,6 +19146,3253 @@ const CombustibleReportesPage: React.FC = () => {
               ))}
             </tbody>
           </table>
+        </div>
+      </section>
+    </DashboardLayout>
+  );
+};
+
+const CombustibleRunsPage: React.FC = () => {
+  type LiquidacionRunRecord = {
+    id: number;
+    sourceSystem: string | null;
+    clientCode: string | null;
+    periodFrom: string | null;
+    periodTo: string | null;
+    sourceFileName: string | null;
+    sourceFileUrl: string | null;
+    sourceFileHash: string | null;
+    status: string | null;
+    rowsTotal: number;
+    rowsOk: number;
+    rowsError: number;
+    rowsAlert: number;
+    rowsDiff: number;
+    metadata: Record<string, unknown> | null;
+    approvedAt: string | null;
+    publishedAt: string | null;
+    createdAt: string | null;
+    updatedAt: string | null;
+  };
+
+  type LiquidacionRunSummary = {
+    staging_rows_count: number;
+    validation_results_count: number;
+    publish_jobs_count: number;
+    observations_count: number;
+    observations_by_status?: Record<string, number>;
+  };
+
+  type LiquidacionPublishJob = {
+    id: number;
+    runId: number;
+    status: string;
+    erpRequestId?: string | null;
+    erpBatchId?: string | null;
+    sentAt?: string | null;
+    confirmedAt?: string | null;
+    errorMessage?: string | null;
+  };
+
+  type RunsListResponse = {
+    data?: LiquidacionRunRecord[];
+    meta?: {
+      current_page?: number;
+      last_page?: number;
+      per_page?: number;
+      total?: number;
+    };
+    summary?: {
+      status_counts?: Record<string, number>;
+    };
+    message?: string;
+  };
+
+  type RunShowResponse = {
+    data?: LiquidacionRunRecord;
+    summary?: LiquidacionRunSummary;
+    latest_publish_job?: LiquidacionPublishJob | null;
+    message?: string;
+  };
+
+  type ImportacionPreviewDistribuidor = {
+    liquidacion_distribuidor_id: number;
+    proveedor_id: number | null;
+    patente: string | null;
+    categoria: string | null;
+    subtotal_calculado: number;
+    subtotal_final: number;
+    gastos_admin_default: number;
+    gastos_admin_override: number | null;
+    gastos_admin_final: number;
+    total_final: number;
+    tiene_overrides: boolean;
+    alertas: string[];
+  };
+
+  type ImportacionMatchCandidate = {
+    id: number;
+    nombre: string;
+    cuil?: string | null;
+    patente?: string | null;
+    score?: number;
+  };
+
+  type ImportacionPendingMatchItem = {
+    row_id: number;
+    row_number: number;
+    patente_norm: string | null;
+    nombre_excel_raw: string | null;
+    nombre_excel_norm: string | null;
+    match_status: string | null;
+    candidatos: ImportacionMatchCandidate[];
+  };
+
+  type ImportacionPreviewResponse = {
+    importacion?: {
+      id: number;
+      cliente_id: string | number | null;
+      anio?: number | null;
+      mes?: number | null;
+      tipo_periodo?: string | null;
+      quincena?: string | null;
+      sucursal_id?: number | null;
+      version?: number | null;
+      estado?: string | null;
+    };
+    resumen?: {
+      filas_total?: number;
+      distribuidores_total?: number;
+      criticos?: number;
+      alertas?: number;
+      pendientes_match?: number;
+      total_distribuidores_calculado?: number;
+      total_distribuidores_final?: number;
+    };
+    distribuidores?: ImportacionPreviewDistribuidor[];
+    pendientes_match?: ImportacionPendingMatchItem[];
+    message?: string;
+  };
+
+  type MatchAssignDraft = {
+    proveedorId: string;
+    searchTerm: string;
+    manualCandidates: ImportacionMatchCandidate[];
+    searching: boolean;
+    searchError: string | null;
+    actualizarPatente: boolean;
+    sobreescribirPatente: boolean;
+    motivo: string;
+    saving: boolean;
+    error: string | null;
+  };
+
+  type ProviderSearchResponse = {
+    query?: string;
+    data?: ImportacionMatchCandidate[];
+    message?: string;
+  };
+
+  type DistribuidorLineaRecord = {
+    linea_id: number;
+    staging_linea_id: number | null;
+    fecha: string | null;
+    id_ruta: string | null;
+    svc: string | null;
+    turno_norm: string | null;
+    factor_jornada: number;
+    tarifa_dist_calculada: number;
+    plus_calculado: number;
+    importe_calculado: number;
+    importe_override: number | null;
+    importe_final: number;
+    alertas: string[];
+  };
+
+  type DistribuidorDetailResponse = {
+    liquidacion_distribuidor_id: number;
+    proveedor_id: number | null;
+    patente: string | null;
+    gastos_admin_default: number;
+    gastos_admin_override: number | null;
+    lineas: DistribuidorLineaRecord[];
+    message?: string;
+  };
+
+  type LineaEditDraft = {
+    importeOverride: string;
+    plusOverride: string;
+    tarifaOverride: string;
+    motivo: string;
+    saving: boolean;
+    error: string | null;
+  };
+
+  type ClientRulesPayload = {
+    clientCode?: string;
+    exists?: boolean;
+    active?: boolean;
+    rules?: Record<string, unknown> | null;
+    resolvedRules?: Record<string, unknown> | null;
+    source?: string;
+    updatedAt?: string | null;
+  };
+
+  type ClientRulesResponse = {
+    data?: ClientRulesPayload;
+    message?: string;
+  };
+
+  type ClientTariffRuleEditor = {
+    id: string;
+    product: string;
+    pricePerLiter: string;
+    tolerancePercent: string;
+    toleranceAmount: string;
+    effectiveFrom: string;
+    effectiveTo: string;
+  };
+
+  type IntermedioTariffMatrixRowEditor = {
+    key: string;
+    label: string;
+    original: string;
+    liquidacion: string;
+    special?: boolean;
+  };
+
+  type ClientRulesEditorState = {
+    duplicateRowBlocking: boolean;
+    outsidePeriodBlocking: boolean;
+    tariffMismatchBlocking: boolean;
+    tolerancePercent: string;
+    toleranceAmount: string;
+    tariffs: ClientTariffRuleEditor[];
+    intermedioSelectedZone: string;
+    intermedioMatrix: Record<string, IntermedioTariffMatrixRowEditor[]>;
+  };
+
+  type ExtractUploadPreviewResponse = {
+    mapped?: boolean;
+    rowCount?: number;
+    previewCount?: number;
+    sheet?: string | null;
+    detectedColumns?: string[];
+    mappedColumns?: string[];
+    unmappedColumns?: string[];
+    productColumn?: string | null;
+    productColumnMessage?: string | null;
+    rowsByStatus?: {
+      ok?: number;
+      error?: number;
+      alert?: number;
+      diff?: number;
+    };
+    rules?: {
+      source?: string;
+      blockingRules?: Record<string, boolean>;
+      tolerances?: Record<string, number>;
+      tariffsCount?: number;
+    };
+    sampleRows?: Array<{
+      fecha?: string;
+      estacion?: string;
+      dominio?: string;
+      producto?: string;
+      litros?: string;
+      importe?: string;
+    }>;
+    message?: string;
+  };
+
+  const createTariffRuleEditorRow = (seed?: Partial<ClientTariffRuleEditor>): ClientTariffRuleEditor => ({
+    id: seed?.id ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    product: seed?.product ?? '',
+    pricePerLiter: seed?.pricePerLiter ?? '',
+    tolerancePercent: seed?.tolerancePercent ?? '',
+    toleranceAmount: seed?.toleranceAmount ?? '',
+    effectiveFrom: seed?.effectiveFrom ?? '',
+    effectiveTo: seed?.effectiveTo ?? '',
+  });
+
+  const INTERMEDIO_ZONES = ['AMBA', 'MDQ', 'ROSARIO', 'SANTA_FE', 'NEUQUEN', 'BARILOCHE'] as const;
+  const INTERMEDIO_ROW_TEMPLATES: Array<{ key: string; label: string; special?: boolean }> = [
+    { key: 'CORTO_AM', label: 'Ut. Corto AM' },
+    { key: 'CORTO_PM', label: 'Ut. Corto PM' },
+    { key: 'CORTO_PM_SC21', label: 'Ut. Corto PM SC21 / Escobar PM' },
+    { key: 'CORTO', label: 'Ut. Corto' },
+    { key: 'MEDIANO', label: 'Ut. Mediano', special: true },
+    { key: 'LARGO', label: 'Ut. Largo (2015/2017)', special: true },
+    { key: 'LARGO_2018', label: 'Ut. Largo NEW (2018)', special: true },
+    { key: 'CHASIS', label: 'Chasis' },
+  ];
+
+  const INTERMEDIO_ZONE_DEFAULTS: Record<string, Record<string, { original: number; liquidacion: number; special?: boolean }>> = {
+    AMBA: {
+      CORTO_AM: { original: 114000, liquidacion: 96900 },
+      CORTO_PM: { original: 85000, liquidacion: 72250 },
+      CORTO_PM_SC21: { original: 90000, liquidacion: 76250 },
+      MEDIANO: { original: 193000, liquidacion: 170000, special: true },
+      LARGO: { original: 228000, liquidacion: 200000, special: true },
+      LARGO_2018: { original: 250000, liquidacion: 220000, special: true },
+      CHASIS: { original: 296000, liquidacion: 296000 },
+    },
+    MDQ: {
+      CORTO: { original: 118000, liquidacion: 118000 },
+      LARGO: { original: 210000, liquidacion: 210000 },
+    },
+    ROSARIO: {
+      CORTO: { original: 101000, liquidacion: 101000 },
+      MEDIANO: { original: 156000, liquidacion: 156000 },
+      LARGO: { original: 228000, liquidacion: 228000 },
+      CHASIS: { original: 265000, liquidacion: 265000 },
+    },
+    SANTA_FE: {
+      CORTO: { original: 90000, liquidacion: 90000 },
+      LARGO: { original: 205000, liquidacion: 205000 },
+    },
+    NEUQUEN: {
+      CORTO_AM: { original: 117000, liquidacion: 117000 },
+      CORTO_PM: { original: 98000, liquidacion: 98000 },
+      LARGO: { original: 210000, liquidacion: 210000 },
+    },
+    BARILOCHE: {
+      CORTO: { original: 105000, liquidacion: 105000 },
+      LARGO: { original: 220000, liquidacion: 220000 },
+    },
+  };
+
+  const normalizeIntermedioTariffKey = (value: string): string => {
+    const normalized = value
+      .trim()
+      .toUpperCase()
+      .replace(/\s+/g, '_')
+      .replace(/[^A-Z0-9_]/g, '_')
+      .replace(/_+/g, '_')
+      .replace(/^_+|_+$/g, '');
+    if (normalized.includes('SC21') || normalized.includes('ESCOBAR')) {
+      return 'CORTO_PM_SC21';
+    }
+    if (normalized.includes('LARGO') && (normalized.includes('2018') || normalized.includes('NEW'))) {
+      return 'LARGO_2018';
+    }
+    if (normalized.includes('CORTO') && normalized.includes('AM')) {
+      return 'CORTO_AM';
+    }
+    if (normalized.includes('CORTO') && normalized.includes('PM')) {
+      return 'CORTO_PM';
+    }
+    if (normalized.includes('CORTO')) {
+      return 'CORTO';
+    }
+    if (normalized.includes('MEDIANO')) {
+      return 'MEDIANO';
+    }
+    if (normalized.includes('LARGO')) {
+      return 'LARGO';
+    }
+    if (normalized.includes('CHASIS')) {
+      return 'CHASIS';
+    }
+    return normalized || value.trim().toUpperCase();
+  };
+
+  const createIntermedioMatrixRows = (
+    zone: string,
+    source?: Record<string, { original?: number; liquidacion?: number; special?: boolean }>
+  ): IntermedioTariffMatrixRowEditor[] =>
+    INTERMEDIO_ROW_TEMPLATES.map((template) => {
+      const record = source?.[template.key];
+      return {
+        key: template.key,
+        label: template.label,
+        original: record?.original != null ? String(record.original) : '',
+        liquidacion: record?.liquidacion != null ? String(record.liquidacion) : '',
+        special: Boolean(record?.special ?? template.special ?? false),
+      };
+    });
+
+  const createDefaultIntermedioMatrixState = (): Record<string, IntermedioTariffMatrixRowEditor[]> => {
+    const state: Record<string, IntermedioTariffMatrixRowEditor[]> = {};
+    INTERMEDIO_ZONES.forEach((zone) => {
+      state[zone] = createIntermedioMatrixRows(zone, INTERMEDIO_ZONE_DEFAULTS[zone]);
+    });
+    return state;
+  };
+
+  const toNumberString = (value: unknown): string => {
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      return String(value);
+    }
+    if (typeof value === 'string') {
+      const trimmed = value.trim();
+      return trimmed;
+    }
+    return '';
+  };
+
+  const normalizeDateInput = (value: unknown): string => {
+    if (typeof value !== 'string') {
+      return '';
+    }
+    const trimmed = value.trim();
+    if (!trimmed) {
+      return '';
+    }
+    const match = trimmed.match(/^(\d{4}-\d{2}-\d{2})/);
+    return match ? match[1] : '';
+  };
+
+  const parseOptionalNumber = (value: string): number | null => {
+    const trimmed = value.trim();
+    if (!trimmed) {
+      return null;
+    }
+    const normalized = trimmed.replace(',', '.');
+    const parsed = Number(normalized);
+    return Number.isFinite(parsed) ? parsed : null;
+  };
+
+  const createMatchAssignDraft = useCallback((seed?: Partial<MatchAssignDraft>): MatchAssignDraft => ({
+    proveedorId: seed?.proveedorId ?? '',
+    searchTerm: seed?.searchTerm ?? '',
+    manualCandidates: Array.isArray(seed?.manualCandidates) ? [...(seed?.manualCandidates ?? [])] : [],
+    searching: seed?.searching ?? false,
+    searchError: seed?.searchError ?? null,
+    actualizarPatente: seed?.actualizarPatente ?? false,
+    sobreescribirPatente: seed?.sobreescribirPatente ?? false,
+    motivo: seed?.motivo ?? '',
+    saving: seed?.saving ?? false,
+    error: seed?.error ?? null,
+  }), []);
+
+  const rulesObjectToEditorState = (rules: Record<string, unknown> | null | undefined): ClientRulesEditorState => {
+    const blocking = (rules?.blocking_rules && typeof rules.blocking_rules === 'object'
+      ? (rules.blocking_rules as Record<string, unknown>)
+      : {}) as Record<string, unknown>;
+    const tolerances = (rules?.tolerances && typeof rules.tolerances === 'object'
+      ? (rules.tolerances as Record<string, unknown>)
+      : {}) as Record<string, unknown>;
+    const tariffsRaw = Array.isArray(rules?.tariffs) ? (rules?.tariffs as Array<Record<string, unknown>>) : [];
+    const matrixRaw =
+      rules?.tariff_matrix && typeof rules.tariff_matrix === 'object'
+        ? (rules.tariff_matrix as Record<string, unknown>)
+        : null;
+    const matrixZonesRaw =
+      matrixRaw?.zones && typeof matrixRaw.zones === 'object'
+        ? (matrixRaw.zones as Record<string, unknown>)
+        : {};
+    const matrixState = createDefaultIntermedioMatrixState();
+
+    Object.entries(matrixZonesRaw).forEach(([zoneName, zoneValue]) => {
+      if (!zoneValue || typeof zoneValue !== 'object') {
+        return;
+      }
+      const zoneKey = String(zoneName).trim().toUpperCase();
+      const zoneEntries = zoneValue as Record<string, unknown>;
+      const existingRows = matrixState[zoneKey] ? [...matrixState[zoneKey]] : createIntermedioMatrixRows(zoneKey);
+      const rowsByKey = new Map(existingRows.map((row) => [row.key, { ...row }]));
+
+      Object.entries(zoneEntries).forEach(([entryKey, entryValue]) => {
+        if (!entryValue || typeof entryValue !== 'object') {
+          return;
+        }
+        const entry = entryValue as Record<string, unknown>;
+        const normalizedKey = normalizeIntermedioTariffKey(entryKey);
+        const found = rowsByKey.get(normalizedKey) ?? {
+          key: normalizedKey,
+          label: String(entry.label ?? entryKey),
+          original: '',
+          liquidacion: '',
+          special: false,
+        };
+        rowsByKey.set(normalizedKey, {
+          ...found,
+          label: typeof entry.label === 'string' && entry.label.trim() ? entry.label : found.label,
+          original: toNumberString(entry.original ?? entry.tarifa_original ?? found.original),
+          liquidacion: toNumberString(entry.liquidacion ?? entry.tarifa_liquidacion ?? entry.price_per_liter ?? found.liquidacion),
+          special: Boolean(entry.special ?? found.special ?? false),
+        });
+      });
+
+      matrixState[zoneKey] = Array.from(rowsByKey.values());
+    });
+
+    if ((!matrixRaw || Object.keys(matrixZonesRaw).length === 0) && tariffsRaw.length > 0) {
+      const rowsByKey = new Map((matrixState.AMBA ?? createIntermedioMatrixRows('AMBA')).map((row) => [row.key, { ...row }]));
+      tariffsRaw.forEach((tariff) => {
+        const key = normalizeIntermedioTariffKey(String(tariff.product ?? ''));
+        if (!key) {
+          return;
+        }
+        const found = rowsByKey.get(key) ?? {
+          key,
+          label: String(tariff.product ?? key),
+          original: '',
+          liquidacion: '',
+          special: false,
+        };
+        const tariffValue = toNumberString(tariff.price_per_liter);
+        rowsByKey.set(key, {
+          ...found,
+          liquidacion: tariffValue || found.liquidacion,
+        });
+      });
+      matrixState.AMBA = Array.from(rowsByKey.values());
+    }
+
+    const selectedZoneRaw = typeof matrixRaw?.default_zone === 'string' ? matrixRaw.default_zone : 'AMBA';
+    const selectedZone = selectedZoneRaw.trim().toUpperCase() || 'AMBA';
+
+    return {
+      duplicateRowBlocking: Boolean(blocking.duplicate_row ?? false),
+      outsidePeriodBlocking: Boolean(blocking.outside_period ?? true),
+      tariffMismatchBlocking: Boolean(blocking.tariff_mismatch ?? false),
+      tolerancePercent: toNumberString(tolerances.price_per_liter_percent ?? 3),
+      toleranceAmount: toNumberString(tolerances.price_per_liter_amount ?? 0),
+      tariffs: tariffsRaw.map((row, index) =>
+        createTariffRuleEditorRow({
+          id: `${Date.now()}-${index}`,
+          product: typeof row.product === 'string' ? row.product : '',
+          pricePerLiter: toNumberString(row.price_per_liter),
+          tolerancePercent: toNumberString(row.tolerance_percent),
+          toleranceAmount: toNumberString(row.tolerance_amount),
+          effectiveFrom: normalizeDateInput(row.effective_from),
+          effectiveTo: normalizeDateInput(row.effective_to),
+        })
+      ),
+      intermedioSelectedZone: selectedZone,
+      intermedioMatrix: matrixState,
+    };
+  };
+
+  const editorStateToRulesObject = (editor: ClientRulesEditorState): Record<string, unknown> => {
+    const tolerancePercent = parseOptionalNumber(editor.tolerancePercent);
+    const toleranceAmount = parseOptionalNumber(editor.toleranceAmount);
+
+    const tariffs = editor.tariffs
+      .map((row) => {
+        const product = row.product.trim();
+        const pricePerLiter = parseOptionalNumber(row.pricePerLiter);
+        const rowTolerancePercent = parseOptionalNumber(row.tolerancePercent);
+        const rowToleranceAmount = parseOptionalNumber(row.toleranceAmount);
+        const effectiveFrom = row.effectiveFrom.trim();
+        const effectiveTo = row.effectiveTo.trim();
+
+        if (!product || pricePerLiter === null || pricePerLiter <= 0) {
+          return null;
+        }
+
+        const tariff: Record<string, unknown> = {
+          product,
+          price_per_liter: pricePerLiter,
+        };
+        if (rowTolerancePercent !== null) {
+          tariff.tolerance_percent = rowTolerancePercent;
+        }
+        if (rowToleranceAmount !== null) {
+          tariff.tolerance_amount = rowToleranceAmount;
+        }
+        if (effectiveFrom) {
+          tariff.effective_from = effectiveFrom;
+        }
+        if (effectiveTo) {
+          tariff.effective_to = effectiveTo;
+        }
+
+        return tariff;
+      })
+      .filter((row): row is Record<string, unknown> => row !== null);
+
+    const matrixZonesPayload: Record<string, Record<string, Record<string, unknown>>> = {};
+    Object.entries(editor.intermedioMatrix ?? {}).forEach(([zoneName, rows]) => {
+      if (!Array.isArray(rows)) {
+        return;
+      }
+      const zonePayload: Record<string, Record<string, unknown>> = {};
+      rows.forEach((row) => {
+        const original = parseOptionalNumber(row.original);
+        const liquidacion = parseOptionalNumber(row.liquidacion);
+        if (original === null && liquidacion === null) {
+          return;
+        }
+
+        zonePayload[row.key] = {
+          label: row.label,
+          original: original ?? 0,
+          liquidacion: liquidacion ?? original ?? 0,
+          special: Boolean(row.special ?? false),
+        };
+      });
+      if (Object.keys(zonePayload).length > 0) {
+        matrixZonesPayload[zoneName.trim().toUpperCase()] = zonePayload;
+      }
+    });
+
+    const selectedZoneKey = (editor.intermedioSelectedZone || 'AMBA').trim().toUpperCase() || 'AMBA';
+    const selectedZoneRows = editor.intermedioMatrix?.[selectedZoneKey] ?? editor.intermedioMatrix?.AMBA ?? [];
+    const intermedioTariffs = selectedZoneRows
+      .map((row) => {
+        const liquid = parseOptionalNumber(row.liquidacion);
+        if (liquid === null || liquid <= 0) {
+          return null;
+        }
+        return {
+          product: row.label,
+          price_per_liter: liquid,
+        };
+      })
+      .filter((row): row is { product: string; price_per_liter: number } => row !== null);
+
+    return {
+      blocking_rules: {
+        duplicate_row: editor.duplicateRowBlocking,
+        outside_period: editor.outsidePeriodBlocking,
+        tariff_mismatch: editor.tariffMismatchBlocking,
+      },
+      tolerances: {
+        price_per_liter_percent: tolerancePercent ?? 0,
+        price_per_liter_amount: toleranceAmount ?? 0,
+      },
+      tariffs: intermedioTariffs.length > 0 ? intermedioTariffs : tariffs,
+      ...(Object.keys(matrixZonesPayload).length > 0
+        ? {
+            tariff_matrix: {
+              default_zone: selectedZoneKey,
+              zones: matrixZonesPayload,
+            },
+          }
+        : {}),
+    };
+  };
+
+  const apiBaseUrl = useMemo(() => resolveApiBaseUrl(), []);
+  const location = useLocation();
+  const isStandaloneExtractosRoute = location.pathname.startsWith('/liquidaciones/extractos');
+  const createFileRef = useRef<HTMLInputElement | null>(null);
+  const [runs, setRuns] = useState<LiquidacionRunRecord[]>([]);
+  const [meta, setMeta] = useState<{ total: number; currentPage: number; lastPage: number; perPage: number }>({
+    total: 0,
+    currentPage: 1,
+    lastPage: 1,
+    perPage: 50,
+  });
+  const [statusCounts, setStatusCounts] = useState<Record<string, number>>({});
+  const [statusFilter, setStatusFilter] = useState('');
+  const [clientCodeFilter, setClientCodeFilter] = useState('');
+  const [loadingRuns, setLoadingRuns] = useState(false);
+  const [runsError, setRunsError] = useState<string | null>(null);
+
+  const [selectedRunId, setSelectedRunId] = useState<number | null>(null);
+  const [selectedRun, setSelectedRun] = useState<LiquidacionRunRecord | null>(null);
+  const [runSummary, setRunSummary] = useState<LiquidacionRunSummary | null>(null);
+  const [latestPublishJob, setLatestPublishJob] = useState<LiquidacionPublishJob | null>(null);
+  const [loadingDetail, setLoadingDetail] = useState(false);
+  const [detailError, setDetailError] = useState<string | null>(null);
+
+  const [approveForce, setApproveForce] = useState(false);
+  const [approveNote, setApproveNote] = useState('');
+  const [approveLoading, setApproveLoading] = useState(false);
+
+  const [publishForce, setPublishForce] = useState(false);
+  const [publishDistributorCode, setPublishDistributorCode] = useState('');
+  const [publishLiquidacionId, setPublishLiquidacionId] = useState('');
+  const [publishLoading, setPublishLoading] = useState(false);
+
+  const [createClientCode, setCreateClientCode] = useState('');
+  const [createPeriodFrom, setCreatePeriodFrom] = useState('');
+  const [createPeriodTo, setCreatePeriodTo] = useState('');
+  const [createSourceFileName, setCreateSourceFileName] = useState('');
+  const [createExtractFile, setCreateExtractFile] = useState<File | null>(null);
+  const [createExtractPreview, setCreateExtractPreview] = useState<ExtractUploadPreviewResponse | null>(null);
+  const [createPreviewLoading, setCreatePreviewLoading] = useState(false);
+  const [createPreviewError, setCreatePreviewError] = useState<string | null>(null);
+  const [createLoading, setCreateLoading] = useState(false);
+
+  const [rulesClientCode, setRulesClientCode] = useState('');
+  const [rulesActive, setRulesActive] = useState(true);
+  const [rulesEditor, setRulesEditor] = useState<ClientRulesEditorState>(() =>
+    rulesObjectToEditorState({
+      blocking_rules: {
+        duplicate_row: false,
+        outside_period: true,
+        tariff_mismatch: false,
+      },
+      tolerances: {
+        price_per_liter_percent: 3,
+        price_per_liter_amount: 0,
+      },
+      tariffs: [],
+    })
+  );
+  const [rulesShowJson, setRulesShowJson] = useState(false);
+  const [rulesSourceLabel, setRulesSourceLabel] = useState<string | null>(null);
+  const [rulesUpdatedAt, setRulesUpdatedAt] = useState<string | null>(null);
+  const [rulesLoading, setRulesLoading] = useState(false);
+  const [rulesSaving, setRulesSaving] = useState(false);
+  const [rulesMessage, setRulesMessage] = useState<string | null>(null);
+  const [rulesError, setRulesError] = useState<string | null>(null);
+
+  const [actionMessage, setActionMessage] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [importacionPreview, setImportacionPreview] = useState<ImportacionPreviewResponse | null>(null);
+  const [importacionPreviewLoading, setImportacionPreviewLoading] = useState(false);
+  const [importacionPreviewError, setImportacionPreviewError] = useState<string | null>(null);
+  const [selectedDistribuidorId, setSelectedDistribuidorId] = useState<number | null>(null);
+  const [selectedDistribuidorDetail, setSelectedDistribuidorDetail] = useState<DistribuidorDetailResponse | null>(null);
+  const [distribuidorDetailLoading, setDistribuidorDetailLoading] = useState(false);
+  const [distribuidorDetailError, setDistribuidorDetailError] = useState<string | null>(null);
+  const [lineaDrafts, setLineaDrafts] = useState<Record<number, LineaEditDraft>>({});
+  const [distribuidorDraft, setDistribuidorDraft] = useState<{
+    gastosAdminOverride: string;
+    ajusteManual: string;
+    motivo: string;
+    saving: boolean;
+  }>({
+    gastosAdminOverride: '',
+    ajusteManual: '',
+    motivo: '',
+    saving: false,
+  });
+  const [detalleActionMessage, setDetalleActionMessage] = useState<string | null>(null);
+  const [detalleActionError, setDetalleActionError] = useState<string | null>(null);
+  const [matchAssignDrafts, setMatchAssignDrafts] = useState<Record<string, MatchAssignDraft>>({});
+  const isIntermedioRulesClient = useMemo(() => {
+    const normalized = rulesClientCode.trim().toUpperCase();
+    if (!normalized) {
+      return false;
+    }
+    return normalized.includes('INTERMEDIO') || /^INT\d*$/.test(normalized);
+  }, [rulesClientCode]);
+  const intermedioRulesZone = (() => {
+    const normalized = (rulesEditor.intermedioSelectedZone || 'AMBA').trim().toUpperCase() || 'AMBA';
+    return INTERMEDIO_ZONES.includes(normalized as (typeof INTERMEDIO_ZONES)[number]) ? normalized : 'AMBA';
+  })();
+  const intermedioRulesZoneRows = (() => {
+    const rows = rulesEditor.intermedioMatrix?.[intermedioRulesZone];
+    if (Array.isArray(rows) && rows.length > 0) {
+      return rows;
+    }
+    return createIntermedioMatrixRows(intermedioRulesZone, INTERMEDIO_ZONE_DEFAULTS[intermedioRulesZone]);
+  })();
+  const rulesJsonText = JSON.stringify(editorStateToRulesObject(rulesEditor), null, 2);
+
+  const formatDateCell = useCallback((value?: string | null) => {
+    if (!value) {
+      return '—';
+    }
+    try {
+      const date = new Date(value);
+      if (Number.isNaN(date.getTime())) {
+        return value;
+      }
+      return date.toLocaleString('es-AR');
+    } catch {
+      return value;
+    }
+  }, []);
+
+  const loadRuns = useCallback(async () => {
+    setLoadingRuns(true);
+    setRunsError(null);
+    try {
+      const params = new URLSearchParams();
+      params.set('per_page', '50');
+      if (statusFilter) {
+        params.set('status', statusFilter);
+      }
+      if (clientCodeFilter.trim()) {
+        params.set('client_code', clientCodeFilter.trim());
+      }
+
+      const response = await fetch(`${apiBaseUrl}/api/liquidaciones/runs?${params.toString()}`, {
+        credentials: 'include',
+      });
+
+      const payload = (await parseJsonSafe(response)) as RunsListResponse;
+      if (!response.ok) {
+        throw new Error(payload?.message ?? 'No se pudieron cargar los runs.');
+      }
+
+      const fetchedRuns = Array.isArray(payload.data) ? payload.data : [];
+      setRuns(fetchedRuns);
+      setMeta({
+        total: Number(payload.meta?.total) || 0,
+        currentPage: Number(payload.meta?.current_page) || 1,
+        lastPage: Number(payload.meta?.last_page) || 1,
+        perPage: Number(payload.meta?.per_page) || 50,
+      });
+
+      const nextStatusCounts: Record<string, number> = {};
+      if (payload.summary?.status_counts && typeof payload.summary.status_counts === 'object') {
+        Object.entries(payload.summary.status_counts).forEach(([status, total]) => {
+          const parsed = Number(total);
+          if (Number.isFinite(parsed)) {
+            nextStatusCounts[status] = parsed;
+          }
+        });
+      }
+      setStatusCounts(nextStatusCounts);
+
+      setSelectedRunId((prev) => {
+        if (fetchedRuns.length === 0) {
+          return null;
+        }
+
+        if (prev == null) {
+          return Number(fetchedRuns[0].id);
+        }
+
+        const stillExists = fetchedRuns.some((run) => Number(run.id) === prev);
+        return stillExists ? prev : Number(fetchedRuns[0].id);
+      });
+    } catch (err) {
+      setRunsError(err instanceof Error ? err.message : 'No se pudieron cargar los runs.');
+      setRuns([]);
+      setMeta({ total: 0, currentPage: 1, lastPage: 1, perPage: 50 });
+      setStatusCounts({});
+      setSelectedRunId(null);
+    } finally {
+      setLoadingRuns(false);
+    }
+  }, [apiBaseUrl, clientCodeFilter, statusFilter]);
+
+  const loadRunDetail = useCallback(
+    async (runId: number) => {
+      setLoadingDetail(true);
+      setDetailError(null);
+      try {
+        const response = await fetch(`${apiBaseUrl}/api/liquidaciones/runs/${runId}`, {
+          credentials: 'include',
+        });
+
+        const payload = (await parseJsonSafe(response)) as RunShowResponse;
+        if (!response.ok) {
+          throw new Error(payload?.message ?? 'No se pudo cargar el detalle del run.');
+        }
+
+        setSelectedRun(payload.data ?? null);
+        setRunSummary(payload.summary ?? null);
+        setLatestPublishJob(payload.latest_publish_job ?? null);
+      } catch (err) {
+        setDetailError(err instanceof Error ? err.message : 'No se pudo cargar el detalle del run.');
+        setSelectedRun(null);
+        setRunSummary(null);
+        setLatestPublishJob(null);
+      } finally {
+        setLoadingDetail(false);
+      }
+    },
+    [apiBaseUrl]
+  );
+
+  const loadImportacionPreview = useCallback(
+    async (runId: number) => {
+      setImportacionPreviewLoading(true);
+      setImportacionPreviewError(null);
+      try {
+        const response = await fetch(`${apiBaseUrl}/api/liquidaciones/importaciones/${runId}/preview`, {
+          credentials: 'include',
+        });
+        const payload = (await parseJsonSafe(response)) as ImportacionPreviewResponse;
+        if (!response.ok) {
+          throw new Error(payload?.message ?? 'No se pudo cargar la preliquidación del run.');
+        }
+
+        const distribs = Array.isArray(payload.distribuidores) ? payload.distribuidores : [];
+        setImportacionPreview(payload ?? null);
+        setSelectedDistribuidorId((current) => {
+          if (distribs.length === 0) {
+            return null;
+          }
+          if (current != null && distribs.some((item) => Number(item.liquidacion_distribuidor_id) === current)) {
+            return current;
+          }
+          return Number(distribs[0].liquidacion_distribuidor_id);
+        });
+      } catch (err) {
+        setImportacionPreview(null);
+        setSelectedDistribuidorId(null);
+        setImportacionPreviewError(err instanceof Error ? err.message : 'No se pudo cargar la preliquidación del run.');
+      } finally {
+        setImportacionPreviewLoading(false);
+      }
+    },
+    [apiBaseUrl]
+  );
+
+  const loadDistribuidorDetail = useCallback(
+    async (distribuidorId: number) => {
+      setDistribuidorDetailLoading(true);
+      setDistribuidorDetailError(null);
+      try {
+        const response = await fetch(`${apiBaseUrl}/api/liquidaciones/distribuidores/${distribuidorId}`, {
+          credentials: 'include',
+        });
+        const payload = (await parseJsonSafe(response)) as DistribuidorDetailResponse;
+        if (!response.ok) {
+          throw new Error(payload?.message ?? 'No se pudo cargar el detalle del distribuidor.');
+        }
+
+        setSelectedDistribuidorDetail(payload);
+        setDistribuidorDraft((current) => ({
+          ...current,
+          gastosAdminOverride: payload.gastos_admin_override == null ? '' : toNumberString(payload.gastos_admin_override),
+          ajusteManual: '',
+          saving: false,
+        }));
+        setLineaDrafts((current) => {
+          const next: Record<number, LineaEditDraft> = {};
+          (payload.lineas ?? []).forEach((linea) => {
+            const previous = current[linea.linea_id];
+            next[linea.linea_id] = {
+              importeOverride: linea.importe_override == null ? '' : toNumberString(linea.importe_override),
+              plusOverride: previous?.plusOverride ?? '',
+              tarifaOverride: previous?.tarifaOverride ?? '',
+              motivo: previous?.motivo ?? '',
+              saving: false,
+              error: null,
+            };
+          });
+          return next;
+        });
+      } catch (err) {
+        setSelectedDistribuidorDetail(null);
+        setLineaDrafts({});
+        setDistribuidorDetailError(err instanceof Error ? err.message : 'No se pudo cargar el detalle del distribuidor.');
+      } finally {
+        setDistribuidorDetailLoading(false);
+      }
+    },
+    [apiBaseUrl]
+  );
+
+  useEffect(() => {
+    loadRuns();
+  }, [loadRuns]);
+
+  useEffect(() => {
+    if (selectedRunId == null) {
+      setSelectedRun(null);
+      setRunSummary(null);
+      setLatestPublishJob(null);
+      setDetailError(null);
+      setImportacionPreview(null);
+      setImportacionPreviewLoading(false);
+      setImportacionPreviewError(null);
+      setSelectedDistribuidorId(null);
+      setSelectedDistribuidorDetail(null);
+      setDistribuidorDetailLoading(false);
+      setDistribuidorDetailError(null);
+      setLineaDrafts({});
+      setMatchAssignDrafts({});
+      setDetalleActionMessage(null);
+      setDetalleActionError(null);
+      return;
+    }
+
+    loadRunDetail(selectedRunId);
+    loadImportacionPreview(selectedRunId);
+  }, [loadImportacionPreview, loadRunDetail, selectedRunId]);
+
+  useEffect(() => {
+    if (selectedDistribuidorId == null) {
+      setSelectedDistribuidorDetail(null);
+      setDistribuidorDetailError(null);
+      setLineaDrafts({});
+      return;
+    }
+
+    loadDistribuidorDetail(selectedDistribuidorId);
+  }, [loadDistribuidorDetail, selectedDistribuidorId]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadExtractPreview = async () => {
+      if (!createExtractFile) {
+        setCreateExtractPreview(null);
+        setCreatePreviewError(null);
+        setCreatePreviewLoading(false);
+        return;
+      }
+
+      setCreatePreviewLoading(true);
+      setCreatePreviewError(null);
+      setCreateExtractPreview(null);
+
+      try {
+        const formData = new FormData();
+        formData.append('extract_file', createExtractFile);
+        formData.append('format', 'custom');
+        if (createClientCode.trim()) {
+          formData.append('client_code', createClientCode.trim());
+        }
+        if (createPeriodFrom) {
+          formData.append('period_from', createPeriodFrom);
+        }
+        if (createPeriodTo) {
+          formData.append('period_to', createPeriodTo);
+        }
+
+        const response = await fetch(`${apiBaseUrl}/api/liquidaciones/runs/upload-preview`, {
+          method: 'POST',
+          credentials: 'include',
+          body: formData,
+        });
+
+        const payload = (await parseJsonSafe(response)) as ExtractUploadPreviewResponse;
+        if (!response.ok) {
+          throw new Error(payload?.message ?? 'No se pudo generar la vista previa del extracto.');
+        }
+
+        if (!cancelled) {
+          setCreateExtractPreview(payload ?? null);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setCreatePreviewError(err instanceof Error ? err.message : 'No se pudo generar la vista previa del extracto.');
+          setCreateExtractPreview(null);
+        }
+      } finally {
+        if (!cancelled) {
+          setCreatePreviewLoading(false);
+        }
+      }
+    };
+
+    loadExtractPreview();
+    return () => {
+      cancelled = true;
+    };
+  }, [apiBaseUrl, createClientCode, createExtractFile, createPeriodFrom, createPeriodTo]);
+
+  useEffect(() => {
+    if (rulesClientCode.trim()) {
+      return;
+    }
+    if (createClientCode.trim()) {
+      setRulesClientCode(createClientCode.trim());
+    }
+  }, [createClientCode, rulesClientCode]);
+
+  const handleLoadClientRules = async () => {
+    const clientCode = rulesClientCode.trim();
+    if (!clientCode) {
+      setRulesError('Ingresá un cliente para cargar reglas.');
+      return;
+    }
+
+    setRulesLoading(true);
+    setRulesError(null);
+    setRulesMessage(null);
+    try {
+      const response = await fetch(
+        `${apiBaseUrl}/api/liquidaciones/reglas-cliente/${encodeURIComponent(clientCode)}`,
+        {
+          credentials: 'include',
+        }
+      );
+      const payload = (await parseJsonSafe(response)) as ClientRulesResponse;
+      if (!response.ok) {
+        throw new Error(payload?.message ?? 'No se pudieron cargar las reglas del cliente.');
+      }
+
+      const data = payload?.data;
+      const rules = (data?.resolvedRules ?? data?.rules ?? {}) as Record<string, unknown>;
+      setRulesEditor(rulesObjectToEditorState(rules));
+      setRulesActive(Boolean(data?.active ?? true));
+      setRulesSourceLabel(data?.source ?? (data?.exists ? 'client' : 'default'));
+      setRulesUpdatedAt(data?.updatedAt ?? null);
+      setRulesMessage(data?.exists ? 'Reglas del cliente cargadas.' : 'No había reglas guardadas: se cargó configuración base.');
+    } catch (err) {
+      setRulesError(err instanceof Error ? err.message : 'No se pudieron cargar las reglas del cliente.');
+    } finally {
+      setRulesLoading(false);
+    }
+  };
+
+  const handleSaveClientRules = async () => {
+    const clientCode = rulesClientCode.trim();
+    if (!clientCode) {
+      setRulesError('Ingresá un cliente para guardar reglas.');
+      return;
+    }
+
+    const parsedRules = editorStateToRulesObject(rulesEditor);
+
+    setRulesSaving(true);
+    setRulesError(null);
+    setRulesMessage(null);
+    try {
+      const response = await fetch(
+        `${apiBaseUrl}/api/liquidaciones/reglas-cliente/${encodeURIComponent(clientCode)}`,
+        {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          credentials: 'include',
+          body: JSON.stringify({
+            active: rulesActive,
+            rules: parsedRules,
+          }),
+        }
+      );
+
+      const payload = (await parseJsonSafe(response)) as ClientRulesResponse;
+      if (!response.ok) {
+        throw new Error(payload?.message ?? 'No se pudieron guardar las reglas del cliente.');
+      }
+
+      const data = payload?.data;
+      const rules = (data?.resolvedRules ?? data?.rules ?? parsedRules) as Record<string, unknown>;
+      setRulesEditor(rulesObjectToEditorState(rules));
+      setRulesSourceLabel(data?.source ?? 'client');
+      setRulesUpdatedAt(data?.updatedAt ?? null);
+      setRulesMessage('Reglas del cliente guardadas correctamente.');
+    } catch (err) {
+      setRulesError(err instanceof Error ? err.message : 'No se pudieron guardar las reglas del cliente.');
+    } finally {
+      setRulesSaving(false);
+    }
+  };
+
+  const handleLoadRulesTemplate = async () => {
+    const clientCode = rulesClientCode.trim().toUpperCase();
+    const isIntermedioClient = clientCode.includes('INTERMEDIO') || /^INT\d*$/.test(clientCode);
+    if (isIntermedioClient) {
+      const matrixZones = INTERMEDIO_ZONES.reduce<Record<string, Record<string, Record<string, unknown>>>>(
+        (acc, zone) => {
+          const rows = createIntermedioMatrixRows(zone, INTERMEDIO_ZONE_DEFAULTS[zone]);
+          const zonePayload: Record<string, Record<string, unknown>> = {};
+          rows.forEach((row) => {
+            const original = parseOptionalNumber(row.original);
+            const liquidacion = parseOptionalNumber(row.liquidacion);
+            if (original === null && liquidacion === null) {
+              return;
+            }
+            zonePayload[row.key] = {
+              key: row.key,
+              label: row.label,
+              original: original ?? 0,
+              liquidacion: liquidacion ?? original ?? 0,
+              special: Boolean(row.special ?? false),
+            };
+          });
+          acc[zone] = zonePayload;
+          return acc;
+        },
+        {}
+      );
+
+      const intermedioTemplate: Record<string, unknown> = {
+        blocking_rules: {
+          duplicate_row: false,
+          outside_period: true,
+          tariff_mismatch: false,
+        },
+        tolerances: {
+          price_per_liter_percent: 3,
+          price_per_liter_amount: 0,
+        },
+        tariff_matrix: {
+          default_zone: 'AMBA',
+          zones: matrixZones,
+        },
+      };
+      setRulesEditor(rulesObjectToEditorState(intermedioTemplate));
+      setRulesActive(true);
+      setRulesSourceLabel('template_intermedio');
+      setRulesUpdatedAt(null);
+      setRulesMessage('Plantilla INTERMEDIO cargada.');
+      setRulesError(null);
+      return;
+    }
+
+    setRulesLoading(true);
+    setRulesError(null);
+    setRulesMessage(null);
+    try {
+      const response = await fetch(`${apiBaseUrl}/api/liquidaciones/reglas-template`, {
+        credentials: 'include',
+      });
+      const payload = (await parseJsonSafe(response)) as Record<string, unknown> & { message?: string };
+      if (!response.ok) {
+        throw new Error(payload?.message ?? 'No se pudo cargar la plantilla base de reglas.');
+      }
+      setRulesEditor(rulesObjectToEditorState(payload as Record<string, unknown>));
+      setRulesActive(true);
+      setRulesSourceLabel('template');
+      setRulesUpdatedAt(null);
+      setRulesMessage('Plantilla base cargada en el editor.');
+    } catch (err) {
+      setRulesError(err instanceof Error ? err.message : 'No se pudo cargar la plantilla base de reglas.');
+    } finally {
+      setRulesLoading(false);
+    }
+  };
+
+  const handleIntermedioZoneChange = (zoneRaw: string) => {
+    const zone = zoneRaw.trim().toUpperCase() || 'AMBA';
+    setRulesEditor((current) => {
+      const existingRows = current.intermedioMatrix?.[zone];
+      return {
+        ...current,
+        intermedioSelectedZone: zone,
+        intermedioMatrix: {
+          ...current.intermedioMatrix,
+          [zone]:
+            Array.isArray(existingRows) && existingRows.length > 0
+              ? existingRows
+              : createIntermedioMatrixRows(zone, INTERMEDIO_ZONE_DEFAULTS[zone]),
+        },
+      };
+    });
+  };
+
+  const handleIntermedioMatrixValueChange = (
+    zone: string,
+    rowId: string,
+    field: 'original' | 'liquidacion',
+    value: string
+  ) => {
+    setRulesEditor((current) => {
+      const zoneRows = current.intermedioMatrix?.[zone] ?? createIntermedioMatrixRows(zone, INTERMEDIO_ZONE_DEFAULTS[zone]);
+      return {
+        ...current,
+        intermedioMatrix: {
+          ...current.intermedioMatrix,
+          [zone]: zoneRows.map((row) =>
+            row.key === rowId
+              ? {
+                  ...row,
+                  [field]: value,
+                }
+              : row
+          ),
+        },
+      };
+    });
+  };
+
+  const handleCreateRun = async () => {
+    setActionMessage(null);
+    setActionError(null);
+
+    if (!createClientCode.trim()) {
+      setActionError('Ingresá el código de cliente para crear el run.');
+      return;
+    }
+
+    setCreateLoading(true);
+    try {
+      let response: Response;
+      if (createExtractFile) {
+        const formData = new FormData();
+        formData.append('source_system', 'powerbi');
+        formData.append('client_code', createClientCode.trim());
+        if (createPeriodFrom) {
+          formData.append('period_from', createPeriodFrom);
+        }
+        if (createPeriodTo) {
+          formData.append('period_to', createPeriodTo);
+        }
+        formData.append('status', 'CARGADA');
+        formData.append('extract_file', createExtractFile);
+
+        response = await fetch(`${apiBaseUrl}/api/liquidaciones/runs/upload`, {
+          method: 'POST',
+          credentials: 'include',
+          body: formData,
+        });
+      } else {
+        response = await fetch(`${apiBaseUrl}/api/liquidaciones/runs`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          credentials: 'include',
+          body: JSON.stringify({
+            source_system: 'powerbi',
+            client_code: createClientCode.trim(),
+            period_from: createPeriodFrom || null,
+            period_to: createPeriodTo || null,
+            source_file_name: createSourceFileName.trim() || null,
+            status: 'CARGADA',
+          }),
+        });
+      }
+
+      const payload = (await parseJsonSafe(response)) as { data?: LiquidacionRunRecord; message?: string };
+      if (!response.ok) {
+        throw new Error(payload?.message ?? 'No se pudo crear el run.');
+      }
+
+      const createdRunId = Number(payload?.data?.id);
+      setActionMessage(`Run #${createdRunId} creado correctamente.`);
+      setCreateSourceFileName('');
+      setCreateExtractFile(null);
+      if (createFileRef.current) {
+        createFileRef.current.value = '';
+      }
+      await loadRuns();
+      if (Number.isFinite(createdRunId) && createdRunId > 0) {
+        setSelectedRunId(createdRunId);
+      }
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : 'No se pudo crear el run.');
+    } finally {
+      setCreateLoading(false);
+    }
+  };
+
+  const handleApproveRun = async () => {
+    if (!selectedRunId) {
+      setActionError('Seleccioná un run para aprobar.');
+      return;
+    }
+
+    setApproveLoading(true);
+    setActionMessage(null);
+    setActionError(null);
+    try {
+      const response = await fetch(`${apiBaseUrl}/api/liquidaciones/runs/${selectedRunId}/approve`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        credentials: 'include',
+        body: JSON.stringify({
+          force: approveForce,
+          note: approveNote.trim() || null,
+        }),
+      });
+
+      const payload = (await parseJsonSafe(response)) as { message?: string };
+      if (!response.ok) {
+        throw new Error(payload?.message ?? 'No se pudo aprobar el run.');
+      }
+
+      setActionMessage(payload?.message ?? 'Run aprobado correctamente.');
+      await loadRuns();
+      await loadRunDetail(selectedRunId);
+      await loadImportacionPreview(selectedRunId);
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : 'No se pudo aprobar el run.');
+    } finally {
+      setApproveLoading(false);
+    }
+  };
+
+  const handlePublishRun = async (dryRun: boolean) => {
+    if (!selectedRunId) {
+      setActionError('Seleccioná un run para publicar.');
+      return;
+    }
+
+    const payloadBody: Record<string, unknown> = {
+      dry_run: dryRun,
+      force: publishForce,
+    };
+
+    const distributorCode = publishDistributorCode.trim();
+    if (distributorCode) {
+      payloadBody.only_distributor_code = distributorCode;
+    }
+
+    const liquidacionIdRaw = publishLiquidacionId.trim();
+    if (liquidacionIdRaw) {
+      const parsed = Number(liquidacionIdRaw);
+      if (!Number.isInteger(parsed) || parsed <= 0) {
+        setActionError('El ID de liquidación debe ser un número entero positivo.');
+        return;
+      }
+      payloadBody.liquidacion_id = parsed;
+    }
+
+    setPublishLoading(true);
+    setActionMessage(null);
+    setActionError(null);
+    try {
+      const response = await fetch(`${apiBaseUrl}/api/liquidaciones/runs/${selectedRunId}/publicar-erp`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        credentials: 'include',
+        body: JSON.stringify(payloadBody),
+      });
+
+      const payload = (await parseJsonSafe(response)) as { message?: string; data?: { status?: string } };
+      if (!response.ok) {
+        throw new Error(payload?.message ?? 'No se pudo publicar el run.');
+      }
+
+      const statusLabel = payload?.data?.status ? ` (${payload.data.status})` : '';
+      setActionMessage(dryRun ? `Dry run ERP ejecutado${statusLabel}.` : `Publicación ERP ejecutada${statusLabel}.`);
+      await loadRuns();
+      await loadRunDetail(selectedRunId);
+      await loadImportacionPreview(selectedRunId);
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : 'No se pudo publicar el run.');
+    } finally {
+      setPublishLoading(false);
+    }
+  };
+
+  const handleLineaDraftChange = (lineaId: number, field: keyof Omit<LineaEditDraft, 'saving' | 'error'>, value: string) => {
+    setLineaDrafts((current) => ({
+      ...current,
+      [lineaId]: {
+        ...(current[lineaId] ?? {
+          importeOverride: '',
+          plusOverride: '',
+          tarifaOverride: '',
+          motivo: '',
+          saving: false,
+          error: null,
+        }),
+        [field]: value,
+        error: null,
+      },
+    }));
+  };
+
+  const handleSaveLinea = async (lineaId: number) => {
+    if (!selectedRunId || !selectedDistribuidorId) {
+      setDetalleActionError('Seleccioná un run y un distribuidor.');
+      return;
+    }
+
+    const draft = lineaDrafts[lineaId];
+    if (!draft) {
+      setDetalleActionError('No se encontró el borrador de la línea.');
+      return;
+    }
+
+    const reason = draft.motivo.trim();
+    if (!reason) {
+      setLineaDrafts((current) => ({
+        ...current,
+        [lineaId]: {
+          ...draft,
+          error: 'Ingresá un motivo para guardar el override.',
+        },
+      }));
+      return;
+    }
+
+    setDetalleActionMessage(null);
+    setDetalleActionError(null);
+    setLineaDrafts((current) => ({
+      ...current,
+      [lineaId]: {
+        ...draft,
+        saving: true,
+        error: null,
+      },
+    }));
+
+    try {
+      const response = await fetch(`${apiBaseUrl}/api/liquidaciones/lineas/${lineaId}`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        credentials: 'include',
+        body: JSON.stringify({
+          importe_override: parseOptionalNumber(draft.importeOverride),
+          plus_override: parseOptionalNumber(draft.plusOverride),
+          tarifa_override: parseOptionalNumber(draft.tarifaOverride),
+          motivo: reason,
+        }),
+      });
+
+      const payload = (await parseJsonSafe(response)) as { message?: string };
+      if (!response.ok) {
+        throw new Error(payload?.message ?? 'No se pudo guardar la línea.');
+      }
+
+      setDetalleActionMessage(`Línea #${lineaId} actualizada.`);
+      await Promise.all([
+        loadRunDetail(selectedRunId),
+        loadImportacionPreview(selectedRunId),
+        loadDistribuidorDetail(selectedDistribuidorId),
+      ]);
+    } catch (err) {
+      setLineaDrafts((current) => ({
+        ...current,
+        [lineaId]: {
+          ...(current[lineaId] ?? draft),
+          saving: false,
+          error: err instanceof Error ? err.message : 'No se pudo guardar la línea.',
+        },
+      }));
+      return;
+    }
+
+    setLineaDrafts((current) => ({
+      ...current,
+      [lineaId]: {
+        ...(current[lineaId] ?? draft),
+        saving: false,
+        error: null,
+      },
+    }));
+  };
+
+  const handleSaveDistribuidor = async () => {
+    if (!selectedRunId || !selectedDistribuidorId) {
+      setDetalleActionError('Seleccioná un run y un distribuidor.');
+      return;
+    }
+
+    const reason = distribuidorDraft.motivo.trim();
+    if (!reason) {
+      setDetalleActionError('Ingresá motivo para guardar gastos administrativos.');
+      return;
+    }
+
+    setDetalleActionMessage(null);
+    setDetalleActionError(null);
+    setDistribuidorDraft((current) => ({
+      ...current,
+      saving: true,
+    }));
+
+    try {
+      const response = await fetch(`${apiBaseUrl}/api/liquidaciones/distribuidores/${selectedDistribuidorId}`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        credentials: 'include',
+        body: JSON.stringify({
+          gastos_admin_override: parseOptionalNumber(distribuidorDraft.gastosAdminOverride),
+          ajuste_manual: parseOptionalNumber(distribuidorDraft.ajusteManual),
+          motivo: reason,
+        }),
+      });
+
+      const payload = (await parseJsonSafe(response)) as { message?: string };
+      if (!response.ok) {
+        throw new Error(payload?.message ?? 'No se pudo guardar gastos administrativos.');
+      }
+
+      setDetalleActionMessage(`Distribuidor #${selectedDistribuidorId} actualizado.`);
+      await Promise.all([
+        loadRunDetail(selectedRunId),
+        loadImportacionPreview(selectedRunId),
+        loadDistribuidorDetail(selectedDistribuidorId),
+      ]);
+    } catch (err) {
+      setDetalleActionError(err instanceof Error ? err.message : 'No se pudo guardar gastos administrativos.');
+    } finally {
+      setDistribuidorDraft((current) => ({
+        ...current,
+        saving: false,
+      }));
+    }
+  };
+
+  const buildMatchDraftKey = useCallback((item: ImportacionPendingMatchItem) => {
+    return `${item.patente_norm ?? ''}|${item.nombre_excel_norm ?? ''}|${item.row_id}`;
+  }, []);
+
+  const pendingMatchItems = useMemo(
+    () =>
+      Array.isArray(importacionPreview?.pendientes_match)
+        ? (importacionPreview?.pendientes_match ?? [])
+        : [],
+    [importacionPreview?.pendientes_match]
+  );
+
+  useEffect(() => {
+    setMatchAssignDrafts((current) => {
+      const next: Record<string, MatchAssignDraft> = {};
+
+      pendingMatchItems.forEach((item) => {
+        const key = buildMatchDraftKey(item);
+        const previous = current[key];
+        const defaultProviderId =
+          previous?.proveedorId && previous.proveedorId.trim()
+            ? previous.proveedorId.trim()
+            : item.candidatos?.[0]?.id != null
+            ? String(item.candidatos[0].id)
+            : '';
+        const selectedCandidate = item.candidatos?.find((candidate) => String(candidate.id) === defaultProviderId);
+        const defaultActualizarPatente = selectedCandidate ? !(selectedCandidate.patente && selectedCandidate.patente.trim()) : false;
+
+        next[key] = createMatchAssignDraft({
+          proveedorId: defaultProviderId,
+          searchTerm: previous?.searchTerm ?? item.nombre_excel_raw ?? item.patente_norm ?? '',
+          manualCandidates: previous?.manualCandidates ?? [],
+          actualizarPatente: previous?.actualizarPatente ?? defaultActualizarPatente,
+          sobreescribirPatente: previous?.sobreescribirPatente ?? false,
+          motivo: previous?.motivo ?? '',
+          saving: false,
+          error: null,
+          searching: false,
+          searchError: null,
+        });
+      });
+
+      return next;
+    });
+  }, [buildMatchDraftKey, createMatchAssignDraft, pendingMatchItems]);
+
+  const handleMatchDraftChange = (
+    key: string,
+    field: 'proveedorId' | 'searchTerm' | 'actualizarPatente' | 'sobreescribirPatente' | 'motivo',
+    value: string | boolean
+  ) => {
+    setMatchAssignDrafts((current) => ({
+      ...current,
+      [key]: {
+        ...(current[key] ?? createMatchAssignDraft()),
+        [field]: value,
+        error: null,
+        ...(field === 'searchTerm' ? { searchError: null } : {}),
+      },
+    }));
+  };
+
+  const handleSearchProvidersForMatch = async (item: ImportacionPendingMatchItem) => {
+    const key = buildMatchDraftKey(item);
+    const draft = matchAssignDrafts[key] ?? createMatchAssignDraft();
+    const term = draft.searchTerm.trim();
+    if (!term || term.length < 2) {
+      setMatchAssignDrafts((current) => ({
+        ...current,
+        [key]: {
+          ...(current[key] ?? draft),
+          searchError: 'Ingresá al menos 2 caracteres para buscar.',
+        },
+      }));
+      return;
+    }
+
+    setMatchAssignDrafts((current) => ({
+      ...current,
+      [key]: {
+        ...(current[key] ?? draft),
+        searching: true,
+        searchError: null,
+      },
+    }));
+
+    try {
+      const params = new URLSearchParams();
+      params.set('q', term);
+      params.set('limit', '10');
+      const response = await fetch(`${apiBaseUrl}/api/liquidaciones/proveedores/buscar?${params.toString()}`, {
+        credentials: 'include',
+      });
+      const payload = (await parseJsonSafe(response)) as ProviderSearchResponse;
+      if (!response.ok) {
+        throw new Error(payload?.message ?? 'No se pudo buscar proveedores.');
+      }
+
+      const searched = Array.isArray(payload?.data) ? payload.data : [];
+      setMatchAssignDrafts((current) => {
+        const currentDraft = current[key] ?? draft;
+        const fallbackProviderId = currentDraft.proveedorId.trim();
+        const autoProviderId = fallbackProviderId
+          || (searched[0]?.id != null ? String(searched[0].id) : '');
+        const selectedCandidate = searched.find((candidate) => String(candidate.id) === autoProviderId);
+        const candidateHasPatente = Boolean(
+          selectedCandidate && typeof selectedCandidate.patente === 'string' && selectedCandidate.patente.trim()
+        );
+
+        return {
+          ...current,
+          [key]: {
+            ...currentDraft,
+            searching: false,
+            manualCandidates: searched,
+            proveedorId: autoProviderId,
+            actualizarPatente:
+              currentDraft.actualizarPatente
+              || (selectedCandidate ? !candidateHasPatente : currentDraft.actualizarPatente),
+            searchError: searched.length === 0 ? 'Sin resultados para esa búsqueda.' : null,
+          },
+        };
+      });
+    } catch (err) {
+      setMatchAssignDrafts((current) => ({
+        ...current,
+        [key]: {
+          ...(current[key] ?? draft),
+          searching: false,
+          searchError: err instanceof Error ? err.message : 'No se pudo buscar proveedores.',
+        },
+      }));
+    }
+  };
+
+  const handleAssignProvider = async (item: ImportacionPendingMatchItem) => {
+    if (!selectedRunId) {
+      setActionError('Seleccioná un run para asignar proveedor.');
+      return;
+    }
+
+    const key = buildMatchDraftKey(item);
+    const draft = matchAssignDrafts[key] ?? createMatchAssignDraft();
+    const providerId = Number(draft.proveedorId);
+    if (!Number.isInteger(providerId) || providerId <= 0) {
+      setMatchAssignDrafts((current) => ({
+        ...current,
+        [key]: {
+          ...draft,
+          error: 'Seleccioná un proveedor válido.',
+        },
+      }));
+      return;
+    }
+
+    if (draft.actualizarPatente && draft.sobreescribirPatente && !draft.motivo.trim()) {
+      setMatchAssignDrafts((current) => ({
+        ...current,
+        [key]: {
+          ...draft,
+          error: 'Ingresá motivo para sobreescribir patente existente.',
+        },
+      }));
+      return;
+    }
+
+    setActionMessage(null);
+    setActionError(null);
+    setMatchAssignDrafts((current) => ({
+      ...current,
+      [key]: {
+        ...draft,
+        saving: true,
+        error: null,
+      },
+    }));
+
+    try {
+      const response = await fetch(`${apiBaseUrl}/api/liquidaciones/importaciones/${selectedRunId}/asignar-proveedor`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        credentials: 'include',
+        body: JSON.stringify({
+          patente_norm: item.patente_norm,
+          nombre_excel_norm: item.nombre_excel_norm,
+          proveedor_id: providerId,
+          actualizar_patente_en_proveedor: draft.actualizarPatente,
+          sobreescribir_patente_existente: draft.sobreescribirPatente,
+          motivo: draft.motivo.trim() || null,
+        }),
+      });
+
+      const payload = (await parseJsonSafe(response)) as { message?: string };
+      if (!response.ok) {
+        throw new Error(payload?.message ?? 'No se pudo asignar el proveedor.');
+      }
+
+      setActionMessage(payload?.message ?? `Proveedor #${providerId} asignado para patente ${item.patente_norm ?? '—'}.`);
+      const refreshTasks: Array<Promise<unknown>> = [loadRunDetail(selectedRunId), loadImportacionPreview(selectedRunId)];
+      if (selectedDistribuidorId != null) {
+        refreshTasks.push(loadDistribuidorDetail(selectedDistribuidorId));
+      }
+      await Promise.all(refreshTasks);
+    } catch (err) {
+      setMatchAssignDrafts((current) => ({
+        ...current,
+        [key]: {
+          ...(current[key] ?? draft),
+          saving: false,
+          error: err instanceof Error ? err.message : 'No se pudo asignar el proveedor.',
+        },
+      }));
+      return;
+    }
+
+    setMatchAssignDrafts((current) => ({
+      ...current,
+      [key]: {
+        ...(current[key] ?? draft),
+        saving: false,
+        error: null,
+      },
+    }));
+  };
+
+  const getPendingMatchStatusLabel = useCallback((statusRaw?: string | null) => {
+    const status = (statusRaw ?? '').trim().toUpperCase();
+    if (status === 'SIN_MATCH') {
+      return 'Sin match';
+    }
+    if (status === 'PENDIENTE_ASIGNACION') {
+      return 'Pendiente asignación';
+    }
+    if (status === 'MANUAL_CONFIRMED') {
+      return 'Asignado manual';
+    }
+    return status || '—';
+  }, []);
+
+  const getPendingMatchStatusBadgeClass = useCallback((statusRaw?: string | null) => {
+    const status = (statusRaw ?? '').trim().toUpperCase();
+    if (status === 'SIN_MATCH') {
+      return 'fuel-badge fuel-badge--danger';
+    }
+    if (status === 'PENDIENTE_ASIGNACION') {
+      return 'fuel-badge fuel-badge--warning';
+    }
+    if (status === 'MANUAL_CONFIRMED') {
+      return 'fuel-badge fuel-badge--success';
+    }
+    return 'fuel-badge fuel-badge--muted';
+  }, []);
+
+  const canEditSelectedRun = ['PRELIQUIDACION', 'CARGADA'].includes((selectedRun?.status ?? '').toUpperCase());
+  const previewDistribuidores = Array.isArray(importacionPreview?.distribuidores) ? (importacionPreview?.distribuidores ?? []) : [];
+
+  return (
+    <DashboardLayout
+      title={isStandaloneExtractosRoute ? 'Liquidaciones' : 'Combustible'}
+      subtitle={isStandaloneExtractosRoute ? 'Extractos BI/ERP' : 'Runs BI/ERP'}
+      headerContent={isStandaloneExtractosRoute ? undefined : <CombustibleTabs />}
+    >
+      <section className="dashboard-card">
+        <header className="card-header">
+          <h3>Panel de control</h3>
+        </header>
+        <div className="card-body">
+          <div className="form-grid">
+            <label className="input-control">
+              <span>Estado</span>
+              <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
+                <option value="">Todos</option>
+                <option value="CARGADA">CARGADA</option>
+                <option value="PROCESADA">PROCESADA</option>
+                <option value="PRELIQUIDACION">PRELIQUIDACION</option>
+                <option value="APROBADA">APROBADA</option>
+                <option value="PUBLICADA">PUBLICADA</option>
+                <option value="RECEIVED">RECEIVED (legacy)</option>
+                <option value="VALIDATED">VALIDATED (legacy)</option>
+                <option value="APPROVED">APPROVED (legacy)</option>
+                <option value="PUBLISHED">PUBLISHED (legacy)</option>
+                <option value="PARTIAL">PARTIAL</option>
+                <option value="FAILED">FAILED</option>
+              </select>
+            </label>
+            <label className="input-control">
+              <span>Cliente</span>
+              <input
+                value={clientCodeFilter}
+                onChange={(event) => setClientCodeFilter(event.target.value)}
+                placeholder="Código cliente"
+              />
+            </label>
+          </div>
+          <div className="filters-actions">
+            <button type="button" className="secondary-action" onClick={loadRuns} disabled={loadingRuns}>
+              {loadingRuns ? 'Actualizando...' : 'Actualizar runs'}
+            </button>
+            <span className="helper-text">
+              {`Total: ${meta.total} · Página ${meta.currentPage}/${Math.max(1, meta.lastPage)} · ${meta.perPage} por página`}
+            </span>
+          </div>
+          <div className="summary-cards">
+            {Object.keys(statusCounts).length === 0 ? (
+              <div className="summary-card">
+                <span className="summary-card__label">Estados</span>
+                <strong className="summary-card__value">—</strong>
+              </div>
+            ) : (
+              Object.entries(statusCounts).map(([status, total]) => (
+                <div className="summary-card" key={`run-status-${status}`}>
+                  <span className="summary-card__label">{status}</span>
+                  <strong className="summary-card__value">{total}</strong>
+                </div>
+              ))
+            )}
+          </div>
+          {runsError ? <p className="form-info form-info--error">{runsError}</p> : null}
+        </div>
+      </section>
+
+      <section className="dashboard-card">
+        <header className="card-header">
+          <h3>{isStandaloneExtractosRoute ? 'Subir liquidación y crear run' : 'Crear run manual'}</h3>
+        </header>
+        <div className="card-body">
+          <div className="form-grid">
+            <label className="input-control">
+              <span>Cliente</span>
+              <input
+                value={createClientCode}
+                onChange={(event) => setCreateClientCode(event.target.value)}
+                placeholder="CLIENTE-X"
+              />
+            </label>
+            <label className="input-control">
+              <span>Período desde</span>
+              <input type="date" value={createPeriodFrom} onChange={(event) => setCreatePeriodFrom(event.target.value)} />
+            </label>
+            <label className="input-control">
+              <span>Período hasta</span>
+              <input type="date" value={createPeriodTo} onChange={(event) => setCreatePeriodTo(event.target.value)} />
+            </label>
+            <label className="input-control">
+              <span>Archivo origen</span>
+              <input
+                value={createSourceFileName}
+                onChange={(event) => setCreateSourceFileName(event.target.value)}
+                placeholder="liquidacion-cliente.xlsx"
+              />
+            </label>
+            <label className="input-control">
+              <span>Archivo liquidación (.xlsx/.xls/.csv)</span>
+              <input
+                ref={createFileRef}
+                type="file"
+                accept=".xlsx,.xls,.csv"
+                onChange={(event) => {
+                  const file = event.target.files?.[0] ?? null;
+                  setCreateExtractFile(file);
+                  if (file) {
+                    setCreateSourceFileName(file.name);
+                  } else {
+                    setCreateSourceFileName('');
+                  }
+                }}
+              />
+            </label>
+          </div>
+          {createExtractFile ? (
+            <div style={{ marginTop: 12 }}>
+              {createPreviewLoading ? <p className="helper-text">Analizando extracto...</p> : null}
+              {createPreviewError ? <p className="form-info form-info--error">{createPreviewError}</p> : null}
+              {createExtractPreview && !createPreviewLoading ? (
+                <>
+                  <div className="summary-cards">
+                    <div className="summary-card">
+                      <span className="summary-card__label">Filas detectadas</span>
+                      <strong className="summary-card__value">{Number(createExtractPreview.rowCount) || 0}</strong>
+                    </div>
+                    <div className="summary-card">
+                      <span className="summary-card__label">OK</span>
+                      <strong className="summary-card__value">{Number(createExtractPreview.rowsByStatus?.ok) || 0}</strong>
+                    </div>
+                    <div className="summary-card">
+                      <span className="summary-card__label">Errores</span>
+                      <strong className="summary-card__value">{Number(createExtractPreview.rowsByStatus?.error) || 0}</strong>
+                    </div>
+                    <div className="summary-card">
+                      <span className="summary-card__label">Diferencias</span>
+                      <strong className="summary-card__value">{Number(createExtractPreview.rowsByStatus?.diff) || 0}</strong>
+                    </div>
+                  </div>
+
+                  {createExtractPreview.mapped === false ? (
+                    <p className="form-info form-info--error">No se pudieron mapear columnas al formato esperado.</p>
+                  ) : (
+                    <p className="helper-text">
+                      {createExtractPreview.productColumnMessage ??
+                        `Concepto tomado desde ${createExtractPreview.productColumn ? `columna ${createExtractPreview.productColumn}` : 'encabezado detectado'}.`}
+                    </p>
+                  )}
+                  {createExtractPreview.rules ? (
+                    <p className="helper-text">
+                      Reglas aplicadas: {createExtractPreview.rules.source === 'client' ? 'cliente' : 'default'} ·
+                      Tarifas configuradas: {Number(createExtractPreview.rules.tariffsCount) || 0}
+                    </p>
+                  ) : null}
+
+                  {Array.isArray(createExtractPreview.detectedColumns) && createExtractPreview.detectedColumns.length > 0 ? (
+                    <p className="helper-text">
+                      <strong>Columnas detectadas:</strong> {createExtractPreview.detectedColumns.join(', ')}
+                    </p>
+                  ) : null}
+
+                  {Array.isArray(createExtractPreview.sampleRows) && createExtractPreview.sampleRows.length > 0 ? (
+                    <div className="table-wrapper" style={{ marginTop: 8 }}>
+                      <table>
+                        <thead>
+                          <tr>
+                            <th>Fecha</th>
+                            <th>Dominio</th>
+                            <th>Concepto</th>
+                            <th>Litros</th>
+                            <th>Importe</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {createExtractPreview.sampleRows.map((row, index) => (
+                            <tr key={`preview-row-${index}`}>
+                              <td>{row.fecha || '—'}</td>
+                              <td>{row.dominio || '—'}</td>
+                              <td>{row.producto || '—'}</td>
+                              <td>{row.litros || '—'}</td>
+                              <td>{row.importe || '—'}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : null}
+                </>
+              ) : null}
+            </div>
+          ) : null}
+          <div className="filters-actions">
+            <button
+              type="button"
+              className="primary-action"
+              onClick={handleCreateRun}
+              disabled={createLoading || (Boolean(createExtractFile) && createPreviewLoading)}
+            >
+              {createLoading ? 'Creando...' : createExtractFile ? 'Subir y crear run' : 'Crear run'}
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <section className="dashboard-card">
+        <header className="card-header">
+          <h3>Reglas por cliente</h3>
+        </header>
+        <div className="card-body">
+          <div className="form-grid">
+            <label className="input-control">
+              <span>Cliente</span>
+              <input
+                value={rulesClientCode}
+                onChange={(event) => setRulesClientCode(event.target.value)}
+                placeholder="INTERMEDIO"
+              />
+            </label>
+            <label className="checkbox-control" style={{ alignSelf: 'end' }}>
+              <input
+                type="checkbox"
+                checked={rulesActive}
+                onChange={(event) => setRulesActive(event.target.checked)}
+              />
+              <span>Reglas activas</span>
+            </label>
+            <div className="helper-text" style={{ alignSelf: 'end' }}>
+              Fuente: {rulesSourceLabel ?? '—'} · Última actualización: {formatDateCell(rulesUpdatedAt)}
+            </div>
+          </div>
+
+          <div className="form-grid" style={{ marginTop: 8 }}>
+            <label className="checkbox-control">
+              <input
+                type="checkbox"
+                checked={rulesEditor.duplicateRowBlocking}
+                onChange={(event) =>
+                  setRulesEditor((current) => ({
+                    ...current,
+                    duplicateRowBlocking: event.target.checked,
+                  }))
+                }
+              />
+              <span>Bloquear duplicados</span>
+            </label>
+            <label className="checkbox-control">
+              <input
+                type="checkbox"
+                checked={rulesEditor.outsidePeriodBlocking}
+                onChange={(event) =>
+                  setRulesEditor((current) => ({
+                    ...current,
+                    outsidePeriodBlocking: event.target.checked,
+                  }))
+                }
+              />
+              <span>Bloquear fuera de período</span>
+            </label>
+            <label className="checkbox-control">
+              <input
+                type="checkbox"
+                checked={rulesEditor.tariffMismatchBlocking}
+                onChange={(event) =>
+                  setRulesEditor((current) => ({
+                    ...current,
+                    tariffMismatchBlocking: event.target.checked,
+                  }))
+                }
+              />
+              <span>Bloquear diferencias de tarifa</span>
+            </label>
+          </div>
+
+          <div className="form-grid" style={{ marginTop: 8 }}>
+            <label className="input-control">
+              <span>Tolerancia % precio/litro</span>
+              <input
+                value={rulesEditor.tolerancePercent}
+                onChange={(event) =>
+                  setRulesEditor((current) => ({
+                    ...current,
+                    tolerancePercent: event.target.value,
+                  }))
+                }
+                placeholder="3"
+              />
+            </label>
+            <label className="input-control">
+              <span>Tolerancia monto precio/litro</span>
+              <input
+                value={rulesEditor.toleranceAmount}
+                onChange={(event) =>
+                  setRulesEditor((current) => ({
+                    ...current,
+                    toleranceAmount: event.target.value,
+                  }))
+                }
+                placeholder="0"
+              />
+            </label>
+          </div>
+
+          {isIntermedioRulesClient ? (
+            <>
+              <div className="form-grid" style={{ marginTop: 8 }}>
+                <label className="input-control">
+                  <span>Zona tarifaria</span>
+                  <select
+                    value={intermedioRulesZone}
+                    onChange={(event) => handleIntermedioZoneChange(event.target.value)}
+                  >
+                    {INTERMEDIO_ZONES.map((zone) => (
+                      <option key={zone} value={zone}>
+                        {zone}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <div className="helper-text" style={{ alignSelf: 'end' }}>
+                  Matriz INTERMEDIO: valor original del cliente y valor de liquidación aplicado.
+                </div>
+              </div>
+
+              <div className="table-wrapper">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Servicio</th>
+                      <th>Original</th>
+                      <th>Liquidación</th>
+                      <th>Especial</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {intermedioRulesZoneRows.map((row) => (
+                      <tr key={row.key}>
+                        <td>{row.label}</td>
+                        <td>
+                          <input
+                            value={row.original}
+                            onChange={(event) =>
+                              handleIntermedioMatrixValueChange(
+                                intermedioRulesZone,
+                                row.key,
+                                'original',
+                                event.target.value
+                              )
+                            }
+                            placeholder="0"
+                          />
+                        </td>
+                        <td>
+                          <input
+                            value={row.liquidacion}
+                            onChange={(event) =>
+                              handleIntermedioMatrixValueChange(
+                                intermedioRulesZone,
+                                row.key,
+                                'liquidacion',
+                                event.target.value
+                              )
+                            }
+                            placeholder="0"
+                          />
+                        </td>
+                        <td>{row.special ? 'Sí' : 'No'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="filters-actions" style={{ marginTop: 8 }}>
+                <span className="helper-text">Tarifas operativas ({rulesEditor.tariffs.length})</span>
+                <button
+                  type="button"
+                  className="secondary-action"
+                  onClick={() =>
+                    setRulesEditor((current) => ({
+                      ...current,
+                      tariffs: [...current.tariffs, createTariffRuleEditorRow()],
+                    }))
+                  }
+                >
+                  Agregar tarifa
+                </button>
+              </div>
+
+              <div className="table-wrapper">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Producto</th>
+                      <th>Tarifa</th>
+                      <th>Tolerancia %</th>
+                      <th>Tolerancia monto</th>
+                      <th>Vigencia desde</th>
+                      <th>Vigencia hasta</th>
+                      <th>Acción</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {rulesEditor.tariffs.length === 0 ? (
+                      <tr>
+                        <td colSpan={7}>Sin tarifas cargadas.</td>
+                      </tr>
+                    ) : (
+                      rulesEditor.tariffs.map((row) => (
+                        <tr key={row.id}>
+                          <td>
+                            <input
+                              value={row.product}
+                              onChange={(event) =>
+                                setRulesEditor((current) => ({
+                                  ...current,
+                                  tariffs: current.tariffs.map((tariffRow) =>
+                                    tariffRow.id === row.id
+                                      ? {
+                                          ...tariffRow,
+                                          product: event.target.value,
+                                        }
+                                      : tariffRow
+                                  ),
+                                }))
+                              }
+                              placeholder="DIESEL"
+                            />
+                          </td>
+                          <td>
+                            <input
+                              value={row.pricePerLiter}
+                              onChange={(event) =>
+                                setRulesEditor((current) => ({
+                                  ...current,
+                                  tariffs: current.tariffs.map((tariffRow) =>
+                                    tariffRow.id === row.id
+                                      ? {
+                                          ...tariffRow,
+                                          pricePerLiter: event.target.value,
+                                        }
+                                      : tariffRow
+                                  ),
+                                }))
+                              }
+                              placeholder="1250.50"
+                            />
+                          </td>
+                          <td>
+                            <input
+                              value={row.tolerancePercent}
+                              onChange={(event) =>
+                                setRulesEditor((current) => ({
+                                  ...current,
+                                  tariffs: current.tariffs.map((tariffRow) =>
+                                    tariffRow.id === row.id
+                                      ? {
+                                          ...tariffRow,
+                                          tolerancePercent: event.target.value,
+                                        }
+                                      : tariffRow
+                                  ),
+                                }))
+                              }
+                              placeholder="3"
+                            />
+                          </td>
+                          <td>
+                            <input
+                              value={row.toleranceAmount}
+                              onChange={(event) =>
+                                setRulesEditor((current) => ({
+                                  ...current,
+                                  tariffs: current.tariffs.map((tariffRow) =>
+                                    tariffRow.id === row.id
+                                      ? {
+                                          ...tariffRow,
+                                          toleranceAmount: event.target.value,
+                                        }
+                                      : tariffRow
+                                  ),
+                                }))
+                              }
+                              placeholder="0"
+                            />
+                          </td>
+                          <td>
+                            <input
+                              type="date"
+                              value={row.effectiveFrom}
+                              onChange={(event) =>
+                                setRulesEditor((current) => ({
+                                  ...current,
+                                  tariffs: current.tariffs.map((tariffRow) =>
+                                    tariffRow.id === row.id
+                                      ? {
+                                          ...tariffRow,
+                                          effectiveFrom: event.target.value,
+                                        }
+                                      : tariffRow
+                                  ),
+                                }))
+                              }
+                            />
+                          </td>
+                          <td>
+                            <input
+                              type="date"
+                              value={row.effectiveTo}
+                              onChange={(event) =>
+                                setRulesEditor((current) => ({
+                                  ...current,
+                                  tariffs: current.tariffs.map((tariffRow) =>
+                                    tariffRow.id === row.id
+                                      ? {
+                                          ...tariffRow,
+                                          effectiveTo: event.target.value,
+                                        }
+                                      : tariffRow
+                                  ),
+                                }))
+                              }
+                            />
+                          </td>
+                          <td>
+                            <button
+                              type="button"
+                              className="secondary-action secondary-action--ghost"
+                              onClick={() =>
+                                setRulesEditor((current) => ({
+                                  ...current,
+                                  tariffs: current.tariffs.filter((tariffRow) => tariffRow.id !== row.id),
+                                }))
+                              }
+                            >
+                              Quitar
+                            </button>
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
+
+          <div className="filters-actions" style={{ marginTop: 8 }}>
+            <button
+              type="button"
+              className="secondary-action secondary-action--ghost"
+              onClick={() => setRulesShowJson((current) => !current)}
+            >
+              {rulesShowJson ? 'Ocultar JSON técnico' : 'Ver JSON técnico'}
+            </button>
+          </div>
+
+          {rulesShowJson ? (
+            <label className="input-control" style={{ marginTop: 8 }}>
+              <span>JSON generado (solo lectura)</span>
+              <textarea value={rulesJsonText} rows={14} readOnly style={{ width: '100%', resize: 'vertical', fontFamily: 'monospace' }} />
+            </label>
+          ) : null}
+
+          <div className="filters-actions">
+            <button type="button" className="secondary-action" onClick={handleLoadRulesTemplate} disabled={rulesLoading || rulesSaving}>
+              {rulesLoading ? 'Cargando...' : 'Cargar plantilla'}
+            </button>
+            <button type="button" className="secondary-action" onClick={handleLoadClientRules} disabled={rulesLoading || rulesSaving}>
+              {rulesLoading ? 'Cargando...' : 'Cargar reglas cliente'}
+            </button>
+            <button type="button" className="primary-action" onClick={handleSaveClientRules} disabled={rulesLoading || rulesSaving}>
+              {rulesSaving ? 'Guardando...' : 'Guardar reglas'}
+            </button>
+          </div>
+
+          {rulesMessage ? <p className="form-info form-info--success">{rulesMessage}</p> : null}
+          {rulesError ? <p className="form-info form-info--error">{rulesError}</p> : null}
+        </div>
+      </section>
+
+      <section className="dashboard-card">
+        <header className="card-header">
+          <h3>Listado de runs</h3>
+        </header>
+        <div className="card-body">
+          <div className="table-wrapper">
+            <table>
+              <thead>
+                <tr>
+                  <th>ID</th>
+                  <th>Cliente</th>
+                  <th>Período</th>
+                  <th>Estado</th>
+                  <th>Filas</th>
+                  <th>OK</th>
+                  <th>Errores</th>
+                  <th>Alertas</th>
+                  <th>Diferencias</th>
+                  <th>Creado</th>
+                </tr>
+              </thead>
+              <tbody>
+                {loadingRuns ? (
+                  <tr>
+                    <td colSpan={10}>Cargando runs...</td>
+                  </tr>
+                ) : runs.length === 0 ? (
+                  <tr>
+                    <td colSpan={10}>No hay runs para mostrar.</td>
+                  </tr>
+                ) : (
+                  runs.map((run) => (
+                    <tr
+                      key={`run-${run.id}`}
+                      onClick={() => setSelectedRunId(run.id)}
+                      style={{
+                        cursor: 'pointer',
+                        backgroundColor: selectedRunId === run.id ? 'rgba(66, 133, 244, 0.08)' : undefined,
+                      }}
+                    >
+                      <td>{run.id}</td>
+                      <td>{run.clientCode ?? '—'}</td>
+                      <td>{`${run.periodFrom ?? '—'} / ${run.periodTo ?? '—'}`}</td>
+                      <td>{run.status ?? '—'}</td>
+                      <td>{run.rowsTotal ?? 0}</td>
+                      <td>{run.rowsOk ?? 0}</td>
+                      <td>{run.rowsError ?? 0}</td>
+                      <td>{run.rowsAlert ?? 0}</td>
+                      <td>{run.rowsDiff ?? 0}</td>
+                      <td>{formatDateCell(run.createdAt)}</td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <section className="dashboard-card">
+        <header className="card-header">
+          <h3>Preliquidación editable</h3>
+        </header>
+        <div className="card-body">
+          {selectedRunId == null ? (
+            <p className="helper-text">Seleccioná un run para revisar distribuidores y líneas.</p>
+          ) : importacionPreviewLoading ? (
+            <p className="helper-text">Cargando preliquidación...</p>
+          ) : importacionPreviewError ? (
+            <p className="form-info form-info--error">{importacionPreviewError}</p>
+          ) : (
+            <>
+              <div className="summary-cards">
+                <div className="summary-card">
+                  <span className="summary-card__label">Filas total</span>
+                  <strong className="summary-card__value">{Number(importacionPreview?.resumen?.filas_total) || 0}</strong>
+                </div>
+                <div className="summary-card">
+                  <span className="summary-card__label">Distribuidores</span>
+                  <strong className="summary-card__value">{Number(importacionPreview?.resumen?.distribuidores_total) || 0}</strong>
+                </div>
+                <div className="summary-card">
+                  <span className="summary-card__label">Críticos</span>
+                  <strong className="summary-card__value">{Number(importacionPreview?.resumen?.criticos) || 0}</strong>
+                </div>
+                <div className="summary-card">
+                  <span className="summary-card__label">Alertas</span>
+                  <strong className="summary-card__value">{Number(importacionPreview?.resumen?.alertas) || 0}</strong>
+                </div>
+                <div className="summary-card">
+                  <span className="summary-card__label">Pendientes match</span>
+                  <strong className="summary-card__value">{Number(importacionPreview?.resumen?.pendientes_match) || pendingMatchItems.length}</strong>
+                </div>
+              </div>
+
+              <section className="pending-match-section" style={{ marginTop: 12 }}>
+                <header className="card-header">
+                  <h4>Pendientes de match</h4>
+                  <span className="form-info">Asigná proveedor por candidato, búsqueda o ID manual.</span>
+                </header>
+                {pendingMatchItems.length === 0 ? (
+                  <p className="helper-text">No hay pendientes de asignación de proveedor.</p>
+                ) : (
+                  <>
+                  <div className="table-wrapper pending-match-table-wrapper">
+                    <table className="pending-match-table">
+                      <thead>
+                        <tr>
+                          <th>Fila</th>
+                          <th>Patente</th>
+                          <th>Nombre Excel</th>
+                          <th>Estado</th>
+                          <th>Candidatos</th>
+                          <th>Proveedor a asignar</th>
+                          <th>Actualizar patente</th>
+                          <th>Sobrescribir patente</th>
+                          <th>Motivo</th>
+                          <th>Acción</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {pendingMatchItems.map((item) => {
+                          const key = buildMatchDraftKey(item);
+                          const draft = matchAssignDrafts[key] ?? createMatchAssignDraft();
+                          const candidateOptions = [
+                            ...(Array.isArray(item.candidatos) ? item.candidatos : []),
+                            ...(Array.isArray(draft.manualCandidates) ? draft.manualCandidates : []),
+                          ].reduce<ImportacionMatchCandidate[]>((acc, candidate) => {
+                            if (!candidate || typeof candidate.id !== 'number') {
+                              return acc;
+                            }
+                            if (acc.some((existing) => existing.id === candidate.id)) {
+                              return acc;
+                            }
+                            acc.push(candidate);
+                            return acc;
+                          }, []);
+
+                          return (
+                            <React.Fragment key={`pending-match-${key}`}>
+                              <tr>
+                                <td>{item.row_number ?? item.row_id}</td>
+                                <td>{item.patente_norm ?? '—'}</td>
+                                <td>{item.nombre_excel_raw ?? item.nombre_excel_norm ?? '—'}</td>
+                                <td>
+                                  <span className={getPendingMatchStatusBadgeClass(item.match_status)}>
+                                    {getPendingMatchStatusLabel(item.match_status)}
+                                  </span>
+                                </td>
+                                <td>
+                                  {Array.isArray(item.candidatos) && item.candidatos.length > 0 ? (
+                                    <ul className="pending-match-candidate-list">
+                                      {item.candidatos.slice(0, 4).map((candidate) => (
+                                        <li key={`cand-${key}-${candidate.id}`}>
+                                          <button
+                                            type="button"
+                                            className="pending-match-candidate-btn"
+                                            onClick={() => {
+                                              handleMatchDraftChange(key, 'proveedorId', String(candidate.id));
+                                              const candidateHasPatente =
+                                                typeof candidate.patente === 'string' && candidate.patente.trim() !== '';
+                                              handleMatchDraftChange(key, 'actualizarPatente', !candidateHasPatente);
+                                            }}
+                                          >
+                                            <strong>#{candidate.id}</strong> {candidate.nombre}
+                                            <span>{candidate.score ?? 0}</span>
+                                          </button>
+                                        </li>
+                                      ))}
+                                    </ul>
+                                  ) : (
+                                    <span className="pending-match-empty-candidates">Sin candidatos</span>
+                                  )}
+                                </td>
+                                <td>
+                                  <div className="pending-match-provider-grid">
+                                    <span className="pending-match-provider-hint">Buscá por nombre, CUIL o patente.</span>
+                                    <div className="pending-match-search-row">
+                                      <input
+                                        value={draft.searchTerm}
+                                        onChange={(event) => handleMatchDraftChange(key, 'searchTerm', event.target.value)}
+                                        placeholder="Buscar por nombre/cuil/patente"
+                                      />
+                                      <button
+                                        type="button"
+                                        className="secondary-action secondary-action--ghost"
+                                        onClick={() => handleSearchProvidersForMatch(item)}
+                                        disabled={draft.searching}
+                                      >
+                                        {draft.searching ? 'Buscando...' : 'Buscar'}
+                                      </button>
+                                    </div>
+                                    <select
+                                      value={
+                                        candidateOptions.some((candidate) => String(candidate.id) === draft.proveedorId)
+                                          ? draft.proveedorId
+                                          : ''
+                                      }
+                                      onChange={(event) => {
+                                        const nextProviderId = event.target.value;
+                                        const selectedCandidate = candidateOptions.find(
+                                          (candidate) => String(candidate.id) === nextProviderId
+                                        );
+                                        handleMatchDraftChange(key, 'proveedorId', nextProviderId);
+                                        if (selectedCandidate) {
+                                          const candidateHasPatente =
+                                            typeof selectedCandidate.patente === 'string' && selectedCandidate.patente.trim() !== '';
+                                          handleMatchDraftChange(key, 'actualizarPatente', !candidateHasPatente);
+                                        }
+                                      }}
+                                    >
+                                      <option value="">Seleccionar candidato</option>
+                                      {candidateOptions.map((candidate) => (
+                                        <option value={String(candidate.id)} key={`candidate-option-${key}-${candidate.id}`}>
+                                          {`#${candidate.id} - ${candidate.nombre}${candidate.cuil ? ` - ${candidate.cuil}` : ''}`}
+                                        </option>
+                                      ))}
+                                    </select>
+                                    <label className="pending-match-manual-id">
+                                      <span>ID manual</span>
+                                      <input
+                                        value={draft.proveedorId}
+                                        onChange={(event) =>
+                                          handleMatchDraftChange(
+                                            key,
+                                            'proveedorId',
+                                            event.target.value.replace(/[^\d]/g, '')
+                                          )
+                                        }
+                                        placeholder="Ej: 389"
+                                        inputMode="numeric"
+                                        className="pending-match-provider-manual-input"
+                                      />
+                                    </label>
+                                    {draft.searchError ? (
+                                      <span className="form-info form-info--error pending-match-inline-error">
+                                        {draft.searchError}
+                                      </span>
+                                    ) : null}
+                                  </div>
+                                </td>
+                                <td>
+                                  <label className="checkbox-control">
+                                    <input
+                                      type="checkbox"
+                                      checked={draft.actualizarPatente}
+                                      onChange={(event) => handleMatchDraftChange(key, 'actualizarPatente', event.target.checked)}
+                                    />
+                                    <span>Sí</span>
+                                  </label>
+                                </td>
+                                <td>
+                                  <label className="checkbox-control">
+                                    <input
+                                      type="checkbox"
+                                      checked={draft.sobreescribirPatente}
+                                      onChange={(event) => handleMatchDraftChange(key, 'sobreescribirPatente', event.target.checked)}
+                                      disabled={!draft.actualizarPatente}
+                                    />
+                                    <span>Sí</span>
+                                  </label>
+                                </td>
+                                <td>
+                                  <input
+                                    value={draft.motivo}
+                                    onChange={(event) => handleMatchDraftChange(key, 'motivo', event.target.value)}
+                                    placeholder="Motivo (si sobreescribe)"
+                                  />
+                                </td>
+                                <td>
+                                  <button
+                                    type="button"
+                                    className="primary-action pending-match-assign-btn"
+                                    onClick={() => handleAssignProvider(item)}
+                                    disabled={draft.saving || !canEditSelectedRun}
+                                  >
+                                    {draft.saving ? 'Asignando...' : 'Asignar'}
+                                  </button>
+                                </td>
+                              </tr>
+                              {draft.error ? (
+                                <tr>
+                                  <td colSpan={10} className="form-info form-info--error">
+                                    {draft.error}
+                                  </td>
+                                </tr>
+                              ) : null}
+                            </React.Fragment>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                  <div className="pending-match-cards">
+                    {pendingMatchItems.map((item) => {
+                      const key = buildMatchDraftKey(item);
+                      const draft = matchAssignDrafts[key] ?? createMatchAssignDraft();
+                      const candidateOptions = [
+                        ...(Array.isArray(item.candidatos) ? item.candidatos : []),
+                        ...(Array.isArray(draft.manualCandidates) ? draft.manualCandidates : []),
+                      ].reduce<ImportacionMatchCandidate[]>((acc, candidate) => {
+                        if (!candidate || typeof candidate.id !== 'number') {
+                          return acc;
+                        }
+                        if (acc.some((existing) => existing.id === candidate.id)) {
+                          return acc;
+                        }
+                        acc.push(candidate);
+                        return acc;
+                      }, []);
+
+                      return (
+                        <article className="pending-match-card" key={`pending-match-card-${key}`}>
+                          <header className="pending-match-card__header">
+                            <div>
+                              <p className="pending-match-card__label">Fila #{item.row_number ?? item.row_id}</p>
+                              <strong>{item.patente_norm ?? '—'}</strong>
+                            </div>
+                            <span className={getPendingMatchStatusBadgeClass(item.match_status)}>
+                              {getPendingMatchStatusLabel(item.match_status)}
+                            </span>
+                          </header>
+
+                          <div className="pending-match-card__body">
+                            <div className="pending-match-card__field">
+                              <span className="pending-match-card__label">Nombre Excel</span>
+                              <strong>{item.nombre_excel_raw ?? item.nombre_excel_norm ?? '—'}</strong>
+                            </div>
+
+                            <div className="pending-match-card__field">
+                              <span className="pending-match-card__label">Candidatos</span>
+                              {Array.isArray(item.candidatos) && item.candidatos.length > 0 ? (
+                                <ul className="pending-match-candidate-list">
+                                  {item.candidatos.slice(0, 4).map((candidate) => (
+                                    <li key={`cand-card-${key}-${candidate.id}`}>
+                                      <button
+                                        type="button"
+                                        className="pending-match-candidate-btn"
+                                        onClick={() => {
+                                          handleMatchDraftChange(key, 'proveedorId', String(candidate.id));
+                                          const candidateHasPatente =
+                                            typeof candidate.patente === 'string' && candidate.patente.trim() !== '';
+                                          handleMatchDraftChange(key, 'actualizarPatente', !candidateHasPatente);
+                                        }}
+                                      >
+                                        <strong>#{candidate.id}</strong> {candidate.nombre}
+                                        <span>{candidate.score ?? 0}</span>
+                                      </button>
+                                    </li>
+                                  ))}
+                                </ul>
+                              ) : (
+                                <span className="pending-match-empty-candidates">Sin candidatos</span>
+                              )}
+                            </div>
+
+                            <div className="pending-match-card__field">
+                              <span className="pending-match-card__label">Proveedor a asignar</span>
+                              <div className="pending-match-provider-grid">
+                                <span className="pending-match-provider-hint">Buscá por nombre, CUIL o patente.</span>
+                                <div className="pending-match-search-row">
+                                  <input
+                                    value={draft.searchTerm}
+                                    onChange={(event) => handleMatchDraftChange(key, 'searchTerm', event.target.value)}
+                                    placeholder="Buscar por nombre/cuil/patente"
+                                  />
+                                  <button
+                                    type="button"
+                                    className="secondary-action secondary-action--ghost"
+                                    onClick={() => handleSearchProvidersForMatch(item)}
+                                    disabled={draft.searching}
+                                  >
+                                    {draft.searching ? 'Buscando...' : 'Buscar'}
+                                  </button>
+                                </div>
+                                <select
+                                  value={
+                                    candidateOptions.some((candidate) => String(candidate.id) === draft.proveedorId)
+                                      ? draft.proveedorId
+                                      : ''
+                                  }
+                                  onChange={(event) => {
+                                    const nextProviderId = event.target.value;
+                                    const selectedCandidate = candidateOptions.find(
+                                      (candidate) => String(candidate.id) === nextProviderId
+                                    );
+                                    handleMatchDraftChange(key, 'proveedorId', nextProviderId);
+                                    if (selectedCandidate) {
+                                      const candidateHasPatente =
+                                        typeof selectedCandidate.patente === 'string' && selectedCandidate.patente.trim() !== '';
+                                      handleMatchDraftChange(key, 'actualizarPatente', !candidateHasPatente);
+                                    }
+                                  }}
+                                >
+                                  <option value="">Seleccionar candidato</option>
+                                  {candidateOptions.map((candidate) => (
+                                    <option value={String(candidate.id)} key={`candidate-card-option-${key}-${candidate.id}`}>
+                                      {`#${candidate.id} - ${candidate.nombre}${candidate.cuil ? ` - ${candidate.cuil}` : ''}`}
+                                    </option>
+                                  ))}
+                                </select>
+                                <label className="pending-match-manual-id">
+                                  <span>ID manual</span>
+                                  <input
+                                    value={draft.proveedorId}
+                                    onChange={(event) =>
+                                      handleMatchDraftChange(
+                                        key,
+                                        'proveedorId',
+                                        event.target.value.replace(/[^\d]/g, '')
+                                      )
+                                    }
+                                    placeholder="Ej: 389"
+                                    inputMode="numeric"
+                                    className="pending-match-provider-manual-input"
+                                  />
+                                </label>
+                                {draft.searchError ? (
+                                  <span className="form-info form-info--error pending-match-inline-error">
+                                    {draft.searchError}
+                                  </span>
+                                ) : null}
+                              </div>
+                            </div>
+
+                            <div className="pending-match-card__actions">
+                              <label className="checkbox-control">
+                                <input
+                                  type="checkbox"
+                                  checked={draft.actualizarPatente}
+                                  onChange={(event) => handleMatchDraftChange(key, 'actualizarPatente', event.target.checked)}
+                                />
+                                <span>Actualizar patente</span>
+                              </label>
+                              <label className="checkbox-control">
+                                <input
+                                  type="checkbox"
+                                  checked={draft.sobreescribirPatente}
+                                  onChange={(event) => handleMatchDraftChange(key, 'sobreescribirPatente', event.target.checked)}
+                                  disabled={!draft.actualizarPatente}
+                                />
+                                <span>Sobrescribir patente</span>
+                              </label>
+                              <input
+                                value={draft.motivo}
+                                onChange={(event) => handleMatchDraftChange(key, 'motivo', event.target.value)}
+                                placeholder="Motivo (si sobreescribe)"
+                              />
+                              <button
+                                type="button"
+                                className="primary-action pending-match-assign-btn"
+                                onClick={() => handleAssignProvider(item)}
+                                disabled={draft.saving || !canEditSelectedRun}
+                              >
+                                {draft.saving ? 'Asignando...' : 'Asignar'}
+                              </button>
+                            </div>
+                            {draft.error ? (
+                              <p className="form-info form-info--error pending-match-inline-error">{draft.error}</p>
+                            ) : null}
+                          </div>
+                        </article>
+                      );
+                    })}
+                  </div>
+                  </>
+                )}
+              </section>
+
+              <div className="table-wrapper" style={{ marginTop: 8 }}>
+                <table>
+                  <thead>
+                    <tr>
+                      <th>ID dist.</th>
+                      <th>Patente</th>
+                      <th>Categoría</th>
+                      <th>Subtotal calc.</th>
+                      <th>Subtotal final</th>
+                      <th>Gastos admin final</th>
+                      <th>Total final</th>
+                      <th>Overrides</th>
+                      <th>Alertas</th>
+                      <th>Acción</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {previewDistribuidores.length === 0 ? (
+                      <tr>
+                        <td colSpan={10}>No hay distribuidores para este run.</td>
+                      </tr>
+                    ) : (
+                      previewDistribuidores.map((dist) => (
+                        <tr
+                          key={`dist-${dist.liquidacion_distribuidor_id}`}
+                          style={{
+                            backgroundColor:
+                              selectedDistribuidorId === Number(dist.liquidacion_distribuidor_id)
+                                ? 'rgba(66, 133, 244, 0.08)'
+                                : undefined,
+                          }}
+                        >
+                          <td>{dist.liquidacion_distribuidor_id}</td>
+                          <td>{dist.patente ?? '—'}</td>
+                          <td>{dist.categoria ?? '—'}</td>
+                          <td>{formatCurrency(Number(dist.subtotal_calculado) || 0)}</td>
+                          <td>{formatCurrency(Number(dist.subtotal_final) || 0)}</td>
+                          <td>{formatCurrency(Number(dist.gastos_admin_final) || 0)}</td>
+                          <td>{formatCurrency(Number(dist.total_final) || 0)}</td>
+                          <td>{dist.tiene_overrides ? 'Sí' : 'No'}</td>
+                          <td>{Array.isArray(dist.alertas) ? dist.alertas.length : 0}</td>
+                          <td>
+                            <button
+                              type="button"
+                              className="secondary-action"
+                              onClick={() => setSelectedDistribuidorId(Number(dist.liquidacion_distribuidor_id))}
+                            >
+                              Ver detalle
+                            </button>
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+
+              {selectedDistribuidorId == null ? (
+                <p className="helper-text" style={{ marginTop: 8 }}>
+                  Seleccioná un distribuidor para editar detalle.
+                </p>
+              ) : distribuidorDetailLoading ? (
+                <p className="helper-text" style={{ marginTop: 8 }}>
+                  Cargando detalle del distribuidor...
+                </p>
+              ) : distribuidorDetailError ? (
+                <p className="form-info form-info--error" style={{ marginTop: 8 }}>
+                  {distribuidorDetailError}
+                </p>
+              ) : selectedDistribuidorDetail ? (
+                <div style={{ marginTop: 12 }}>
+                  <div className="summary-cards">
+                    <div className="summary-card">
+                      <span className="summary-card__label">Distribuidor</span>
+                      <strong className="summary-card__value">#{selectedDistribuidorDetail.liquidacion_distribuidor_id}</strong>
+                    </div>
+                    <div className="summary-card">
+                      <span className="summary-card__label">Patente</span>
+                      <strong className="summary-card__value">{selectedDistribuidorDetail.patente ?? '—'}</strong>
+                    </div>
+                    <div className="summary-card">
+                      <span className="summary-card__label">Gasto admin default</span>
+                      <strong className="summary-card__value">{formatCurrency(selectedDistribuidorDetail.gastos_admin_default ?? 0)}</strong>
+                    </div>
+                    <div className="summary-card">
+                      <span className="summary-card__label">Líneas</span>
+                      <strong className="summary-card__value">{selectedDistribuidorDetail.lineas?.length ?? 0}</strong>
+                    </div>
+                  </div>
+
+                  <div className="form-grid" style={{ marginTop: 8 }}>
+                    <label className="input-control">
+                      <span>Gastos admin override</span>
+                      <input
+                        value={distribuidorDraft.gastosAdminOverride}
+                        onChange={(event) =>
+                          setDistribuidorDraft((current) => ({
+                            ...current,
+                            gastosAdminOverride: event.target.value,
+                          }))
+                        }
+                        placeholder="Vacío = usa default"
+                      />
+                    </label>
+                    <label className="input-control">
+                      <span>Ajuste manual</span>
+                      <input
+                        value={distribuidorDraft.ajusteManual}
+                        onChange={(event) =>
+                          setDistribuidorDraft((current) => ({
+                            ...current,
+                            ajusteManual: event.target.value,
+                          }))
+                        }
+                        placeholder="0"
+                      />
+                    </label>
+                    <label className="input-control">
+                      <span>Motivo (obligatorio)</span>
+                      <input
+                        value={distribuidorDraft.motivo}
+                        onChange={(event) =>
+                          setDistribuidorDraft((current) => ({
+                            ...current,
+                            motivo: event.target.value,
+                          }))
+                        }
+                        placeholder="Ej: Bonificación de gastos"
+                      />
+                    </label>
+                  </div>
+
+                  <div className="filters-actions">
+                    <button
+                      type="button"
+                      className="primary-action"
+                      onClick={handleSaveDistribuidor}
+                      disabled={distribuidorDraft.saving || !canEditSelectedRun}
+                    >
+                      {distribuidorDraft.saving ? 'Guardando...' : 'Guardar gastos admin'}
+                    </button>
+                    {!canEditSelectedRun ? (
+                      <span className="helper-text">Edición bloqueada: el run no está en PRELIQUIDACION.</span>
+                    ) : null}
+                  </div>
+
+                  <div className="table-wrapper" style={{ marginTop: 8 }}>
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>Línea</th>
+                          <th>Fecha</th>
+                          <th>Ruta</th>
+                          <th>SVC</th>
+                          <th>Turno</th>
+                          <th>Factor</th>
+                          <th>Tarifa calc.</th>
+                          <th>Plus calc.</th>
+                          <th>Importe calc.</th>
+                          <th>Importe override</th>
+                          <th>Plus override</th>
+                          <th>Tarifa override</th>
+                          <th>Motivo</th>
+                          <th>Importe final</th>
+                          <th>Acción</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {selectedDistribuidorDetail.lineas?.length ? (
+                          selectedDistribuidorDetail.lineas.map((linea) => {
+                            const draft = lineaDrafts[linea.linea_id] ?? {
+                              importeOverride: linea.importe_override == null ? '' : toNumberString(linea.importe_override),
+                              plusOverride: '',
+                              tarifaOverride: '',
+                              motivo: '',
+                              saving: false,
+                              error: null,
+                            };
+                            return (
+                              <React.Fragment key={`linea-${linea.linea_id}`}>
+                                <tr>
+                                  <td>{linea.linea_id}</td>
+                                  <td>{linea.fecha ?? '—'}</td>
+                                  <td>{linea.id_ruta ?? '—'}</td>
+                                  <td>{linea.svc ?? '—'}</td>
+                                  <td>{linea.turno_norm ?? '—'}</td>
+                                  <td>{linea.factor_jornada ?? 1}</td>
+                                  <td>{formatCurrency(linea.tarifa_dist_calculada ?? 0)}</td>
+                                  <td>{formatCurrency(linea.plus_calculado ?? 0)}</td>
+                                  <td>{formatCurrency(linea.importe_calculado ?? 0)}</td>
+                                  <td>
+                                    <input
+                                      value={draft.importeOverride}
+                                      onChange={(event) => handleLineaDraftChange(linea.linea_id, 'importeOverride', event.target.value)}
+                                      placeholder="Vacío = calculado"
+                                    />
+                                  </td>
+                                  <td>
+                                    <input
+                                      value={draft.plusOverride}
+                                      onChange={(event) => handleLineaDraftChange(linea.linea_id, 'plusOverride', event.target.value)}
+                                      placeholder="Opcional"
+                                    />
+                                  </td>
+                                  <td>
+                                    <input
+                                      value={draft.tarifaOverride}
+                                      onChange={(event) => handleLineaDraftChange(linea.linea_id, 'tarifaOverride', event.target.value)}
+                                      placeholder="Opcional"
+                                    />
+                                  </td>
+                                  <td>
+                                    <input
+                                      value={draft.motivo}
+                                      onChange={(event) => handleLineaDraftChange(linea.linea_id, 'motivo', event.target.value)}
+                                      placeholder="Motivo obligatorio"
+                                    />
+                                  </td>
+                                  <td>{formatCurrency(linea.importe_final ?? 0)}</td>
+                                  <td>
+                                    <button
+                                      type="button"
+                                      className="secondary-action"
+                                      onClick={() => handleSaveLinea(linea.linea_id)}
+                                      disabled={draft.saving || !canEditSelectedRun}
+                                    >
+                                      {draft.saving ? 'Guardando...' : 'Guardar'}
+                                    </button>
+                                  </td>
+                                </tr>
+                                {draft.error ? (
+                                  <tr>
+                                    <td colSpan={15} className="form-info form-info--error">
+                                      {draft.error}
+                                    </td>
+                                  </tr>
+                                ) : null}
+                              </React.Fragment>
+                            );
+                          })
+                        ) : (
+                          <tr>
+                            <td colSpan={15}>Sin líneas para mostrar.</td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              ) : null}
+
+              {detalleActionMessage ? <p className="form-info form-info--success">{detalleActionMessage}</p> : null}
+              {detalleActionError ? <p className="form-info form-info--error">{detalleActionError}</p> : null}
+            </>
+          )}
+        </div>
+      </section>
+
+      <section className="dashboard-card">
+        <header className="card-header">
+          <h3>Detalle del run</h3>
+        </header>
+        <div className="card-body">
+          {selectedRunId == null ? (
+            <p className="helper-text">Seleccioná un run para ver detalle y operar aprobación/publicación.</p>
+          ) : loadingDetail ? (
+            <p className="helper-text">Cargando detalle...</p>
+          ) : detailError ? (
+            <p className="form-info form-info--error">{detailError}</p>
+          ) : selectedRun ? (
+            <>
+              <div className="summary-cards">
+                <div className="summary-card">
+                  <span className="summary-card__label">Run</span>
+                  <strong className="summary-card__value">#{selectedRun.id}</strong>
+                </div>
+                <div className="summary-card">
+                  <span className="summary-card__label">Estado</span>
+                  <strong className="summary-card__value">{selectedRun.status ?? '—'}</strong>
+                </div>
+                <div className="summary-card">
+                  <span className="summary-card__label">Aprobado</span>
+                  <strong className="summary-card__value">{formatDateCell(selectedRun.approvedAt)}</strong>
+                </div>
+                <div className="summary-card">
+                  <span className="summary-card__label">Publicado</span>
+                  <strong className="summary-card__value">{formatDateCell(selectedRun.publishedAt)}</strong>
+                </div>
+              </div>
+
+              <div className="summary-cards">
+                <div className="summary-card">
+                  <span className="summary-card__label">Staging rows</span>
+                  <strong className="summary-card__value">{runSummary?.staging_rows_count ?? 0}</strong>
+                </div>
+                <div className="summary-card">
+                  <span className="summary-card__label">Validaciones</span>
+                  <strong className="summary-card__value">{runSummary?.validation_results_count ?? 0}</strong>
+                </div>
+                <div className="summary-card">
+                  <span className="summary-card__label">Observaciones</span>
+                  <strong className="summary-card__value">{runSummary?.observations_count ?? 0}</strong>
+                </div>
+                <div className="summary-card">
+                  <span className="summary-card__label">Publicaciones</span>
+                  <strong className="summary-card__value">{runSummary?.publish_jobs_count ?? 0}</strong>
+                </div>
+              </div>
+
+              <div className="form-grid">
+                <label className="input-control">
+                  <span>Nota de aprobación</span>
+                  <input
+                    value={approveNote}
+                    onChange={(event) => setApproveNote(event.target.value)}
+                    placeholder="Opcional"
+                  />
+                </label>
+                <label className="input-control">
+                  <span>Filtro distribuidor</span>
+                  <input
+                    value={publishDistributorCode}
+                    onChange={(event) => setPublishDistributorCode(event.target.value)}
+                    placeholder="Solo un distribuidor"
+                  />
+                </label>
+                <label className="input-control">
+                  <span>Liquidación ID (ERP ref)</span>
+                  <input
+                    value={publishLiquidacionId}
+                    onChange={(event) => setPublishLiquidacionId(event.target.value)}
+                    placeholder="Opcional"
+                  />
+                </label>
+              </div>
+
+              <div className="filters-actions">
+                <label className="checkbox-control">
+                  <input
+                    type="checkbox"
+                    checked={approveForce}
+                    onChange={(event) => setApproveForce(event.target.checked)}
+                  />
+                  <span>Force aprobación</span>
+                </label>
+                <button type="button" className="primary-action" onClick={handleApproveRun} disabled={approveLoading}>
+                  {approveLoading ? 'Aprobando...' : 'Aprobar run'}
+                </button>
+              </div>
+
+              <div className="filters-actions">
+                <label className="checkbox-control">
+                  <input
+                    type="checkbox"
+                    checked={publishForce}
+                    onChange={(event) => setPublishForce(event.target.checked)}
+                  />
+                  <span>Force publicación</span>
+                </label>
+                <button
+                  type="button"
+                  className="secondary-action secondary-action--ghost"
+                  onClick={() => handlePublishRun(true)}
+                  disabled={publishLoading}
+                >
+                  {publishLoading ? 'Procesando...' : 'Dry run ERP'}
+                </button>
+                <button
+                  type="button"
+                  className="primary-action"
+                  onClick={() => handlePublishRun(false)}
+                  disabled={publishLoading}
+                >
+                  {publishLoading ? 'Publicando...' : 'Publicar ERP'}
+                </button>
+              </div>
+
+              <div className="helper-text">
+                Último job ERP:{' '}
+                {latestPublishJob
+                  ? `#${latestPublishJob.id} · ${latestPublishJob.status} · ${formatDateCell(latestPublishJob.sentAt ?? null)}`
+                  : 'sin publicaciones todavía'}
+              </div>
+
+              {actionMessage ? <p className="form-info form-info--success">{actionMessage}</p> : null}
+              {actionError ? <p className="form-info form-info--error">{actionError}</p> : null}
+            </>
+          ) : (
+            <p className="helper-text">No se pudo resolver el detalle del run seleccionado.</p>
+          )}
         </div>
       </section>
     </DashboardLayout>
@@ -42113,6 +45385,1107 @@ const AuditPage: React.FC = () => {
   );
 };
 
+type NativeCallSession = {
+  id: number;
+  status: string;
+  provider: string;
+  channel?: string | null;
+  initiatorUserId: number | null;
+  targetUserId: number | null;
+  targetIdentity?: string | null;
+  signalVersion: number;
+};
+
+type NativeCallSyncPayload = {
+  data?: NativeCallSession;
+  webrtc?: {
+    signalVersion?: number;
+    changed?: boolean;
+    offer?: { sdp?: string | null; version?: number } | null;
+    answer?: { sdp?: string | null; version?: number } | null;
+    hangup?: { reason?: string | null; version?: number } | null;
+    initiatorCandidates?: Array<{
+      candidate?: string | null;
+      sdpMid?: string | null;
+      sdpMLineIndex?: number | null;
+      version?: number;
+    }>;
+    targetCandidates?: Array<{
+      candidate?: string | null;
+      sdpMid?: string | null;
+      sdpMLineIndex?: number | null;
+      version?: number;
+    }>;
+  };
+  message?: string;
+};
+
+type WhatsAppStartResponse = {
+  data?: {
+    deeplink?: string;
+    normalizedPhone?: string;
+  };
+  message?: string;
+};
+
+const WebRtcCallsPage: React.FC = () => {
+  const authUser = useStoredAuthUser();
+  const navigate = useNavigate();
+  const apiBaseUrl = useMemo(() => resolveApiBaseUrl(), []);
+  const [selectedTargetUserId, setSelectedTargetUserId] = useState('');
+  const [manualTargetIdentity, setManualTargetIdentity] = useState('');
+  const [usersCatalog, setUsersCatalog] = useState<Usuario[]>([]);
+  const [usersCatalogLoading, setUsersCatalogLoading] = useState(false);
+  const [incomingSessions, setIncomingSessions] = useState<NativeCallSession[]>([]);
+  const [activeSession, setActiveSession] = useState<NativeCallSession | null>(null);
+  const [activeRole, setActiveRole] = useState<'initiator' | 'target' | null>(null);
+  const [statusMessage, setStatusMessage] = useState('Sin llamada activa.');
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [whatsAppPhone, setWhatsAppPhone] = useState('');
+  const [whatsAppMessage, setWhatsAppMessage] = useState('Hola, te contacto desde la app. ¿Podés atender una llamada por WhatsApp?');
+  const [whatsAppStatus, setWhatsAppStatus] = useState<string | null>(null);
+  const [isBusy, setIsBusy] = useState(false);
+  const [isRecording, setIsRecording] = useState(false);
+  const [recordedAudioUrl, setRecordedAudioUrl] = useState<string | null>(null);
+  const [recordedAudioMimeType, setRecordedAudioMimeType] = useState('audio/webm');
+  const [iceServers, setIceServers] = useState<RTCIceServer[]>([{ urls: ['stun:stun.l.google.com:19302'] }]);
+
+  const localAudioRef = useRef<HTMLAudioElement | null>(null);
+  const remoteAudioRef = useRef<HTMLAudioElement | null>(null);
+  const localStreamRef = useRef<MediaStream | null>(null);
+  const remoteStreamRef = useRef<MediaStream | null>(null);
+  const peerRef = useRef<RTCPeerConnection | null>(null);
+  const syncTimerRef = useRef<number | null>(null);
+  const signalVersionRef = useRef(0);
+  const activeSessionIdRef = useRef<number | null>(null);
+  const activeRoleRef = useRef<'initiator' | 'target' | null>(null);
+  const appliedCandidateVersionsRef = useRef<Set<number>>(new Set());
+  const ringAudioContextRef = useRef<AudioContext | null>(null);
+  const ringTimerRef = useRef<number | null>(null);
+  const ringModeRef = useRef<'incoming' | 'outgoing' | null>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const recordingStreamRef = useRef<MediaStream | null>(null);
+  const recordingAudioContextRef = useRef<AudioContext | null>(null);
+  const recordingChunksRef = useRef<BlobPart[]>([]);
+  const recordedAudioUrlRef = useRef<string | null>(null);
+
+  const authHeaders = useMemo(
+    () => ({
+      Accept: 'application/json',
+      'Content-Type': 'application/json',
+    }),
+    []
+  );
+
+  const apiJson = useCallback(
+    async (path: string, init?: RequestInit): Promise<NativeCallSyncPayload> => {
+      const response = await fetch(`${apiBaseUrl}${path}`, {
+        credentials: 'include',
+        ...init,
+        headers: {
+          ...authHeaders,
+          ...(init?.headers ?? {}),
+        },
+      });
+
+      const payload = (await parseJsonSafe(response)) as NativeCallSyncPayload;
+      if (!response.ok) {
+        throw new Error(payload?.message ?? `Error ${response.status}`);
+      }
+
+      return payload;
+    },
+    [apiBaseUrl, authHeaders]
+  );
+
+  const ensureRingAudioContext = useCallback(async (): Promise<AudioContext | null> => {
+    try {
+      if (!ringAudioContextRef.current) {
+        const AudioContextConstructor =
+          window.AudioContext ||
+          (window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+        if (!AudioContextConstructor) {
+          return null;
+        }
+        ringAudioContextRef.current = new AudioContextConstructor();
+      }
+
+      const context = ringAudioContextRef.current;
+      if (!context) {
+        return null;
+      }
+
+      if (context.state === 'suspended') {
+        await context.resume();
+      }
+
+      return context;
+    } catch {
+      return null;
+    }
+  }, []);
+
+  const stopRingTone = useCallback(() => {
+    if (ringTimerRef.current != null) {
+      window.clearInterval(ringTimerRef.current);
+      ringTimerRef.current = null;
+    }
+    ringModeRef.current = null;
+  }, []);
+
+  const scheduleRingPulse = useCallback(
+    async (frequency: number, startOffset: number, duration = 0.14, gainValue = 0.09) => {
+      const context = await ensureRingAudioContext();
+      if (!context) {
+        return;
+      }
+
+      const start = context.currentTime + startOffset;
+      const end = start + duration;
+      const oscillator = context.createOscillator();
+      const gain = context.createGain();
+
+      oscillator.type = 'sine';
+      oscillator.frequency.setValueAtTime(frequency, start);
+      gain.gain.setValueAtTime(0.0001, start);
+      gain.gain.exponentialRampToValueAtTime(gainValue, start + 0.025);
+      gain.gain.exponentialRampToValueAtTime(0.0001, end);
+      oscillator.connect(gain);
+      gain.connect(context.destination);
+      oscillator.start(start);
+      oscillator.stop(end + 0.03);
+      oscillator.onended = () => {
+        oscillator.disconnect();
+        gain.disconnect();
+      };
+    },
+    [ensureRingAudioContext]
+  );
+
+  const startRingTone = useCallback(
+    (mode: 'incoming' | 'outgoing') => {
+      if (ringModeRef.current === mode && ringTimerRef.current != null) {
+        return;
+      }
+
+      stopRingTone();
+      ringModeRef.current = mode;
+
+      const playPattern = () => {
+        if (mode === 'incoming') {
+          void scheduleRingPulse(660, 0.0, 0.16, 0.1);
+          void scheduleRingPulse(740, 0.18, 0.16, 0.095);
+          void scheduleRingPulse(660, 0.36, 0.16, 0.1);
+          return;
+        }
+
+        void scheduleRingPulse(480, 0.0, 0.13, 0.08);
+        void scheduleRingPulse(540, 0.18, 0.13, 0.08);
+      };
+
+      playPattern();
+      ringTimerRef.current = window.setInterval(playPattern, mode === 'incoming' ? 2200 : 1500);
+    },
+    [scheduleRingPulse, stopRingTone]
+  );
+
+  const setRecordingUrl = useCallback((nextUrl: string | null) => {
+    const previousUrl = recordedAudioUrlRef.current;
+    if (previousUrl && previousUrl !== nextUrl) {
+      URL.revokeObjectURL(previousUrl);
+    }
+    recordedAudioUrlRef.current = nextUrl;
+    setRecordedAudioUrl(nextUrl);
+  }, []);
+
+  const getPreferredRecordingMimeType = useCallback((): string | null => {
+    if (typeof MediaRecorder === 'undefined') {
+      return null;
+    }
+
+    const candidates = ['audio/webm;codecs=opus', 'audio/ogg;codecs=opus', 'audio/webm', 'audio/mp4'];
+    for (const candidate of candidates) {
+      if (typeof MediaRecorder.isTypeSupported === 'function' && MediaRecorder.isTypeSupported(candidate)) {
+        return candidate;
+      }
+    }
+
+    return null;
+  }, []);
+
+  const releaseRecordingResources = useCallback(() => {
+    if (recordingStreamRef.current) {
+      recordingStreamRef.current.getTracks().forEach((track) => track.stop());
+      recordingStreamRef.current = null;
+    }
+
+    if (recordingAudioContextRef.current) {
+      const context = recordingAudioContextRef.current;
+      recordingAudioContextRef.current = null;
+      void context.close().catch(() => {
+        // ignore close errors
+      });
+    }
+  }, []);
+
+  const stopActiveRecording = useCallback(() => {
+    const recorder = mediaRecorderRef.current;
+    if (recorder && recorder.state !== 'inactive') {
+      try {
+        recorder.stop();
+      } catch {
+        mediaRecorderRef.current = null;
+        recordingChunksRef.current = [];
+        setIsRecording(false);
+        releaseRecordingResources();
+      }
+      return;
+    }
+
+    mediaRecorderRef.current = null;
+    recordingChunksRef.current = [];
+    setIsRecording(false);
+    releaseRecordingResources();
+  }, [releaseRecordingResources]);
+
+  const recordingDownloadExtension = useMemo(() => {
+    if (recordedAudioMimeType.includes('ogg')) {
+      return 'ogg';
+    }
+    if (recordedAudioMimeType.includes('mp4')) {
+      return 'm4a';
+    }
+    return 'webm';
+  }, [recordedAudioMimeType]);
+
+  const stopSyncLoop = useCallback(() => {
+    if (syncTimerRef.current != null) {
+      window.clearInterval(syncTimerRef.current);
+      syncTimerRef.current = null;
+    }
+  }, []);
+
+  const releaseMedia = useCallback(() => {
+    if (peerRef.current) {
+      peerRef.current.onicecandidate = null;
+      peerRef.current.ontrack = null;
+      peerRef.current.onconnectionstatechange = null;
+      peerRef.current.close();
+      peerRef.current = null;
+    }
+
+    if (localStreamRef.current) {
+      localStreamRef.current.getTracks().forEach((track) => track.stop());
+      localStreamRef.current = null;
+    }
+
+    if (remoteStreamRef.current) {
+      remoteStreamRef.current.getTracks().forEach((track) => track.stop());
+      remoteStreamRef.current = null;
+    }
+
+    if (localAudioRef.current) {
+      localAudioRef.current.srcObject = null;
+    }
+    if (remoteAudioRef.current) {
+      remoteAudioRef.current.srcObject = null;
+    }
+  }, []);
+
+  const resetActiveCallState = useCallback(() => {
+    stopSyncLoop();
+    stopRingTone();
+    stopActiveRecording();
+    releaseMedia();
+    setActiveSession(null);
+    activeSessionIdRef.current = null;
+    setActiveRole(null);
+    activeRoleRef.current = null;
+    signalVersionRef.current = 0;
+    appliedCandidateVersionsRef.current = new Set();
+  }, [releaseMedia, stopActiveRecording, stopRingTone, stopSyncLoop]);
+
+  useEffect(
+    () => () => {
+      resetActiveCallState();
+      if (ringAudioContextRef.current) {
+        ringAudioContextRef.current.close().catch(() => {
+          // ignore close errors
+        });
+        ringAudioContextRef.current = null;
+      }
+      if (recordedAudioUrlRef.current) {
+        URL.revokeObjectURL(recordedAudioUrlRef.current);
+        recordedAudioUrlRef.current = null;
+      }
+    },
+    [resetActiveCallState]
+  );
+
+  const fetchWebRtcConfig = useCallback(async () => {
+    try {
+      const payload = await apiJson('/api/calls/webrtc/config', { method: 'GET' });
+      const rawIceServers = (payload as { data?: { iceServers?: RTCIceServer[] } })?.data?.iceServers;
+      if (Array.isArray(rawIceServers) && rawIceServers.length > 0) {
+        setIceServers(rawIceServers);
+      }
+    } catch (error) {
+      console.error('fetchWebRtcConfig failed', error);
+    }
+  }, [apiJson]);
+
+  useEffect(() => {
+    void fetchWebRtcConfig();
+  }, [fetchWebRtcConfig]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const controller = new AbortController();
+
+    const fetchUsersCatalog = async () => {
+      try {
+        setUsersCatalogLoading(true);
+        const response = await fetch(`${apiBaseUrl}/api/usuarios`, {
+          signal: controller.signal,
+          credentials: 'include',
+        });
+
+        if (!response.ok) {
+          return;
+        }
+
+        const payload = (await parseJsonSafe(response)) as { data?: Usuario[] };
+        const data = Array.isArray(payload?.data) ? payload.data : [];
+        const filtered = data
+          .filter((user) => user.id !== authUser?.id)
+          .sort((a, b) => {
+            const aLabel = `${a.name ?? ''} ${a.email ?? ''}`.toLowerCase();
+            const bLabel = `${b.name ?? ''} ${b.email ?? ''}`.toLowerCase();
+            return aLabel.localeCompare(bLabel);
+          });
+
+        if (!cancelled) {
+          setUsersCatalog(filtered);
+        }
+      } catch {
+        // ignore catalog fetch errors; manual identity remains available
+      } finally {
+        if (!cancelled) {
+          setUsersCatalogLoading(false);
+        }
+      }
+    };
+
+    void fetchUsersCatalog();
+
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
+  }, [apiBaseUrl, authUser?.id]);
+
+  const ensureLocalMedia = useCallback(async (): Promise<MediaStream> => {
+    if (localStreamRef.current) {
+      return localStreamRef.current;
+    }
+
+    if (!navigator.mediaDevices?.getUserMedia) {
+      throw new Error('Este navegador no soporta captura de audio WebRTC.');
+    }
+
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+    localStreamRef.current = stream;
+
+    if (localAudioRef.current) {
+      localAudioRef.current.srcObject = stream;
+      localAudioRef.current.muted = true;
+    }
+
+    return stream;
+  }, []);
+
+  const postCandidate = useCallback(
+    async (candidate: RTCIceCandidateInit) => {
+      const sessionId = activeSessionIdRef.current;
+      if (!sessionId) {
+        return;
+      }
+
+      await apiJson(`/api/calls/sessions/${sessionId}/webrtc/candidate`, {
+        method: 'POST',
+        body: JSON.stringify({
+          role: activeRoleRef.current,
+          candidate: candidate.candidate,
+          sdpMid: candidate.sdpMid ?? null,
+          sdpMLineIndex: candidate.sdpMLineIndex ?? null,
+          usernameFragment: candidate.usernameFragment ?? null,
+        }),
+      });
+    },
+    [apiJson]
+  );
+
+  const ensurePeerConnection = useCallback(async (): Promise<RTCPeerConnection> => {
+    if (peerRef.current) {
+      return peerRef.current;
+    }
+
+    const pc = new RTCPeerConnection({ iceServers });
+    const remoteStream = new MediaStream();
+    remoteStreamRef.current = remoteStream;
+
+    if (remoteAudioRef.current) {
+      remoteAudioRef.current.srcObject = remoteStream;
+    }
+
+    const localStream = await ensureLocalMedia();
+    localStream.getTracks().forEach((track) => {
+      pc.addTrack(track, localStream);
+    });
+
+    pc.ontrack = (event) => {
+      event.streams.forEach((stream) => {
+        stream.getTracks().forEach((track) => remoteStream.addTrack(track));
+      });
+
+      if (remoteAudioRef.current) {
+        void remoteAudioRef.current.play().catch(() => {
+          // autoplay can be blocked until user interaction
+        });
+      }
+    };
+
+    pc.onicecandidate = (event) => {
+      if (event.candidate) {
+        void postCandidate(event.candidate.toJSON());
+      }
+    };
+
+    pc.onconnectionstatechange = () => {
+      const state = pc.connectionState;
+      if (state === 'connected') {
+        stopRingTone();
+        setStatusMessage('Llamada conectada.');
+      } else if (state === 'disconnected' || state === 'failed') {
+        setStatusMessage('Conexión interrumpida.');
+      }
+    };
+
+    peerRef.current = pc;
+    return pc;
+  }, [ensureLocalMedia, iceServers, postCandidate, stopRingTone]);
+
+  const applyRemoteCandidates = useCallback(
+    async (
+      pc: RTCPeerConnection,
+      candidates: Array<{
+        candidate?: string | null;
+        sdpMid?: string | null;
+        sdpMLineIndex?: number | null;
+        version?: number;
+      }>
+    ) => {
+      for (const item of candidates) {
+        const version = Number(item?.version ?? 0);
+        if (!version || appliedCandidateVersionsRef.current.has(version)) {
+          continue;
+        }
+
+        if (!item?.candidate) {
+          continue;
+        }
+
+        try {
+          await pc.addIceCandidate({
+            candidate: item.candidate,
+            sdpMid: item.sdpMid ?? undefined,
+            sdpMLineIndex: item.sdpMLineIndex ?? undefined,
+          });
+          appliedCandidateVersionsRef.current.add(version);
+        } catch (error) {
+          console.warn('addIceCandidate failed', error);
+        }
+      }
+    },
+    []
+  );
+
+  const processSyncPayload = useCallback(
+    async (payload: NativeCallSyncPayload) => {
+      const sessionData = payload.data;
+      if (sessionData) {
+        setActiveSession(sessionData);
+      }
+
+      const webrtc = payload.webrtc;
+      if (!webrtc) {
+        return;
+      }
+
+      signalVersionRef.current = Number(webrtc.signalVersion ?? signalVersionRef.current);
+      const sessionId = activeSessionIdRef.current;
+      if (!sessionId) {
+        return;
+      }
+
+      const role = activeRoleRef.current;
+      const pc = await ensurePeerConnection();
+
+      if (webrtc.hangup) {
+        stopRingTone();
+        setStatusMessage('La otra parte finalizó la llamada.');
+        resetActiveCallState();
+        return;
+      }
+
+      if (role === 'target' && webrtc.offer?.sdp && !pc.currentRemoteDescription) {
+        await pc.setRemoteDescription({
+          type: 'offer',
+          sdp: webrtc.offer.sdp,
+        });
+
+        if (!pc.currentLocalDescription || pc.currentLocalDescription.type !== 'answer') {
+          const answer = await pc.createAnswer();
+          await pc.setLocalDescription(answer);
+          await apiJson(`/api/calls/sessions/${sessionId}/webrtc/answer`, {
+            method: 'POST',
+            body: JSON.stringify({ sdp: answer.sdp }),
+          });
+        }
+      }
+
+      if (role === 'initiator' && webrtc.answer?.sdp && !pc.currentRemoteDescription) {
+        stopRingTone();
+        await pc.setRemoteDescription({
+          type: 'answer',
+          sdp: webrtc.answer.sdp,
+        });
+      }
+
+      if (role === 'initiator') {
+        await applyRemoteCandidates(pc, webrtc.targetCandidates ?? []);
+      } else if (role === 'target') {
+        await applyRemoteCandidates(pc, webrtc.initiatorCandidates ?? []);
+      }
+    },
+    [apiJson, applyRemoteCandidates, ensurePeerConnection, resetActiveCallState, stopRingTone]
+  );
+
+  const syncCall = useCallback(async () => {
+    const sessionId = activeSessionIdRef.current;
+    if (!sessionId) {
+      return;
+    }
+
+    try {
+      const payload = await apiJson(`/api/calls/sessions/${sessionId}/webrtc/sync?since=${signalVersionRef.current}`, {
+        method: 'GET',
+      });
+      await processSyncPayload(payload);
+    } catch (error) {
+      setErrorMessage((error as Error).message ?? 'No se pudo sincronizar la llamada.');
+    }
+  }, [apiJson, processSyncPayload]);
+
+  const startSyncLoop = useCallback(() => {
+    stopSyncLoop();
+    syncTimerRef.current = window.setInterval(() => {
+      void syncCall();
+    }, 1500);
+  }, [stopSyncLoop, syncCall]);
+
+  const fetchIncomingSessions = useCallback(async () => {
+    if (!authUser?.id || activeSessionIdRef.current) {
+      return;
+    }
+
+    try {
+      const payload = await apiJson('/api/calls/sessions?status=ringing&limit=20', { method: 'GET' });
+      const sessions = Array.isArray((payload as { data?: NativeCallSession[] })?.data)
+        ? ((payload as { data?: NativeCallSession[] }).data ?? [])
+        : [];
+      const currentIdentity = `user-${authUser.id}`;
+
+      setIncomingSessions(
+        sessions.filter(
+          (item) =>
+            item.channel === 'webrtc' &&
+            (item.targetUserId === authUser.id || item.targetIdentity === currentIdentity)
+        )
+      );
+    } catch (error) {
+      console.error('fetchIncomingSessions failed', error);
+    }
+  }, [apiJson, authUser?.id]);
+
+  useEffect(() => {
+    void fetchIncomingSessions();
+    const timer = window.setInterval(() => {
+      void fetchIncomingSessions();
+    }, 4000);
+    return () => window.clearInterval(timer);
+  }, [fetchIncomingSessions]);
+
+  useEffect(() => {
+    const shouldPlayIncomingTone =
+      !activeSession &&
+      !isBusy &&
+      incomingSessions.length > 0 &&
+      ringModeRef.current !== 'outgoing';
+
+    if (shouldPlayIncomingTone) {
+      startRingTone('incoming');
+      return;
+    }
+
+    if (ringModeRef.current === 'incoming') {
+      stopRingTone();
+    }
+  }, [activeSession, incomingSessions.length, isBusy, startRingTone, stopRingTone]);
+
+  const handleStartCall = async () => {
+    setErrorMessage(null);
+
+    const targetUserId = selectedTargetUserId ? Number(selectedTargetUserId) : null;
+    const normalizedTargetIdentity = manualTargetIdentity.trim();
+
+    if (!targetUserId && normalizedTargetIdentity.length === 0) {
+      setErrorMessage('Seleccioná un usuario destino o ingresá una identidad manual.');
+      return;
+    }
+
+    if (targetUserId && (!Number.isFinite(targetUserId) || targetUserId <= 0)) {
+      setErrorMessage('Seleccioná un usuario válido.');
+      return;
+    }
+
+    if (targetUserId && authUser?.id && targetUserId === authUser.id) {
+      setErrorMessage('No podés llamarte a vos mismo.');
+      return;
+    }
+
+    try {
+      setIsBusy(true);
+      setStatusMessage('Creando llamada...');
+
+      const createPayload = (await apiJson('/api/calls/sessions', {
+        method: 'POST',
+        body: JSON.stringify({
+          target_user_id: targetUserId ?? undefined,
+          target_identity: targetUserId ? undefined : normalizedTargetIdentity,
+          channel: 'webrtc',
+          metadata: {
+            source: 'web-frontend',
+          },
+        }),
+      })) as { data?: NativeCallSession };
+
+      const session = createPayload.data;
+      if (!session) {
+        throw new Error('No se pudo crear la sesión.');
+      }
+
+      setActiveSession(session);
+      activeSessionIdRef.current = session.id;
+      setActiveRole('initiator');
+      activeRoleRef.current = 'initiator';
+      signalVersionRef.current = Number(session.signalVersion ?? 0);
+      appliedCandidateVersionsRef.current = new Set();
+
+      const pc = await ensurePeerConnection();
+      const offer = await pc.createOffer({ offerToReceiveAudio: true });
+      await pc.setLocalDescription(offer);
+
+      await apiJson(`/api/calls/sessions/${session.id}/webrtc/offer`, {
+        method: 'POST',
+        body: JSON.stringify({ sdp: offer.sdp }),
+      });
+
+      startRingTone('outgoing');
+      setStatusMessage('Llamando... esperando respuesta.');
+      setIncomingSessions([]);
+      startSyncLoop();
+    } catch (error) {
+      stopRingTone();
+      setErrorMessage((error as Error).message ?? 'No se pudo iniciar la llamada.');
+      resetActiveCallState();
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
+  const handleAcceptCall = async (sessionId: number) => {
+    setErrorMessage(null);
+    try {
+      setIsBusy(true);
+      stopRingTone();
+      setStatusMessage('Conectando llamada entrante...');
+
+      const detailPayload = (await apiJson(`/api/calls/sessions/${sessionId}`, {
+        method: 'GET',
+      })) as { data?: NativeCallSession };
+
+      if (!detailPayload.data) {
+        throw new Error('La sesión no está disponible.');
+      }
+
+      setActiveSession(detailPayload.data);
+      activeSessionIdRef.current = detailPayload.data.id;
+      setActiveRole('target');
+      activeRoleRef.current = 'target';
+      signalVersionRef.current = Number(detailPayload.data.signalVersion ?? 0);
+      appliedCandidateVersionsRef.current = new Set();
+
+      await ensurePeerConnection();
+      await syncCall();
+      startSyncLoop();
+      setStatusMessage('Llamada aceptada.');
+      setIncomingSessions((prev) => prev.filter((item) => item.id !== sessionId));
+    } catch (error) {
+      setErrorMessage((error as Error).message ?? 'No se pudo aceptar la llamada.');
+      resetActiveCallState();
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
+  const handleHangup = async () => {
+    const sessionId = activeSessionIdRef.current;
+    if (!sessionId) {
+      return;
+    }
+
+    try {
+      setIsBusy(true);
+      stopRingTone();
+      await apiJson(`/api/calls/sessions/${sessionId}/hangup`, {
+        method: 'POST',
+        body: JSON.stringify({ reason: 'manual_hangup' }),
+      });
+    } catch (error) {
+      setErrorMessage((error as Error).message ?? 'No se pudo finalizar la llamada.');
+    } finally {
+      resetActiveCallState();
+      setStatusMessage('Llamada finalizada.');
+      setIsBusy(false);
+    }
+  };
+
+  const buildRecordingStream = useCallback((localStream: MediaStream, remoteStream: MediaStream | null): MediaStream => {
+    const localTracks = localStream.getAudioTracks();
+    const remoteTracks = remoteStream?.getAudioTracks() ?? [];
+
+    if (localTracks.length === 0 && remoteTracks.length === 0) {
+      throw new Error('No hay pistas de audio activas para grabar.');
+    }
+
+    try {
+      const AudioContextConstructor =
+        window.AudioContext ||
+        (window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+
+      if (AudioContextConstructor) {
+        const context = new AudioContextConstructor();
+        const destination = context.createMediaStreamDestination();
+
+        if (localTracks.length > 0) {
+          const localSource = context.createMediaStreamSource(localStream);
+          localSource.connect(destination);
+        }
+
+        if (remoteTracks.length > 0 && remoteStream) {
+          const remoteSource = context.createMediaStreamSource(remoteStream);
+          remoteSource.connect(destination);
+        }
+
+        recordingAudioContextRef.current = context;
+        return destination.stream;
+      }
+    } catch (error) {
+      console.warn('No se pudo mezclar audio local/remoto para grabación', error);
+    }
+
+    const fallbackTracks = [...localTracks, ...remoteTracks].map((track) => track.clone());
+    if (fallbackTracks.length === 0) {
+      throw new Error('No hay pistas de audio disponibles para grabar.');
+    }
+    return new MediaStream(fallbackTracks);
+  }, []);
+
+  const handleStartRecording = async () => {
+    setErrorMessage(null);
+
+    if (!activeSessionIdRef.current) {
+      setErrorMessage('Necesitás una llamada activa para grabar.');
+      return;
+    }
+
+    if (typeof MediaRecorder === 'undefined') {
+      setErrorMessage('Este navegador no soporta grabación de audio en tiempo real.');
+      return;
+    }
+
+    if (isRecording) {
+      return;
+    }
+
+    try {
+      const localStream = await ensureLocalMedia();
+      const mixedStream = buildRecordingStream(localStream, remoteStreamRef.current);
+      const preferredMimeType = getPreferredRecordingMimeType();
+      const recorder = preferredMimeType
+        ? new MediaRecorder(mixedStream, { mimeType: preferredMimeType })
+        : new MediaRecorder(mixedStream);
+
+      setRecordingUrl(null);
+      recordingChunksRef.current = [];
+      recordingStreamRef.current = mixedStream;
+      mediaRecorderRef.current = recorder;
+
+      recorder.ondataavailable = (event) => {
+        if (event.data && event.data.size > 0) {
+          recordingChunksRef.current.push(event.data);
+        }
+      };
+
+      recorder.onerror = () => {
+        setErrorMessage('La grabación falló. Verificá permisos de micrófono y navegador.');
+      };
+
+      recorder.onstop = () => {
+        const finalMimeType = recorder.mimeType || preferredMimeType || 'audio/webm';
+        const blob = new Blob(recordingChunksRef.current, { type: finalMimeType });
+        recordingChunksRef.current = [];
+        mediaRecorderRef.current = null;
+        releaseRecordingResources();
+        setIsRecording(false);
+        setRecordedAudioMimeType(finalMimeType);
+
+        if (blob.size > 0) {
+          setRecordingUrl(URL.createObjectURL(blob));
+          setStatusMessage('Grabación finalizada. Podés reproducir o descargar el audio.');
+        } else {
+          setStatusMessage('Grabación detenida, pero no se capturó audio.');
+        }
+      };
+
+      recorder.start(1000);
+      setIsRecording(true);
+      setStatusMessage('Grabando llamada...');
+    } catch (error) {
+      mediaRecorderRef.current = null;
+      recordingChunksRef.current = [];
+      setIsRecording(false);
+      releaseRecordingResources();
+      setErrorMessage((error as Error).message ?? 'No se pudo iniciar la grabación.');
+    }
+  };
+
+  const handleStopRecording = () => {
+    const recorder = mediaRecorderRef.current;
+    if (!recorder || recorder.state === 'inactive') {
+      setIsRecording(false);
+      releaseRecordingResources();
+      return;
+    }
+
+    try {
+      setStatusMessage('Deteniendo grabación...');
+      recorder.stop();
+    } catch {
+      setErrorMessage('No se pudo detener la grabación.');
+      mediaRecorderRef.current = null;
+      setIsRecording(false);
+      releaseRecordingResources();
+    }
+  };
+
+  const handleStartWhatsApp = async () => {
+    setErrorMessage(null);
+    setWhatsAppStatus(null);
+
+    if (whatsAppPhone.trim().length === 0) {
+      setErrorMessage('Ingresá un número de WhatsApp.');
+      return;
+    }
+
+    try {
+      setIsBusy(true);
+      const payload = (await apiJson('/api/calls/whatsapp/start', {
+        method: 'POST',
+        body: JSON.stringify({
+          to_phone: whatsAppPhone.trim(),
+          message: whatsAppMessage.trim() || undefined,
+        }),
+      })) as WhatsAppStartResponse;
+
+      const link = payload?.data?.deeplink ?? '';
+      if (!link) {
+        throw new Error('No se pudo generar el enlace de WhatsApp.');
+      }
+
+      window.open(link, '_blank', 'noopener,noreferrer');
+      setWhatsAppStatus(`WhatsApp abierto para ${payload?.data?.normalizedPhone ?? whatsAppPhone.trim()}.`);
+    } catch (error) {
+      setErrorMessage((error as Error).message ?? 'No se pudo iniciar WhatsApp.');
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
+  return (
+    <DashboardLayout
+      title="Llamadas WebRTC"
+      subtitle="Señalización propia sin Twilio"
+      headerContent={
+        <div className="card-header card-header--compact">
+          <button type="button" className="secondary-action" onClick={() => navigate('/dashboard')}>
+            ← Volver al panel
+          </button>
+        </div>
+      }
+    >
+      <div className="webrtc-page">
+        <section className="webrtc-card">
+          <h3>Iniciar llamada</h3>
+          <div className="webrtc-row">
+            <label className="input-control">
+              <span>Usuario destino</span>
+              <select
+                value={selectedTargetUserId}
+                onChange={(event) => setSelectedTargetUserId(event.target.value)}
+                disabled={isBusy || !!activeSession}
+              >
+                <option value="">Seleccionar usuario</option>
+                {usersCatalog.map((user) => (
+                  <option key={user.id} value={String(user.id)}>
+                    #{user.id} - {user.name ?? 'Sin nombre'} ({user.email ?? 'sin email'})
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="input-control">
+              <span>Identidad manual (opcional)</span>
+              <input
+                type="text"
+                value={manualTargetIdentity}
+                onChange={(event) => setManualTargetIdentity(event.target.value)}
+                placeholder="Ej: user-24"
+                disabled={isBusy || !!activeSession || Boolean(selectedTargetUserId)}
+              />
+            </label>
+            <button type="button" className="primary-action" onClick={handleStartCall} disabled={isBusy || !!activeSession}>
+              Llamar
+            </button>
+          </div>
+          <p className="webrtc-status">
+            {usersCatalogLoading
+              ? 'Cargando usuarios...'
+              : usersCatalog.length > 0
+              ? `Usuarios disponibles: ${usersCatalog.length}`
+              : 'No se pudo cargar catálogo de usuarios. Podés usar identidad manual.'}
+          </p>
+        </section>
+
+        <section className="webrtc-card">
+          <h3>Entrantes</h3>
+          {incomingSessions.length === 0 ? <p>No hay llamadas entrantes.</p> : null}
+          {incomingSessions.map((session) => (
+            <div key={session.id} className="webrtc-incoming-item">
+              <div>
+                <strong>Sesión #{session.id}</strong>
+                <small>Desde usuario {session.initiatorUserId ?? 'N/A'}</small>
+              </div>
+              <button type="button" className="secondary-action" onClick={() => handleAcceptCall(session.id)} disabled={isBusy}>
+                Atender
+              </button>
+            </div>
+          ))}
+        </section>
+
+        <section className="webrtc-card">
+          <h3>Sesión activa</h3>
+          {activeSession ? (
+            <div className="webrtc-active">
+              <p>
+                Sesión #{activeSession.id} | Estado: <strong>{activeSession.status}</strong> | Rol:{' '}
+                <strong>{activeRole ?? 'N/A'}</strong>
+              </p>
+              <button type="button" className="danger-action" onClick={handleHangup} disabled={isBusy}>
+                Colgar
+              </button>
+              <div className="webrtc-row webrtc-recording-controls">
+                <button
+                  type="button"
+                  className="secondary-action"
+                  onClick={handleStartRecording}
+                  disabled={isBusy || isRecording}
+                >
+                  Iniciar grabación
+                </button>
+                <button
+                  type="button"
+                  className="secondary-action"
+                  onClick={handleStopRecording}
+                  disabled={!isRecording}
+                >
+                  Detener grabación
+                </button>
+              </div>
+            </div>
+          ) : (
+            <p>No hay sesión activa.</p>
+          )}
+          <p className="webrtc-status">{statusMessage}</p>
+          {recordedAudioUrl ? (
+            <div className="webrtc-recording-preview">
+              <audio controls src={recordedAudioUrl} />
+              <a href={recordedAudioUrl} download={`llamada-${activeSession?.id ?? 'web'}.${recordingDownloadExtension}`}>
+                Descargar grabación
+              </a>
+            </div>
+          ) : null}
+          {errorMessage ? <p className="form-info form-info--error">{errorMessage}</p> : null}
+        </section>
+
+        <section className="webrtc-card">
+          <h3>Llamar por WhatsApp</h3>
+          <div className="webrtc-row">
+            <label className="input-control">
+              <span>Celular (E.164)</span>
+              <input
+                type="text"
+                value={whatsAppPhone}
+                onChange={(event) => setWhatsAppPhone(event.target.value)}
+                placeholder="Ej: +5491155551234"
+                disabled={isBusy}
+              />
+            </label>
+          </div>
+          <label className="input-control">
+            <span>Mensaje inicial</span>
+            <textarea
+              rows={2}
+              value={whatsAppMessage}
+              onChange={(event) => setWhatsAppMessage(event.target.value)}
+              disabled={isBusy}
+            />
+          </label>
+          <div className="webrtc-row">
+            <button type="button" className="secondary-action" onClick={handleStartWhatsApp} disabled={isBusy}>
+              Abrir WhatsApp
+            </button>
+          </div>
+          {whatsAppStatus ? <p className="form-info form-info--success">{whatsAppStatus}</p> : null}
+        </section>
+
+        <audio ref={localAudioRef} autoPlay playsInline muted />
+        <audio ref={remoteAudioRef} autoPlay playsInline />
+      </div>
+    </DashboardLayout>
+  );
+};
+
 const RequireAccess: React.FC<{ section: AccessSection; children: React.ReactElement }> = ({
   section,
   children,
@@ -42203,6 +46576,7 @@ const AppRoutes: React.FC = () => (
       />
       <Route path="/chat" element={<ChatPage />} />
       <Route path="/chat/:contactId" element={<ChatPage />} />
+      <Route path="/llamadas" element={<WebRtcCallsPage />} />
       <Route path="/informacion-general" element={<GeneralInfoPage />} />
       <Route
         path="/clientes"
@@ -42345,6 +46719,14 @@ const AppRoutes: React.FC = () => (
         }
       />
       <Route
+        path="/liquidaciones/extractos"
+        element={
+          <RequireAccess section="liquidaciones">
+            <CombustibleRunsPage />
+          </RequireAccess>
+        }
+      />
+      <Route
         path="/pagos"
         element={
           <RequireAccess section="pagos">
@@ -42415,6 +46797,10 @@ const AppRoutes: React.FC = () => (
             <CombustibleReportesPage />
           </RequireAccess>
         }
+      />
+      <Route
+        path="/combustible/runs"
+        element={<Navigate to="/liquidaciones/extractos" replace />}
       />
       <Route
         path="/documentos"
