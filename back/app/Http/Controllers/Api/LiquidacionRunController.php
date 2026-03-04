@@ -2518,12 +2518,37 @@ class LiquidacionRunController extends Controller
             return null;
         }
 
-        $alias = LiquidacionClientIdentifierAlias::query()
-            ->where('client_code', $normalizedClientCode)
+        $lookupCodes = $this->buildClientRuleLookupCodes($normalizedClientCode);
+        if (empty($lookupCodes)) {
+            return null;
+        }
+
+        $aliasRecords = LiquidacionClientIdentifierAlias::query()
+            ->whereIn('client_code', $lookupCodes)
             ->where('alias_type', strtoupper(trim($aliasType)))
             ->where('alias_norm', $aliasNorm)
             ->where('active', true)
-            ->first();
+            ->get();
+        if ($aliasRecords->isEmpty()) {
+            return null;
+        }
+
+        $byClient = [];
+        foreach ($aliasRecords as $aliasRecord) {
+            $code = $this->normalizeClientCode($aliasRecord->client_code);
+            if ($code === null || isset($byClient[$code])) {
+                continue;
+            }
+            $byClient[$code] = $aliasRecord;
+        }
+
+        $alias = null;
+        foreach ($lookupCodes as $lookupCode) {
+            if (isset($byClient[$lookupCode])) {
+                $alias = $byClient[$lookupCode];
+                break;
+            }
+        }
         if (!$alias) {
             return null;
         }
@@ -2967,10 +2992,7 @@ class LiquidacionRunController extends Controller
             ];
         }
 
-        $record = LiquidacionClientRule::query()
-            ->where('client_code', $normalizedClientCode)
-            ->where('active', true)
-            ->first();
+        $record = $this->resolveActiveClientRuleRecord($normalizedClientCode);
         if (!$record || !is_array($record->rules_json)) {
             if ($this->isIntermedioClientCode($normalizedClientCode)) {
                 return [
@@ -3015,10 +3037,88 @@ class LiquidacionRunController extends Controller
             $rules = $this->mergeEpsaDefaults($rules, $epsaDefaults);
         }
 
+        $recordClientCode = $this->normalizeClientCode($record->client_code ?? null);
+        $source = $recordClientCode !== null && $recordClientCode !== $normalizedClientCode
+            ? 'client_fallback'
+            : 'client';
+
         return [
             'rules' => $rules,
-            'source' => 'client',
+            'source' => $source,
         ];
+    }
+
+    private function resolveActiveClientRuleRecord(?string $normalizedClientCode): ?LiquidacionClientRule
+    {
+        if ($normalizedClientCode === null) {
+            return null;
+        }
+
+        $lookupCodes = $this->buildClientRuleLookupCodes($normalizedClientCode);
+        if (empty($lookupCodes)) {
+            return null;
+        }
+
+        $records = LiquidacionClientRule::query()
+            ->whereIn('client_code', $lookupCodes)
+            ->where('active', true)
+            ->get();
+        if ($records->isEmpty()) {
+            return null;
+        }
+
+        $recordsByCode = [];
+        foreach ($records as $record) {
+            $code = $this->normalizeClientCode($record->client_code ?? null);
+            if ($code === null || isset($recordsByCode[$code])) {
+                continue;
+            }
+            $recordsByCode[$code] = $record;
+        }
+
+        foreach ($lookupCodes as $lookupCode) {
+            if (isset($recordsByCode[$lookupCode])) {
+                return $recordsByCode[$lookupCode];
+            }
+        }
+
+        return null;
+    }
+
+    private function buildClientRuleLookupCodes(?string $normalizedClientCode): array
+    {
+        if ($normalizedClientCode === null) {
+            return [];
+        }
+
+        $codes = [];
+        $addCode = static function (?string $value) use (&$codes): void {
+            if (!is_string($value)) {
+                return;
+            }
+            $normalized = strtoupper(trim($value));
+            if ($normalized === '' || in_array($normalized, $codes, true)) {
+                return;
+            }
+            $codes[] = $normalized;
+        };
+
+        $addCode($normalizedClientCode);
+        $compact = preg_replace('/[\s\-_]+/', '', $normalizedClientCode);
+        if (is_string($compact) && $compact !== '') {
+            $addCode($compact);
+        }
+
+        if ($this->isIntermedioClientCode($normalizedClientCode)) {
+            $addCode('INTERMEDIO');
+            $addCode('INT');
+        }
+
+        if ($this->isEpsaClientCode($normalizedClientCode)) {
+            $addCode('EPSA');
+        }
+
+        return $codes;
     }
 
     private function defaultClientRuleSet(): array
@@ -4069,6 +4169,20 @@ class LiquidacionRunController extends Controller
             return [$indexMap, null];
         }
 
+        $currentProductIndex = $indexMap['Producto'] ?? null;
+        if ($currentProductIndex !== null && array_key_exists($currentProductIndex, $columns)) {
+            $currentProductHeader = $this->normalizeUploadHeader((string) $columns[$currentProductIndex]);
+            if (
+                $currentProductHeader !== ''
+                && (
+                    str_contains($currentProductHeader, 'unidad')
+                    || str_contains($currentProductHeader, 'tipo unidad')
+                )
+            ) {
+                return [$indexMap, null];
+            }
+        }
+
         $productColumnIndex = $this->columnLettersToZeroIndex('V');
         $maxColumns = max(count($columns), $this->maxUploadRowWidth($rows));
         if (
@@ -5042,14 +5156,14 @@ class LiquidacionRunController extends Controller
             return $epsaFactor;
         }
         $mapped = is_array($rawPayload['mapped'] ?? null) ? $rawPayload['mapped'] : [];
-        $candidate = $this->normalizeNullableString(
-            (string) (
-                $mapped['¿REALIZO RUTA ASIGNADA POR SVC?']
-                ?? $mapped['REALIZO RUTA ASIGNADA POR SVC']
-                ?? $mapped['REALIZO RUTA']
-                ?? $mapped['RUTA ASIGNADA']
-                ?? ''
-            )
+        $candidate = $this->mappedPayloadString(
+            $mapped,
+            [
+                '¿REALIZO RUTA ASIGNADA POR SVC?',
+                'REALIZO RUTA ASIGNADA POR SVC',
+                'REALIZO RUTA',
+                'RUTA ASIGNADA',
+            ]
         );
         if ($candidate === null) {
             return 1.0;
@@ -5067,9 +5181,7 @@ class LiquidacionRunController extends Controller
     {
         $rawPayload = is_array($row->raw_payload_json) ? $row->raw_payload_json : [];
         $mapped = is_array($rawPayload['mapped'] ?? null) ? $rawPayload['mapped'] : [];
-        $turnoRaw = $this->normalizeNullableString(
-            (string) ($mapped['TURNO'] ?? $mapped['Turno'] ?? '')
-        );
+        $turnoRaw = $this->mappedPayloadString($mapped, ['TURNO', 'Turno']);
         if ($turnoRaw !== null) {
             $upper = strtoupper($turnoRaw);
             if (in_array($upper, ['AM', 'PM', 'FULL'], true)) {
@@ -5093,14 +5205,10 @@ class LiquidacionRunController extends Controller
         $rawPayload = is_array($row->raw_payload_json) ? $row->raw_payload_json : [];
         $mapped = is_array($rawPayload['mapped'] ?? null) ? $rawPayload['mapped'] : [];
 
-        $candidate = $this->normalizeNullableString(
-            (string) (
-                $mapped['Categoria']
-                ?? $mapped['UNIDAD']
-                ?? $row->product
-                ?? ''
-            )
-        );
+        $candidate = $this->mappedPayloadString(
+            $mapped,
+            ['Categoria', 'Categoría', 'UNIDAD', 'Unidad', 'Producto', 'TIPO UNIDAD', 'Tipo unidad']
+        ) ?? $this->normalizeNullableString((string) ($row->product ?? ''));
         if ($candidate === null) {
             return null;
         }
@@ -5277,8 +5385,8 @@ class LiquidacionRunController extends Controller
         $rawPayload = is_array($row->raw_payload_json) ? $row->raw_payload_json : [];
         $mapped = is_array($rawPayload['mapped'] ?? null) ? $rawPayload['mapped'] : [];
         $amountCandidates = [
-            $this->parseFloatOrNull($mapped['Importe'] ?? null),
-            $this->parseFloatOrNull($mapped['Tarifa final'] ?? null),
+            $this->parseFloatOrNull($this->mappedPayloadString($mapped, ['Importe'])),
+            $this->parseFloatOrNull($this->mappedPayloadString($mapped, ['Tarifa final', 'TARIFA FINAL'])),
             $this->parseFloatOrNull($row->amount ?? null),
             $this->parseFloatOrNull($row->tariff_expected ?? null),
         ];
@@ -5338,6 +5446,40 @@ class LiquidacionRunController extends Controller
 
         if ($currentServiceKey === null) {
             return $bestKey;
+        }
+
+        return null;
+    }
+
+    private function mappedPayloadString(array $mapped, array $aliases): ?string
+    {
+        foreach ($aliases as $alias) {
+            if (array_key_exists($alias, $mapped)) {
+                $value = $this->normalizeNullableString((string) ($mapped[$alias] ?? ''));
+                if ($value !== null) {
+                    return $value;
+                }
+            }
+        }
+
+        $byNormalizedKey = [];
+        foreach ($mapped as $key => $value) {
+            $normalizedKey = $this->normalizeUploadHeader((string) $key);
+            if ($normalizedKey === '' || isset($byNormalizedKey[$normalizedKey])) {
+                continue;
+            }
+            $byNormalizedKey[$normalizedKey] = $value;
+        }
+
+        foreach ($aliases as $alias) {
+            $normalizedAlias = $this->normalizeUploadHeader((string) $alias);
+            if ($normalizedAlias === '' || !array_key_exists($normalizedAlias, $byNormalizedKey)) {
+                continue;
+            }
+            $value = $this->normalizeNullableString((string) ($byNormalizedKey[$normalizedAlias] ?? ''));
+            if ($value !== null) {
+                return $value;
+            }
         }
 
         return null;

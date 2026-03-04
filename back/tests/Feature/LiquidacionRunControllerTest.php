@@ -552,6 +552,80 @@ class LiquidacionRunControllerTest extends TestCase
             ->assertJsonPath('data.resolvedRules.tolerances.price_per_liter_percent', 1.5);
     }
 
+    public function test_it_applies_intermedio_family_rules_when_run_client_is_variant(): void
+    {
+        $headers = $this->authHeaders();
+
+        $this->putJson('/api/liquidaciones/reglas-cliente/INTERMEDIO', [
+            'active' => true,
+            'rules' => [
+                'blocking_rules' => [
+                    'duplicate_row' => false,
+                    'outside_period' => true,
+                    'tariff_mismatch' => false,
+                ],
+                'tolerances' => [
+                    'price_per_liter_percent' => 3,
+                    'price_per_liter_amount' => 0,
+                ],
+                'tariffs' => [
+                    [
+                        'product' => 'Ut. Corto PM',
+                        'price_per_liter' => 72250,
+                    ],
+                ],
+                'tariff_matrix' => [
+                    'default_zone' => 'AMBA',
+                    'zones' => [
+                        'AMBA' => [
+                            'CORTO_PM' => [
+                                'label' => 'Ut. Corto PM',
+                                'original' => 85000,
+                                'liquidacion' => 72250,
+                            ],
+                        ],
+                    ],
+                ],
+            ],
+        ], $headers)->assertOk();
+
+        $createResponse = $this->postJson('/api/liquidaciones/runs', [
+            'client_code' => 'INTERMEDIO 2',
+            'period_from' => '2026-02-01',
+            'period_to' => '2026-02-28',
+            'staging_rows' => [
+                [
+                    'row_number' => 1,
+                    'domain_norm' => 'PLP086',
+                    'product' => 'Ut. Corto PM',
+                    'validation_status' => 'OK',
+                    'liters' => 1,
+                    'amount' => 85000,
+                ],
+            ],
+        ], $headers)->assertCreated();
+
+        $runId = (int) $createResponse->json('data.id');
+
+        $this->getJson('/api/liquidaciones/reglas-cliente/INTERMEDIO 2', $headers)
+            ->assertOk()
+            ->assertJsonPath('data.source', 'client_fallback')
+            ->assertJsonPath('data.resolvedRules.tariffs.0.price_per_liter', 72250);
+
+        $previewResponse = $this->getJson('/api/liquidaciones/importaciones/' . $runId . '/preview', $headers)
+            ->assertOk()
+            ->assertJsonPath('importacion.cliente_id', 'INTERMEDIO 2');
+
+        $distribuidorId = (int) $previewResponse->json('distribuidores.0.liquidacion_distribuidor_id');
+        $this->assertGreaterThan(0, $distribuidorId);
+
+        $this->getJson('/api/liquidaciones/distribuidores/' . $distribuidorId, $headers)
+            ->assertOk()
+            ->assertJsonPath('lineas.0.tarifa_dist_calculada', 72250)
+            ->assertJsonPath('lineas.0.importe_calculado', 72250)
+            ->assertJsonPath('lineas.0.factor_jornada', 1);
+    }
+
     public function test_it_applies_client_tariff_rules_during_upload_validation(): void
     {
         $headers = $this->authHeaders();
