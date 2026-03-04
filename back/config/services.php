@@ -101,4 +101,8 @@ return [
         'redirect_base_url' => env('TRANSPORTISTA_QR_REDIRECT_BASE_URL'),
     ],
 
+    'reclamos_adelantos' => [
+        'approver_emails' => env('RECLAMOS_ADELANTOS_APPROVER_EMAILS', ''),
+    ],
+
 ];

@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Models\Cliente;
 use App\Models\Estado;
 use App\Models\Notification;
 use App\Models\Persona;
@@ -25,6 +26,204 @@ use Illuminate\Validation\Rule;
 
 class ReclamoController extends Controller
 {
+    protected function resolveActorEmail(Request $request): ?string
+    {
+        $candidates = [
+            $request->header('X-Actor-Email'),
+            $request->input('actorEmail'),
+            $request->input('userEmail'),
+            $request->input('email'),
+            $request->user()?->email,
+        ];
+
+        $actorIds = collect([
+            $request->input('creatorId'),
+            $request->input('agenteId'),
+            $request->input('actorId'),
+            $request->input('userId'),
+        ])
+            ->filter()
+            ->map(fn ($value) => (int) $value)
+            ->unique();
+
+        foreach ($actorIds as $actorId) {
+            $user = User::query()->find($actorId);
+            if ($user && $user->email) {
+                $candidates[] = $user->email;
+            }
+        }
+
+        foreach ($candidates as $candidate) {
+            if (! is_string($candidate)) {
+                continue;
+            }
+
+            $normalized = strtolower(trim($candidate));
+            if ($normalized !== '') {
+                return $normalized;
+            }
+        }
+
+        return null;
+    }
+
+    protected function reclamosAdelantosApproverEmails(): array
+    {
+        static $emails = null;
+
+        if ($emails !== null) {
+            return $emails;
+        }
+
+        $raw = (string) config('services.reclamos_adelantos.approver_emails', '');
+        $emails = collect(explode(',', $raw))
+            ->map(fn ($value) => strtolower(trim((string) $value)))
+            ->filter(fn ($value) => $value !== '')
+            ->values()
+            ->all();
+
+        return $emails;
+    }
+
+    protected function canEditReclamosAdelantosApproval(Request $request): bool
+    {
+        $actorEmail = $this->resolveActorEmail($request);
+        if ($actorEmail && in_array($actorEmail, $this->reclamosAdelantosApproverEmails(), true)) {
+            return true;
+        }
+
+        $nameCandidates = [
+            $request->user()?->name,
+            $request->input('actorName'),
+            $request->input('userName'),
+        ];
+
+        foreach ($nameCandidates as $candidate) {
+            if (! is_string($candidate)) {
+                continue;
+            }
+            $normalized = Str::of($candidate)->ascii()->lower()->trim()->toString();
+            if ($normalized !== '' && Str::contains($normalized, 'seba')) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    protected function normalizeNullableString($value): ?string
+    {
+        if (! is_string($value)) {
+            return null;
+        }
+
+        $normalized = trim($value);
+        return $normalized !== '' ? $normalized : null;
+    }
+
+    protected function normalizeNullableCuit($value): ?string
+    {
+        if (! is_string($value)) {
+            return null;
+        }
+
+        $digits = preg_replace('/\D+/', '', $value) ?? '';
+        return $digits !== '' ? $digits : null;
+    }
+
+    protected function normalizeAprobacionEstado($value): ?string
+    {
+        $normalized = Str::of((string) $value)->ascii()->lower()->trim()->toString();
+        if ($normalized === '') {
+            return null;
+        }
+        if ($normalized === 'aprobado') {
+            return 'aprobado';
+        }
+        if ($normalized === 'no_aprobado' || $normalized === 'no aprobado') {
+            return 'no_aprobado';
+        }
+
+        return null;
+    }
+
+    protected function canMutateLockedValue($current, $incoming): bool
+    {
+        $currentNormalized = $this->normalizeNullableString(is_numeric($current) ? (string) $current : $current);
+        $incomingNormalized = $this->normalizeNullableString(is_numeric($incoming) ? (string) $incoming : $incoming);
+
+        if ($currentNormalized === null) {
+            return true;
+        }
+
+        return $currentNormalized === $incomingNormalized;
+    }
+
+    protected function isReclamosYAdelantosType(?ReclamoType $type = null, ?int $typeId = null): bool
+    {
+        $resolvedType = $type;
+        if (! $resolvedType && $typeId) {
+            $resolvedType = ReclamoType::query()->select('id', 'nombre', 'slug')->find($typeId);
+        }
+
+        $slug = Str::of((string) ($resolvedType?->slug ?? ''))->ascii()->lower()->trim()->toString();
+        if ($slug === 'reclamos-y-adelantos') {
+            return true;
+        }
+
+        $normalizedName = Str::of((string) ($resolvedType?->nombre ?? ''))
+            ->ascii()
+            ->lower()
+            ->replace(['_', '-'], ' ')
+            ->replaceMatches('/\s+/', ' ')
+            ->trim()
+            ->toString();
+
+        return $normalizedName === 'reclamos y adelantos';
+    }
+
+    protected function requireReclamosAdelantosBaseFields(array $validated): void
+    {
+        $labels = [
+            'clienteNombre' => 'cliente',
+            'sucursalNombre' => 'sucursal',
+            'distribuidorNombre' => 'nombre distribuidor',
+            'emisorFactura' => 'dueño de la unidad / emisor de la factura',
+            'importeSolicitado' => 'importe solicitado',
+            'cuitCobrador' => 'CUIT cobrador',
+            'medioPago' => 'medio de pago',
+            'concepto' => 'concepto',
+        ];
+
+        $errors = [];
+        foreach ($labels as $key => $label) {
+            $value = $validated[$key] ?? null;
+            $isMissing = is_numeric($value)
+                ? false
+                : $this->normalizeNullableString((string) $value) === null;
+
+            if ($value === null || $isMissing) {
+                $errors[$key] = ["El campo {$label} es obligatorio para Reclamos y Adelantos."];
+            }
+        }
+
+        if (! empty($errors)) {
+            throw \Illuminate\Validation\ValidationException::withMessages($errors);
+        }
+    }
+
+    protected function aprobacionEstadoLabel(?string $value): ?string
+    {
+        if ($value === 'aprobado') {
+            return 'Aprobado';
+        }
+        if ($value === 'no_aprobado') {
+            return 'No aprobado';
+        }
+
+        return null;
+    }
+
     public function index(Request $request): JsonResponse
     {
         $canViewImportes = $this->canViewReclamoImportes($request);
@@ -33,7 +232,7 @@ class ReclamoController extends Controller
             ->with([
                 'creator:id,name',
                 'agente:id,name',
-                'tipo:id,nombre',
+                'tipo:id,nombre,slug',
                 'persona' => fn ($query) => $query->select(
                     'id',
                     'nombres',
@@ -67,7 +266,7 @@ class ReclamoController extends Controller
             ->with([
                 'creator:id,name',
                 'agente:id,name',
-                'tipo:id,nombre',
+                'tipo:id,nombre,slug',
                 'persona' => fn ($personaQuery) => $personaQuery->select(
                     'id',
                     'nombres',
@@ -153,13 +352,24 @@ class ReclamoController extends Controller
             ])
             ->values();
 
-        $tipos = ReclamoType::query()
+        $clientes = Cliente::query()
             ->select('id', 'nombre')
+            ->orderBy('nombre')
+            ->get()
+            ->map(fn (Cliente $cliente) => [
+                'id' => $cliente->id,
+                'nombre' => $cliente->nombre,
+            ])
+            ->values();
+
+        $tipos = ReclamoType::query()
+            ->select('id', 'nombre', 'slug')
             ->orderBy('nombre')
             ->get()
             ->map(fn (ReclamoType $tipo) => [
                 'id' => $tipo->id,
                 'nombre' => $tipo->nombre,
+                'slug' => $tipo->slug,
             ])
             ->values();
 
@@ -175,6 +385,7 @@ class ReclamoController extends Controller
                 'agentes' => $agentes,
                 'creadores' => $agentes,
                 'transportistas' => $transportistas,
+                'clientes' => $clientes,
                 'tipos' => $tipos,
                 'estados' => $estados,
             ],
@@ -201,9 +412,27 @@ class ReclamoController extends Controller
             ],
             'importeFacturado' => ['nullable', 'numeric', 'min:0'],
             'fechaReclamo' => ['nullable', 'date'],
+            'clienteNombre' => ['nullable', 'string', 'max:255'],
+            'sucursalNombre' => ['nullable', 'string', 'max:255'],
+            'distribuidorNombre' => ['nullable', 'string', 'max:255'],
+            'emisorFactura' => ['nullable', 'string', 'max:255'],
+            'importeSolicitado' => ['nullable', 'numeric', 'min:0'],
+            'cuitCobrador' => ['nullable', 'string', 'max:32'],
+            'medioPago' => ['nullable', 'string', 'max:120'],
+            'concepto' => ['nullable', 'string', 'max:2000'],
+            'fechaCompromisoPago' => ['nullable', 'date'],
+            'aprobacionEstado' => ['nullable', Rule::in(['aprobado', 'no_aprobado'])],
+            'aprobacionMotivo' => ['nullable', 'string', 'max:2000'],
         ]);
 
-        $reclamo = DB::transaction(function () use ($request, $validated, $canViewImportes) {
+        $tipo = ReclamoType::query()->select('id', 'nombre', 'slug')->find((int) $validated['tipoId']);
+        $isReclamoAdelanto = $this->isReclamosYAdelantosType($tipo, (int) $validated['tipoId']);
+
+        if ($isReclamoAdelanto) {
+            $this->requireReclamosAdelantosBaseFields($validated);
+        }
+
+        $reclamo = DB::transaction(function () use ($request, $validated, $canViewImportes, $isReclamoAdelanto) {
             /** @var \App\Models\User|null $authenticated */
             $authenticated = $request->user();
             $creatorId = $validated['creatorId'] ?? $authenticated?->id ?? null;
@@ -214,6 +443,22 @@ class ReclamoController extends Controller
                 'persona_id' => $validated['transportistaId'],
                 'reclamo_type_id' => $validated['tipoId'],
                 'detalle' => isset($validated['detalle']) ? trim($validated['detalle']) : null,
+                'cliente_nombre' => $this->normalizeNullableString($validated['clienteNombre'] ?? null),
+                'sucursal_nombre' => $this->normalizeNullableString($validated['sucursalNombre'] ?? null),
+                'distribuidor_nombre' => $this->normalizeNullableString($validated['distribuidorNombre'] ?? null),
+                'emisor_factura' => $this->normalizeNullableString($validated['emisorFactura'] ?? null),
+                'importe_solicitado' => isset($validated['importeSolicitado'])
+                    ? $this->normalizeImportePagado($validated['importeSolicitado'])
+                    : null,
+                'cuit_cobrador' => $this->normalizeNullableCuit($validated['cuitCobrador'] ?? null),
+                'medio_pago' => $this->normalizeNullableString($validated['medioPago'] ?? null),
+                'concepto' => $this->normalizeNullableString($validated['concepto'] ?? null),
+                'fecha_compromiso_pago' => isset($validated['fechaCompromisoPago'])
+                    ? Carbon::parse($validated['fechaCompromisoPago'])->startOfDay()
+                    : null,
+                'aprobacion_estado' => null,
+                'aprobacion_motivo' => null,
+                'bloqueado_en' => $isReclamoAdelanto ? Carbon::now() : null,
                 'fecha_alta' => isset($validated['fechaReclamo'])
                     ? Carbon::parse($validated['fechaReclamo'])
                     : null,
@@ -244,7 +489,7 @@ class ReclamoController extends Controller
         $relations = [
             'creator:id,name',
             'agente:id,name',
-            'tipo:id,nombre',
+            'tipo:id,nombre,slug',
             'persona' => fn ($query) => $query->select(
                 'id',
                 'nombres',
@@ -292,7 +537,7 @@ class ReclamoController extends Controller
         $showRelations = [
             'creator:id,name',
             'agente:id,name',
-            'tipo:id,nombre',
+            'tipo:id,nombre,slug',
             'persona' => fn ($query) => $query->select(
                 'id',
                 'nombres',
@@ -350,9 +595,108 @@ class ReclamoController extends Controller
             ],
             'importeFacturado' => ['nullable', 'numeric', 'min:0'],
             'fechaReclamo' => ['nullable', 'date'],
+            'clienteNombre' => ['nullable', 'string', 'max:255'],
+            'sucursalNombre' => ['nullable', 'string', 'max:255'],
+            'distribuidorNombre' => ['nullable', 'string', 'max:255'],
+            'emisorFactura' => ['nullable', 'string', 'max:255'],
+            'importeSolicitado' => ['nullable', 'numeric', 'min:0'],
+            'cuitCobrador' => ['nullable', 'string', 'max:32'],
+            'medioPago' => ['nullable', 'string', 'max:120'],
+            'concepto' => ['nullable', 'string', 'max:2000'],
+            'fechaCompromisoPago' => ['nullable', 'date'],
+            'aprobacionEstado' => ['nullable', Rule::in(['aprobado', 'no_aprobado'])],
+            'aprobacionMotivo' => ['nullable', 'string', 'max:2000'],
         ]);
 
-        $reclamo->loadMissing('agente:id,name');
+        $reclamo->loadMissing('agente:id,name', 'tipo:id,nombre,slug');
+        $isReclamoAdelanto = $this->isReclamosYAdelantosType($reclamo->tipo, (int) ($validated['tipoId'] ?? $reclamo->reclamo_type_id));
+
+        $incomingClienteNombre = array_key_exists('clienteNombre', $validated)
+            ? $this->normalizeNullableString($validated['clienteNombre'])
+            : $this->normalizeNullableString($reclamo->cliente_nombre);
+        $incomingSucursalNombre = array_key_exists('sucursalNombre', $validated)
+            ? $this->normalizeNullableString($validated['sucursalNombre'])
+            : $this->normalizeNullableString($reclamo->sucursal_nombre);
+        $incomingDistribuidorNombre = array_key_exists('distribuidorNombre', $validated)
+            ? $this->normalizeNullableString($validated['distribuidorNombre'])
+            : $this->normalizeNullableString($reclamo->distribuidor_nombre);
+        $incomingEmisorFactura = array_key_exists('emisorFactura', $validated)
+            ? $this->normalizeNullableString($validated['emisorFactura'])
+            : $this->normalizeNullableString($reclamo->emisor_factura);
+        $incomingImporteSolicitado = array_key_exists('importeSolicitado', $validated)
+            ? $this->normalizeImportePagado($validated['importeSolicitado'])
+            : $this->normalizeImportePagado($reclamo->importe_solicitado);
+        $incomingCuitCobrador = array_key_exists('cuitCobrador', $validated)
+            ? $this->normalizeNullableCuit($validated['cuitCobrador'])
+            : $this->normalizeNullableCuit($reclamo->cuit_cobrador);
+        $incomingMedioPago = array_key_exists('medioPago', $validated)
+            ? $this->normalizeNullableString($validated['medioPago'])
+            : $this->normalizeNullableString($reclamo->medio_pago);
+        $incomingConcepto = array_key_exists('concepto', $validated)
+            ? $this->normalizeNullableString($validated['concepto'])
+            : $this->normalizeNullableString($reclamo->concepto);
+        $incomingFechaCompromisoPago = array_key_exists('fechaCompromisoPago', $validated)
+            ? $this->normalizeNullableString((string) $validated['fechaCompromisoPago'])
+            : optional($reclamo->fecha_compromiso_pago)->format('Y-m-d');
+        $incomingAprobacionEstado = array_key_exists('aprobacionEstado', $validated)
+            ? $this->normalizeAprobacionEstado($validated['aprobacionEstado'])
+            : $this->normalizeAprobacionEstado($reclamo->aprobacion_estado);
+        $incomingAprobacionMotivo = array_key_exists('aprobacionMotivo', $validated)
+            ? $this->normalizeNullableString($validated['aprobacionMotivo'])
+            : $this->normalizeNullableString($reclamo->aprobacion_motivo);
+
+        $originalAprobacionEstado = $this->normalizeAprobacionEstado($reclamo->aprobacion_estado);
+        $originalAprobacionMotivo = $this->normalizeNullableString($reclamo->aprobacion_motivo);
+        $approvalChanged = $incomingAprobacionEstado !== $originalAprobacionEstado
+            || $incomingAprobacionMotivo !== $originalAprobacionMotivo;
+
+        if ($incomingAprobacionEstado === 'no_aprobado' && $incomingAprobacionMotivo === null) {
+            return response()->json([
+                'message' => 'El motivo es obligatorio cuando el estado de aprobación es "No aprobado".',
+            ], 422);
+        }
+
+        if ($isReclamoAdelanto) {
+            $lockedViolations = [];
+
+            $lockedChecks = [
+                ['field' => 'clienteNombre', 'label' => 'Cliente', 'current' => $reclamo->cliente_nombre, 'incoming' => $incomingClienteNombre],
+                ['field' => 'sucursalNombre', 'label' => 'Sucursal', 'current' => $reclamo->sucursal_nombre, 'incoming' => $incomingSucursalNombre],
+                ['field' => 'distribuidorNombre', 'label' => 'Nombre distribuidor', 'current' => $reclamo->distribuidor_nombre, 'incoming' => $incomingDistribuidorNombre],
+                ['field' => 'emisorFactura', 'label' => 'Dueño / emisor factura', 'current' => $reclamo->emisor_factura, 'incoming' => $incomingEmisorFactura],
+                ['field' => 'importeSolicitado', 'label' => 'Importe solicitado', 'current' => $this->normalizeImportePagado($reclamo->importe_solicitado), 'incoming' => $incomingImporteSolicitado],
+                ['field' => 'cuitCobrador', 'label' => 'CUIT cobrador', 'current' => $reclamo->cuit_cobrador, 'incoming' => $incomingCuitCobrador],
+                ['field' => 'medioPago', 'label' => 'Medio de pago', 'current' => $reclamo->medio_pago, 'incoming' => $incomingMedioPago],
+                ['field' => 'concepto', 'label' => 'Concepto', 'current' => $reclamo->concepto, 'incoming' => $incomingConcepto],
+            ];
+
+            foreach ($lockedChecks as $check) {
+                if (! $this->canMutateLockedValue($check['current'], $check['incoming'])) {
+                    $lockedViolations[$check['field']] = ["{$check['label']} no se puede modificar una vez cargado."];
+                }
+            }
+
+            if ((int) $reclamo->persona_id !== (int) $validated['transportistaId']) {
+                $lockedViolations['transportistaId'] = ['El transportista no se puede modificar una vez cargado.'];
+            }
+            if ((int) $reclamo->reclamo_type_id !== (int) $validated['tipoId']) {
+                $lockedViolations['tipoId'] = ['El tipo de reclamo no se puede modificar para este registro.'];
+            }
+
+            if (! empty($lockedViolations)) {
+                return response()->json([
+                    'message' => 'Algunos campos de Reclamos y Adelantos son inmutables.',
+                    'errors' => $lockedViolations,
+                ], 422);
+            }
+
+            if ($approvalChanged && ! $this->canEditReclamosAdelantosApproval($request)) {
+                return response()->json([
+                    'message' => 'Solo Seba puede editar "Aprobado / No aprobado" y "Motivo".',
+                ], 403);
+            }
+        }
+
         $originalAgente = $reclamo->agente_id;
         $originalAgenteName = $reclamo->agente?->name;
         $agentChanged = false;
@@ -360,8 +704,34 @@ class ReclamoController extends Controller
 
         $originalImportePagado = $this->normalizeImportePagado($reclamo->importe_pagado);
         $originalImporteFacturado = $this->normalizeImportePagado($reclamo->importe_facturado);
+        $originalFechaCompromisoPago = optional($reclamo->fecha_compromiso_pago)->format('Y-m-d');
 
-        DB::transaction(function () use ($reclamo, $validated, $originalAgente, $originalAgenteName, &$agentChanged, &$newAgenteId, $originalImportePagado, $canViewImportes) {
+        DB::transaction(function () use (
+            $reclamo,
+            $validated,
+            $originalAgente,
+            $originalAgenteName,
+            &$agentChanged,
+            &$newAgenteId,
+            $originalImportePagado,
+            $canViewImportes,
+            $isReclamoAdelanto,
+            $incomingClienteNombre,
+            $incomingSucursalNombre,
+            $incomingDistribuidorNombre,
+            $incomingEmisorFactura,
+            $incomingImporteSolicitado,
+            $incomingCuitCobrador,
+            $incomingMedioPago,
+            $incomingConcepto,
+            $incomingFechaCompromisoPago,
+            $incomingAprobacionEstado,
+            $incomingAprobacionMotivo,
+            $approvalChanged,
+            $originalFechaCompromisoPago,
+            $originalAprobacionEstado,
+            $originalAprobacionMotivo
+        ) {
             $originalStatus = $reclamo->status;
             $originalPagado = (bool) $reclamo->pagado;
             $originalImporteFacturado = $this->normalizeImportePagado($reclamo->importe_facturado);
@@ -371,6 +741,21 @@ class ReclamoController extends Controller
             $reclamo->persona_id = $validated['transportistaId'];
             $reclamo->reclamo_type_id = $validated['tipoId'];
             $reclamo->detalle = isset($validated['detalle']) ? trim($validated['detalle']) : null;
+            $reclamo->cliente_nombre = $incomingClienteNombre;
+            $reclamo->sucursal_nombre = $incomingSucursalNombre;
+            $reclamo->distribuidor_nombre = $incomingDistribuidorNombre;
+            $reclamo->emisor_factura = $incomingEmisorFactura;
+            $reclamo->importe_solicitado = $incomingImporteSolicitado;
+            $reclamo->cuit_cobrador = $incomingCuitCobrador;
+            $reclamo->medio_pago = $incomingMedioPago;
+            $reclamo->concepto = $incomingConcepto;
+            $reclamo->fecha_compromiso_pago = $incomingFechaCompromisoPago
+                ? Carbon::parse($incomingFechaCompromisoPago)->startOfDay()
+                : null;
+            if ($approvalChanged || ! $isReclamoAdelanto) {
+                $reclamo->aprobacion_estado = $incomingAprobacionEstado;
+                $reclamo->aprobacion_motivo = $incomingAprobacionMotivo;
+            }
             $reclamo->fecha_alta = isset($validated['fechaReclamo'])
                 ? Carbon::parse($validated['fechaReclamo'])
                 : null;
@@ -444,6 +829,41 @@ class ReclamoController extends Controller
                 }
             }
 
+            $currentFechaCompromisoPago = optional($reclamo->fecha_compromiso_pago)->format('Y-m-d');
+            if ($originalFechaCompromisoPago !== $currentFechaCompromisoPago) {
+                $this->recordComment(
+                    $reclamo,
+                    $currentFechaCompromisoPago
+                        ? sprintf('Fecha compromiso de pago actualizada a %s', $currentFechaCompromisoPago)
+                        : 'Fecha compromiso de pago eliminada.',
+                    [
+                        'old' => $originalFechaCompromisoPago,
+                        'new' => $currentFechaCompromisoPago,
+                        'field' => 'fecha_compromiso_pago',
+                    ],
+                    $actorId
+                );
+            }
+
+            if ($approvalChanged) {
+                $this->recordComment(
+                    $reclamo,
+                    sprintf(
+                        'Aprobación actualizada de %s a %s.',
+                        $this->aprobacionEstadoLabel($originalAprobacionEstado) ?? 'Sin definir',
+                        $this->aprobacionEstadoLabel($incomingAprobacionEstado) ?? 'Sin definir'
+                    ),
+                    [
+                        'old' => $originalAprobacionEstado,
+                        'new' => $incomingAprobacionEstado,
+                        'oldMotivo' => $originalAprobacionMotivo,
+                        'newMotivo' => $incomingAprobacionMotivo,
+                        'field' => 'aprobacion_estado',
+                    ],
+                    $actorId
+                );
+            }
+
             if ($originalAgente !== $reclamo->agente_id) {
                 $agentChanged = true;
 
@@ -466,7 +886,7 @@ class ReclamoController extends Controller
         $reclamo->refresh()->loadMissing([
             'creator:id,name',
             'agente:id,name',
-            'tipo:id,nombre',
+            'tipo:id,nombre,slug',
             'persona' => fn ($query) => $query->select(
                 'id',
                 'nombres',
@@ -529,7 +949,7 @@ class ReclamoController extends Controller
         $reclamo->refresh()->loadMissing([
             'creator:id,name',
             'agente:id,name',
-            'tipo:id,nombre',
+            'tipo:id,nombre,slug',
             'persona' => fn ($query) => $query->select(
                 'id',
                 'nombres',
@@ -681,7 +1101,7 @@ class ReclamoController extends Controller
         $reclamo->refresh()->loadMissing([
             'creator:id,name',
             'agente:id,name',
-            'tipo:id,nombre',
+            'tipo:id,nombre,slug',
             'persona' => fn ($query) => $query->select(
                 'id',
                 'nombres',
@@ -753,7 +1173,7 @@ class ReclamoController extends Controller
         $reclamo->refresh()->loadMissing([
             'creator:id,name',
             'agente:id,name',
-            'tipo:id,nombre',
+            'tipo:id,nombre,slug',
             'persona' => fn ($query) => $query->select(
                 'id',
                 'nombres',
@@ -846,6 +1266,7 @@ class ReclamoController extends Controller
         $statusLabels = $this->statusLabels();
         $statusLabel = $statusLabels[$reclamo->status] ?? Str::title(str_replace('_', ' ', (string) $reclamo->status));
         $fechaReferencia = $reclamo->fecha_alta ?? $reclamo->created_at;
+        $isReclamoAdelanto = $this->isReclamosYAdelantosType($reclamo->tipo, $reclamo->reclamo_type_id);
 
         $persona = $reclamo->persona;
         $transportistaDetail = null;
@@ -891,8 +1312,24 @@ class ReclamoController extends Controller
             'transportista' => $reclamo->persona ? trim(($reclamo->persona->nombres ?? '').' '.($reclamo->persona->apellidos ?? '')) ?: null : null,
             'transportistaId' => $reclamo->persona_id,
             'cliente' => $reclamo->persona?->cliente?->nombre,
+            'clienteNombre' => $reclamo->cliente_nombre ?? $reclamo->persona?->cliente?->nombre,
+            'sucursalNombre' => $reclamo->sucursal_nombre ?? $reclamo->persona?->sucursal?->nombre,
+            'distribuidorNombre' => $reclamo->distribuidor_nombre,
+            'emisorFactura' => $reclamo->emisor_factura,
+            'importeSolicitado' => $this->normalizeImportePagado($reclamo->importe_solicitado),
+            'importeSolicitadoLabel' => $this->formatImportePagadoLabel($this->normalizeImportePagado($reclamo->importe_solicitado)),
+            'cuitCobrador' => $reclamo->cuit_cobrador,
+            'medioPago' => $reclamo->medio_pago,
+            'concepto' => $reclamo->concepto,
+            'fechaCompromisoPago' => optional($reclamo->fecha_compromiso_pago)->format('Y-m-d'),
+            'aprobacionEstado' => $this->normalizeAprobacionEstado($reclamo->aprobacion_estado),
+            'aprobacionEstadoLabel' => $this->aprobacionEstadoLabel($this->normalizeAprobacionEstado($reclamo->aprobacion_estado)),
+            'aprobacionMotivo' => $reclamo->aprobacion_motivo,
+            'bloqueadoEn' => $reclamo->bloqueado_en?->toIso8601String(),
             'tipo' => $reclamo->tipo?->nombre,
+            'tipoSlug' => $reclamo->tipo?->slug,
             'tipoId' => $reclamo->reclamo_type_id,
+            'isReclamoAdelanto' => $isReclamoAdelanto,
             'createdAt' => $reclamo->created_at?->toIso8601String(),
             'updatedAt' => $reclamo->updated_at?->toIso8601String(),
             'transportistaDetail' => $transportistaDetail,

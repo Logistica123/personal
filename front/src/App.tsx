@@ -1187,8 +1187,24 @@ type ReclamoRecord = {
   transportistaId: number | null;
   transportistas?: ReclamoTransportistaSummary[];
   cliente: string | null;
+  clienteNombre?: string | null;
+  sucursalNombre?: string | null;
+  distribuidorNombre?: string | null;
+  emisorFactura?: string | null;
+  importeSolicitado?: string | null;
+  importeSolicitadoLabel?: string | null;
+  cuitCobrador?: string | null;
+  medioPago?: string | null;
+  concepto?: string | null;
+  fechaCompromisoPago?: string | null;
+  aprobacionEstado?: 'aprobado' | 'no_aprobado' | null;
+  aprobacionEstadoLabel?: string | null;
+  aprobacionMotivo?: string | null;
+  bloqueadoEn?: string | null;
   tipo: string | null;
+  tipoSlug?: string | null;
   tipoId: number | null;
+  isReclamoAdelanto?: boolean;
   createdAt: string | null;
   updatedAt: string | null;
 };
@@ -1197,7 +1213,8 @@ type ReclamoMeta = {
   agentes: Array<{ id: number; nombre: string | null }>;
   creadores: Array<{ id: number; nombre: string | null }>;
   transportistas: Array<{ id: number; nombre: string | null }>;
-  tipos: Array<{ id: number; nombre: string | null }>;
+  clientes?: Array<{ id: number; nombre: string | null }>;
+  tipos: Array<{ id: number; nombre: string | null; slug?: string | null }>;
   estados: Array<{ value: string; label: string }>;
 };
 
@@ -1801,6 +1818,42 @@ const formatReclamoTipoLabel = (tipo?: string | null): string => {
   const normalized = tipo.trim();
   const key = normalized.replace(/[_-]/g, ' ').toLowerCase();
   return tipoLabelOverrides[key as keyof typeof tipoLabelOverrides] ?? normalized;
+};
+
+const isReclamoAdelantoType = (tipo?: { nombre?: string | null; slug?: string | null } | null): boolean => {
+  if (!tipo) {
+    return false;
+  }
+
+  const slug = (tipo.slug ?? '').trim().toLowerCase();
+  if (slug === 'reclamos-y-adelantos') {
+    return true;
+  }
+
+  const normalizedName = (tipo.nombre ?? '')
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[_-]+/g, ' ')
+    .replace(/\s+/g, ' ');
+
+  return normalizedName === 'reclamos y adelantos';
+};
+
+const RECLAMOS_ADELANTOS_APPROVER_EMAILS = (process.env.REACT_APP_RECLAMOS_ADELANTOS_APPROVER_EMAILS ?? '')
+  .split(',')
+  .map((value) => value.trim().toLowerCase())
+  .filter((value) => value.length > 0);
+
+const canEditReclamosAdelantosApproval = (authUser: AuthUser | null | undefined): boolean => {
+  const email = (authUser?.email ?? '').trim().toLowerCase();
+  if (email && RECLAMOS_ADELANTOS_APPROVER_EMAILS.includes(email)) {
+    return true;
+  }
+
+  const name = (authUser?.name ?? '').trim().toLowerCase();
+  return name.includes('seba');
 };
 
 
@@ -10715,7 +10768,7 @@ const ReclamosPage: React.FC = () => {
     () => isElevatedRole(userRole) && userRole !== 'asesor',
     [userRole]
   );
-  const reclamosColumnCount = canViewReclamoImportes ? 13 : 11;
+  const reclamosColumnCount = canViewReclamoImportes ? 16 : 14;
   const [reclamos, setReclamos] = useState<ReclamoRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -10905,7 +10958,14 @@ const ReclamosPage: React.FC = () => {
   const agenteOptions = useMemo(
     () => {
       const fromReclamos = reclamos
-        .map((reclamo) => reclamo.agente?.trim())
+        .map((reclamo) => {
+          const agente = (reclamo.agente ?? '').trim();
+          if (agente) {
+            return agente;
+          }
+          const cliente = (reclamo.clienteNombre ?? '').trim();
+          return cliente || null;
+        })
         .filter((value): value is string => Boolean(value));
       return Array.from(new Set([...agentesCatalog, ...fromReclamos])).sort((a, b) => a.localeCompare(b));
     },
@@ -10943,6 +11003,20 @@ const ReclamosPage: React.FC = () => {
     return Array.from(names).sort((a, b) => a.localeCompare(b));
   }, [reclamos, getTransportistaNames]);
 
+  const resolveReclamoResponsable = useCallback((reclamo: ReclamoRecord): string | null => {
+    const agente = (reclamo.agente ?? '').trim();
+    if (agente) {
+      return agente;
+    }
+
+    const cliente = (reclamo.clienteNombre ?? '').trim();
+    if (cliente) {
+      return cliente;
+    }
+
+    return null;
+  }, []);
+
   const estadoOptions = useMemo(() => {
     const map = new Map<string, string>();
     reclamos.forEach((reclamo) => {
@@ -10971,7 +11045,9 @@ const ReclamosPage: React.FC = () => {
     const term = searchTerm.trim().toLowerCase();
 
     return reclamos.filter((reclamo) => {
-      if (agenteFilter.length > 0 && !agenteFilter.includes(reclamo.agente ?? '')) {
+      const responsable = resolveReclamoResponsable(reclamo) ?? '';
+
+      if (agenteFilter.length > 0 && !agenteFilter.includes(responsable)) {
         return false;
       }
 
@@ -11015,7 +11091,9 @@ const ReclamosPage: React.FC = () => {
         reclamo.codigo,
         reclamo.detalle,
         reclamo.creator,
+        responsable,
         reclamo.agente,
+        reclamo.clienteNombre,
         ...getTransportistaNames(reclamo),
         reclamo.cliente,
         reclamo.tipo,
@@ -11037,6 +11115,7 @@ const ReclamosPage: React.FC = () => {
     dateFrom,
     dateTo,
     getTransportistaNames,
+    resolveReclamoResponsable,
   ]);
 
   const resolveFechaMs = useCallback((reclamo: ReclamoRecord) => {
@@ -11094,6 +11173,9 @@ const ReclamosPage: React.FC = () => {
       'Cliente',
       'Tipo de reclamo',
       'Estado',
+      'Fecha compromiso pago',
+      'Aprobación',
+      'Motivo aprobación',
       ...(canViewReclamoImportes
         ? ['Pagado', 'Importe pagado', 'Importe facturado']
         : ['Pagado']),
@@ -11109,6 +11191,7 @@ const ReclamosPage: React.FC = () => {
         const transportistaDisplay = formatTransportistaDisplay(reclamo);
         const canSeeFacturado =
           canViewReclamoImportes && (reclamo.status ?? '').trim().toLowerCase() === 'finalizado';
+        const responsable = resolveReclamoResponsable(reclamo);
         rows.push([
           reclamo.fechaReclamo ?? '',
           reclamo.codigo ?? `#${reclamo.id}`,
@@ -11117,10 +11200,13 @@ const ReclamosPage: React.FC = () => {
           transportistaDisplay.restCount > 0
             ? `${transportistaDisplay.label} (+${transportistaDisplay.restCount})`
             : transportistaDisplay.label ?? '',
-          reclamo.agente ?? '',
+          responsable ?? '',
           reclamo.cliente ?? '',
           formatReclamoTipoLabel(reclamo.tipo),
           reclamo.statusLabel ?? reclamo.status ?? '',
+          reclamo.fechaCompromisoPago ?? '',
+          reclamo.aprobacionEstadoLabel ?? '',
+          reclamo.aprobacionMotivo ?? '',
           reclamo.pagado ? 'Sí' : 'No',
           ...(canViewReclamoImportes
             ? [
@@ -11140,7 +11226,13 @@ const ReclamosPage: React.FC = () => {
 
     const today = new Date().toISOString().slice(0, 10);
     downloadCsv(`reclamos-${today}.csv`, rows);
-  }, [canViewReclamoImportes, sortedReclamos, formatTransportistaDisplay, resolveReclamoDemora]);
+  }, [
+    canViewReclamoImportes,
+    sortedReclamos,
+    formatTransportistaDisplay,
+    resolveReclamoDemora,
+    resolveReclamoResponsable,
+  ]);
 
   const footerLabel = useMemo(() => {
     if (loading) {
@@ -11189,7 +11281,7 @@ const ReclamosPage: React.FC = () => {
       <div className="filters-bar filters-bar--reclamos">
         <div className="filters-grid filters-grid--reclamos">
           <label className="filter-field">
-            <span>Agente responsable</span>
+            <span>Responsable</span>
             <select
               className="reclamos-multi-select"
               multiple
@@ -11403,6 +11495,9 @@ const ReclamosPage: React.FC = () => {
               <th>Responsable</th>
               <th>Tipo de reclamo</th>
               <th>Estado</th>
+              <th>Fecha compromiso</th>
+              <th>Aprobación</th>
+              <th>Motivo</th>
               <th>Pagado</th>
               {canViewReclamoImportes ? (
                 <>
@@ -11441,6 +11536,7 @@ const ReclamosPage: React.FC = () => {
                 const transportistaDisplay = formatTransportistaDisplay(reclamo);
                 const canSeeFacturado =
                   canViewReclamoImportes && (reclamo.status ?? '').trim().toLowerCase() === 'finalizado';
+                const responsable = resolveReclamoResponsable(reclamo);
                 return (
                   <tr key={reclamo.id}>
                   <td>{reclamo.fechaReclamo ?? '—'}</td>
@@ -11459,7 +11555,7 @@ const ReclamosPage: React.FC = () => {
                       ) : null}
                     </span>
                   </td>
-                  <td>{reclamo.agente ?? '—'}</td>
+                  <td>{responsable ?? '—'}</td>
                   <td>{formatReclamoTipoLabel(reclamo.tipo) || '—'}</td>
                   <td>
                     <span
@@ -11467,6 +11563,11 @@ const ReclamosPage: React.FC = () => {
                     >
                       {reclamo.statusLabel ?? reclamo.status ?? '—'}
                     </span>
+                  </td>
+                  <td>{reclamo.fechaCompromisoPago ?? '—'}</td>
+                  <td title={reclamo.aprobacionMotivo ?? undefined}>{reclamo.aprobacionEstadoLabel ?? '—'}</td>
+                  <td title={reclamo.aprobacionMotivo ?? undefined}>
+                    {truncateText(reclamo.aprobacionMotivo ?? null, 60) || '—'}
                   </td>
                   <td>
                     <span
@@ -11547,6 +11648,15 @@ const CreateReclamoPage: React.FC = () => {
     status: '',
     pagado: 'false',
     fechaReclamo: '',
+    clienteNombre: '',
+    sucursalNombre: '',
+    distribuidorNombre: '',
+    emisorFactura: '',
+    importeSolicitado: '',
+    cuitCobrador: '',
+    medioPago: '',
+    concepto: '',
+    fechaCompromisoPago: '',
   });
   const authUser = useStoredAuthUser();
   const normalizedUserName = useMemo(
@@ -11674,6 +11784,12 @@ const CreateReclamoPage: React.FC = () => {
     }
     return meta.creadores;
   }, [meta, normalizedUserName]);
+
+  const selectedTipo = useMemo(
+    () => meta?.tipos.find((tipo) => String(tipo.id) === formValues.tipoId) ?? null,
+    [meta?.tipos, formValues.tipoId]
+  );
+  const isReclamoAdelantoSelected = useMemo(() => isReclamoAdelantoType(selectedTipo), [selectedTipo]);
 
   const transportistaOptions = useMemo(() => {
     if (!meta) {
@@ -11847,6 +11963,22 @@ const CreateReclamoPage: React.FC = () => {
   }, [formValues.transportistaId, apiBaseUrl]);
 
   useEffect(() => {
+    if (!transportistaDetail || !isReclamoAdelantoSelected) {
+      return;
+    }
+
+    setFormValues((prev) => ({
+      ...prev,
+      clienteNombre: prev.clienteNombre || transportistaDetail.cliente || '',
+      sucursalNombre: prev.sucursalNombre || transportistaDetail.sucursal || '',
+      distribuidorNombre:
+        prev.distribuidorNombre ||
+        `${transportistaDetail.nombres ?? ''} ${transportistaDetail.apellidos ?? ''}`.trim() ||
+        '',
+    }));
+  }, [transportistaDetail, isReclamoAdelantoSelected]);
+
+  useEffect(() => {
     if (!formValues.transportistaId) {
       return;
     }
@@ -11911,6 +12043,25 @@ const CreateReclamoPage: React.FC = () => {
       return;
     }
 
+    if (isReclamoAdelantoSelected) {
+      const requiredAdelantoFields: Array<{ key: keyof typeof formValues; label: string }> = [
+        { key: 'clienteNombre', label: 'Cliente' },
+        { key: 'sucursalNombre', label: 'Sucursal' },
+        { key: 'distribuidorNombre', label: 'Nombre distribuidor' },
+        { key: 'emisorFactura', label: 'Dueño / emisor de factura' },
+        { key: 'importeSolicitado', label: 'Importe solicitado' },
+        { key: 'cuitCobrador', label: 'CUIT cobrador' },
+        { key: 'medioPago', label: 'Medio de pago' },
+        { key: 'concepto', label: 'Concepto' },
+      ];
+
+      const missingField = requiredAdelantoFields.find((field) => !(formValues[field.key] ?? '').trim());
+      if (missingField) {
+        setSubmitError(`Completa el campo obligatorio: ${missingField.label}.`);
+        return;
+      }
+    }
+
     try {
       setSubmitError(null);
       setSuccessMessage(null);
@@ -11950,6 +12101,15 @@ const CreateReclamoPage: React.FC = () => {
           status: formValues.status,
           pagado: formValues.pagado === 'true',
           fechaReclamo: formValues.fechaReclamo || null,
+          clienteNombre: formValues.clienteNombre.trim() || null,
+          sucursalNombre: formValues.sucursalNombre.trim() || null,
+          distribuidorNombre: formValues.distribuidorNombre.trim() || null,
+          emisorFactura: formValues.emisorFactura.trim() || null,
+          importeSolicitado: formValues.importeSolicitado.trim() || null,
+          cuitCobrador: formValues.cuitCobrador.trim() || null,
+          medioPago: formValues.medioPago.trim() || null,
+          concepto: formValues.concepto.trim() || null,
+          fechaCompromisoPago: formValues.fechaCompromisoPago || null,
         }),
       });
 
@@ -12109,6 +12269,15 @@ const CreateReclamoPage: React.FC = () => {
         status: defaultStatus,
         pagado: 'false',
         fechaReclamo: '',
+        clienteNombre: '',
+        sucursalNombre: '',
+        distribuidorNombre: '',
+        emisorFactura: '',
+        importeSolicitado: '',
+        cuitCobrador: '',
+        medioPago: '',
+        concepto: '',
+        fechaCompromisoPago: '',
       });
       setTransportistaSearch('');
       setTransportistaDetail(null);
@@ -12444,6 +12613,99 @@ const CreateReclamoPage: React.FC = () => {
           </label>
         </div>
 
+        {isReclamoAdelantoSelected ? (
+          <div className="reclamo-section">
+            <div className="reclamo-section__header">
+              <h3>Datos de Reclamos y Adelantos</h3>
+            </div>
+            <div className="form-grid">
+              <label className="input-control">
+                <span>Cliente</span>
+                <input
+                  type="text"
+                  value={formValues.clienteNombre}
+                  onChange={(event) => setFormValues((prev) => ({ ...prev, clienteNombre: event.target.value }))}
+                  required
+                />
+              </label>
+              <label className="input-control">
+                <span>Sucursal</span>
+                <input
+                  type="text"
+                  value={formValues.sucursalNombre}
+                  onChange={(event) => setFormValues((prev) => ({ ...prev, sucursalNombre: event.target.value }))}
+                  required
+                />
+              </label>
+              <label className="input-control">
+                <span>Nombre distribuidor</span>
+                <input
+                  type="text"
+                  value={formValues.distribuidorNombre}
+                  onChange={(event) => setFormValues((prev) => ({ ...prev, distribuidorNombre: event.target.value }))}
+                  required
+                />
+              </label>
+              <label className="input-control">
+                <span>Dueño / emisor factura</span>
+                <input
+                  type="text"
+                  value={formValues.emisorFactura}
+                  onChange={(event) => setFormValues((prev) => ({ ...prev, emisorFactura: event.target.value }))}
+                  required
+                />
+              </label>
+              <label className="input-control">
+                <span>Importe solicitado</span>
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  inputMode="decimal"
+                  value={formValues.importeSolicitado}
+                  onChange={(event) => setFormValues((prev) => ({ ...prev, importeSolicitado: event.target.value }))}
+                  required
+                />
+              </label>
+              <label className="input-control">
+                <span>CUIT cobrador</span>
+                <input
+                  type="text"
+                  value={formValues.cuitCobrador}
+                  onChange={(event) => setFormValues((prev) => ({ ...prev, cuitCobrador: event.target.value }))}
+                  required
+                />
+              </label>
+              <label className="input-control">
+                <span>Medio de pago</span>
+                <input
+                  type="text"
+                  value={formValues.medioPago}
+                  onChange={(event) => setFormValues((prev) => ({ ...prev, medioPago: event.target.value }))}
+                  required
+                />
+              </label>
+              <label className="input-control">
+                <span>Fecha compromiso de pago</span>
+                <input
+                  type="date"
+                  value={formValues.fechaCompromisoPago}
+                  onChange={(event) => setFormValues((prev) => ({ ...prev, fechaCompromisoPago: event.target.value }))}
+                />
+              </label>
+            </div>
+            <label className="input-control">
+              <span>Concepto</span>
+              <textarea
+                value={formValues.concepto}
+                onChange={(event) => setFormValues((prev) => ({ ...prev, concepto: event.target.value }))}
+                rows={3}
+                required
+              />
+            </label>
+          </div>
+        ) : null}
+
         <div className="reclamo-section">
           <div className="reclamo-section__header">
             <h3>Documentación del reclamo</h3>
@@ -12525,6 +12787,10 @@ const ReclamoDetailPage: React.FC = () => {
     () => isElevatedRole(userRole) && userRole !== 'asesor',
     [userRole]
   );
+  const canEditAdelantosApproval = useMemo(
+    () => canEditReclamosAdelantosApproval(authUser),
+    [authUser]
+  );
   const [detail, setDetail] = useState<ReclamoDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -12533,12 +12799,16 @@ const ReclamoDetailPage: React.FC = () => {
   const [metaError, setMetaError] = useState<string | null>(null);
   const [formValues, setFormValues] = useState({
     agenteId: '',
+    clienteNombre: '',
     status: '',
     pagado: 'false',
     fechaReclamo: '',
     detalle: '',
     importePagado: '',
     importeFacturado: '',
+    fechaCompromisoPago: '',
+    aprobacionEstado: '',
+    aprobacionMotivo: '',
   });
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -12553,6 +12823,31 @@ const ReclamoDetailPage: React.FC = () => {
   const [documentMessage, setDocumentMessage] = useState<string | null>(null);
   const [documentError, setDocumentError] = useState<string | null>(null);
   const transportistaInfo = detail?.transportistaDetail;
+  const isReclamoAdelanto = Boolean(detail?.isReclamoAdelanto);
+  const clienteOptions = useMemo(() => {
+    const names = new Set<string>();
+    (meta?.clientes ?? []).forEach((cliente) => {
+      const normalized = (cliente.nombre ?? '').trim();
+      if (normalized) {
+        names.add(normalized);
+      }
+    });
+    const fromDetail = (detail?.clienteNombre ?? detail?.cliente ?? '').trim();
+    if (fromDetail) {
+      names.add(fromDetail);
+    }
+    return Array.from(names).sort((a, b) => a.localeCompare(b));
+  }, [meta?.clientes, detail?.clienteNombre, detail?.cliente]);
+  const responsableClienteValue = useMemo(() => {
+    if (formValues.agenteId) {
+      return `agente:${formValues.agenteId}`;
+    }
+    const cliente = formValues.clienteNombre.trim();
+    if (cliente) {
+      return `cliente:${cliente}`;
+    }
+    return '';
+  }, [formValues.agenteId, formValues.clienteNombre]);
   const initialTransportistasRef = useRef<ReclamoTransportistaSummary[] | undefined>(
     locationState?.transportistas
   );
@@ -12699,12 +12994,16 @@ const ReclamoDetailPage: React.FC = () => {
     const fallbackStatus = detail.status ?? meta?.estados[0]?.value ?? '';
     setFormValues({
       agenteId: detail.agenteId ? String(detail.agenteId) : '',
+      clienteNombre: detail.clienteNombre ?? detail.cliente ?? '',
       status: fallbackStatus,
       pagado: detail.pagado ? 'true' : 'false',
       fechaReclamo: detail.fechaReclamo ?? '',
       detalle: detail.detalle ?? '',
       importePagado: detail.pagado ? detail.importePagado ?? '' : '',
       importeFacturado: detail.importeFacturado ?? '',
+      fechaCompromisoPago: detail.fechaCompromisoPago ?? '',
+      aprobacionEstado: detail.aprobacionEstado ?? '',
+      aprobacionMotivo: detail.aprobacionMotivo ?? '',
     });
     shouldRefreshFormRef.current = false;
   }, [detail, meta]);
@@ -12716,12 +13015,16 @@ const ReclamoDetailPage: React.FC = () => {
 
     setFormValues({
       agenteId: detail.agenteId ? String(detail.agenteId) : '',
+      clienteNombre: detail.clienteNombre ?? detail.cliente ?? '',
       status: detail.status ?? '',
       pagado: detail.pagado ? 'true' : 'false',
       fechaReclamo: detail.fechaReclamo ?? '',
       detalle: detail.detalle ?? '',
       importePagado: detail.pagado ? detail.importePagado ?? '' : '',
       importeFacturado: detail.importeFacturado ?? '',
+      fechaCompromisoPago: detail.fechaCompromisoPago ?? '',
+      aprobacionEstado: detail.aprobacionEstado ?? '',
+      aprobacionMotivo: detail.aprobacionMotivo ?? '',
     });
     setSaveError(null);
     setSaveSuccess(null);
@@ -12779,6 +13082,15 @@ const ReclamoDetailPage: React.FC = () => {
       }
     }
 
+    if (
+      isReclamoAdelanto &&
+      formValues.aprobacionEstado === 'no_aprobado' &&
+      !formValues.aprobacionMotivo.trim()
+    ) {
+      setSaveError('Ingresa un motivo cuando la aprobación es "No aprobado".');
+      return;
+    }
+
     try {
       setSaving(true);
       setSaveError(null);
@@ -12800,6 +13112,17 @@ const ReclamoDetailPage: React.FC = () => {
           ...(canViewReclamoImportes ? { importePagado: normalizedImporte } : {}),
           ...(normalizedImporteFacturado !== undefined ? { importeFacturado: normalizedImporteFacturado } : {}),
           fechaReclamo: formValues.fechaReclamo || null,
+          clienteNombre: formValues.clienteNombre.trim() || null,
+          sucursalNombre: detail.sucursalNombre ?? null,
+          distribuidorNombre: detail.distribuidorNombre ?? null,
+          emisorFactura: detail.emisorFactura ?? null,
+          importeSolicitado: detail.importeSolicitado ?? null,
+          cuitCobrador: detail.cuitCobrador ?? null,
+          medioPago: detail.medioPago ?? null,
+          concepto: detail.concepto ?? null,
+          fechaCompromisoPago: formValues.fechaCompromisoPago || null,
+          aprobacionEstado: formValues.aprobacionEstado || null,
+          aprobacionMotivo: formValues.aprobacionMotivo.trim() || null,
         }),
       });
 
@@ -13093,6 +13416,17 @@ const ReclamoDetailPage: React.FC = () => {
         : []),
       ['Fecha del alta', info?.fechaAlta ?? ''],
       ['Fecha del reclamo', detail.fechaReclamo ?? ''],
+      ['Fecha compromiso pago', detail.fechaCompromisoPago ?? ''],
+      ['Aprobación', detail.aprobacionEstadoLabel ?? ''],
+      ['Motivo aprobación', detail.aprobacionMotivo ?? ''],
+      ['Cliente (sector)', detail.clienteNombre ?? ''],
+      ['Sucursal (sector)', detail.sucursalNombre ?? ''],
+      ['Nombre distribuidor', detail.distribuidorNombre ?? ''],
+      ['Dueño / emisor factura', detail.emisorFactura ?? ''],
+      ['Importe solicitado', detail.importeSolicitadoLabel ?? detail.importeSolicitado ?? ''],
+      ['CUIT cobrador', detail.cuitCobrador ?? ''],
+      ['Medio de pago', detail.medioPago ?? ''],
+      ['Concepto', detail.concepto ?? ''],
       ['Teléfono', info?.telefono ?? ''],
       ['Email', info?.email ?? ''],
     ];
@@ -13156,7 +13490,6 @@ const ReclamoDetailPage: React.FC = () => {
     );
   }
 
-
   return (
     <DashboardLayout
       title="Detalle de reclamo"
@@ -13214,6 +13547,18 @@ const ReclamoDetailPage: React.FC = () => {
               {renderReadOnlyField('Responsable actual', detail.agente ?? '')}
               {renderReadOnlyField('Fecha del alta', transportistaInfo?.fechaAlta ?? '')}
               {renderReadOnlyField('Fecha del reclamo', formValues.fechaReclamo || detail.fechaReclamo || '')}
+              {isReclamoAdelanto ? renderReadOnlyField('Cliente (sector)', detail.clienteNombre ?? '') : null}
+              {isReclamoAdelanto ? renderReadOnlyField('Sucursal (sector)', detail.sucursalNombre ?? '') : null}
+              {isReclamoAdelanto ? renderReadOnlyField('Nombre distribuidor', detail.distribuidorNombre ?? '') : null}
+              {isReclamoAdelanto ? renderReadOnlyField('Dueño / emisor factura', detail.emisorFactura ?? '') : null}
+              {isReclamoAdelanto
+                ? renderReadOnlyField(
+                    'Importe solicitado',
+                    detail.importeSolicitadoLabel ?? detail.importeSolicitado ?? ''
+                  )
+                : null}
+              {isReclamoAdelanto ? renderReadOnlyField('CUIT cobrador', detail.cuitCobrador ?? '') : null}
+              {isReclamoAdelanto ? renderReadOnlyField('Medio de pago', detail.medioPago ?? '') : null}
               {canViewReclamoImportes && detail.pagado
                 ? renderReadOnlyField(
                     'Importe pagado',
@@ -13234,6 +13579,12 @@ const ReclamoDetailPage: React.FC = () => {
                 formatReclamoTipoLabel(detail.tipo) || '—'
               )}
             </div>
+            {isReclamoAdelanto ? (
+              <label className="input-control">
+                <span>Concepto</span>
+                <textarea value={detail.concepto ?? ''} rows={3} readOnly />
+              </label>
+            ) : null}
           </section>
 
           <section className="reclamo-card">
@@ -13363,18 +13714,53 @@ const ReclamoDetailPage: React.FC = () => {
             </div>
 
             <label className="input-control">
-              <span>Responsable</span>
+              <span>Responsable / Cliente</span>
               <select
-                value={formValues.agenteId}
-                onChange={(event) => setFormValues((prev) => ({ ...prev, agenteId: event.target.value }))}
+                value={responsableClienteValue}
+                onChange={(event) => {
+                  const rawValue = event.target.value;
+                  if (!rawValue) {
+                    setFormValues((prev) => ({ ...prev, agenteId: '', clienteNombre: '' }));
+                    return;
+                  }
+
+                  if (rawValue.startsWith('agente:')) {
+                    const agenteId = rawValue.slice('agente:'.length);
+                    setFormValues((prev) => ({ ...prev, agenteId, clienteNombre: '' }));
+                    return;
+                  }
+
+                  if (rawValue.startsWith('cliente:')) {
+                    const clienteNombre = rawValue.slice('cliente:'.length);
+                    setFormValues((prev) => ({
+                      ...prev,
+                      agenteId: '',
+                      clienteNombre,
+                    }));
+                  }
+                }}
                 disabled={metaLoading}
               >
                 <option value="">Sin asignar</option>
-                {(meta?.agentes ?? []).map((agente) => (
-                  <option key={agente.id} value={agente.id}>
-                    {agente.nombre ?? `Agente #${agente.id}`}
+                <optgroup label="Agentes responsables">
+                  {(meta?.agentes ?? []).map((agente) => (
+                    <option key={agente.id} value={`agente:${agente.id}`}>
+                      {agente.nombre ?? `Agente #${agente.id}`}
+                    </option>
+                  ))}
+                </optgroup>
+                <optgroup label="Clientes">
+                  {clienteOptions.map((cliente) => (
+                    <option key={`cliente-${cliente}`} value={`cliente:${cliente}`}>
+                      {cliente}
+                    </option>
+                  ))}
+                </optgroup>
+                {(meta?.agentes ?? []).length === 0 ? (
+                  <option value="" disabled>
+                    No hay agentes disponibles
                   </option>
-                ))}
+                ) : null}
               </select>
             </label>
             <p className="section-helper">Al asignar un responsable se notificará el cambio.</p>
@@ -13457,6 +13843,48 @@ const ReclamoDetailPage: React.FC = () => {
                 onChange={(event) => setFormValues((prev) => ({ ...prev, fechaReclamo: event.target.value }))}
               />
             </label>
+
+            {isReclamoAdelanto ? (
+              <label className="input-control">
+                <span>Fecha compromiso de pago</span>
+                <input
+                  type="date"
+                  value={formValues.fechaCompromisoPago}
+                  onChange={(event) => setFormValues((prev) => ({ ...prev, fechaCompromisoPago: event.target.value }))}
+                />
+              </label>
+            ) : null}
+
+            {isReclamoAdelanto ? (
+              <label className="input-control">
+                <span>Aprobado / No aprobado</span>
+                <select
+                  value={formValues.aprobacionEstado}
+                  onChange={(event) => setFormValues((prev) => ({ ...prev, aprobacionEstado: event.target.value }))}
+                  disabled={!canEditAdelantosApproval}
+                >
+                  <option value="">Sin definir</option>
+                  <option value="aprobado">Aprobado</option>
+                  <option value="no_aprobado">No aprobado</option>
+                </select>
+              </label>
+            ) : null}
+
+            {isReclamoAdelanto ? (
+              <label className="input-control">
+                <span>Motivo</span>
+                <textarea
+                  rows={3}
+                  value={formValues.aprobacionMotivo}
+                  onChange={(event) => setFormValues((prev) => ({ ...prev, aprobacionMotivo: event.target.value }))}
+                  disabled={!canEditAdelantosApproval}
+                />
+              </label>
+            ) : null}
+
+            {isReclamoAdelanto && !canEditAdelantosApproval ? (
+              <p className="section-helper">Solo Seba puede editar aprobación y motivo.</p>
+            ) : null}
 
             <div className="form-actions">
               <button type="button" className="secondary-action" onClick={handleResetForm} disabled={saving}>
