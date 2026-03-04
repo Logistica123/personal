@@ -47387,6 +47387,7 @@ const App: React.FC = () => {
       </BrandingProvider>
     </ThemeProvider>
   );
+  
 };
 
 export default App;
