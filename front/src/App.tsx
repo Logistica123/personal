@@ -20062,20 +20062,33 @@ const CombustibleRunsPage: React.FC = () => {
   const [detalleActionMessage, setDetalleActionMessage] = useState<string | null>(null);
   const [detalleActionError, setDetalleActionError] = useState<string | null>(null);
   const [matchAssignDrafts, setMatchAssignDrafts] = useState<Record<string, MatchAssignDraft>>({});
+  const rulesClientContextText = useMemo(() => {
+    const normalizedCode = rulesClientCode.trim().toUpperCase();
+    if (!normalizedCode) {
+      return '';
+    }
+    const matchedClient = liquidacionesClients.find(
+      (item) => item.code.trim().toUpperCase() === normalizedCode
+    );
+    const matchedRun = runs.find(
+      (run) => String(run.clientCode ?? '').trim().toUpperCase() === normalizedCode
+    );
+    const fallbackLabel = matchedRun ? String(matchedRun.clientCode ?? '').trim() : '';
+    const label = String(matchedClient?.label ?? fallbackLabel).trim().toUpperCase();
+    return `${normalizedCode} ${label}`.trim();
+  }, [liquidacionesClients, rulesClientCode, runs]);
   const isIntermedioRulesClient = useMemo(() => {
-    const normalized = rulesClientCode.trim().toUpperCase();
-    if (!normalized) {
+    if (!rulesClientContextText) {
       return false;
     }
-    return normalized.includes('INTERMEDIO') || /^INT\d*$/.test(normalized);
-  }, [rulesClientCode]);
+    return rulesClientContextText.includes('INTERMEDIO') || /\bINT\d*\b/.test(rulesClientContextText);
+  }, [rulesClientContextText]);
   const isEpsaRulesClient = useMemo(() => {
-    const normalized = rulesClientCode.trim().toUpperCase();
-    if (!normalized) {
+    if (!rulesClientContextText) {
       return false;
     }
-    return normalized.includes('EPSA');
-  }, [rulesClientCode]);
+    return rulesClientContextText.includes('EPSA');
+  }, [rulesClientContextText]);
   const intermedioRulesZone = (() => {
     const normalized = (rulesEditor.intermedioSelectedZone || 'AMBA').trim().toUpperCase() || 'AMBA';
     return INTERMEDIO_ZONES.includes(normalized as (typeof INTERMEDIO_ZONES)[number]) ? normalized : 'AMBA';
