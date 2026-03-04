@@ -1011,16 +1011,22 @@ class PersonalController extends Controller
             $persona->pago = $validated['pago'] ?? null;
         }
 
+        $hasFechaAltaInput = false;
+        $hasFechaAltaValue = false;
+
         if (array_key_exists('fechaAlta', $validated)) {
-            $persona->fecha_alta = $validated['fechaAlta'] ? Carbon::parse($validated['fechaAlta']) : null;
+            $hasFechaAltaInput = true;
+            $hasFechaAltaValue = filled($validated['fechaAlta'] ?? null);
+            $persona->fecha_alta = $hasFechaAltaValue ? Carbon::parse($validated['fechaAlta']) : null;
         } elseif (array_key_exists('fechaAltaVinculacion', $validated)) {
-            $persona->fecha_alta = $validated['fechaAltaVinculacion']
+            $hasFechaAltaInput = true;
+            $hasFechaAltaValue = filled($validated['fechaAltaVinculacion'] ?? null);
+            $persona->fecha_alta = $hasFechaAltaValue
                 ? Carbon::parse($validated['fechaAltaVinculacion'])
                 : null;
         }
 
-        $hasFechaAltaInput = array_key_exists('fechaAlta', $validated) || array_key_exists('fechaAltaVinculacion', $validated);
-        if (! $hasFechaAltaInput && ! $persona->fecha_alta && ! $isCurrentActivo && $isTargetActivo) {
+        if ((! $hasFechaAltaInput || ! $hasFechaAltaValue) && ! $persona->fecha_alta && ! $isCurrentActivo && $isTargetActivo) {
             $persona->fecha_alta = Carbon::now();
         }
 
