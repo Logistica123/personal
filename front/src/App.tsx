@@ -19426,6 +19426,7 @@ const CombustibleRunsPage: React.FC = () => {
     rules?: Record<string, unknown> | null;
     resolvedRules?: Record<string, unknown> | null;
     source?: string;
+    matchedClientCode?: string | null;
     updatedAt?: string | null;
   };
 
@@ -20465,8 +20466,8 @@ const CombustibleRunsPage: React.FC = () => {
     }
   }, [createClientCode, rulesClientCode]);
 
-  const handleLoadClientRules = async () => {
-    const clientCode = rulesClientCode.trim();
+  const loadClientRulesByCode = async (clientCodeRaw: string) => {
+    const clientCode = clientCodeRaw.trim();
     if (!clientCode) {
       setRulesError('Ingresá un cliente para cargar reglas.');
       return;
@@ -20493,11 +20494,37 @@ const CombustibleRunsPage: React.FC = () => {
       setRulesActive(Boolean(data?.active ?? true));
       setRulesSourceLabel(data?.source ?? (data?.exists ? 'client' : 'default'));
       setRulesUpdatedAt(data?.updatedAt ?? null);
-      setRulesMessage(data?.exists ? 'Reglas del cliente cargadas.' : 'No había reglas guardadas: se cargó configuración base.');
+
+      const source = String(data?.source ?? '').trim().toLowerCase();
+      if (source === 'client_fallback') {
+        const matchedCode = String(data?.matchedClientCode ?? '').trim().toUpperCase();
+        setRulesMessage(
+          matchedCode
+            ? `Reglas cargadas por fallback desde ${matchedCode}.`
+            : 'Reglas cargadas por fallback de la familia del cliente.'
+        );
+      } else if (data?.exists) {
+        setRulesMessage('Reglas del cliente cargadas.');
+      } else {
+        setRulesMessage('No había reglas guardadas: se cargó configuración base.');
+      }
     } catch (err) {
       setRulesError(err instanceof Error ? err.message : 'No se pudieron cargar las reglas del cliente.');
     } finally {
       setRulesLoading(false);
+    }
+  };
+
+  const handleLoadClientRules = async () => {
+    await loadClientRulesByCode(rulesClientCode);
+  };
+
+  const handleRulesClientChange = (nextClientCode: string) => {
+    setRulesClientCode(nextClientCode);
+    setRulesError(null);
+    setRulesMessage(null);
+    if (nextClientCode.trim()) {
+      void loadClientRulesByCode(nextClientCode);
     }
   };
 
@@ -21516,7 +21543,7 @@ const CombustibleRunsPage: React.FC = () => {
               <span>Cliente</span>
               <select
                 value={rulesClientCode}
-                onChange={(event) => setRulesClientCode(event.target.value)}
+                onChange={(event) => handleRulesClientChange(event.target.value)}
               >
                 <option value="">Seleccionar cliente</option>
                 {clientOptions.map((option) => (

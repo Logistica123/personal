@@ -1756,21 +1756,29 @@ class LiquidacionRunController extends Controller
     public function showClientRules(string $clientCode)
     {
         $normalizedClientCode = $this->normalizeClientCode($clientCode);
-        $rule = LiquidacionClientRule::query()
+        $exactRule = LiquidacionClientRule::query()
             ->where('client_code', $normalizedClientCode)
             ->first();
+        $effectiveRule = $this->resolveActiveClientRuleRecord($normalizedClientCode);
 
         $resolved = $this->resolveClientRuleSet($normalizedClientCode);
+        $source = (string) ($resolved['source'] ?? 'default');
+        $resolvedRule = $source === 'client_fallback'
+            ? $effectiveRule
+            : ($source === 'client' ? $effectiveRule : null);
+        $recordForResponse = $resolvedRule ?? $exactRule;
+        $exists = $recordForResponse !== null;
 
         return response()->json([
             'data' => [
                 'clientCode' => $normalizedClientCode,
-                'exists' => $rule !== null,
-                'active' => $rule?->active ?? false,
-                'rules' => $rule?->rules_json ?? null,
+                'exists' => $exists,
+                'active' => $recordForResponse?->active ?? false,
+                'rules' => $recordForResponse?->rules_json ?? null,
                 'resolvedRules' => $resolved['rules'],
-                'source' => $resolved['source'],
-                'updatedAt' => $rule?->updated_at?->toIso8601String(),
+                'source' => $source,
+                'matchedClientCode' => $recordForResponse?->client_code,
+                'updatedAt' => $recordForResponse?->updated_at?->toIso8601String(),
             ],
         ]);
     }
