@@ -655,6 +655,7 @@ type PendingPersonalUpload = {
   typeId: number;
   typeName: string | null;
   fechaVencimiento: string | null;
+  visualClient?: string | null;
   previewUrl?: string | null;
 };
 
@@ -734,6 +735,7 @@ const FORTNIGHT_FILTER_OPTIONS = [
 
 const DOCUMENT_ALERT_DAYS = 30;
 const LIQUIDACIONES_PERIOD_SELECTION_STORAGE_KEY = 'liquidaciones.periodSelection';
+const LIQUIDACIONES_VISUAL_CLIENT_STORAGE_KEY = 'liquidaciones.visualClientByDocument';
 
 const PERFIL_DISPLAY_LABELS: Record<number, string> = {
   1: 'Transportista',
@@ -788,6 +790,53 @@ const readStoredLiquidacionesPeriodSelection = (): { month: string; fortnight: s
     return { month, fortnight };
   } catch {
     return fallback;
+  }
+};
+
+const readStoredLiquidacionesVisualClient = (): Record<number, string> => {
+  if (typeof window === 'undefined') {
+    return {};
+  }
+
+  try {
+    const raw = window.localStorage.getItem(LIQUIDACIONES_VISUAL_CLIENT_STORAGE_KEY);
+    if (!raw) {
+      return {};
+    }
+
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    const next: Record<number, string> = {};
+    Object.entries(parsed ?? {}).forEach(([key, value]) => {
+      const numericKey = Number(key);
+      const label = typeof value === 'string' ? value.trim() : '';
+      if (!Number.isInteger(numericKey) || numericKey <= 0 || !label) {
+        return;
+      }
+      next[numericKey] = label;
+    });
+    return next;
+  } catch {
+    return {};
+  }
+};
+
+const writeStoredLiquidacionesVisualClient = (value: Record<number, string>) => {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  try {
+    const payload: Record<string, string> = {};
+    Object.entries(value).forEach(([key, label]) => {
+      const normalizedLabel = typeof label === 'string' ? label.trim() : '';
+      if (!normalizedLabel) {
+        return;
+      }
+      payload[String(key)] = normalizedLabel;
+    });
+    window.localStorage.setItem(LIQUIDACIONES_VISUAL_CLIENT_STORAGE_KEY, JSON.stringify(payload));
+  } catch {
+    // ignore storage failures
   }
 };
 
@@ -23331,6 +23380,11 @@ const LiquidacionesPage: React.FC = () => {
   const [listImporteDrafts, setListImporteDrafts] = useState<Record<number, string>>({});
   const [listImporteSavingIds, setListImporteSavingIds] = useState<Set<number>>(() => new Set());
   const [selectedPersonaId, setSelectedPersonaId] = useState<number | null>(personaIdFromRoute);
+  const [selectedLiquidacionPersonaIds, setSelectedLiquidacionPersonaIds] = useState<Set<number>>(() => new Set());
+  const [liquidacionVisualClientInput, setLiquidacionVisualClientInput] = useState('');
+  const [liquidacionVisualClientByDocId, setLiquidacionVisualClientByDocId] = useState<Record<number, string>>(
+    () => readStoredLiquidacionesVisualClient()
+  );
   const [liquidacionRecipientType, setLiquidacionRecipientType] = useState<'proveedor' | 'cobrador' | 'ambos'>('proveedor');
   const [detail, setDetail] = useState<PersonalDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
@@ -23659,6 +23713,7 @@ const LiquidacionesPage: React.FC = () => {
     pagosColumnOptions,
     visiblePagosColumns,
   ]);
+  const listTableColumnCount = listVisibleColumnCount + (isPagosView ? 0 : 1);
   const isListColumnVisible = useCallback(
     (key: string) =>
       isPagosView ? visiblePagosColumns[key] !== false : visibleLiquidacionesColumns[key] !== false,
@@ -23675,6 +23730,23 @@ const LiquidacionesPage: React.FC = () => {
   useEffect(() => {
     setLiquidacionRecipientType('ambos');
   }, [selectedPersonaId]);
+
+  useEffect(() => {
+    setSelectedLiquidacionPersonaIds((prev) => {
+      if (prev.size === 0) {
+        return prev;
+      }
+
+      const validIds = new Set(personal.map((registro) => registro.id));
+      const next = new Set<number>();
+      prev.forEach((id) => {
+        if (validIds.has(id)) {
+          next.add(id);
+        }
+      });
+      return next.size === prev.size ? prev : next;
+    });
+  }, [personal]);
 
   useEffect(() => {
     if (showPasteModal) {
@@ -23698,6 +23770,10 @@ const LiquidacionesPage: React.FC = () => {
       // ignore storage failures (private mode, quota, etc)
     }
   }, [liquidacionMonthSelection, liquidacionFortnightSelection]);
+
+  useEffect(() => {
+    writeStoredLiquidacionesVisualClient(liquidacionVisualClientByDocId);
+  }, [liquidacionVisualClientByDocId]);
 
   const selectedDocumentType = useMemo(() => {
     if (!selectedDocumentTypeId) {
@@ -23824,6 +23900,56 @@ const LiquidacionesPage: React.FC = () => {
     []
   );
 
+  const shouldSuppressLiquidacionValidationError = useCallback((message?: string | null): boolean => {
+    const normalized = (message ?? '').trim().toLowerCase();
+    if (!normalized) {
+      return false;
+    }
+
+    return [
+      'patente asociada',
+      'cuil',
+      'cbu',
+      'importe facturado es incorrecto',
+      'tesseract',
+      'tessdata',
+      'traineddata',
+      'pixreadstream',
+      'failed loading language',
+      'error opening data file',
+    ].some((token) => normalized.includes(token));
+  }, []);
+
+  const resolveValidationFeedback = useCallback(
+    (
+      status: { type: 'success' | 'error'; message: string } | null,
+      fallbackSuccessMessage: string
+    ): {
+      visibleValidation: { type: 'success' | 'error'; message: string } | null;
+      uploadFeedback: { type: 'success' | 'error'; message: string };
+    } => {
+      if (!status) {
+        return {
+          visibleValidation: null,
+          uploadFeedback: { type: 'success', message: fallbackSuccessMessage },
+        };
+      }
+
+      if (status.type === 'error' && shouldSuppressLiquidacionValidationError(status.message)) {
+        return {
+          visibleValidation: null,
+          uploadFeedback: { type: 'success', message: fallbackSuccessMessage },
+        };
+      }
+
+      return {
+        visibleValidation: status,
+        uploadFeedback: status,
+      };
+    },
+    [shouldSuppressLiquidacionValidationError]
+  );
+
   useEffect(() => {
     if (personaIdFromRoute !== selectedPersonaId) {
       setSelectedPersonaId(personaIdFromRoute);
@@ -23921,7 +24047,10 @@ const LiquidacionesPage: React.FC = () => {
     (doc: LiquidacionDocument) => {
       const domain = normalizeDomainValue(detail?.patente ?? null);
       if (!domain) {
-        window.alert('Este personal no tiene patente asociada.');
+        setFuelPreview(null);
+        setFuelSelection(new Set());
+        setFuelPreviewError(null);
+        setFuelPreviewMessage(null);
         return;
       }
       const selectedRange = resolveFuelRange(liquidacionMonthSelection, liquidacionFortnightSelection);
@@ -24841,7 +24970,12 @@ const LiquidacionesPage: React.FC = () => {
           return false;
         }
       }
-      if (clienteFilter && registro.cliente !== clienteFilter) {
+      const liquidacionId = typeof registro.liquidacionIdLatest === 'number' ? registro.liquidacionIdLatest : null;
+      const visualClient = liquidacionId ? liquidacionVisualClientByDocId[liquidacionId] : null;
+      const effectiveClientLabel =
+        (typeof visualClient === 'string' && visualClient.trim().length > 0 ? visualClient.trim() : null)
+        ?? registro.cliente;
+      if (clienteFilter && effectiveClientLabel !== clienteFilter) {
         return false;
       }
 
@@ -24899,7 +25033,7 @@ const LiquidacionesPage: React.FC = () => {
         registro.cuil,
         registro.telefono,
         registro.email,
-        registro.cliente,
+        effectiveClientLabel,
         registro.unidad,
         registro.unidadDetalle,
         registro.sucursal,
@@ -24956,6 +25090,7 @@ const LiquidacionesPage: React.FC = () => {
     liquidacionFortnightFilter,
     liquidacionesSortMode,
     perfilNames,
+    liquidacionVisualClientByDocId,
   ]);
 
   const handleExportPagos = useCallback(() => {
@@ -24985,7 +25120,16 @@ const LiquidacionesPage: React.FC = () => {
       { header: 'Perfil', resolve: (registro) => getPerfilDisplayLabel(registro.perfilValue ?? null, registro.perfil ?? '') },
       { header: 'Agente', resolve: (registro) => registro.agente ?? '' },
       { header: 'Estado', resolve: (registro) => registro.estado ?? '' },
-      { header: 'Cliente', resolve: (registro) => registro.cliente ?? '' },
+      {
+        header: 'Cliente',
+        resolve: (registro) => {
+          const liquidacionId = typeof registro.liquidacionIdLatest === 'number' ? registro.liquidacionIdLatest : null;
+          const visualClient = liquidacionId ? liquidacionVisualClientByDocId[liquidacionId] : null;
+          return (typeof visualClient === 'string' && visualClient.trim().length > 0 ? visualClient.trim() : null)
+            ?? registro.cliente
+            ?? '';
+        },
+      },
       { header: 'Unidad', resolve: (registro) => registro.unidad ?? '' },
       { header: 'Sucursal', resolve: (registro) => registro.sucursal ?? '' },
       { header: 'Fecha alta', resolve: (registro) => registro.fechaAlta ?? '' },
@@ -25024,7 +25168,7 @@ const LiquidacionesPage: React.FC = () => {
     link.click();
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
-  }, [filteredPersonal, listRecords]);
+  }, [filteredPersonal, liquidacionVisualClientByDocId, listRecords]);
 
   useEffect(() => {
     setCurrentPage(1);
@@ -25108,11 +25252,195 @@ const LiquidacionesPage: React.FC = () => {
   const allListPagadoSelected =
     visibleListPagadoIds.length > 0 && visibleListPagadoIds.every((id) => selectedListPagadoIds.has(id));
 
-  const clienteOptions = useMemo(
-    () =>
-      Array.from(new Set(personal.map((registro) => registro.cliente).filter((value): value is string => Boolean(value)))).sort(),
-    [personal]
+  const visibleLiquidacionPersonaIds = useMemo(() => {
+    if (isPagosView) {
+      return [] as number[];
+    }
+
+    const ids: number[] = [];
+    const seen = new Set<number>();
+    pageRecords.forEach((registro) => {
+      if (!seen.has(registro.id)) {
+        seen.add(registro.id);
+        ids.push(registro.id);
+      }
+    });
+    return ids;
+  }, [isPagosView, pageRecords]);
+
+  const allVisibleLiquidacionSelected =
+    visibleLiquidacionPersonaIds.length > 0 &&
+    visibleLiquidacionPersonaIds.every((id) => selectedLiquidacionPersonaIds.has(id));
+
+  const selectedLiquidacionQueueIds = useMemo(() => {
+    if (selectedLiquidacionPersonaIds.size === 0 || isPagosView) {
+      return [] as number[];
+    }
+
+    const selected = selectedLiquidacionPersonaIds;
+    const ordered = filteredPersonal
+      .map((registro) => registro.id)
+      .filter((id, index, source) => source.indexOf(id) === index)
+      .filter((id) => selected.has(id));
+
+    if (ordered.length === selected.size) {
+      return ordered;
+    }
+
+    const missing = Array.from(selected).filter((id) => !ordered.includes(id));
+    return [...ordered, ...missing];
+  }, [filteredPersonal, isPagosView, selectedLiquidacionPersonaIds]);
+
+  const selectedLiquidacionQueueRecords = useMemo(() => {
+    if (selectedLiquidacionQueueIds.length === 0) {
+      return [] as PersonalRecord[];
+    }
+
+    const byId = new Map<number, PersonalRecord>();
+    listRecords.forEach((registro) => {
+      if (!byId.has(registro.id)) {
+        byId.set(registro.id, registro);
+      }
+    });
+    personal.forEach((registro) => {
+      if (!byId.has(registro.id)) {
+        byId.set(registro.id, registro);
+      }
+    });
+
+    return selectedLiquidacionQueueIds
+      .map((id) => byId.get(id) ?? null)
+      .filter((registro): registro is PersonalRecord => Boolean(registro));
+  }, [listRecords, personal, selectedLiquidacionQueueIds]);
+
+  const selectedLiquidacionQueuePreview = useMemo(() => {
+    const names = selectedLiquidacionQueueRecords
+      .map((registro) => registro.nombre ?? `ID ${registro.id}`)
+      .filter((value) => value.trim().length > 0);
+
+    if (names.length === 0) {
+      return {
+        compact: '',
+        full: '',
+      };
+    }
+
+    if (names.length <= 2) {
+      const label = `Lista: ${names.join(' · ')}`;
+      return {
+        compact: label,
+        full: label,
+      };
+    }
+
+    return {
+      compact: `Lista: ${names[0]} · ${names[1]} +${names.length - 2} más`,
+      full: `Lista: ${names.join(' · ')}`,
+    };
+  }, [selectedLiquidacionQueueRecords]);
+
+  const currentLiquidacionQueueIndex = useMemo(() => {
+    if (!selectedPersonaId || selectedLiquidacionQueueIds.length === 0) {
+      return -1;
+    }
+    return selectedLiquidacionQueueIds.indexOf(selectedPersonaId);
+  }, [selectedLiquidacionQueueIds, selectedPersonaId]);
+
+  const nextLiquidacionQueuePersonaId =
+    currentLiquidacionQueueIndex >= 0
+      ? selectedLiquidacionQueueIds[currentLiquidacionQueueIndex + 1] ?? null
+      : null;
+
+  const toggleLiquidacionPersonaSelection = useCallback((personaId: number) => {
+    setSelectedLiquidacionPersonaIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(personaId)) {
+        next.delete(personaId);
+      } else {
+        next.add(personaId);
+      }
+      return next;
+    });
+  }, []);
+
+  const toggleVisibleLiquidacionSelection = useCallback(() => {
+    if (visibleLiquidacionPersonaIds.length === 0) {
+      return;
+    }
+
+    setSelectedLiquidacionPersonaIds((prev) => {
+      const next = new Set(prev);
+      const allSelected = visibleLiquidacionPersonaIds.every((id) => next.has(id));
+      if (allSelected) {
+        visibleLiquidacionPersonaIds.forEach((id) => next.delete(id));
+      } else {
+        visibleLiquidacionPersonaIds.forEach((id) => next.add(id));
+      }
+      return next;
+    });
+  }, [visibleLiquidacionPersonaIds]);
+
+  const clearLiquidacionQueueSelection = useCallback(() => {
+    setSelectedLiquidacionPersonaIds(new Set());
+  }, []);
+
+  const normalizeVisualClientLabel = useCallback((value?: string | null): string | null => {
+    const normalized = (value ?? '').trim();
+    return normalized.length > 0 ? normalized : null;
+  }, []);
+
+  const resolveRecordVisualClient = useCallback(
+    (registro: PersonalRecord): string | null => {
+      const liquidacionId = typeof registro.liquidacionIdLatest === 'number' ? registro.liquidacionIdLatest : null;
+      if (!liquidacionId) {
+        return null;
+      }
+      const mapped = liquidacionVisualClientByDocId[liquidacionId];
+      return typeof mapped === 'string' && mapped.trim().length > 0 ? mapped.trim() : null;
+    },
+    [liquidacionVisualClientByDocId]
   );
+
+  const applyVisualClientToDocument = useCallback(
+    (documentId: number | null | undefined, label?: string | null) => {
+      const normalizedLabel = normalizeVisualClientLabel(label);
+      if (!documentId || !Number.isInteger(documentId)) {
+        return;
+      }
+
+      setLiquidacionVisualClientByDocId((prev) => {
+        const currentValue = prev[documentId];
+        if (!normalizedLabel) {
+          if (!currentValue) {
+            return prev;
+          }
+          const next = { ...prev };
+          delete next[documentId];
+          return next;
+        }
+
+        if (currentValue === normalizedLabel) {
+          return prev;
+        }
+        return {
+          ...prev,
+          [documentId]: normalizedLabel,
+        };
+      });
+    },
+    [normalizeVisualClientLabel]
+  );
+
+  const clienteOptions = useMemo(() => {
+    const baseClients = personal
+      .map((registro) => registro.cliente)
+      .filter((value): value is string => Boolean(value));
+    const visualClients = listRecords
+      .map((registro) => resolveRecordVisualClient(registro))
+      .filter((value): value is string => Boolean(value));
+
+    return Array.from(new Set([...baseClients, ...visualClients])).sort();
+  }, [listRecords, personal, resolveRecordVisualClient]);
   const sucursalOptions = useMemo(
     () =>
       Array.from(new Set(personal.map((registro) => registro.sucursal).filter((value): value is string => Boolean(value)))).sort(),
@@ -25839,7 +26167,76 @@ const LiquidacionesPage: React.FC = () => {
     });
     pendingPreviewUrlsRef.current = [];
     closePreviewModal();
+    setLiquidacionVisualClientInput('');
   }, [closePreviewModal]);
+
+  const openQueuedPersona = useCallback(
+    (personaId: number) => {
+      setSelectedPersonaId(personaId);
+      clearPendingUploads();
+      setUploadStatus(null);
+      setDocumentExpiry('');
+      navigate(`/liquidaciones/${personaId}`);
+    },
+    [clearPendingUploads, navigate]
+  );
+
+  const advanceToNextQueuedPersona = useCallback(
+    (actionLabel: 'guardada' | 'subida') => {
+      if (isPagosView || !selectedPersonaId || selectedLiquidacionQueueIds.length === 0) {
+        return false;
+      }
+
+      const currentIndex = selectedLiquidacionQueueIds.indexOf(selectedPersonaId);
+      if (currentIndex === -1) {
+        return false;
+      }
+
+      const nextId = selectedLiquidacionQueueIds[currentIndex + 1] ?? null;
+      const nextRecord = nextId != null
+        ? selectedLiquidacionQueueRecords.find((record) => record.id === nextId) ?? null
+        : null;
+
+      setSelectedLiquidacionPersonaIds((prev) => {
+        if (!prev.has(selectedPersonaId)) {
+          return prev;
+        }
+        const next = new Set(prev);
+        next.delete(selectedPersonaId);
+        return next;
+      });
+
+      if (nextId != null) {
+        openQueuedPersona(nextId);
+        setUploadStatus({
+          type: 'success',
+          message: `Liquidación ${actionLabel} correctamente. Se abrió el siguiente marcado: ${nextRecord?.nombre ?? `ID ${nextId}`}.`,
+        });
+      } else {
+        setSelectedPersonaId(null);
+        setDetail(null);
+        setDetailError(null);
+        clearPendingUploads();
+        setDocumentExpiry('');
+        navigate('/liquidaciones');
+        setUploadStatus({
+          type: 'success',
+          message: `Liquidación ${actionLabel} correctamente. Lote completado.`,
+        });
+      }
+
+      return true;
+    },
+    [
+      clearPendingUploads,
+      isPagosView,
+      navigate,
+      openQueuedPersona,
+      selectedLiquidacionQueueIds,
+      selectedLiquidacionQueueRecords,
+      selectedPersonaId,
+    ]
+  );
 
   const prepareUploadsFromFiles = useCallback(
     (files: File[]): { ok: true; uploads: PendingPersonalUpload[] } | { ok: false; message: string } => {
@@ -25867,6 +26264,7 @@ const LiquidacionesPage: React.FC = () => {
     }
 
     const fechaVencimiento = targetDate ?? (tipo?.vence ? documentExpiry || null : null);
+    const visualClient = normalizeVisualClientLabel(liquidacionVisualClientInput);
 
     const uploads: PendingPersonalUpload[] = files.map((file) => ({
       id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
@@ -25874,6 +26272,7 @@ const LiquidacionesPage: React.FC = () => {
       typeId: effectiveTypeId,
       typeName: tipo?.nombre ?? null,
       fechaVencimiento,
+      visualClient,
       previewUrl: createImagePreviewUrl(file),
     }));
 
@@ -25884,6 +26283,8 @@ const LiquidacionesPage: React.FC = () => {
       selectedDocumentTypeId,
       selectedDocumentType,
       documentExpiry,
+      liquidacionVisualClientInput,
+      normalizeVisualClientLabel,
       resolveFilteredTargetDate,
     ]
   );
@@ -26279,19 +26680,13 @@ const LiquidacionesPage: React.FC = () => {
           }
         }
 
-        if (validationStatus) {
-          setValidationStatus(validationStatus);
-        }
-
         if (!options?.silent) {
-          setUploadStatus(
-            validationStatus ?? {
-              type: 'success',
-              message: options?.pending
-                ? 'Factura de combustible guardada. Se publicará al subir las liquidaciones.'
-                : 'Factura de combustible cargada correctamente.',
-            }
-          );
+          const fallbackSuccessMessage = options?.pending
+            ? 'Factura de combustible guardada. Se publicará al subir las liquidaciones.'
+            : 'Factura de combustible cargada correctamente.';
+          const feedback = resolveValidationFeedback(validationStatus, fallbackSuccessMessage);
+          setValidationStatus(feedback.visibleValidation);
+          setUploadStatus(feedback.uploadFeedback);
         }
 
         if (fuelInvoiceUpload.previewUrl) {
@@ -26317,6 +26712,7 @@ const LiquidacionesPage: React.FC = () => {
       fuelParentDocumentId,
       isPdfFile,
       refreshPersonaDetail,
+      resolveValidationFeedback,
       selectedPersonaId,
     ]
   );
@@ -26375,6 +26771,7 @@ const LiquidacionesPage: React.FC = () => {
         await publishPendingDocuments();
         setUploadStatus({ type: 'success', message: 'Liquidaciones publicadas correctamente.' });
         refreshPersonaDetail();
+        advanceToNextQueuedPersona('subida');
       } catch (err) {
         setUploadStatus({ type: 'error', message: (err as Error).message ?? 'No se pudieron publicar las liquidaciones.' });
       } finally {
@@ -26462,6 +26859,7 @@ const LiquidacionesPage: React.FC = () => {
         if (parentDocumentId === null && payload?.data?.id) {
           parentDocumentId = payload.data.id;
         }
+        applyVisualClientToDocument(payload?.data?.id ?? null, item.visualClient ?? null);
 
         if (payload?.data?.id && isPdfFile(item.file)) {
           try {
@@ -26570,13 +26968,13 @@ const LiquidacionesPage: React.FC = () => {
         await publishPendingDocuments();
       }
 
-      if (validationStatus) {
-        setValidationStatus(validationStatus);
-      }
-      setUploadStatus(validationStatus ?? { type: 'success', message: 'Liquidaciones cargadas correctamente.' });
+      const uploadFeedback = resolveValidationFeedback(validationStatus, 'Liquidaciones cargadas correctamente.');
+      setValidationStatus(uploadFeedback.visibleValidation);
+      setUploadStatus(uploadFeedback.uploadFeedback);
       clearPendingUploads();
       setDocumentExpiry('');
       refreshPersonaDetail();
+      advanceToNextQueuedPersona('subida');
     } catch (err) {
       setUploadStatus({ type: 'error', message: (err as Error).message ?? 'No se pudieron subir los archivos.' });
     } finally {
@@ -26654,6 +27052,7 @@ const LiquidacionesPage: React.FC = () => {
 
         try {
           const payload = (await response.json()) as { data?: { id?: number } };
+          applyVisualClientToDocument(payload?.data?.id ?? null, item.visualClient ?? null);
           if (payload?.data?.id) {
             lastSavedId = payload.data.id;
             if (isPdfFile(item.file)) {
@@ -26716,21 +27115,19 @@ const LiquidacionesPage: React.FC = () => {
         }
       }
 
-      if (validationStatus) {
-        setValidationStatus(validationStatus);
-      }
-      setUploadStatus(
-        validationStatus ?? {
-          type: 'success',
-          message: 'Liquidaciones guardadas. Se publicarán al subir las liquidaciones.',
-        }
+      const uploadFeedback = resolveValidationFeedback(
+        validationStatus,
+        'Liquidaciones guardadas. Se publicarán al subir las liquidaciones.'
       );
+      setValidationStatus(uploadFeedback.visibleValidation);
+      setUploadStatus(uploadFeedback.uploadFeedback);
       if (lastSavedId) {
         setFuelParentDocumentId(String(lastSavedId));
       }
       clearPendingUploads();
       setDocumentExpiry('');
       refreshPersonaDetail();
+      advanceToNextQueuedPersona('guardada');
     } catch (err) {
       setUploadStatus({ type: 'error', message: (err as Error).message ?? 'No se pudieron guardar las liquidaciones.' });
     } finally {
@@ -26805,6 +27202,14 @@ const LiquidacionesPage: React.FC = () => {
       }
 
       setUploadStatus({ type: 'success', message: 'Documento eliminado correctamente.' });
+      setLiquidacionVisualClientByDocId((prev) => {
+        if (!prev[docId]) {
+          return prev;
+        }
+        const next = { ...prev };
+        delete next[docId];
+        return next;
+      });
       await refreshPersonaDetail({ silent: true });
     } catch (err) {
       const message = (err as Error).message ?? 'No se pudo eliminar el documento.';
@@ -26951,6 +27356,34 @@ const LiquidacionesPage: React.FC = () => {
         <button type="button" className="secondary-action" onClick={clearFilters}>
           Limpiar
         </button>
+        {!isPagosView ? (
+          <button
+            type="button"
+            className="secondary-action"
+            onClick={toggleVisibleLiquidacionSelection}
+            disabled={visibleLiquidacionPersonaIds.length === 0}
+          >
+            {allVisibleLiquidacionSelected ? 'Desmarcar página' : 'Marcar página'}
+          </button>
+        ) : null}
+        {!isPagosView ? (
+          <button
+            type="button"
+            className="secondary-action secondary-action--ghost"
+            onClick={clearLiquidacionQueueSelection}
+            disabled={selectedLiquidacionPersonaIds.size === 0}
+          >
+            Limpiar lote
+          </button>
+        ) : null}
+        {!isPagosView && selectedLiquidacionPersonaIds.size > 0 ? (
+          <span className="form-info">{`Lote: ${selectedLiquidacionPersonaIds.size} marcado${selectedLiquidacionPersonaIds.size === 1 ? '' : 's'}`}</span>
+        ) : null}
+        {!isPagosView && selectedLiquidacionQueueRecords.length > 0 ? (
+          <span className="form-info" title={selectedLiquidacionQueuePreview.full}>
+            {selectedLiquidacionQueuePreview.compact}
+          </span>
+        ) : null}
         {isPagosView ? (
           <div className="column-picker">
             <button
@@ -27226,6 +27659,17 @@ const LiquidacionesPage: React.FC = () => {
         <table>
           <thead>
             <tr>
+              {!isPagosView ? (
+                <th>
+                  <input
+                    type="checkbox"
+                    aria-label="Seleccionar distribuidores de la página"
+                    checked={allVisibleLiquidacionSelected}
+                    onChange={toggleVisibleLiquidacionSelection}
+                    disabled={visibleLiquidacionPersonaIds.length === 0}
+                  />
+                </th>
+              ) : null}
               {isListColumnVisible('id') ? <th>ID</th> : null}
               {isListColumnVisible('nombre') ? <th>Nombre</th> : null}
               {isListColumnVisible('cuil') ? <th>CUIL</th> : null}
@@ -27255,13 +27699,13 @@ const LiquidacionesPage: React.FC = () => {
           <tbody>
             {loading && (
               <tr>
-                <td colSpan={listVisibleColumnCount}>Cargando personal...</td>
+                <td colSpan={listTableColumnCount}>Cargando personal...</td>
               </tr>
             )}
 
             {error && !loading && (
               <tr>
-                <td colSpan={listVisibleColumnCount} className="error-cell">
+                <td colSpan={listTableColumnCount} className="error-cell">
                   {error}
                 </td>
               </tr>
@@ -27269,7 +27713,7 @@ const LiquidacionesPage: React.FC = () => {
 
             {!loading && !error && filteredPersonal.length === 0 && (
               <tr>
-                <td colSpan={listVisibleColumnCount}>No hay registros para mostrar.</td>
+                <td colSpan={listTableColumnCount}>No hay registros para mostrar.</td>
               </tr>
             )}
 
@@ -27277,6 +27721,16 @@ const LiquidacionesPage: React.FC = () => {
               !error &&
               pageRecords.map((registro) => (
                 <tr key={registro.rowId ?? registro.id}>
+                  {!isPagosView ? (
+                    <td>
+                      <input
+                        type="checkbox"
+                        aria-label={`Agregar ${registro.nombre ?? `ID ${registro.id}`} al lote`}
+                        checked={selectedLiquidacionPersonaIds.has(registro.id)}
+                        onChange={() => toggleLiquidacionPersonaSelection(registro.id)}
+                      />
+                    </td>
+                  ) : null}
                   {isListColumnVisible('id') ? <td>{registro.id}</td> : null}
                   {isListColumnVisible('nombre') ? <td>{registro.nombre ?? '—'}</td> : null}
                   {isListColumnVisible('cuil') ? <td>{registro.cuil ?? '—'}</td> : null}
@@ -27294,7 +27748,23 @@ const LiquidacionesPage: React.FC = () => {
                   {isListColumnVisible('estado') ? <td>{registro.estado ?? '—'}</td> : null}
                   {isListColumnVisible('combustible') ? <td>{registro.combustible ?? '—'}</td> : null}
                   {isListColumnVisible('tarifaEspecial') ? <td>{registro.tarifaEspecial ?? '—'}</td> : null}
-                  {isListColumnVisible('cliente') ? <td>{registro.cliente ?? '—'}</td> : null}
+                  {isListColumnVisible('cliente') ? (
+                    <td>
+                      {(() => {
+                        const visualClient = resolveRecordVisualClient(registro);
+                        const defaultClient = registro.cliente ?? null;
+                        const effectiveClient = visualClient ?? defaultClient;
+
+                        if (!effectiveClient) {
+                          return '—';
+                        }
+
+                        return visualClient && visualClient !== defaultClient
+                          ? `${effectiveClient} (visual)`
+                          : effectiveClient;
+                      })()}
+                    </td>
+                  ) : null}
                   {isListColumnVisible('unidad') ? <td>{registro.unidad ?? '—'}</td> : null}
                   {isListColumnVisible('sucursal') ? <td>{registro.sucursal ?? '—'}</td> : null}
                   {isListColumnVisible('fechaAlta') ? <td>{registro.fechaAlta ?? '—'}</td> : null}
@@ -27410,7 +27880,11 @@ const LiquidacionesPage: React.FC = () => {
           </button>
         </div>
       </footer>
-      <p className="form-info">Seleccioná un registro para gestionarlo en una nueva página.</p>
+      <p className="form-info">
+        {!isPagosView
+          ? 'Marcá distribuidores para armar un lote masivo. Al guardar o subir una liquidación, se abrirá el siguiente marcado.'
+          : 'Seleccioná un registro para gestionarlo en una nueva página.'}
+      </p>
     </DashboardLayout>
   );
 
@@ -27439,6 +27913,24 @@ const LiquidacionesPage: React.FC = () => {
             : `Gestioná las liquidaciones de ${selectedPersonaLabel ?? 'este personal'}.`}
         </p>
         {detailError ? <p className="form-info form-info--error">{detailError}</p> : null}
+        {!isPagosView && selectedLiquidacionQueueIds.length > 0 ? (
+          <div className="filters-actions" style={{ marginBottom: '0.75rem' }}>
+            <span className="form-info">
+              {currentLiquidacionQueueIndex >= 0
+                ? `Lote activo: ${currentLiquidacionQueueIndex + 1}/${selectedLiquidacionQueueIds.length}`
+                : `Lote activo: ${selectedLiquidacionQueueIds.length} marcado${selectedLiquidacionQueueIds.length === 1 ? '' : 's'}`}
+            </span>
+            {nextLiquidacionQueuePersonaId != null ? (
+              <button
+                type="button"
+                className="secondary-action"
+                onClick={() => openQueuedPersona(nextLiquidacionQueuePersonaId)}
+              >
+                Ir al siguiente marcado
+              </button>
+            ) : null}
+          </div>
+        ) : null}
 
         {detail && liquidacionRecipientOptions.length > 0 ? (
           <>
@@ -27593,6 +28085,11 @@ const LiquidacionesPage: React.FC = () => {
                                 <td>
                                   <div style={{ fontSize: '0.85rem', color: '#6b7a90' }}>{`ID ${group.main.id}`}</div>
                                   <div>{group.main.nombre ?? `Documento #${group.main.id}`}</div>
+                                  {liquidacionVisualClientByDocId[group.main.id] ? (
+                                    <div style={{ fontSize: '0.8rem', color: '#4f5d75' }}>
+                                      Cliente visual: {liquidacionVisualClientByDocId[group.main.id]}
+                                    </div>
+                                  ) : null}
                                 </td>
                                 <td>{group.main.tipoNombre ?? '—'}</td>
                                 <td>
@@ -27772,6 +28269,20 @@ const LiquidacionesPage: React.FC = () => {
             )}
           </label>
           <label className="input-control">
+            <span>Cliente visual (solo filtro liquidaciones)</span>
+            <input
+              value={liquidacionVisualClientInput}
+              onChange={(event) => setLiquidacionVisualClientInput(event.target.value)}
+              list="liquidaciones-cliente-visual-options"
+              placeholder="Opcional. No cambia Proveedores."
+            />
+            <datalist id="liquidaciones-cliente-visual-options">
+              {clienteOptions.map((option) => (
+                <option key={`cliente-visual-option-${option}`} value={option} />
+              ))}
+            </datalist>
+          </label>
+          <label className="input-control">
             <span>Importe a facturar</span>
             <input
               type="number"
@@ -27880,6 +28391,7 @@ const LiquidacionesPage: React.FC = () => {
                   <div>
                     <strong>{item.file.name}</strong>
                     <span>{item.typeName ?? 'Sin tipo asignado'}</span>
+                    {item.visualClient ? <span>Cliente visual: {item.visualClient}</span> : null}
                     {item.fechaVencimiento ? <span>Vence: {item.fechaVencimiento}</span> : null}
                   </div>
                   <button
