@@ -14,6 +14,7 @@ use App\Models\LiquidacionObservation;
 use App\Models\LiquidacionPublishJob;
 use App\Models\LiquidacionStagingRow;
 use App\Models\LiquidacionValidationResult;
+use App\Models\Cliente;
 use App\Models\Persona;
 use App\Services\Erp\ErpClient;
 use App\Services\AuditLogger;
@@ -661,11 +662,13 @@ class LiquidacionRunController extends Controller
         $autoObservations = array_key_exists('auto_observations', $validated)
             ? (bool) $validated['auto_observations']
             : true;
+        $normalizedClientCode = $this->normalizeClientCode($validated['client_code'] ?? null)
+            ?? strtoupper(trim((string) ($validated['client_code'] ?? '')));
 
-        $run = DB::transaction(function () use ($validated, $request, $autoObservations) {
+        $run = DB::transaction(function () use ($validated, $request, $autoObservations, $normalizedClientCode) {
             $run = LiquidacionImportRun::query()->create([
                 'source_system' => $validated['source_system'] ?? 'powerbi',
-                'client_code' => $validated['client_code'],
+                'client_code' => $normalizedClientCode,
                 'period_from' => $validated['period_from'] ?? null,
                 'period_to' => $validated['period_to'] ?? null,
                 'source_file_name' => $validated['source_file_name'] ?? null,
@@ -820,7 +823,9 @@ class LiquidacionRunController extends Controller
 
         $sheet = $this->normalizeNullableString($validated['sheet'] ?? null);
         $format = $this->normalizeNullableString($validated['format'] ?? null);
-        $isEpsaMode = $this->isEpsaUploadMode($validated['client_code'] ?? null, $format);
+        $normalizedClientCode = $this->normalizeClientCode($validated['client_code'] ?? null)
+            ?? strtoupper(trim((string) ($validated['client_code'] ?? '')));
+        $isEpsaMode = $this->isEpsaUploadMode($normalizedClientCode, $format);
         if ($isEpsaMode && $extension !== 'csv') {
             $sheet = 'Table';
         }
@@ -857,14 +862,14 @@ class LiquidacionRunController extends Controller
 
         $prepared = $isEpsaMode
             ? $this->prepareEpsaUploadStagingAndValidations($mapping['columns'], $mapping['rows'], [
-                'client_code' => $validated['client_code'] ?? null,
+                'client_code' => $normalizedClientCode,
                 'period_from' => $validated['period_from'] ?? null,
                 'period_to' => $validated['period_to'] ?? null,
                 'mapped_fields' => $mapping['mappedFields'] ?? [],
                 'format' => $mapping['format'] ?? null,
             ])
             : $this->prepareUploadStagingAndValidations($mapping['columns'], $mapping['rows'], [
-                'client_code' => $validated['client_code'] ?? null,
+                'client_code' => $normalizedClientCode,
                 'period_from' => $validated['period_from'] ?? null,
                 'period_to' => $validated['period_to'] ?? null,
                 'mapped_fields' => $mapping['mappedFields'] ?? [],
@@ -882,11 +887,12 @@ class LiquidacionRunController extends Controller
             $prepared,
             $parseMeta,
             $autoObservations,
-            $isEpsaMode
+            $isEpsaMode,
+            $normalizedClientCode
         ) {
             $run = LiquidacionImportRun::query()->create([
                 'source_system' => $validated['source_system'] ?? 'powerbi',
-                'client_code' => $validated['client_code'],
+                'client_code' => $normalizedClientCode,
                 'period_from' => $validated['period_from'] ?? null,
                 'period_to' => $validated['period_to'] ?? null,
                 'source_file_name' => $file->getClientOriginalName(),
@@ -912,7 +918,7 @@ class LiquidacionRunController extends Controller
                         'missingColumns' => $mapping['missingColumns'] ?? [],
                     ],
                     'rules' => [
-                        'clientCode' => $validated['client_code'] ?? null,
+                        'clientCode' => $normalizedClientCode,
                         'source' => $prepared['rules_source'] ?? 'default',
                         'blockingRules' => $prepared['rules']['blocking_rules'] ?? [],
                         'tolerances' => $prepared['rules']['tolerances'] ?? [],
@@ -1756,9 +1762,7 @@ class LiquidacionRunController extends Controller
     public function showClientRules(string $clientCode)
     {
         $normalizedClientCode = $this->normalizeClientCode($clientCode);
-        $exactRule = LiquidacionClientRule::query()
-            ->where('client_code', $normalizedClientCode)
-            ->first();
+        $exactRule = $this->findRuleRecordByExactNormalizedCode($normalizedClientCode);
         $effectiveRule = $this->resolveActiveClientRuleRecord($normalizedClientCode);
 
         $resolved = $this->resolveClientRuleSet($normalizedClientCode);
@@ -1796,15 +1800,16 @@ class LiquidacionRunController extends Controller
         $note = $this->normalizeNullableString($validated['note'] ?? null);
         $rules = is_array($validated['rules']) ? $validated['rules'] : [];
 
-        $record = LiquidacionClientRule::query()->updateOrCreate(
-            ['client_code' => $normalizedClientCode],
-            [
-                'active' => $active,
-                'rules_json' => $rules,
-                'note' => $note,
-                'updated_by' => $request->user()?->id,
-            ]
-        );
+        $record = $this->findRuleRecordByExactNormalizedCode($normalizedClientCode);
+        if (!$record) {
+            $record = new LiquidacionClientRule();
+            $record->client_code = $normalizedClientCode;
+        }
+        $record->active = $active;
+        $record->rules_json = $rules;
+        $record->note = $note;
+        $record->updated_by = $request->user()?->id;
+        $record->save();
 
         $resolved = $this->resolveClientRuleSet($normalizedClientCode);
         AuditLogger::log($request, 'liquidaciones.client_rules.upsert', 'liq_client_rules', $record->id, [
@@ -3001,7 +3006,13 @@ class LiquidacionRunController extends Controller
         }
 
         $record = $this->resolveActiveClientRuleRecord($normalizedClientCode);
-        if (!$record || !is_array($record->rules_json)) {
+        $recordRules = $record?->rules_json;
+        if (is_string($recordRules)) {
+            $decoded = json_decode($recordRules, true);
+            $recordRules = is_array($decoded) ? $decoded : null;
+        }
+
+        if (!$record || !is_array($recordRules)) {
             if ($this->isIntermedioClientCode($normalizedClientCode)) {
                 return [
                     'rules' => $intermedioDefaults,
@@ -3021,7 +3032,7 @@ class LiquidacionRunController extends Controller
         }
 
         $rules = $defaults;
-        $payload = $record->rules_json;
+        $payload = $recordRules;
         if (isset($payload['blocking_rules']) && is_array($payload['blocking_rules'])) {
             $rules['blocking_rules'] = array_merge($rules['blocking_rules'], $payload['blocking_rules']);
         }
@@ -3068,8 +3079,9 @@ class LiquidacionRunController extends Controller
         }
 
         $records = LiquidacionClientRule::query()
-            ->whereIn('client_code', $lookupCodes)
             ->where('active', true)
+            ->orderByDesc('updated_at')
+            ->orderByDesc('id')
             ->get();
         if ($records->isEmpty()) {
             return null;
@@ -3077,11 +3089,16 @@ class LiquidacionRunController extends Controller
 
         $recordsByCode = [];
         foreach ($records as $record) {
-            $code = $this->normalizeClientCode($record->client_code ?? null);
-            if ($code === null || isset($recordsByCode[$code])) {
+            $recordCode = $this->normalizeClientCode($record->client_code ?? null);
+            if ($recordCode === null) {
                 continue;
             }
-            $recordsByCode[$code] = $record;
+            $recordLookupCodes = $this->buildClientRuleLookupCodes($recordCode, false);
+            foreach ($recordLookupCodes as $candidateCode) {
+                if (!isset($recordsByCode[$candidateCode])) {
+                    $recordsByCode[$candidateCode] = $record;
+                }
+            }
         }
 
         foreach ($lookupCodes as $lookupCode) {
@@ -3093,7 +3110,7 @@ class LiquidacionRunController extends Controller
         return null;
     }
 
-    private function buildClientRuleLookupCodes(?string $normalizedClientCode): array
+    private function buildClientRuleLookupCodes(?string $normalizedClientCode, bool $includeClientAliases = true): array
     {
         if ($normalizedClientCode === null) {
             return [];
@@ -3126,7 +3143,72 @@ class LiquidacionRunController extends Controller
             $addCode('EPSA');
         }
 
+        if ($includeClientAliases) {
+            foreach ($this->resolveClientLookupAliases($normalizedClientCode) as $aliasCode) {
+                $addCode($aliasCode);
+            }
+        }
+
         return $codes;
+    }
+
+    private function resolveClientLookupAliases(?string $normalizedClientCode): array
+    {
+        if ($normalizedClientCode === null || !Schema::hasTable('clientes')) {
+            return [];
+        }
+
+        static $cache = [];
+        if (array_key_exists($normalizedClientCode, $cache)) {
+            return $cache[$normalizedClientCode];
+        }
+
+        $aliases = [];
+        $query = Cliente::query()->select(['id', 'codigo', 'nombre']);
+
+        if (preg_match('/^\d+$/', $normalizedClientCode) === 1) {
+            $query->where('id', (int) $normalizedClientCode);
+        } else {
+            $query->whereRaw('UPPER(TRIM(COALESCE(codigo, ""))) = ?', [$normalizedClientCode])
+                ->orWhereRaw('UPPER(TRIM(COALESCE(nombre, ""))) = ?', [$normalizedClientCode]);
+        }
+
+        $client = $query->first();
+        if ($client) {
+            $aliases[] = (string) $client->id;
+            $aliases[] = (string) ($client->codigo ?? '');
+            $aliases[] = (string) ($client->nombre ?? '');
+        }
+
+        $normalizedAliases = [];
+        foreach ($aliases as $alias) {
+            $normalizedAlias = $this->normalizeClientCode($alias);
+            if ($normalizedAlias !== null && !in_array($normalizedAlias, $normalizedAliases, true)) {
+                $normalizedAliases[] = $normalizedAlias;
+            }
+        }
+
+        $cache[$normalizedClientCode] = $normalizedAliases;
+        return $normalizedAliases;
+    }
+
+    private function findRuleRecordByExactNormalizedCode(?string $normalizedClientCode): ?LiquidacionClientRule
+    {
+        if ($normalizedClientCode === null) {
+            return null;
+        }
+
+        $records = LiquidacionClientRule::query()
+            ->orderByDesc('updated_at')
+            ->orderByDesc('id')
+            ->get();
+        foreach ($records as $record) {
+            if ($this->normalizeClientCode($record->client_code ?? null) === $normalizedClientCode) {
+                return $record;
+            }
+        }
+
+        return null;
     }
 
     private function defaultClientRuleSet(): array
