@@ -30551,6 +30551,11 @@ const WorkflowPage: React.FC = () => {
   const [responsableQuery, setResponsableQuery] = useState('');
   const [refreshTick, setRefreshTick] = useState(0);
   const [exporting, setExporting] = useState(false);
+  const [filterAssignedToId, setFilterAssignedToId] = useState('');
+  const [filterAssignedById, setFilterAssignedById] = useState('');
+  const [filterPersonId, setFilterPersonId] = useState('');
+  const [filterAssignedToMe, setFilterAssignedToMe] = useState(false);
+  const [filterAssignedByMe, setFilterAssignedByMe] = useState(false);
   const [deleteHistory, setDeleteHistory] = useState<
     Array<{ taskId: number; title: string; status: WorkflowStatus | null; removedAt: string; removedBy: string | null }>
   >(() => {
@@ -30693,19 +30698,6 @@ const WorkflowPage: React.FC = () => {
     setSelectedResponsibles((prev) => prev.filter((item) => item.id !== id));
   };
 
-  const columns = useMemo(
-    () =>
-      [
-        { status: 'nueva' as WorkflowStatus, title: 'Nueva tarea' },
-        { status: 'proceso' as WorkflowStatus, title: 'En proceso' },
-        { status: 'finalizado' as WorkflowStatus, title: 'Finalizado' },
-      ].map((column) => ({
-        ...column,
-        tasks: tasks.filter((task) => task.status === column.status),
-      })),
-    [tasks]
-  );
-
   const resolveTaskResponsables = useCallback((task: WorkflowTaskRecord) => {
     const fromArray =
       task.responsables
@@ -30729,6 +30721,89 @@ const WorkflowPage: React.FC = () => {
 
     return [] as Array<{ id: number | null; nombre: string | null }>;
   }, []);
+
+  const resolveTaskResponsibleIds = useCallback(
+    (task: WorkflowTaskRecord) => {
+      const idsFromArray = resolveTaskResponsables(task)
+        .map((item) => item.id)
+        .filter((id): id is number => id != null);
+      if (idsFromArray.length > 0) {
+        return idsFromArray;
+      }
+      return task.responsableId != null ? [task.responsableId] : [];
+    },
+    [resolveTaskResponsables]
+  );
+
+  const filteredTasks = useMemo(() => {
+    const assignedToId = filterAssignedToId ? Number(filterAssignedToId) : null;
+    const assignedById = filterAssignedById ? Number(filterAssignedById) : null;
+    const personId = filterPersonId ? Number(filterPersonId) : null;
+
+    return tasks.filter((task) => {
+      const responsibleIds = resolveTaskResponsibleIds(task);
+      const creatorId = task.creatorId;
+      const isAssignedToMe = currentActorId != null && responsibleIds.some((id) => id === currentActorId);
+      const isAssignedByMe = currentActorId != null && creatorId === currentActorId;
+
+      if (filterAssignedToMe && !isAssignedToMe) {
+        return false;
+      }
+
+      if (filterAssignedByMe && !isAssignedByMe) {
+        return false;
+      }
+
+      if (assignedToId != null && !Number.isNaN(assignedToId) && !responsibleIds.includes(assignedToId)) {
+        return false;
+      }
+
+      if (assignedById != null && !Number.isNaN(assignedById) && creatorId !== assignedById) {
+        return false;
+      }
+
+      if (
+        personId != null &&
+        !Number.isNaN(personId) &&
+        creatorId !== personId &&
+        !responsibleIds.includes(personId)
+      ) {
+        return false;
+      }
+
+      return true;
+    });
+  }, [
+    tasks,
+    filterAssignedToId,
+    filterAssignedById,
+    filterPersonId,
+    filterAssignedToMe,
+    filterAssignedByMe,
+    currentActorId,
+    resolveTaskResponsibleIds,
+  ]);
+
+  const columns = useMemo(
+    () =>
+      [
+        { status: 'nueva' as WorkflowStatus, title: 'Nueva tarea' },
+        { status: 'proceso' as WorkflowStatus, title: 'En proceso' },
+        { status: 'finalizado' as WorkflowStatus, title: 'Finalizado' },
+      ].map((column) => ({
+        ...column,
+        tasks: filteredTasks.filter((task) => task.status === column.status),
+      })),
+    [filteredTasks]
+  );
+
+  const clearWorkflowFilters = () => {
+    setFilterAssignedToId('');
+    setFilterAssignedById('');
+    setFilterPersonId('');
+    setFilterAssignedToMe(false);
+    setFilterAssignedByMe(false);
+  };
 
   const handleAddTask = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -30974,6 +31049,69 @@ const WorkflowPage: React.FC = () => {
           {exporting ? 'Descargando...' : 'Exportar tareas'}
         </button>
       </div>
+
+      <section className="workflow-filters">
+        <div className="workflow-filters__grid">
+          <label>
+            <span>Asignado al destinatario</span>
+            <select value={filterAssignedToId} onChange={(event) => setFilterAssignedToId(event.target.value)}>
+              <option value="">Todos</option>
+              {agentOptions.map((option) => (
+                <option key={`assigned-to-${option.id}`} value={String(option.id)}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            <span>Asignado por / desde</span>
+            <select value={filterAssignedById} onChange={(event) => setFilterAssignedById(event.target.value)}>
+              <option value="">Todos</option>
+              {agentOptions.map((option) => (
+                <option key={`assigned-by-${option.id}`} value={String(option.id)}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            <span>Persona</span>
+            <select value={filterPersonId} onChange={(event) => setFilterPersonId(event.target.value)}>
+              <option value="">Todas</option>
+              {agentOptions.map((option) => (
+                <option key={`person-${option.id}`} value={String(option.id)}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+        <div className="workflow-filters__toggles">
+          <label className="workflow-filters__toggle">
+            <input
+              type="checkbox"
+              checked={filterAssignedToMe}
+              onChange={(event) => setFilterAssignedToMe(event.target.checked)}
+            />
+            Asignados a mí
+          </label>
+          <label className="workflow-filters__toggle">
+            <input
+              type="checkbox"
+              checked={filterAssignedByMe}
+              onChange={(event) => setFilterAssignedByMe(event.target.checked)}
+            />
+            Asignados por mí
+          </label>
+          <button type="button" className="secondary-action" onClick={clearWorkflowFilters}>
+            Limpiar filtros
+          </button>
+        </div>
+        <p className="workflow-filters__summary">
+          Mostrando {filteredTasks.length} de {tasks.length} tareas.
+        </p>
+      </section>
+
       <section className="workflow-new-task">
         <form onSubmit={handleAddTask} className="workflow-form">
           <label>
