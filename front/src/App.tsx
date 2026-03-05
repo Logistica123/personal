@@ -20961,11 +20961,17 @@ const CombustibleRunsPage: React.FC = () => {
   };
 
   const handleRulesClientChange = (nextClientCode: string) => {
-    setRulesClientCode(nextClientCode);
+    const normalizedInput = nextClientCode.toUpperCase();
+    const normalizedClientCode = normalizedInput.trim();
+    const canAutoLoad = normalizedClientCode
+      ? clientOptions.some((option) => option.code === normalizedClientCode)
+      : false;
+
+    setRulesClientCode(normalizedInput);
     setRulesError(null);
     setRulesMessage(null);
-    if (nextClientCode.trim()) {
-      void loadClientRulesByCode(nextClientCode);
+    if (canAutoLoad) {
+      void loadClientRulesByCode(normalizedClientCode);
     }
   };
 
@@ -21982,17 +21988,20 @@ const CombustibleRunsPage: React.FC = () => {
           <div className="form-grid">
             <label className="input-control">
               <span>Cliente</span>
-              <select
+              <input
                 value={rulesClientCode}
                 onChange={(event) => handleRulesClientChange(event.target.value)}
-              >
-                <option value="">Seleccionar cliente</option>
+                onBlur={(event) => setRulesClientCode(event.target.value.trim().toUpperCase())}
+                list="rules-client-options"
+                placeholder="INT / INTERMEDIO / código manual"
+              />
+              <datalist id="rules-client-options">
                 {clientOptions.map((option) => (
                   <option key={`rules-client-${option.code}`} value={option.code}>
                     {option.label}
                   </option>
                 ))}
-              </select>
+              </datalist>
             </label>
             <label className="checkbox-control" style={{ alignSelf: 'end' }}>
               <input
