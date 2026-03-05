@@ -22,6 +22,7 @@ use App\Http\Controllers\Api\SolicitudPersonalController;
 use App\Http\Controllers\Api\VacacionesDiasController;
 use App\Http\Controllers\Api\DistriappController;
 use App\Http\Controllers\Api\LiquidacionRunController;
+use App\Http\Controllers\Api\UserDocumentController;
 use App\Http\Controllers\Api\CallController;
 use Illuminate\Support\Facades\Route;
 
@@ -92,6 +93,12 @@ Route::middleware('auth.api')->group(function () {
     Route::get('/usuarios/{usuario}', [UserController::class, 'show']);
     Route::put('/usuarios/{usuario}', [UserController::class, 'update']);
     Route::delete('/usuarios/{usuario}', [UserController::class, 'destroy']);
+    Route::get('/usuarios/{usuario}/documentos', [UserDocumentController::class, 'index']);
+    Route::post('/usuarios/{usuario}/documentos', [UserDocumentController::class, 'store']);
+    Route::put('/usuarios/{usuario}/documentos/{documento}', [UserDocumentController::class, 'update']);
+    Route::delete('/usuarios/{usuario}/documentos/{documento}', [UserDocumentController::class, 'destroy']);
+    Route::get('/usuarios/{usuario}/documentos/{documento}/descargar', [UserDocumentController::class, 'download'])
+        ->name('usuarios.documentos.descargar');
 
     Route::get('/reclamos/meta', [ReclamoController::class, 'meta']);
     Route::get('/distriapp/reclamos', [ReclamoController::class, 'distriappIndex']);

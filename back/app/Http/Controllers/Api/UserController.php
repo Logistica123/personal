@@ -24,6 +24,7 @@ class UserController extends Controller
         'clientes',
         'unidades',
         'usuarios',
+        'rrhh',
         'proveedores',
         'personal',
         'reclamos',
