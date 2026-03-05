@@ -237,7 +237,8 @@ class ReclamoController extends Controller
                     'id',
                     'nombres',
                     'apellidos',
-                    'cliente_id'
+                    'cliente_id',
+                    'patente'
                 ),
                 'persona.cliente:id,nombre',
             ])
@@ -272,7 +273,8 @@ class ReclamoController extends Controller
                     'nombres',
                     'apellidos',
                     'cliente_id',
-                    'cuil'
+                    'cuil',
+                    'patente'
                 ),
                 'persona.cliente:id,nombre',
             ]);
@@ -1311,6 +1313,7 @@ class ReclamoController extends Controller
             'agenteId' => $reclamo->agente_id,
             'transportista' => $reclamo->persona ? trim(($reclamo->persona->nombres ?? '').' '.($reclamo->persona->apellidos ?? '')) ?: null : null,
             'transportistaId' => $reclamo->persona_id,
+            'patente' => $reclamo->persona?->patente,
             'cliente' => $reclamo->persona?->cliente?->nombre,
             'clienteNombre' => $reclamo->cliente_nombre ?? $reclamo->persona?->cliente?->nombre,
             'sucursalNombre' => $reclamo->sucursal_nombre ?? $reclamo->persona?->sucursal?->nombre,

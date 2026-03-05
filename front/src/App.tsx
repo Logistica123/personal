@@ -1261,6 +1261,7 @@ type ReclamoRecord = {
   agenteId: number | null;
   transportista: string | null;
   transportistaId: number | null;
+  patente?: string | null;
   transportistas?: ReclamoTransportistaSummary[];
   cliente: string | null;
   clienteNombre?: string | null;
@@ -10893,6 +10894,21 @@ const ReclamosPage: React.FC = () => {
     [getTransportistaEntries]
   );
 
+  const getTransportistaSearchValues = useCallback(
+    (record: ReclamoRecord): string[] =>
+      getTransportistaEntries(record)
+        .flatMap((entry) => [
+          entry.nombre,
+          entry.cliente,
+          entry.patente,
+          entry.unidad,
+          entry.id != null ? String(entry.id) : null,
+        ])
+        .map((value) => (typeof value === 'string' ? value.trim() : ''))
+        .filter((value) => value.length > 0),
+    [getTransportistaEntries]
+  );
+
   const formatTransportistaDisplay = useCallback(
     (record: ReclamoRecord) => {
       const entries = getTransportistaEntries(record);
@@ -11168,6 +11184,7 @@ const ReclamosPage: React.FC = () => {
         return true;
       }
 
+      const transportistaSearchValues = getTransportistaSearchValues(reclamo);
       const fields = [
         reclamo.codigo,
         reclamo.detalle,
@@ -11175,7 +11192,11 @@ const ReclamosPage: React.FC = () => {
         responsable,
         reclamo.agente,
         reclamo.clienteNombre,
+        reclamo.transportista,
+        reclamo.transportistaId != null ? String(reclamo.transportistaId) : null,
+        reclamo.patente,
         ...getTransportistaNames(reclamo),
+        ...transportistaSearchValues,
         reclamo.cliente,
         reclamo.tipo,
         reclamo.status,
@@ -11196,6 +11217,7 @@ const ReclamosPage: React.FC = () => {
     dateFrom,
     dateTo,
     getTransportistaNames,
+    getTransportistaSearchValues,
     resolveReclamoResponsable,
   ]);
 
