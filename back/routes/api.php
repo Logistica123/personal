@@ -169,6 +169,7 @@ Route::middleware('auth.api')->group(function () {
     Route::delete('/liquidaciones/runs/{run}', [LiquidacionRunController::class, 'destroy']);
     Route::post('/liquidaciones/runs/{run}/upsert', [LiquidacionRunController::class, 'upsert']);
     Route::post('/liquidaciones/runs/{run}/approve', [LiquidacionRunController::class, 'approve']);
+    Route::post('/liquidaciones/runs/{run}/sync-personal', [LiquidacionRunController::class, 'syncToPersonal']);
     Route::post('/liquidaciones/runs/{run}/publicar-erp', [LiquidacionRunController::class, 'publishToErp']);
     Route::get('/liquidaciones/reglas-template', [LiquidacionRunController::class, 'rulesTemplate']);
     Route::get('/liquidaciones/reglas-cliente/{clientCode}', [LiquidacionRunController::class, 'showClientRules']);

@@ -402,7 +402,7 @@ class ReclamoController extends Controller
             'detalle' => ['nullable', 'string'],
             'agenteId' => ['nullable', 'integer', 'exists:users,id'],
             'creatorId' => ['nullable', 'integer', 'exists:users,id'],
-            'transportistaId' => ['required', 'integer', 'exists:personas,id'],
+            'transportistaId' => ['nullable', 'integer', 'exists:personas,id'],
             'tipoId' => ['required', 'integer', 'exists:reclamo_types,id'],
             'status' => ['required', Rule::in(array_keys($this->statusLabels()))],
             'pagado' => ['required', 'boolean'],
@@ -432,6 +432,10 @@ class ReclamoController extends Controller
 
         if ($isReclamoAdelanto) {
             $this->requireReclamosAdelantosBaseFields($validated);
+        } elseif (empty($validated['transportistaId'])) {
+            throw \Illuminate\Validation\ValidationException::withMessages([
+                'transportistaId' => ['El transportista es obligatorio para este tipo de reclamo.'],
+            ]);
         }
 
         $reclamo = DB::transaction(function () use ($request, $validated, $canViewImportes, $isReclamoAdelanto) {
@@ -442,7 +446,7 @@ class ReclamoController extends Controller
             $reclamo = Reclamo::create([
                 'creator_id' => $creatorId,
                 'agente_id' => $validated['agenteId'] ?? null,
-                'persona_id' => $validated['transportistaId'],
+                'persona_id' => $validated['transportistaId'] ?? null,
                 'reclamo_type_id' => $validated['tipoId'],
                 'detalle' => isset($validated['detalle']) ? trim($validated['detalle']) : null,
                 'cliente_nombre' => $this->normalizeNullableString($validated['clienteNombre'] ?? null),

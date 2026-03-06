@@ -1918,6 +1918,18 @@ const isReclamoAdelantoType = (tipo?: { nombre?: string | null; slug?: string | 
   return normalizedName === 'reclamos y adelantos';
 };
 
+const isReclamoAdelantoTypeName = (tipoNombre?: string | null): boolean => {
+  const normalizedName = (tipoNombre ?? '')
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[_-]+/g, ' ')
+    .replace(/\s+/g, ' ');
+
+  return normalizedName === 'reclamos y adelantos';
+};
+
 const RECLAMOS_ADELANTOS_APPROVER_EMAILS = (process.env.REACT_APP_RECLAMOS_ADELANTOS_APPROVER_EMAILS ?? '')
   .split(',')
   .map((value) => value.trim().toLowerCase())
@@ -3326,8 +3338,30 @@ const DashboardLayout: React.FC<{
   const location = useLocation();
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [personalSubmenuOpen, setPersonalSubmenuOpen] = useState(false);
+  const [reclamosSubmenuOpen, setReclamosSubmenuOpen] = useState(false);
   const [liquidacionesSubmenuOpen, setLiquidacionesSubmenuOpen] = useState(false);
   const isPersonalListRoute = location.pathname === '/personal';
+  const isReclamosRoute = location.pathname.startsWith('/reclamos');
+  const isReclamosListRoute = location.pathname === '/reclamos';
+  const isReclamosNuevoRoute = location.pathname === '/reclamos/nuevo';
+  const reclamosTipoParam = useMemo(() => {
+    if (!isReclamosRoute) {
+      return '';
+    }
+    const params = new URLSearchParams(location.search);
+    return (params.get('tipo') ?? '')
+      .trim()
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[_\s]+/g, '-');
+  }, [isReclamosRoute, location.search]);
+  const isReclamosAdelantoListRoute =
+    isReclamosListRoute &&
+    (reclamosTipoParam === 'adelanto' || reclamosTipoParam === 'reclamos-y-adelantos');
+  const isReclamosAdelantoNuevoRoute =
+    isReclamosNuevoRoute &&
+    (reclamosTipoParam === 'adelanto' || reclamosTipoParam === 'reclamos-y-adelantos');
   const isLiquidacionesGroupRoute =
     location.pathname.startsWith('/liquidaciones') ||
     location.pathname.startsWith('/pagos') ||
@@ -3336,8 +3370,8 @@ const DashboardLayout: React.FC<{
   const isLiquidacionesRoute =
     (location.pathname === '/liquidaciones' || /^\/liquidaciones\/\d+$/.test(location.pathname)) &&
     !isLiquidacionesExtractosRoute;
-  const isPagosRoute = location.pathname.startsWith('/pagos');
   const isCombustibleRoute = location.pathname.startsWith('/combustible');
+  const isPagosRoute = location.pathname.startsWith('/pagos');
   const personalEstadoParam = useMemo(() => {
     if (!isPersonalListRoute) {
       return 'todos';
@@ -3383,6 +3417,11 @@ const DashboardLayout: React.FC<{
       setPersonalSubmenuOpen(false);
     }
   }, [location.pathname]);
+  useEffect(() => {
+    if (!isReclamosRoute) {
+      setReclamosSubmenuOpen(false);
+    }
+  }, [isReclamosRoute]);
   useEffect(() => {
     if (!isLiquidacionesGroupRoute) {
       setLiquidacionesSubmenuOpen(false);
@@ -4443,9 +4482,45 @@ const DashboardLayout: React.FC<{
             </>
           ) : null}
           {canAccessSection(userRole, 'reclamos', authUser?.permissions) ? (
-            <NavLink to="/reclamos" className={({ isActive }) => `sidebar-link${isActive ? ' is-active' : ''}`}>
-              Reclamos
-            </NavLink>
+            <>
+              <button
+                type="button"
+                className={`sidebar-link${isReclamosRoute ? ' is-active' : ''}`}
+                onClick={() => {
+                  setReclamosSubmenuOpen((prev) => !prev);
+                  if (!isReclamosRoute) {
+                    navigate('/reclamos');
+                  }
+                }}
+              >
+                Reclamos
+              </button>
+              {reclamosSubmenuOpen ? (
+                <div className="sidebar-submenu">
+                  <button
+                    type="button"
+                    className={`sidebar-sublink${isReclamosListRoute ? ' is-active' : ''}`}
+                    onClick={() => navigate('/reclamos')}
+                  >
+                    Listado reclamos
+                  </button>
+                  <button
+                    type="button"
+                    className={`sidebar-sublink${isReclamosAdelantoListRoute ? ' is-active' : ''}`}
+                    onClick={() => navigate('/reclamos?tipo=adelanto')}
+                  >
+                    Reclamos de adelanto
+                  </button>
+                  <button
+                    type="button"
+                    className={`sidebar-sublink${isReclamosAdelantoNuevoRoute ? ' is-active' : ''}`}
+                    onClick={() => navigate('/reclamos/nuevo?tipo=adelanto')}
+                  >
+                    Nuevo reclamo de adelanto
+                  </button>
+                </div>
+              ) : null}
+            </>
           ) : null}
           {canAccessSection(userRole, 'ticketera', authUser?.permissions) ? (
             <NavLink to="/ticketera" className={({ isActive }) => `sidebar-link${isActive ? ' is-active' : ''}`}>
@@ -10843,6 +10918,7 @@ const UnitsPage: React.FC = () => {
 
 const ReclamosPage: React.FC = () => {
   const navigate = useNavigate();
+  const location = useLocation();
   const apiBaseUrl = useMemo(() => resolveApiBaseUrl(), []);
   const authUser = useStoredAuthUser();
   const userRole = useMemo(() => getUserRole(authUser), [authUser]);
@@ -10864,10 +10940,22 @@ const ReclamosPage: React.FC = () => {
   const [clienteFilter, setClienteFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [tipoFilter, setTipoFilter] = useState('');
+  const [creationWeekFilter, setCreationWeekFilter] = useState<'all' | 'current' | 'previous'>('all');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
   const [sortField, setSortField] = useState<'fecha' | 'codigo'>('fecha');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
+  const reclamosTipoParam = useMemo(
+    () =>
+      (new URLSearchParams(location.search).get('tipo') ?? '')
+        .trim()
+        .toLowerCase()
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/[_\s]+/g, '-'),
+    [location.search]
+  );
+  const isAdelantoListMode = reclamosTipoParam === 'adelanto' || reclamosTipoParam === 'reclamos-y-adelantos';
   const getTransportistaEntries = useCallback((record: ReclamoRecord): ReclamoTransportistaSummary[] => {
     if (Array.isArray(record.transportistas) && record.transportistas.length > 0) {
       return record.transportistas;
@@ -11138,8 +11226,46 @@ const ReclamosPage: React.FC = () => {
     [reclamos]
   );
 
+  useEffect(() => {
+    if (!isAdelantoListMode) {
+      return;
+    }
+
+    const adelantoTipo = tipoOptions.find((option) => isReclamoAdelantoTypeName(option));
+    if (!adelantoTipo) {
+      return;
+    }
+
+    setTipoFilter((prev) => (prev === adelantoTipo ? prev : adelantoTipo));
+  }, [isAdelantoListMode, tipoOptions]);
+
   const filteredReclamos = useMemo(() => {
     const term = searchTerm.trim().toLowerCase();
+    const now = new Date();
+    const currentCutoffStart = (() => {
+      const boundary = new Date(now);
+      boundary.setHours(11, 0, 0, 0);
+      const diffToThursday = (boundary.getDay() - 4 + 7) % 7;
+      boundary.setDate(boundary.getDate() - diffToThursday);
+      if (now.getTime() < boundary.getTime()) {
+        boundary.setDate(boundary.getDate() - 7);
+      }
+      return boundary;
+    })();
+    const oneWeekMs = 7 * 24 * 60 * 60 * 1000;
+    const currentCutoffStartMs = currentCutoffStart.getTime();
+    const creationFilterFromMs =
+      creationWeekFilter === 'current'
+        ? currentCutoffStartMs
+        : creationWeekFilter === 'previous'
+        ? currentCutoffStartMs - oneWeekMs
+        : null;
+    const creationFilterToMs =
+      creationWeekFilter === 'current'
+        ? currentCutoffStartMs + oneWeekMs
+        : creationWeekFilter === 'previous'
+        ? currentCutoffStartMs
+        : null;
 
     return reclamos.filter((reclamo) => {
       const responsable = resolveReclamoResponsable(reclamo) ?? '';
@@ -11165,6 +11291,16 @@ const ReclamosPage: React.FC = () => {
 
       if (tipoFilter && reclamo.tipo !== tipoFilter) {
         return false;
+      }
+      if (isAdelantoListMode && !tipoFilter && !isReclamoAdelantoTypeName(reclamo.tipo)) {
+        return false;
+      }
+
+      if (creationFilterFromMs !== null && creationFilterToMs !== null) {
+        const createdMs = Date.parse(reclamo.createdAt ?? '');
+        if (!Number.isFinite(createdMs) || createdMs < creationFilterFromMs || createdMs >= creationFilterToMs) {
+          return false;
+        }
       }
 
       const fechaCorta = reclamo.fechaReclamoIso?.slice(0, 10) ?? reclamo.fechaReclamo ?? null;
@@ -11214,6 +11350,8 @@ const ReclamosPage: React.FC = () => {
     clienteFilter,
     statusFilter,
     tipoFilter,
+    isAdelantoListMode,
+    creationWeekFilter,
     dateFrom,
     dateTo,
     getTransportistaNames,
@@ -11365,6 +11503,7 @@ const ReclamosPage: React.FC = () => {
     setClienteFilter('');
     setStatusFilter('');
     setTipoFilter('');
+    setCreationWeekFilter('all');
     setDateFrom('');
     setDateTo('');
   };
@@ -11456,6 +11595,17 @@ const ReclamosPage: React.FC = () => {
             </select>
           </label>
           <label className="filter-field">
+            <span>Fecha creación (corte jueves 11:00)</span>
+            <select
+              value={creationWeekFilter}
+              onChange={(event) => setCreationWeekFilter(event.target.value as 'all' | 'current' | 'previous')}
+            >
+              <option value="all">Todas</option>
+              <option value="current">Semana actual</option>
+              <option value="previous">Semana anterior</option>
+            </select>
+          </label>
+          <label className="filter-field">
             <span>Fecha desde</span>
             <input
               type="date"
@@ -11469,7 +11619,7 @@ const ReclamosPage: React.FC = () => {
           </label>
           <label className="filter-field">
             <span>Tipo de reclamo</span>
-            <select value={tipoFilter} onChange={(event) => setTipoFilter(event.target.value)}>
+            <select value={tipoFilter} onChange={(event) => setTipoFilter(event.target.value)} disabled={isAdelantoListMode}>
               <option value="">Tipo de reclamo</option>
               {tipoOptions.map((option) => (
                 <option key={option} value={option}>
@@ -11554,8 +11704,8 @@ const ReclamosPage: React.FC = () => {
 
   return (
     <DashboardLayout
-      title="Gestión de reclamos"
-      subtitle="Gestión de reclamos"
+      title={isAdelantoListMode ? 'Gestión de reclamos de adelanto' : 'Gestión de reclamos'}
+      subtitle={isAdelantoListMode ? 'Gestión de reclamos de adelanto' : 'Gestión de reclamos'}
       headerContent={headerContent}
     >
       {flashMessage ? (
@@ -11738,6 +11888,7 @@ const ReclamosPage: React.FC = () => {
 
 const CreateReclamoPage: React.FC = () => {
   const navigate = useNavigate();
+  const location = useLocation();
   const apiBaseUrl = useMemo(() => resolveApiBaseUrl(), []);
   const [meta, setMeta] = useState<ReclamoMeta | null>(null);
   const [metaLoading, setMetaLoading] = useState(true);
@@ -11770,6 +11921,19 @@ const CreateReclamoPage: React.FC = () => {
     [authUser?.name, authUser?.email]
   );
   const normalizedRole = useMemo(() => authUser?.role?.toLowerCase().trim() ?? '', [authUser?.role]);
+  const requestedTipoParam = useMemo(
+    () =>
+      (new URLSearchParams(location.search).get('tipo') ?? '')
+        .trim()
+        .toLowerCase()
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/[_\s]+/g, '-'),
+    [location.search]
+  );
+  const shouldAutoselectAdelantoTipo =
+    requestedTipoParam === 'adelanto' || requestedTipoParam === 'reclamos-y-adelantos';
+  const isAdelantoQuickCreateMode = shouldAutoselectAdelantoTipo;
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -11837,6 +12001,25 @@ const CreateReclamoPage: React.FC = () => {
       return;
     }
   }, [meta?.estados]);
+
+  useEffect(() => {
+    if (!meta || !shouldAutoselectAdelantoTipo) {
+      return;
+    }
+
+    const adelantoTipo = meta.tipos.find((tipo) => isReclamoAdelantoType(tipo));
+    if (!adelantoTipo?.id) {
+      return;
+    }
+
+    setFormValues((prev) => {
+      const adelantoTipoId = String(adelantoTipo.id);
+      if (prev.tipoId === adelantoTipoId) {
+        return prev;
+      }
+      return { ...prev, tipoId: adelantoTipoId };
+    });
+  }, [meta, shouldAutoselectAdelantoTipo]);
 
   useEffect(() => {
     if (!meta) {
@@ -12141,12 +12324,16 @@ const CreateReclamoPage: React.FC = () => {
         ? [Number(formValues.transportistaId)]
         : [];
 
-    if (transportistaIds.length === 0 || !formValues.tipoId || !formValues.status) {
+    if (
+      !formValues.tipoId ||
+      !formValues.status ||
+      (!isAdelantoQuickCreateMode && transportistaIds.length === 0)
+    ) {
       setSubmitError('Completa los campos obligatorios.');
       return;
     }
 
-    if (isReclamoAdelantoSelected) {
+    if (isReclamoAdelantoSelected || isAdelantoQuickCreateMode) {
       const requiredAdelantoFields: Array<{ key: keyof typeof formValues; label: string }> = [
         { key: 'clienteNombre', label: 'Cliente' },
         { key: 'sucursalNombre', label: 'Sucursal' },
@@ -12188,32 +12375,37 @@ const CreateReclamoPage: React.FC = () => {
           ? [mapTransportistaForPayload(transportistaDetail)]
           : transportistaIds.map((id) => ({ id, agenteId: null }));
 
+      const requestBody: Record<string, unknown> = {
+        detalle: formValues.detalle.trim() || null,
+        agenteId: formValues.agenteId ? Number(formValues.agenteId) : null,
+        creatorId: formValues.creatorId ? Number(formValues.creatorId) : null,
+        tipoId: Number(formValues.tipoId),
+        status: formValues.status,
+        pagado: formValues.pagado === 'true',
+        fechaReclamo: formValues.fechaReclamo || null,
+        clienteNombre: formValues.clienteNombre.trim() || null,
+        sucursalNombre: formValues.sucursalNombre.trim() || null,
+        distribuidorNombre: formValues.distribuidorNombre.trim() || null,
+        emisorFactura: formValues.emisorFactura.trim() || null,
+        importeSolicitado: formValues.importeSolicitado.trim() || null,
+        cuitCobrador: formValues.cuitCobrador.trim() || null,
+        medioPago: formValues.medioPago.trim() || null,
+        concepto: formValues.concepto.trim() || null,
+        fechaCompromisoPago: formValues.fechaCompromisoPago || null,
+      };
+
+      if (transportistaIds.length > 0) {
+        requestBody.transportistaId = transportistaIds[0];
+        requestBody.transportistaIds = transportistaIds;
+        requestBody.transportistas = transportistasPayload;
+      }
+
       const response = await fetch(`${apiBaseUrl}/api/reclamos`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({
-          detalle: formValues.detalle.trim() || null,
-          agenteId: formValues.agenteId ? Number(formValues.agenteId) : null,
-          creatorId: formValues.creatorId ? Number(formValues.creatorId) : null,
-          transportistaId: transportistaIds[0],
-          transportistaIds,
-          transportistas: transportistasPayload,
-          tipoId: Number(formValues.tipoId),
-          status: formValues.status,
-          pagado: formValues.pagado === 'true',
-          fechaReclamo: formValues.fechaReclamo || null,
-          clienteNombre: formValues.clienteNombre.trim() || null,
-          sucursalNombre: formValues.sucursalNombre.trim() || null,
-          distribuidorNombre: formValues.distribuidorNombre.trim() || null,
-          emisorFactura: formValues.emisorFactura.trim() || null,
-          importeSolicitado: formValues.importeSolicitado.trim() || null,
-          cuitCobrador: formValues.cuitCobrador.trim() || null,
-          medioPago: formValues.medioPago.trim() || null,
-          concepto: formValues.concepto.trim() || null,
-          fechaCompromisoPago: formValues.fechaCompromisoPago || null,
-        }),
+        body: JSON.stringify(requestBody),
       });
 
       if (!response.ok) {
@@ -12433,6 +12625,7 @@ const CreateReclamoPage: React.FC = () => {
   return (
     <DashboardLayout title="Crear reclamo" subtitle="Registrar un nuevo reclamo" headerContent={headerContent}>
       <form className="edit-form" onSubmit={handleSubmit}>
+        {!isAdelantoQuickCreateMode ? (
         <div className="reclamo-section">
           <div className="reclamo-section__header">
             <h3>Datos del transportista</h3>
@@ -12645,7 +12838,9 @@ const CreateReclamoPage: React.FC = () => {
             )}
           </div>
         </div>
+        ) : null}
 
+        {!isAdelantoQuickCreateMode ? (
         <div className="reclamo-section">
           <div className="reclamo-section__header">
             <h3>Detalle del reclamo</h3>
@@ -12715,8 +12910,9 @@ const CreateReclamoPage: React.FC = () => {
             />
           </label>
         </div>
+        ) : null}
 
-        {isReclamoAdelantoSelected ? (
+        {isReclamoAdelantoSelected || isAdelantoQuickCreateMode ? (
           <div className="reclamo-section">
             <div className="reclamo-section__header">
               <h3>Datos de Reclamos y Adelantos</h3>
@@ -20533,10 +20729,15 @@ const CombustibleRunsPage: React.FC = () => {
   const [publishDistributorCode, setPublishDistributorCode] = useState('');
   const [publishLiquidacionId, setPublishLiquidacionId] = useState('');
   const [publishLoading, setPublishLoading] = useState(false);
+  const [syncPersonalLoading, setSyncPersonalLoading] = useState(false);
 
   const [createClientCode, setCreateClientCode] = useState('');
-  const [createPeriodFrom, setCreatePeriodFrom] = useState('');
-  const [createPeriodTo, setCreatePeriodTo] = useState('');
+  const [createPeriodMonth, setCreatePeriodMonth] = useState(() => {
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  });
+  const [createPeriodType, setCreatePeriodType] = useState<'QUINCENAL' | 'MENSUAL'>('QUINCENAL');
+  const [createPeriodFortnight, setCreatePeriodFortnight] = useState<'1Q' | '2Q'>('1Q');
   const [createSourceFileName, setCreateSourceFileName] = useState('');
   const [createExtractFile, setCreateExtractFile] = useState<File | null>(null);
   const [createExtractPreview, setCreateExtractPreview] = useState<ExtractUploadPreviewResponse | null>(null);
@@ -20667,6 +20868,58 @@ const CombustibleRunsPage: React.FC = () => {
       .map(([code, label]) => ({ code, label }))
       .sort((a, b) => a.label.localeCompare(b.label, 'es', { sensitivity: 'base' }));
   }, [clientCodeFilter, createClientCode, liquidacionesClients, rulesClientCode, runs]);
+
+  const createPeriodRange = useMemo(() => {
+    const match = /^(\d{4})-(\d{2})$/.exec(createPeriodMonth);
+    if (!match) {
+      return {
+        from: '',
+        to: '',
+        year: null as number | null,
+        month: null as number | null,
+      };
+    }
+
+    const year = Number(match[1]);
+    const month = Number(match[2]);
+    if (!Number.isFinite(year) || !Number.isFinite(month) || month < 1 || month > 12) {
+      return {
+        from: '',
+        to: '',
+        year: null as number | null,
+        month: null as number | null,
+      };
+    }
+
+    const pad = (value: number) => String(value).padStart(2, '0');
+    const monthStart = `${year}-${pad(month)}-01`;
+    const monthEnd = `${year}-${pad(month)}-${pad(new Date(year, month, 0).getDate())}`;
+
+    if (createPeriodType === 'MENSUAL') {
+      return {
+        from: monthStart,
+        to: monthEnd,
+        year,
+        month,
+      };
+    }
+
+    if (createPeriodFortnight === '2Q') {
+      return {
+        from: `${year}-${pad(month)}-16`,
+        to: monthEnd,
+        year,
+        month,
+      };
+    }
+
+    return {
+      from: monthStart,
+      to: `${year}-${pad(month)}-15`,
+      year,
+      month,
+    };
+  }, [createPeriodFortnight, createPeriodMonth, createPeriodType]);
 
   const formatDateCell = useCallback((value?: string | null) => {
     if (!value) {
@@ -20963,11 +21216,23 @@ const CombustibleRunsPage: React.FC = () => {
         if (createClientCode.trim()) {
           formData.append('client_code', createClientCode.trim());
         }
-        if (createPeriodFrom) {
-          formData.append('period_from', createPeriodFrom);
+        if (createPeriodRange.from) {
+          formData.append('period_from', createPeriodRange.from);
         }
-        if (createPeriodTo) {
-          formData.append('period_to', createPeriodTo);
+        if (createPeriodRange.to) {
+          formData.append('period_to', createPeriodRange.to);
+        }
+        if (createPeriodType) {
+          formData.append('tipo_periodo', createPeriodType);
+        }
+        if (createPeriodType === 'QUINCENAL' && createPeriodFortnight) {
+          formData.append('quincena', createPeriodFortnight);
+        }
+        if (createPeriodRange.year != null) {
+          formData.append('anio', String(createPeriodRange.year));
+        }
+        if (createPeriodRange.month != null) {
+          formData.append('mes', String(createPeriodRange.month));
         }
 
         const response = await fetch(`${apiBaseUrl}/api/liquidaciones/runs/upload-preview`, {
@@ -21000,7 +21265,17 @@ const CombustibleRunsPage: React.FC = () => {
     return () => {
       cancelled = true;
     };
-  }, [apiBaseUrl, createClientCode, createExtractFile, createPeriodFrom, createPeriodTo]);
+  }, [
+    apiBaseUrl,
+    createClientCode,
+    createExtractFile,
+    createPeriodFortnight,
+    createPeriodRange.from,
+    createPeriodRange.month,
+    createPeriodRange.to,
+    createPeriodRange.year,
+    createPeriodType,
+  ]);
 
   useEffect(() => {
     if (rulesClientCode.trim()) {
@@ -21300,6 +21575,21 @@ const CombustibleRunsPage: React.FC = () => {
       setActionError('Ingresá el código de cliente para crear el run.');
       return;
     }
+    if (!createPeriodRange.from || !createPeriodRange.to || createPeriodRange.year == null || createPeriodRange.month == null) {
+      setActionError('Seleccioná mes y período para crear el run.');
+      return;
+    }
+    if (createPeriodType === 'QUINCENAL' && !createPeriodFortnight) {
+      setActionError('Seleccioná primera o segunda quincena.');
+      return;
+    }
+
+    const periodFrom = createPeriodRange.from;
+    const periodTo = createPeriodRange.to;
+    const periodYear = createPeriodRange.year;
+    const periodMonth = createPeriodRange.month;
+    const periodType = createPeriodType;
+    const periodFortnight = createPeriodType === 'QUINCENAL' ? createPeriodFortnight : null;
 
     setCreateLoading(true);
     try {
@@ -21308,11 +21598,13 @@ const CombustibleRunsPage: React.FC = () => {
         const formData = new FormData();
         formData.append('source_system', 'powerbi');
         formData.append('client_code', createClientCode.trim());
-        if (createPeriodFrom) {
-          formData.append('period_from', createPeriodFrom);
-        }
-        if (createPeriodTo) {
-          formData.append('period_to', createPeriodTo);
+        formData.append('period_from', periodFrom);
+        formData.append('period_to', periodTo);
+        formData.append('anio', String(periodYear));
+        formData.append('mes', String(periodMonth));
+        formData.append('tipo_periodo', periodType);
+        if (periodFortnight) {
+          formData.append('quincena', periodFortnight);
         }
         formData.append('status', 'CARGADA');
         formData.append('extract_file', createExtractFile);
@@ -21330,13 +21622,17 @@ const CombustibleRunsPage: React.FC = () => {
           },
           credentials: 'include',
           body: JSON.stringify({
-            source_system: 'powerbi',
-            client_code: createClientCode.trim(),
-            period_from: createPeriodFrom || null,
-            period_to: createPeriodTo || null,
-            source_file_name: createSourceFileName.trim() || null,
-            status: 'CARGADA',
-          }),
+              source_system: 'powerbi',
+              client_code: createClientCode.trim(),
+              period_from: periodFrom,
+              period_to: periodTo,
+              anio: periodYear,
+              mes: periodMonth,
+              tipo_periodo: periodType,
+              quincena: periodFortnight,
+              source_file_name: createSourceFileName.trim() || null,
+              status: 'CARGADA',
+            }),
         });
       }
 
@@ -21513,6 +21809,36 @@ const CombustibleRunsPage: React.FC = () => {
       setActionError(err instanceof Error ? err.message : 'No se pudo publicar el run.');
     } finally {
       setPublishLoading(false);
+    }
+  };
+
+  const handleSyncRunToPersonal = async () => {
+    if (!selectedRunId) {
+      setActionError('Seleccioná un run para sincronizar.');
+      return;
+    }
+
+    setSyncPersonalLoading(true);
+    setActionMessage(null);
+    setActionError(null);
+    try {
+      const response = await fetch(`${apiBaseUrl}/api/liquidaciones/runs/${selectedRunId}/sync-personal`, {
+        method: 'POST',
+        credentials: 'include',
+      });
+
+      const payload = (await parseJsonSafe(response)) as { message?: string };
+      if (!response.ok) {
+        throw new Error(payload?.message ?? 'No se pudo sincronizar a liquidaciones del personal.');
+      }
+
+      setActionMessage(payload?.message ?? 'Sincronización a liquidaciones del personal completada.');
+      await loadRuns();
+      await loadRunDetail(selectedRunId);
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : 'No se pudo sincronizar a liquidaciones del personal.');
+    } finally {
+      setSyncPersonalLoading(false);
     }
   };
 
@@ -22025,12 +22351,37 @@ const CombustibleRunsPage: React.FC = () => {
               <small className="helper-text">Podés elegir de la lista o escribir un cliente nuevo.</small>
             </label>
             <label className="input-control">
+              <span>Mes liquidación</span>
+              <input type="month" value={createPeriodMonth} onChange={(event) => setCreatePeriodMonth(event.target.value)} />
+            </label>
+            <label className="input-control">
+              <span>Tipo período</span>
+              <select
+                value={createPeriodType}
+                onChange={(event) => setCreatePeriodType(event.target.value as 'QUINCENAL' | 'MENSUAL')}
+              >
+                <option value="QUINCENAL">Quincenal</option>
+                <option value="MENSUAL">Mes completo</option>
+              </select>
+            </label>
+            <label className="input-control">
+              <span>Quincena</span>
+              <select
+                value={createPeriodType === 'QUINCENAL' ? createPeriodFortnight : ''}
+                onChange={(event) => setCreatePeriodFortnight(event.target.value as '1Q' | '2Q')}
+                disabled={createPeriodType !== 'QUINCENAL'}
+              >
+                <option value="1Q">Primera quincena</option>
+                <option value="2Q">Segunda quincena</option>
+              </select>
+            </label>
+            <label className="input-control">
               <span>Período desde</span>
-              <input type="date" value={createPeriodFrom} onChange={(event) => setCreatePeriodFrom(event.target.value)} />
+              <input type="date" value={createPeriodRange.from} readOnly />
             </label>
             <label className="input-control">
               <span>Período hasta</span>
-              <input type="date" value={createPeriodTo} onChange={(event) => setCreatePeriodTo(event.target.value)} />
+              <input type="date" value={createPeriodRange.to} readOnly />
             </label>
             <label className="input-control">
               <span>Archivo origen</span>
@@ -23447,6 +23798,17 @@ const CombustibleRunsPage: React.FC = () => {
                   disabled={publishLoading}
                 >
                   {publishLoading ? 'Publicando...' : 'Publicar ERP'}
+                </button>
+              </div>
+
+              <div className="filters-actions">
+                <button
+                  type="button"
+                  className="primary-action"
+                  onClick={handleSyncRunToPersonal}
+                  disabled={syncPersonalLoading}
+                >
+                  {syncPersonalLoading ? 'Sincronizando...' : 'Sincronizar a Liquidaciones'}
                 </button>
               </div>
 

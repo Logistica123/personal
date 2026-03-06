@@ -4,6 +4,8 @@ namespace App\Http\Controllers\Api;
 
 use App\Jobs\ProcessLiquidacionPublishJob;
 use App\Http\Controllers\Controller;
+use App\Models\Archivo;
+use App\Models\FileType;
 use App\Models\LiquidacionAuditChange;
 use App\Models\LiquidacionClientIdentifierAlias;
 use App\Models\LiquidacionDistribuidor;
@@ -453,6 +455,70 @@ class LiquidacionRunController extends Controller
         return $this->publishToErp($request, $run);
     }
 
+    public function syncToPersonal(Request $request, LiquidacionImportRun $run)
+    {
+        $run->refresh();
+        $this->refreshRunCounters($run);
+        $this->syncRunDistributorSnapshots($run);
+
+        $syncResult = $this->syncRunToPersonalLiquidaciones($run);
+        $syncedPersonas = (int) ($syncResult['synced_personas'] ?? 0);
+        $createdDocuments = (int) ($syncResult['created_documents'] ?? 0);
+        $updatedDocuments = (int) ($syncResult['updated_documents'] ?? 0);
+        $unmatchedDistributors = is_array($syncResult['unmatched_distributors'] ?? null)
+            ? $syncResult['unmatched_distributors']
+            : [];
+        $errors = is_array($syncResult['errors'] ?? null) ? $syncResult['errors'] : [];
+
+        $metadata = is_array($run->metadata) ? $run->metadata : [];
+        $metadata['personal_sync'] = [
+            'at' => now()->toIso8601String(),
+            'by' => $request->user()?->id,
+            'synced_personas' => $syncedPersonas,
+            'created_documents' => $createdDocuments,
+            'updated_documents' => $updatedDocuments,
+            'unmatched_distributors_count' => count($unmatchedDistributors),
+            'errors_count' => count($errors),
+        ];
+        $run->metadata = $metadata;
+        $run->save();
+
+        try {
+            AuditLogger::log($request, 'liquidaciones.run.sync_personal', 'liq_import_run', $run->id, [
+                'synced_personas' => $syncedPersonas,
+                'created_documents' => $createdDocuments,
+                'updated_documents' => $updatedDocuments,
+                'unmatched_distributors_count' => count($unmatchedDistributors),
+                'errors_count' => count($errors),
+            ]);
+        } catch (\Throwable $exception) {
+            report($exception);
+        }
+
+        $message = $syncedPersonas > 0
+            ? sprintf(
+                'Sincronización completada: %d liquidaciones (%d nuevas, %d actualizadas).',
+                $syncedPersonas,
+                $createdDocuments,
+                $updatedDocuments
+            )
+            : 'No se pudieron sincronizar liquidaciones. Revisá distribuidores sin match y errores.';
+
+        return response()->json([
+            'message' => $message,
+            'data' => [
+                'run_id' => $run->id,
+                'synced_personas' => $syncedPersonas,
+                'created_documents' => $createdDocuments,
+                'updated_documents' => $updatedDocuments,
+                'unmatched_distributors_count' => count($unmatchedDistributors),
+                'errors_count' => count($errors),
+                'unmatched_distributors' => $unmatchedDistributors,
+                'errors' => $errors,
+            ],
+        ]);
+    }
+
     public function showDistribuidor(LiquidacionDistribuidor $distribuidor)
     {
         $run = $distribuidor->run()->first();
@@ -469,10 +535,6 @@ class LiquidacionRunController extends Controller
                 'message' => 'No se encontró el distribuidor.',
             ], Response::HTTP_NOT_FOUND);
         }
-
-        $distribuidor->load([
-            'lines' => fn ($query) => $query->orderBy('row_number')->orderBy('id'),
-        ]);
 
         return response()->json($this->serializeDistribuidorDetail($distribuidor));
     }
@@ -614,6 +676,10 @@ class LiquidacionRunController extends Controller
             'client_code' => ['required', 'string', 'max:100'],
             'period_from' => ['nullable', 'date'],
             'period_to' => ['nullable', 'date'],
+            'anio' => ['nullable', 'integer', 'min:2000', 'max:2100'],
+            'mes' => ['nullable', 'integer', 'min:1', 'max:12'],
+            'tipo_periodo' => ['nullable', 'string', 'in:MENSUAL,QUINCENAL'],
+            'quincena' => ['nullable', 'string', 'in:1Q,2Q'],
             'source_file_name' => ['nullable', 'string', 'max:255'],
             'source_file_url' => ['nullable', 'string', 'max:2048'],
             'source_file_hash' => ['nullable', 'string', 'max:128'],
@@ -665,8 +731,79 @@ class LiquidacionRunController extends Controller
             : true;
         $normalizedClientCode = $this->normalizeClientCode($validated['client_code'] ?? null)
             ?? strtoupper(trim((string) ($validated['client_code'] ?? '')));
+        $tipoPeriodo = isset($validated['tipo_periodo'])
+            ? strtoupper((string) $validated['tipo_periodo'])
+            : null;
+        $quincena = $validated['quincena'] ?? null;
+        if ($tipoPeriodo === 'QUINCENAL' && $quincena === null) {
+            return response()->json([
+                'message' => 'La quincena es obligatoria cuando tipo_periodo=QUINCENAL.',
+            ], Response::HTTP_UNPROCESSABLE_ENTITY);
+        }
+        if ($tipoPeriodo === 'MENSUAL') {
+            $quincena = null;
+        }
 
-        $run = DB::transaction(function () use ($validated, $request, $autoObservations, $normalizedClientCode) {
+        $periodFrom = $validated['period_from'] ?? null;
+        $periodTo = $validated['period_to'] ?? null;
+        if (
+            ($periodFrom === null || $periodTo === null)
+            && isset($validated['anio'], $validated['mes'])
+            && $tipoPeriodo !== null
+        ) {
+            [$calculatedFrom, $calculatedTo] = $this->buildPeriodRange(
+                (int) $validated['anio'],
+                (int) $validated['mes'],
+                $tipoPeriodo,
+                $quincena
+            );
+            $periodFrom = $periodFrom ?? $calculatedFrom->toDateString();
+            $periodTo = $periodTo ?? $calculatedTo->toDateString();
+        }
+        $validated['period_from'] = $periodFrom;
+        $validated['period_to'] = $periodTo;
+
+        $metadataPayload = is_array($validated['metadata'] ?? null)
+            ? $validated['metadata']
+            : [];
+        $periodMeta = is_array($metadataPayload['period'] ?? null)
+            ? $metadataPayload['period']
+            : [];
+
+        $periodYear = $validated['anio']
+            ?? ($validated['period_from'] ? (int) Carbon::parse((string) $validated['period_from'])->format('Y') : ($periodMeta['anio'] ?? null));
+        $periodMonth = $validated['mes']
+            ?? ($validated['period_from'] ? (int) Carbon::parse((string) $validated['period_from'])->format('n') : ($periodMeta['mes'] ?? null));
+        $periodType = $tipoPeriodo ?? ($periodMeta['tipo_periodo'] ?? null);
+        $periodFortnight = $periodType === 'QUINCENAL'
+            ? ($quincena ?? ($periodMeta['quincena'] ?? null))
+            : null;
+
+        $metadataPayload['period'] = array_merge($periodMeta, [
+            'anio' => $periodYear,
+            'mes' => $periodMonth,
+            'tipo_periodo' => $periodType,
+            'quincena' => $periodFortnight,
+            'sucursal_id' => $periodMeta['sucursal_id'] ?? null,
+        ]);
+
+        $hasPeriodMeta = collect($metadataPayload['period'])
+            ->contains(static fn ($value) => $value !== null && $value !== '');
+        if (!$hasPeriodMeta) {
+            unset($metadataPayload['period']);
+        }
+
+        if ($metadataPayload === []) {
+            $metadataPayload = null;
+        }
+
+        $run = DB::transaction(function () use (
+            $validated,
+            $request,
+            $autoObservations,
+            $normalizedClientCode,
+            $metadataPayload
+        ) {
             $run = LiquidacionImportRun::query()->create([
                 'source_system' => $validated['source_system'] ?? 'powerbi',
                 'client_code' => $normalizedClientCode,
@@ -676,7 +813,7 @@ class LiquidacionRunController extends Controller
                 'source_file_url' => $validated['source_file_url'] ?? null,
                 'source_file_hash' => $validated['source_file_hash'] ?? null,
                 'status' => $this->normalizeRunStatus($validated['status'] ?? 'CARGADA'),
-                'metadata' => $validated['metadata'] ?? null,
+                'metadata' => $metadataPayload,
                 'created_by' => $request->user()?->id,
             ]);
 
@@ -2111,6 +2248,9 @@ class LiquidacionRunController extends Controller
 
             $dateRaw = $this->getUploadRowValue($row, $columnIndexes, 'Fecha');
             $station = $this->getUploadRowValue($row, $columnIndexes, 'Estación');
+            $routeRaw = $this->getUploadRowValue($row, $columnIndexes, 'ID RUTA');
+            $svcRaw = $this->getUploadRowValue($row, $columnIndexes, 'SVC');
+            $turnoRaw = $this->getUploadRowValue($row, $columnIndexes, 'TURNO');
             $domainRaw = $this->getUploadRowValue($row, $columnIndexes, 'Dominio');
             $product = $this->getUploadRowValue($row, $columnIndexes, 'Producto');
             $invoice = $this->getUploadRowValue($row, $columnIndexes, 'Nro. Factura');
@@ -2118,6 +2258,7 @@ class LiquidacionRunController extends Controller
             $litersRaw = $this->getUploadRowValue($row, $columnIndexes, 'Litros');
             $amountRaw = $this->getUploadRowValue($row, $columnIndexes, 'Importe');
             $priceRaw = $this->getUploadRowValue($row, $columnIndexes, 'Precio/Litro');
+            $penalizacionRaw = $this->getUploadRowValue($row, $columnIndexes, 'Penalización');
 
             $domainNorm = $this->normalizeDomain($domainRaw);
             $occurredAt = $this->parseUploadDate($dateRaw, $preferredDateOrder);
@@ -2345,7 +2486,7 @@ class LiquidacionRunController extends Controller
                 'row_number' => $rowNumber,
                 'domain_norm' => $domainNorm,
                 'occurred_at' => $occurredAt?->toIso8601String(),
-                'station' => $this->normalizeNullableString($station),
+                'station' => $this->normalizeNullableString($station !== '' ? $station : $svcRaw),
                 'product' => $this->normalizeNullableString($product),
                 'invoice_number' => $this->normalizeNullableString($invoice),
                 'conductor' => $this->normalizeNullableString($conductor),
@@ -2378,6 +2519,10 @@ class LiquidacionRunController extends Controller
                         'Litros' => $litersRaw,
                         'Importe' => $amountRaw,
                         'Precio/Litro' => $priceRaw,
+                        'Penalización' => $penalizacionRaw,
+                        'ID RUTA' => $routeRaw,
+                        'SVC' => $svcRaw,
+                        'TURNO' => $turnoRaw,
                     ],
                     'rules' => [
                         'clientCode' => $normalizedClientCode,
@@ -3651,7 +3796,21 @@ class LiquidacionRunController extends Controller
 
     private function mapUploadRows(array $columns, array $rows, ?string $format = null): array
     {
-        $standardColumns = ['Fecha', 'Estación', 'Dominio', 'Producto', 'Nro. Factura', 'Conductor', 'Litros', 'Importe', 'Precio/Litro'];
+        $standardColumns = [
+            'Fecha',
+            'Estación',
+            'Dominio',
+            'Producto',
+            'Nro. Factura',
+            'Conductor',
+            'Litros',
+            'Importe',
+            'Precio/Litro',
+            'Penalización',
+            'ID RUTA',
+            'SVC',
+            'TURNO',
+        ];
         $candidates = [];
         $unmapped = [];
 
@@ -4245,6 +4404,19 @@ class LiquidacionRunController extends Controller
             } elseif (strpos($normalizedHeader, 'precio') !== false && strpos($normalizedHeader, 'litro') !== false) {
                 $score += 500;
             }
+        } elseif ($standardColumn === 'Penalización') {
+            [$numericCount, $nonZeroCount] = $this->uploadColumnNumericStats($rows, $columnIndex);
+            $score += ($numericCount * 10) + ($nonZeroCount * 40);
+            if (
+                strpos($normalizedHeader, 'penal') !== false
+                || strpos($normalizedHeader, 'multa') !== false
+                || strpos($normalizedHeader, 'descuento') !== false
+            ) {
+                $score += 650;
+            }
+            if (strpos($normalizedHeader, 'ajuste') !== false) {
+                $score += 80;
+            }
         } elseif ($standardColumn === 'Dominio') {
             if (strpos($normalizedHeader, 'patente') !== false || strpos($normalizedHeader, 'dominio') !== false) {
                 $score += 500;
@@ -4438,6 +4610,30 @@ class LiquidacionRunController extends Controller
         if (strpos($normalized, 'fecha') !== false) {
             return 'Fecha';
         }
+        if (
+            $normalized === 'ruta'
+            || strpos($normalized, 'id ruta') !== false
+            || strpos($normalized, 'nro ruta') !== false
+            || strpos($normalized, 'numero ruta') !== false
+        ) {
+            return 'ID RUTA';
+        }
+        if (
+            $compact === 'svc'
+            || str_starts_with($normalized, 'svc ')
+            || str_ends_with($normalized, ' svc')
+            || strpos($normalized, 'zona recorrido') !== false
+            || (
+                strpos($normalized, 'servicio') !== false
+                && strpos($normalized, 'estacion') === false
+                && strpos($normalized, 'establecimiento') === false
+            )
+        ) {
+            return 'SVC';
+        }
+        if (strpos($normalized, 'turno') !== false || strpos($normalized, 'jornada') !== false) {
+            return 'TURNO';
+        }
         if (strpos($normalized, 'estacion') !== false || strpos($normalized, 'establecimiento') !== false) {
             return 'Estación';
         }
@@ -4470,6 +4666,14 @@ class LiquidacionRunController extends Controller
         }
         if (strpos($normalized, 'litro') !== false || strpos($normalized, 'cantidad') !== false || strpos($normalized, 'volumen') !== false) {
             return 'Litros';
+        }
+        if (
+            strpos($normalized, 'penal') !== false
+            || strpos($normalized, 'penalizacion') !== false
+            || strpos($normalized, 'penalidad') !== false
+            || strpos($normalized, 'multa') !== false
+        ) {
+            return 'Penalización';
         }
         if (
             strpos($normalized, 'importe') !== false ||
@@ -5160,8 +5364,7 @@ class LiquidacionRunController extends Controller
         $activeDistributorIds = [];
         foreach ($groups as $key => $groupRows) {
             $first = $groupRows[0];
-            $rawPayload = is_array($first->raw_payload_json) ? $first->raw_payload_json : [];
-            $mappedPayload = is_array($rawPayload['mapped'] ?? null) ? $rawPayload['mapped'] : [];
+            $importedPenalty = $this->resolveDistributorPenaltyAdjustment($groupRows);
 
             $distribuidor = LiquidacionDistribuidor::query()
                 ->where('run_id', $run->id)
@@ -5175,6 +5378,9 @@ class LiquidacionRunController extends Controller
                 $distribuidor->gastos_admin_default = 2010.0;
                 $distribuidor->gastos_admin_final = 2010.0;
                 $distribuidor->ajuste_manual = 0.0;
+            }
+            if (abs((float) ($distribuidor->ajuste_manual ?? 0)) < 0.000001) {
+                $distribuidor->ajuste_manual = $importedPenalty;
             }
 
             $distribuidor->provider_id = $first->distributor_id;
@@ -5205,32 +5411,39 @@ class LiquidacionRunController extends Controller
                 $rowRawPayload = is_array($row->raw_payload_json) ? $row->raw_payload_json : [];
                 $mapped = is_array($rowRawPayload['mapped'] ?? null) ? $rowRawPayload['mapped'] : [];
                 $epsa = is_array($rowRawPayload['epsa'] ?? null) ? $rowRawPayload['epsa'] : [];
-                $linea->id_ruta = $this->normalizeNullableString((string) (
-                    $mapped['ID RUTA']
-                    ?? $mapped['RUTA']
-                    ?? $epsa['nro_planilla']
-                    ?? ''
-                ));
-                $linea->svc = $this->normalizeNullableString((string) (
-                    $mapped['SVC']
-                    ?? $mapped['ZONA RECORRIDO']
-                    ?? $row->station
-                    ?? ''
-                ));
+                $linea->id_ruta = $this->mappedPayloadString($mapped, [
+                    'ID RUTA',
+                    'RUTA',
+                    'Ruta',
+                ]) ?? $this->normalizeNullableString((string) ($epsa['nro_planilla'] ?? ''));
+                $linea->svc = $this->mappedPayloadString($mapped, [
+                    'SVC',
+                    'ZONA RECORRIDO',
+                    'Zona recorrido',
+                    'ESTACION',
+                    'Estación',
+                ]) ?? $this->normalizeNullableString((string) ($row->station ?? ''));
 
+                $penaltyLineAmount = $this->resolvePenaltyLineAmount($row);
                 $factorJornada = $this->resolveLineFactorJornada($row);
                 $lineTurno = $this->resolveLineTurno($row);
                 $lineCategory = $this->resolveLineCategory($row);
                 $linea->turno_norm = $lineTurno;
-                $linea->factor_jornada = $factorJornada;
-                $linea->tarifa_dist_calculada = $this->resolveLineTarifaDistCalculada(
-                    $run,
-                    $row,
-                    $lineCategory,
-                    $lineTurno,
-                    $linea->svc
-                );
-                $linea->plus_calculado = $this->resolveLinePlus($run, $row, $factorJornada);
+                if ($penaltyLineAmount !== null) {
+                    $linea->factor_jornada = 1.0;
+                    $linea->tarifa_dist_calculada = $penaltyLineAmount;
+                    $linea->plus_calculado = 0.0;
+                } else {
+                    $linea->factor_jornada = $factorJornada;
+                    $linea->tarifa_dist_calculada = $this->resolveLineTarifaDistCalculada(
+                        $run,
+                        $row,
+                        $lineCategory,
+                        $lineTurno,
+                        $linea->svc
+                    );
+                    $linea->plus_calculado = $this->resolveLinePlus($run, $row, $factorJornada);
+                }
                 $linea->importe_calculado = round(
                     ((float) ($linea->tarifa_dist_calculada ?? 0) * (float) ($linea->factor_jornada ?? 1))
                     + (float) ($linea->plus_calculado ?? 0),
@@ -5290,6 +5503,105 @@ class LiquidacionRunController extends Controller
         return array_values(array_unique($alerts));
     }
 
+    private function resolveDistributorPenaltyAdjustment(array $groupRows): float
+    {
+        $totalPenalty = 0.0;
+        foreach ($groupRows as $row) {
+            if (!$row instanceof LiquidacionStagingRow) {
+                continue;
+            }
+            $penalty = $this->extractPenaltyAmountFromRow($row);
+            if ($penalty === null) {
+                continue;
+            }
+            $totalPenalty += $penalty;
+        }
+
+        return round($totalPenalty, 2);
+    }
+
+    private function resolvePenaltyLineAmount(LiquidacionStagingRow $row): ?float
+    {
+        $rawPayload = is_array($row->raw_payload_json) ? $row->raw_payload_json : [];
+        $mapped = is_array($rawPayload['mapped'] ?? null) ? $rawPayload['mapped'] : [];
+
+        $explicitPenalty = $this->parseFloatOrNull($this->mappedPayloadString($mapped, [
+            'Penalización',
+            'Penalizacion',
+            'PENALIZACION',
+            'Penalidad',
+            'PENALIDAD',
+            'Multa',
+            'MULTA',
+            'Ajuste',
+            'AJUSTE',
+        ]));
+        if ($explicitPenalty !== null && abs($explicitPenalty) >= 0.000001) {
+            return $this->normalizePenaltyAmount($explicitPenalty);
+        }
+
+        $amount = $this->parseFloatOrNull($row->amount);
+        if ($amount === null || abs($amount) < 0.000001) {
+            $amount = $this->parseFloatOrNull($this->mappedPayloadString($mapped, [
+                'Tarifa final',
+                'TARIFA FINAL',
+                'Importe',
+                'Monto',
+                'Total',
+            ]));
+        }
+        if ($amount === null || abs($amount) < 0.000001) {
+            return null;
+        }
+        if ($amount < 0) {
+            return round($amount, 2);
+        }
+
+        $concept = implode(' ', array_filter([
+            $this->mappedPayloadString($mapped, ['¿REALIZO RU?', 'REALIZO RUTA', 'Concepto', 'Detalle', 'Producto']),
+            $this->mappedPayloadString($mapped, ['SVC', 'Estación']),
+            $this->normalizeNullableString((string) ($row->product ?? '')),
+            $this->normalizeNullableString((string) ($row->station ?? '')),
+        ]));
+        $conceptNormalized = $this->normalizeUploadHeader($concept);
+        $isPenaltyConcept = $conceptNormalized !== '' && (
+            strpos($conceptNormalized, 'penal') !== false
+            || strpos($conceptNormalized, 'multa') !== false
+            || strpos($conceptNormalized, 'descuento') !== false
+            || strpos($conceptNormalized, 'ajuste') !== false
+        );
+
+        return $isPenaltyConcept ? $this->normalizePenaltyAmount($amount) : null;
+    }
+
+    private function extractPenaltyAmountFromRow(LiquidacionStagingRow $row): ?float
+    {
+        $rawPayload = is_array($row->raw_payload_json) ? $row->raw_payload_json : [];
+        $mapped = is_array($rawPayload['mapped'] ?? null) ? $rawPayload['mapped'] : [];
+
+        $rawPenalty = $this->mappedPayloadString($mapped, [
+            'Penalización',
+            'Penalizacion',
+            'PENALIZACION',
+            'Penalidad',
+            'PENALIDAD',
+            'Multa',
+            'MULTA',
+            'Ajuste',
+            'AJUSTE',
+        ]);
+        $explicitPenalty = $this->parseFloatOrNull($rawPenalty);
+        if ($explicitPenalty !== null && abs($explicitPenalty) >= 0.000001) {
+            return $this->normalizePenaltyAmount($explicitPenalty);
+        }
+        return null;
+    }
+
+    private function normalizePenaltyAmount(float $value): float
+    {
+        return $value > 0 ? round(-$value, 2) : round($value, 2);
+    }
+
     private function resolveLineFactorJornada(LiquidacionStagingRow $row): float
     {
         $rawPayload = is_array($row->raw_payload_json) ? $row->raw_payload_json : [];
@@ -5324,7 +5636,7 @@ class LiquidacionRunController extends Controller
     {
         $rawPayload = is_array($row->raw_payload_json) ? $row->raw_payload_json : [];
         $mapped = is_array($rawPayload['mapped'] ?? null) ? $rawPayload['mapped'] : [];
-        $turnoRaw = $this->mappedPayloadString($mapped, ['TURNO', 'Turno']);
+        $turnoRaw = $this->mappedPayloadString($mapped, ['TURNO', 'Turno', 'JORNADA']);
         if ($turnoRaw !== null) {
             $upper = strtoupper($turnoRaw);
             if (in_array($upper, ['AM', 'PM', 'FULL'], true)) {
@@ -5880,7 +6192,10 @@ class LiquidacionRunController extends Controller
     private function serializeDistribuidorDetail(LiquidacionDistribuidor $distribuidor): array
     {
         $distribuidor->load([
-            'lines' => fn ($query) => $query->orderBy('row_number')->orderBy('id'),
+            'lines' => fn ($query) => $query
+                ->with('stagingRow')
+                ->orderBy('row_number')
+                ->orderBy('id'),
         ]);
 
         return [
@@ -5892,13 +6207,31 @@ class LiquidacionRunController extends Controller
                 ? round((float) $distribuidor->gastos_admin_override, 2)
                 : null,
             'lineas' => $distribuidor->lines->map(function (LiquidacionDistribuidorLinea $linea) {
+                $stagingRow = $linea->stagingRow;
+                $stagingRawPayload = is_array($stagingRow?->raw_payload_json) ? $stagingRow->raw_payload_json : [];
+                $stagingMapped = is_array($stagingRawPayload['mapped'] ?? null) ? $stagingRawPayload['mapped'] : [];
+                $stagingEpsa = is_array($stagingRawPayload['epsa'] ?? null) ? $stagingRawPayload['epsa'] : [];
+                $fallbackRuta = $this->mappedPayloadString($stagingMapped, [
+                    'ID RUTA',
+                    'RUTA',
+                    'Ruta',
+                ]) ?? $this->normalizeNullableString((string) ($stagingEpsa['nro_planilla'] ?? ''));
+                $fallbackSvc = $this->mappedPayloadString($stagingMapped, [
+                    'SVC',
+                    'ZONA RECORRIDO',
+                    'Zona recorrido',
+                    'ESTACION',
+                    'Estación',
+                ]) ?? $this->normalizeNullableString((string) ($stagingRow?->station ?? ''));
+                $fallbackTurno = $stagingRow ? $this->resolveLineTurno($stagingRow) : null;
+
                 return [
                     'linea_id' => $linea->id,
                     'staging_linea_id' => $linea->staging_row_id,
                     'fecha' => $linea->fecha?->format('Y-m-d'),
-                    'id_ruta' => $linea->id_ruta,
-                    'svc' => $linea->svc,
-                    'turno_norm' => $linea->turno_norm,
+                    'id_ruta' => $linea->id_ruta ?? $fallbackRuta,
+                    'svc' => $linea->svc ?? $fallbackSvc,
+                    'turno_norm' => $linea->turno_norm ?? $fallbackTurno,
                     'factor_jornada' => (float) ($linea->factor_jornada ?? 1),
                     'tarifa_dist_calculada' => round((float) ($linea->tarifa_dist_calculada ?? 0), 2),
                     'plus_calculado' => round((float) ($linea->plus_calculado ?? 0), 2),
@@ -6201,6 +6534,289 @@ class LiquidacionRunController extends Controller
             'la_jornada' => null,
             'error' => 'KM fuera de rango tarifario UT.Chico.',
         ];
+    }
+
+    private function syncRunToPersonalLiquidaciones(LiquidacionImportRun $run): array
+    {
+        $liquidacionType = FileType::query()->firstOrCreate(
+            ['nombre' => 'Liquidación'],
+            ['vence' => false]
+        );
+
+        $syncDate = $this->resolveRunSyncDate($run);
+        $fortnightKey = $this->resolveRunSyncFortnightKey($run, $syncDate);
+
+        $distribuidores = LiquidacionDistribuidor::query()
+            ->where('run_id', $run->id)
+            ->orderBy('id')
+            ->get();
+
+        if ($distribuidores->isEmpty()) {
+            return [
+                'synced_personas' => 0,
+                'created_documents' => 0,
+                'updated_documents' => 0,
+                'unmatched_distributors' => [],
+                'errors' => [],
+            ];
+        }
+
+        $groupedByPersona = [];
+        $unmatchedDistributors = [];
+
+        foreach ($distribuidores as $distribuidor) {
+            $persona = $this->resolvePersonaForDistributorSync($distribuidor);
+            if (!$persona) {
+                $unmatchedDistributors[] = [
+                    'distributor_id' => (int) $distribuidor->id,
+                    'provider_id' => $distribuidor->provider_id !== null ? (int) $distribuidor->provider_id : null,
+                    'patente' => $distribuidor->patente_norm,
+                    'reason' => 'No se encontró persona asociada por proveedor/patente.',
+                ];
+                continue;
+            }
+
+            $personaId = (int) $persona->id;
+            if (!isset($groupedByPersona[$personaId])) {
+                $groupedByPersona[$personaId] = [
+                    'persona' => $persona,
+                    'total' => 0.0,
+                    'distribuidores' => [],
+                ];
+            }
+
+            $groupedByPersona[$personaId]['total'] += (float) ($distribuidor->total_final ?? 0);
+            $groupedByPersona[$personaId]['distribuidores'][] = $distribuidor;
+        }
+
+        $createdDocuments = 0;
+        $updatedDocuments = 0;
+        $errors = [];
+
+        foreach ($groupedByPersona as $personaId => $item) {
+            /** @var Persona $persona */
+            $persona = $item['persona'];
+            /** @var LiquidacionDistribuidor[] $personaDistribuidores */
+            $personaDistribuidores = is_array($item['distribuidores']) ? $item['distribuidores'] : [];
+            $totalFacturar = round((float) ($item['total'] ?? 0), 2);
+
+            $directory = 'personal/' . $personaId . '/liquidaciones_extracto';
+            $path = $directory . '/run_' . $run->id . '_persona_' . $personaId . '.txt';
+            $fileContent = $this->buildRunPersonalLiquidacionText(
+                $run,
+                $persona,
+                $personaDistribuidores,
+                $totalFacturar,
+                $syncDate,
+                $fortnightKey
+            );
+            $sizeBytes = strlen($fileContent);
+
+            try {
+                Storage::disk('public')->put($path, $fileContent);
+            } catch (\Throwable $exception) {
+                report($exception);
+                $errors[] = [
+                    'persona_id' => $personaId,
+                    'path' => $path,
+                    'message' => 'No se pudo guardar el archivo de respaldo de liquidación.',
+                ];
+                continue;
+            }
+
+            $displayPatente = $this->normalizeNullableString((string) ($persona->patente ?? ''))
+                ?? ($personaDistribuidores[0]->patente_norm ?? null)
+                ?? ('PERS-' . $personaId);
+            $nombreDocumento = sprintf('Liquidación extracto Run #%d - %s.txt', $run->id, $displayPatente);
+
+            try {
+                $documento = Archivo::query()
+                    ->where('persona_id', $personaId)
+                    ->whereNull('parent_document_id')
+                    ->where('ruta', $path)
+                    ->first();
+
+                if ($documento) {
+                    $documento->carpeta = $directory;
+                    $documento->ruta = $path;
+                    $documento->disk = 'public';
+                    $documento->nombre_original = $nombreDocumento;
+                    $documento->mime = 'text/plain';
+                    $documento->size = $sizeBytes;
+                    $documento->tipo_archivo_id = $liquidacionType->id;
+                    $documento->fecha_vencimiento = $syncDate;
+                    $documento->fortnight_key = $fortnightKey;
+                    $documento->importe_facturar = $totalFacturar;
+                    $documento->created_at = $syncDate;
+                    $documento->updated_at = $syncDate;
+                    $documento->save();
+
+                    if (!$documento->download_url) {
+                        $documento->download_url = route('personal.documentos.descargar', [
+                            'persona' => $personaId,
+                            'documento' => $documento->id,
+                        ], false);
+                        $documento->save();
+                    }
+
+                    $updatedDocuments += 1;
+                    continue;
+                }
+
+                $documento = Archivo::query()->create([
+                    'persona_id' => $personaId,
+                    'parent_document_id' => null,
+                    'liquidacion_id' => null,
+                    'es_pendiente' => false,
+                    'tipo_archivo_id' => $liquidacionType->id,
+                    'carpeta' => $directory,
+                    'ruta' => $path,
+                    'download_url' => null,
+                    'disk' => 'public',
+                    'nombre_original' => $nombreDocumento,
+                    'mime' => 'text/plain',
+                    'size' => $sizeBytes,
+                    'fecha_vencimiento' => $syncDate,
+                    'fortnight_key' => $fortnightKey,
+                    'importe_facturar' => $totalFacturar,
+                    'enviada' => false,
+                    'recibido' => false,
+                    'pagado' => false,
+                    'liquidacion_destinatario_tipo' => null,
+                    'liquidacion_destinatario_emails' => null,
+                ]);
+
+                $documento->created_at = $syncDate;
+                $documento->updated_at = $syncDate;
+                $documento->download_url = route('personal.documentos.descargar', [
+                    'persona' => $personaId,
+                    'documento' => $documento->id,
+                ], false);
+                $documento->save();
+
+                $createdDocuments += 1;
+            } catch (\Throwable $exception) {
+                report($exception);
+                $errors[] = [
+                    'persona_id' => $personaId,
+                    'path' => $path,
+                    'message' => 'No se pudo crear/actualizar la liquidación sincronizada.',
+                ];
+            }
+        }
+
+        return [
+            'synced_personas' => $createdDocuments + $updatedDocuments,
+            'created_documents' => $createdDocuments,
+            'updated_documents' => $updatedDocuments,
+            'unmatched_distributors' => $unmatchedDistributors,
+            'errors' => $errors,
+        ];
+    }
+
+    private function resolvePersonaForDistributorSync(LiquidacionDistribuidor $distribuidor): ?Persona
+    {
+        $patenteNorm = $this->normalizeDomain((string) ($distribuidor->patente_norm ?? ''));
+        if ($patenteNorm !== null) {
+            // If the extract row has a plate, avoid fallback by provider_id to prevent
+            // mixing different vehicles into a single personal liquidation.
+            return $this->findPersonaByPatenteNorm($patenteNorm);
+        }
+
+        if ($distribuidor->provider_id !== null) {
+            $persona = Persona::query()->find((int) $distribuidor->provider_id);
+            if ($persona) {
+                return $persona;
+            }
+        }
+
+        return null;
+    }
+
+    private function findPersonaByPatenteNorm(string $patenteNorm): ?Persona
+    {
+        return Persona::query()
+            ->whereRaw(
+                "UPPER(REPLACE(REPLACE(REPLACE(TRIM(COALESCE(patente, '')), ' ', ''), '-', ''), '.', '')) = ?",
+                [$patenteNorm]
+            )
+            ->orderByDesc('id')
+            ->first();
+    }
+
+    private function resolveRunSyncDate(LiquidacionImportRun $run): Carbon
+    {
+        if ($run->period_to instanceof Carbon) {
+            return $run->period_to->copy()->endOfDay();
+        }
+        if ($run->period_from instanceof Carbon) {
+            return $run->period_from->copy()->endOfDay();
+        }
+        if ($run->created_at instanceof Carbon) {
+            return $run->created_at->copy();
+        }
+
+        return now();
+    }
+
+    private function resolveRunSyncFortnightKey(LiquidacionImportRun $run, Carbon $fallbackDate): string
+    {
+        $metadata = is_array($run->metadata) ? $run->metadata : [];
+        $period = is_array($metadata['period'] ?? null) ? $metadata['period'] : [];
+
+        $tipoPeriodo = strtoupper(trim((string) ($period['tipo_periodo'] ?? '')));
+        $quincena = strtoupper(trim((string) ($period['quincena'] ?? '')));
+
+        if ($tipoPeriodo === 'MENSUAL') {
+            return 'MONTHLY';
+        }
+        if ($tipoPeriodo === 'QUINCENAL') {
+            return $quincena === '2Q' ? 'Q2' : 'Q1';
+        }
+        if (in_array($quincena, ['1Q', '2Q'], true)) {
+            return $quincena === '2Q' ? 'Q2' : 'Q1';
+        }
+
+        return $fallbackDate->day <= 15 ? 'Q1' : 'Q2';
+    }
+
+    private function buildRunPersonalLiquidacionText(
+        LiquidacionImportRun $run,
+        Persona $persona,
+        array $distribuidores,
+        float $totalFacturar,
+        Carbon $syncDate,
+        string $fortnightKey
+    ): string {
+        $lines = [
+            'Liquidacion sincronizada desde Extractos BI/ERP',
+            'Run ID: ' . $run->id,
+            'Persona ID: ' . $persona->id,
+            'Persona: ' . trim((string) (($persona->nombres ?? '') . ' ' . ($persona->apellidos ?? ''))),
+            'Patente: ' . ((string) ($persona->patente ?? '')),
+            'Cliente: ' . ((string) ($run->client_code ?? '')),
+            'Periodo: ' . ((string) ($run->period_from?->format('Y-m-d') ?? '')) . ' / ' . ((string) ($run->period_to?->format('Y-m-d') ?? '')),
+            'Fecha sync: ' . $syncDate->format('Y-m-d H:i:s'),
+            'Fortnight key: ' . $fortnightKey,
+            'Total a facturar: ' . number_format($totalFacturar, 2, '.', ''),
+            'Distribuidores: ' . count($distribuidores),
+            '',
+        ];
+
+        foreach ($distribuidores as $distribuidor) {
+            if (!$distribuidor instanceof LiquidacionDistribuidor) {
+                continue;
+            }
+            $lines[] = sprintf(
+                '- Dist #%d | Patente %s | Categoria %s | Total %s',
+                (int) $distribuidor->id,
+                (string) ($distribuidor->patente_norm ?? 'N/A'),
+                (string) ($distribuidor->categoria_vehiculo ?? 'N/A'),
+                number_format((float) ($distribuidor->total_final ?? 0), 2, '.', '')
+            );
+        }
+
+        return implode("\n", $lines) . "\n";
     }
 
     private function normalizeNullableString($value): ?string
