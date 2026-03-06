@@ -20544,6 +20544,7 @@ const CombustibleRunsPage: React.FC = () => {
   const [createPreviewError, setCreatePreviewError] = useState<string | null>(null);
   const [createLoading, setCreateLoading] = useState(false);
   const [liquidacionesClients, setLiquidacionesClients] = useState<LiquidacionesClientOption[]>([]);
+  const [deletingRunIds, setDeletingRunIds] = useState<Set<number>>(new Set());
 
   const [rulesClientCode, setRulesClientCode] = useState('');
   const [rulesActive, setRulesActive] = useState(true);
@@ -21362,6 +21363,65 @@ const CombustibleRunsPage: React.FC = () => {
     }
   };
 
+  const handleDeleteRun = async (run: LiquidacionRunRecord) => {
+    const runId = Number(run.id);
+    if (!Number.isInteger(runId) || runId <= 0) {
+      setActionError('No se pudo identificar el run a eliminar.');
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `¿Eliminar el run #${runId}${run.clientCode ? ` (${run.clientCode})` : ''}? Esta acción no se puede deshacer.`
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    setActionMessage(null);
+    setActionError(null);
+    setDeletingRunIds((prev) => {
+      const next = new Set(prev);
+      next.add(runId);
+      return next;
+    });
+
+    try {
+      const response = await fetch(`${apiBaseUrl}/api/liquidaciones/runs/${runId}`, {
+        method: 'DELETE',
+        credentials: 'include',
+      });
+
+      const payload = (await parseJsonSafe(response)) as { message?: string };
+      if (!response.ok) {
+        throw new Error(payload?.message ?? 'No se pudo eliminar el run.');
+      }
+
+      if (selectedRunId === runId) {
+        setSelectedRunId(null);
+        setSelectedRun(null);
+        setRunSummary(null);
+        setLatestPublishJob(null);
+        setImportacionPreview(null);
+        setSelectedDistribuidorId(null);
+        setSelectedDistribuidorDetail(null);
+      }
+
+      setActionMessage(payload?.message ?? `Run #${runId} eliminado correctamente.`);
+      await loadRuns();
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : 'No se pudo eliminar el run.');
+    } finally {
+      setDeletingRunIds((prev) => {
+        if (!prev.has(runId)) {
+          return prev;
+        }
+        const next = new Set(prev);
+        next.delete(runId);
+        return next;
+      });
+    }
+  };
+
   const handleApproveRun = async () => {
     if (!selectedRunId) {
       setActionError('Seleccioná un run para aprobar.');
@@ -21948,17 +22008,21 @@ const CombustibleRunsPage: React.FC = () => {
           <div className="form-grid">
             <label className="input-control">
               <span>Cliente</span>
-              <select
+              <input
                 value={createClientCode}
                 onChange={(event) => setCreateClientCode(event.target.value)}
-              >
-                <option value="">Seleccionar cliente</option>
+                onBlur={(event) => setCreateClientCode(event.target.value.trim().toUpperCase())}
+                list="create-run-client-options"
+                placeholder="Seleccionar o escribir cliente"
+              />
+              <datalist id="create-run-client-options">
                 {clientOptions.map((option) => (
                   <option key={`create-client-${option.code}`} value={option.code}>
                     {option.label}
                   </option>
                 ))}
-              </select>
+              </datalist>
+              <small className="helper-text">Podés elegir de la lista o escribir un cliente nuevo.</small>
             </label>
             <label className="input-control">
               <span>Período desde</span>
@@ -22545,16 +22609,17 @@ const CombustibleRunsPage: React.FC = () => {
                   <th>Alertas</th>
                   <th>Diferencias</th>
                   <th>Creado</th>
+                  <th>Acciones</th>
                 </tr>
               </thead>
               <tbody>
                 {loadingRuns ? (
                   <tr>
-                    <td colSpan={10}>Cargando runs...</td>
+                    <td colSpan={11}>Cargando runs...</td>
                   </tr>
                 ) : runs.length === 0 ? (
                   <tr>
-                    <td colSpan={10}>No hay runs para mostrar.</td>
+                    <td colSpan={11}>No hay runs para mostrar.</td>
                   </tr>
                 ) : (
                   runs.map((run) => (
@@ -22576,6 +22641,19 @@ const CombustibleRunsPage: React.FC = () => {
                       <td>{run.rowsAlert ?? 0}</td>
                       <td>{run.rowsDiff ?? 0}</td>
                       <td>{formatDateCell(run.createdAt)}</td>
+                      <td>
+                        <button
+                          type="button"
+                          className="secondary-action secondary-action--danger"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            void handleDeleteRun(run);
+                          }}
+                          disabled={deletingRunIds.has(run.id)}
+                        >
+                          {deletingRunIds.has(run.id) ? 'Eliminando...' : 'Eliminar'}
+                        </button>
+                      </td>
                     </tr>
                   ))
                 )}

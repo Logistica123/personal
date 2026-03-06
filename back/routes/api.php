@@ -166,6 +166,7 @@ Route::middleware('auth.api')->group(function () {
     Route::post('/liquidaciones/runs/upload', [LiquidacionRunController::class, 'upload']);
     Route::post('/liquidaciones/runs', [LiquidacionRunController::class, 'store']);
     Route::get('/liquidaciones/runs/{run}', [LiquidacionRunController::class, 'show']);
+    Route::delete('/liquidaciones/runs/{run}', [LiquidacionRunController::class, 'destroy']);
     Route::post('/liquidaciones/runs/{run}/upsert', [LiquidacionRunController::class, 'upsert']);
     Route::post('/liquidaciones/runs/{run}/approve', [LiquidacionRunController::class, 'approve']);
     Route::post('/liquidaciones/runs/{run}/publicar-erp', [LiquidacionRunController::class, 'publishToErp']);

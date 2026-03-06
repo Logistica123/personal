@@ -17,6 +17,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
@@ -301,8 +302,8 @@ class PersonalDocumentController extends Controller
             'fechaVencimiento' => ['nullable', 'date'],
             'fortnightKey' => ['nullable', 'in:Q1,Q2,MONTHLY'],
             'monthKey' => ['nullable', 'date_format:Y-m'],
-            'importeCombustible' => ['nullable', 'numeric', 'min:0'],
-            'importeFacturar' => ['nullable', 'numeric', 'min:0'],
+            'importeCombustible' => ['nullable', 'numeric', 'min:0', 'max:9999999999.99'],
+            'importeFacturar' => ['nullable', 'numeric', 'min:0', 'max:9999999999.99'],
             'attachFuelInvoices' => ['nullable', 'boolean'],
             'pendiente' => ['nullable', 'boolean'],
             'liquidacionId' => ['nullable', 'integer', 'min:1'],
@@ -312,7 +313,9 @@ class PersonalDocumentController extends Controller
             'tipoArchivoId.exists' => 'El tipo de documento seleccionado no es válido.',
             'archivo.max' => 'El archivo es demasiado grande. Permitimos hasta 50 MB por liquidación.',
             'importeCombustible.numeric' => 'El importe de combustible debe ser numérico.',
+            'importeCombustible.max' => 'El importe de combustible supera el máximo permitido.',
             'importeFacturar.numeric' => 'El importe a facturar debe ser numérico.',
+            'importeFacturar.max' => 'El importe a facturar supera el máximo permitido.',
         ]);
 
         $validator->after(function ($validator) use ($request) {
@@ -382,48 +385,102 @@ class PersonalDocumentController extends Controller
             $recipientPayload = $this->resolveLiquidacionRecipients($persona, $requestedRecipientType, true);
         }
 
-        $documento = $persona->documentos()->create([
-            'carpeta' => $directory,
-            'ruta' => $storedPath,
-            'parent_document_id' => $parentDocumentId,
-            'liquidacion_id' => $validated['liquidacionId'] ?? null,
-            'es_pendiente' => $isPending,
-            'download_url' => null,
-            'disk' => $disk,
-            'nombre_original' => $nombreOriginal,
-            'mime' => $file->getClientMimeType(),
-            'size' => $file->getSize(),
-            'tipo_archivo_id' => $validated['tipoArchivoId'],
-            'fecha_vencimiento' => $parsedFecha,
-            'fortnight_key' => $validated['fortnightKey'] ?? null,
-            'importe_facturar' => $validated['importeFacturar'] ?? null,
-            'enviada' => $isLiquidacion && ! $isPending,
-            'recibido' => false,
-            'pagado' => false,
-            'liquidacion_destinatario_tipo' => $recipientPayload['type'] ?? null,
-            'liquidacion_destinatario_emails' => $recipientPayload['emails'] ?? null,
-        ]);
+        $documento = null;
+        $downloadUrl = null;
+        $absoluteDownloadUrl = null;
+        $isLiquidacionDoc = false;
 
-        if ($parsedFecha) {
-            $documento->created_at = $parsedFecha;
-            $documento->updated_at = $parsedFecha;
-            $documento->save();
+        try {
+            DB::transaction(function () use (
+                $persona,
+                $parentDocumentId,
+                $validated,
+                $isPending,
+                $disk,
+                $directory,
+                $storedPath,
+                $nombreOriginal,
+                $file,
+                $parsedFecha,
+                $isLiquidacion,
+                $recipientPayload,
+                $request,
+                &$documento,
+                &$downloadUrl,
+                &$absoluteDownloadUrl,
+                &$isLiquidacionDoc
+            ): void {
+                $documento = $persona->documentos()->create([
+                    'carpeta' => $directory,
+                    'ruta' => $storedPath,
+                    'parent_document_id' => $parentDocumentId,
+                    'liquidacion_id' => $validated['liquidacionId'] ?? null,
+                    'es_pendiente' => $isPending,
+                    'download_url' => null,
+                    'disk' => $disk,
+                    'nombre_original' => $nombreOriginal,
+                    'mime' => $file->getClientMimeType(),
+                    'size' => $file->getSize(),
+                    'tipo_archivo_id' => $validated['tipoArchivoId'],
+                    'fecha_vencimiento' => $parsedFecha,
+                    'fortnight_key' => $validated['fortnightKey'] ?? null,
+                    'importe_facturar' => $validated['importeFacturar'] ?? null,
+                    'enviada' => $isLiquidacion && ! $isPending,
+                    'recibido' => false,
+                    'pagado' => false,
+                    'liquidacion_destinatario_tipo' => $recipientPayload['type'] ?? null,
+                    'liquidacion_destinatario_emails' => $recipientPayload['emails'] ?? null,
+                ]);
+
+                if ($parsedFecha) {
+                    $documento->created_at = $parsedFecha;
+                    $documento->updated_at = $parsedFecha;
+                    $documento->save();
+                }
+
+                $documento->loadMissing('tipo:id,nombre,vence');
+
+                $downloadUrl = route('personal.documentos.descargar', [
+                    'persona' => $persona->id,
+                    'documento' => $documento->id,
+                ], false);
+
+                $absoluteDownloadUrl = route('personal.documentos.descargar', [
+                    'persona' => $persona->id,
+                    'documento' => $documento->id,
+                ], true);
+
+                $documento->download_url = $downloadUrl;
+                $documento->save();
+
+                $isLiquidacionDoc = $request->boolean('esLiquidacion')
+                    || Str::contains(Str::lower($documento->tipo?->nombre ?? ''), 'liquid');
+
+                if ($isLiquidacionDoc && $request->boolean('attachFuelInvoices')) {
+                    $this->attachPendingFuelInvoices($persona, $documento, $request->boolean('marcarRecibido'));
+                }
+
+                if ($parentDocumentId && ! $isLiquidacionDoc) {
+                    $shouldMarkReceived = $request->boolean('marcarRecibido') || $request->boolean('esFacturaCombustible');
+                    if ($shouldMarkReceived) {
+                        $persona->documentos()
+                            ->where('id', $parentDocumentId)
+                            ->update(['recibido' => true]);
+                    }
+                }
+            });
+        } catch (\Throwable $exception) {
+            if ($storedPath && Storage::disk($disk)->exists($storedPath)) {
+                Storage::disk($disk)->delete($storedPath);
+            }
+            throw $exception;
         }
 
-        $documento->loadMissing('tipo:id,nombre,vence');
-
-        $downloadUrl = route('personal.documentos.descargar', [
-            'persona' => $persona->id,
-            'documento' => $documento->id,
-        ], false);
-
-        $absoluteDownloadUrl = route('personal.documentos.descargar', [
-            'persona' => $persona->id,
-            'documento' => $documento->id,
-        ], true);
-
-        $documento->download_url = $downloadUrl;
-        $documento->save();
+        if (! $documento || ! $downloadUrl || ! $absoluteDownloadUrl) {
+            throw ValidationException::withMessages([
+                'archivo' => ['No se pudo guardar el documento cargado.'],
+            ]);
+        }
 
         Log::info('Liquidación cargada', [
             'persona_id' => $persona->id,
@@ -435,17 +492,22 @@ class PersonalDocumentController extends Controller
         ]);
 
         if ($isLiquidacion && ! $isPending) {
-            $this->createLiquidacionNotification(
-                $persona,
-                $documento->id,
-                $documento->nombre_original,
-                $recipientPayload['type'] ?? null,
-                $recipientPayload['emails'] ?? []
-            );
+            try {
+                $this->createLiquidacionNotification(
+                    $persona,
+                    $documento->id,
+                    $documento->nombre_original,
+                    $recipientPayload['type'] ?? null,
+                    $recipientPayload['emails'] ?? []
+                );
+            } catch (\Throwable $exception) {
+                report($exception);
+                Log::warning('No se pudo generar notificación de liquidación.', [
+                    'persona_id' => $persona->id,
+                    'documento_id' => $documento->id,
+                ]);
+            }
         }
-
-        $isLiquidacionDoc = $request->boolean('esLiquidacion')
-            || Str::contains(Str::lower($documento->tipo?->nombre ?? ''), 'liquid');
 
         Log::info('Chequeo auto validacion IA', [
             'documento_id' => $documento->id,
@@ -455,31 +517,26 @@ class PersonalDocumentController extends Controller
             'mime' => $documento->mime,
         ]);
 
-        if ($isLiquidacionDoc && $request->boolean('attachFuelInvoices')) {
-            $this->attachPendingFuelInvoices($persona, $documento, $request->boolean('marcarRecibido'));
-        }
-
-        if ($parentDocumentId && ! $isLiquidacionDoc) {
-            $shouldMarkReceived = $request->boolean('marcarRecibido') || $request->boolean('esFacturaCombustible');
-            if ($shouldMarkReceived) {
-                $persona->documentos()
-                    ->where('id', $parentDocumentId)
-                    ->update(['recibido' => true]);
-            }
-        }
-
         if (! $request->boolean('skipAutoValidacion')) {
             if ($documento->parent_document_id !== null) {
                 $this->runFacturaAiValidation($documento);
             }
         }
 
-        AuditLogger::log($request, 'document_create', 'documento', $documento->id, [
-            'persona_id' => $persona->id,
-            'nombre' => $documento->nombre_original,
-            'tipo_archivo_id' => $documento->tipo_archivo_id,
-            'size' => $documento->size,
-        ]);
+        try {
+            AuditLogger::log($request, 'document_create', 'documento', $documento->id, [
+                'persona_id' => $persona->id,
+                'nombre' => $documento->nombre_original,
+                'tipo_archivo_id' => $documento->tipo_archivo_id,
+                'size' => $documento->size,
+            ]);
+        } catch (\Throwable $exception) {
+            report($exception);
+            Log::warning('No se pudo registrar auditoría de documento.', [
+                'persona_id' => $persona->id,
+                'documento_id' => $documento->id,
+            ]);
+        }
 
         return response()->json([
             'message' => 'Documento cargado correctamente.',
@@ -556,13 +613,21 @@ class PersonalDocumentController extends Controller
         ]);
 
         foreach ($publishedLiquidaciones as $publishedLiquidacion) {
-            $this->createLiquidacionNotification(
-                $persona,
-                (int) $publishedLiquidacion->id,
-                $publishedLiquidacion->nombre_original,
-                $recipientPayload['type'] ?? null,
-                $recipientPayload['emails'] ?? []
-            );
+            try {
+                $this->createLiquidacionNotification(
+                    $persona,
+                    (int) $publishedLiquidacion->id,
+                    $publishedLiquidacion->nombre_original,
+                    $recipientPayload['type'] ?? null,
+                    $recipientPayload['emails'] ?? []
+                );
+            } catch (\Throwable $exception) {
+                report($exception);
+                Log::warning('No se pudo generar notificación al publicar liquidación pendiente.', [
+                    'persona_id' => $persona->id,
+                    'documento_id' => (int) $publishedLiquidacion->id,
+                ]);
+            }
         }
 
         if ($request->boolean('marcarRecibido')) {
@@ -695,13 +760,14 @@ class PersonalDocumentController extends Controller
             'nombre' => ['nullable', 'string'],
             'tipoArchivoId' => ['nullable', 'integer', 'exists:fyle_types,id'],
             'fechaVencimiento' => ['nullable', 'date'],
-            'importeFacturar' => ['nullable', 'numeric', 'min:0'],
+            'importeFacturar' => ['nullable', 'numeric', 'min:0', 'max:9999999999.99'],
             'liquidacionId' => ['nullable', 'integer', 'min:1'],
             'destinatarioTipo' => ['nullable', 'in:proveedor,cobrador,ambos'],
         ], [
             'tipoArchivoId.exists' => 'El tipo de documento seleccionado no es válido.',
             'archivo.max' => 'El archivo es demasiado grande. Permitimos hasta 50 MB por liquidación.',
             'importeFacturar.numeric' => 'El importe a facturar debe ser numérico.',
+            'importeFacturar.max' => 'El importe a facturar supera el máximo permitido.',
         ]);
 
         $validator->after(function ($validator) use ($request) {

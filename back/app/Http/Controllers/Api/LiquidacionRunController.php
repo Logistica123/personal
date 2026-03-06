@@ -765,6 +765,10 @@ class LiquidacionRunController extends Controller
                 $this->generateAutomaticObservations($run);
             }
 
+            return $run->fresh();
+        });
+
+        try {
             AuditLogger::log($request, 'liquidaciones.run.create', 'liq_import_run', $run->id, [
                 'client_code' => $run->client_code,
                 'source_file_name' => $run->source_file_name,
@@ -774,9 +778,9 @@ class LiquidacionRunController extends Controller
                 'rows_alert' => $run->rows_alert,
                 'rows_diff' => $run->rows_diff,
             ]);
-
-            return $run->fresh();
-        });
+        } catch (\Throwable $exception) {
+            report($exception);
+        }
 
         return response()->json([
             'data' => $this->serializeRun($run),
@@ -972,17 +976,21 @@ class LiquidacionRunController extends Controller
             ], Response::HTTP_UNPROCESSABLE_ENTITY);
         }
 
-        AuditLogger::log($request, 'liquidaciones.run.upload', 'liq_import_run', $run->id, [
-            'client_code' => $run->client_code,
-            'source_file_name' => $run->source_file_name,
-            'source_file_path' => $storedPath,
-            'size_bytes' => $file->getSize(),
-            'rows_total' => $run->rows_total,
-            'rows_ok' => $run->rows_ok,
-            'rows_error' => $run->rows_error,
-            'rows_alert' => $run->rows_alert,
-            'rows_diff' => $run->rows_diff,
-        ]);
+        try {
+            AuditLogger::log($request, 'liquidaciones.run.upload', 'liq_import_run', $run->id, [
+                'client_code' => $run->client_code,
+                'source_file_name' => $run->source_file_name,
+                'source_file_path' => $storedPath,
+                'size_bytes' => $file->getSize(),
+                'rows_total' => $run->rows_total,
+                'rows_ok' => $run->rows_ok,
+                'rows_error' => $run->rows_error,
+                'rows_alert' => $run->rows_alert,
+                'rows_diff' => $run->rows_diff,
+            ]);
+        } catch (\Throwable $exception) {
+            report($exception);
+        }
 
         return response()->json([
             'message' => 'Archivo procesado y run creado.',
@@ -1174,6 +1182,50 @@ class LiquidacionRunController extends Controller
                 'observations_by_status' => $observationsByStatus,
             ],
             'latest_publish_job' => $latestPublishJob ? $this->serializePublishJob($latestPublishJob) : null,
+        ]);
+    }
+
+    public function destroy(Request $request, LiquidacionImportRun $run)
+    {
+        $status = strtoupper((string) $run->status);
+        if (in_array($status, ['PUBLICADA', 'PUBLISHED'], true)) {
+            return response()->json([
+                'message' => 'No se puede eliminar un run ya publicado.',
+            ], Response::HTTP_CONFLICT);
+        }
+
+        $runId = (int) $run->id;
+        $clientCode = (string) ($run->client_code ?? '');
+        $sourceFilePath = $this->resolveRunSourceFilePath($run);
+        $sourceFileDisk = $this->resolveRunSourceFileDisk($run);
+
+        DB::transaction(function () use ($run): void {
+            $run->delete();
+        });
+
+        if ($sourceFilePath !== null) {
+            try {
+                if (Storage::disk($sourceFileDisk)->exists($sourceFilePath)) {
+                    Storage::disk($sourceFileDisk)->delete($sourceFilePath);
+                }
+            } catch (\Throwable $exception) {
+                report($exception);
+            }
+        }
+
+        try {
+            AuditLogger::log($request, 'liquidaciones.run.delete', 'liq_import_run', $runId, [
+                'client_code' => $clientCode !== '' ? $clientCode : null,
+                'status' => $status !== '' ? $status : null,
+                'source_file_path' => $sourceFilePath,
+                'source_file_disk' => $sourceFileDisk,
+            ]);
+        } catch (\Throwable $exception) {
+            report($exception);
+        }
+
+        return response()->json([
+            'message' => "Run #{$runId} eliminado correctamente.",
         ]);
     }
 
@@ -6158,6 +6210,43 @@ class LiquidacionRunController extends Controller
 
         $trimmed = trim($value);
         return $trimmed !== '' ? $trimmed : null;
+    }
+
+    private function resolveRunSourceFilePath(LiquidacionImportRun $run): ?string
+    {
+        $metadata = is_array($run->metadata) ? $run->metadata : [];
+        $upload = is_array($metadata['upload'] ?? null) ? $metadata['upload'] : [];
+
+        $uploadPath = $this->normalizeNullableString(is_string($upload['path'] ?? null) ? $upload['path'] : null);
+        if ($uploadPath !== null) {
+            return $this->isExternalUrl($uploadPath) ? null : $uploadPath;
+        }
+
+        $legacyPath = $this->normalizeNullableString($run->source_file_url);
+        if ($legacyPath === null || $this->isExternalUrl($legacyPath)) {
+            return null;
+        }
+
+        return $legacyPath;
+    }
+
+    private function resolveRunSourceFileDisk(LiquidacionImportRun $run): string
+    {
+        $metadata = is_array($run->metadata) ? $run->metadata : [];
+        $upload = is_array($metadata['upload'] ?? null) ? $metadata['upload'] : [];
+        $disk = $this->normalizeNullableString(is_string($upload['disk'] ?? null) ? $upload['disk'] : null) ?? 'local';
+
+        $configuredDisks = config('filesystems.disks', []);
+        if (!is_array($configuredDisks) || !array_key_exists($disk, $configuredDisks)) {
+            return 'local';
+        }
+
+        return $disk;
+    }
+
+    private function isExternalUrl(string $value): bool
+    {
+        return (bool) preg_match('/^https?:\/\//i', $value);
     }
 
     private function normalizeClientCode($value): ?string
