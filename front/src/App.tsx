@@ -10,6 +10,7 @@ import {
   Outlet,
 } from 'react-router-dom';
 import './App.css';
+import { FACTURACION_COMPROBANTES_OPTIONS, FACTURACION_FORMATOS_DESTACADOS } from './facturacionComprobantes';
 
 const AUTH_STORAGE_KEY = 'authUser';
 
@@ -245,6 +246,7 @@ type AccessSection =
   | 'control-horario'
   | 'liquidaciones'
   | 'pagos'
+  | 'facturacion'
   | 'combustible'
   | 'auditoria'
   | 'tarifas'
@@ -1175,6 +1177,7 @@ const USER_PERMISSION_OPTIONS: Array<{ value: AccessSection; label: string }> = 
   { value: 'solicitud-personal', label: 'Solicitud personal' },
   { value: 'liquidaciones', label: 'Liquidaciones' },
   { value: 'pagos', label: 'Pago' },
+  { value: 'facturacion', label: 'Facturación' },
   { value: 'combustible', label: 'Combustible' },
   { value: 'tarifas', label: 'Tarifas' },
   { value: 'bases', label: 'Bases de distribución' },
@@ -1213,6 +1216,7 @@ const canAccessSection = (
     case 'control-horario':
     case 'liquidaciones':
     case 'pagos':
+    case 'facturacion':
     case 'combustible':
     case 'auditoria':
     case 'configuracion':
@@ -4607,6 +4611,11 @@ const DashboardLayout: React.FC<{
                 </div>
               ) : null}
             </>
+          ) : null}
+          {canAccessSection(userRole, 'facturacion', authUser?.permissions) ? (
+            <NavLink to="/facturacion" className={({ isActive }) => `sidebar-link${isActive ? ' is-active' : ''}`}>
+              Facturación
+            </NavLink>
           ) : null}
           {canAccessSection(userRole, 'solicitud-personal', authUser?.permissions) ? (
             <NavLink
@@ -26174,6 +26183,73 @@ const LiquidacionesPage: React.FC = () => {
 
     const monthFormatter = new Intl.DateTimeFormat('es-AR', { month: 'long', year: 'numeric' });
     const capitalize = (value: string) => value.charAt(0).toUpperCase() + value.slice(1);
+    const normalizeMonthKey = (raw?: string | null): string | null => {
+      if (!raw || raw === 'unknown') {
+        return null;
+      }
+      return /^\d{4}-\d{2}$/.test(raw) ? raw : null;
+    };
+    const normalizeFortnightKey = (raw?: string | null): 'Q1' | 'Q2' | 'MONTHLY' | 'NO_DATE' | null => {
+      if (raw === 'Q1' || raw === 'Q2' || raw === 'MONTHLY' || raw === 'NO_DATE') {
+        return raw;
+      }
+      return null;
+    };
+    const parseCalendarDate = (raw?: string | null): { year: number; month: number; day: number } | null => {
+      if (!raw) {
+        return null;
+      }
+
+      const match = raw.match(/^(\d{4})-(\d{2})-(\d{2})/);
+      if (match) {
+        const year = Number(match[1]);
+        const month = Number(match[2]);
+        const day = Number(match[3]);
+        if (
+          Number.isFinite(year) &&
+          Number.isFinite(month) &&
+          Number.isFinite(day) &&
+          month >= 1 &&
+          month <= 12 &&
+          day >= 1 &&
+          day <= 31
+        ) {
+          return { year, month, day };
+        }
+      }
+
+      const parsed = new Date(raw);
+      if (Number.isNaN(parsed.getTime())) {
+        return null;
+      }
+      return {
+        year: parsed.getFullYear(),
+        month: parsed.getMonth() + 1,
+        day: parsed.getDate(),
+      };
+    };
+    const monthLabelFromKey = (monthKey: string): string => {
+      const [yearPart, monthPart] = monthKey.split('-');
+      const year = Number(yearPart);
+      const month = Number(monthPart);
+      if (!Number.isFinite(year) || !Number.isFinite(month) || month < 1 || month > 12) {
+        return 'Sin fecha';
+      }
+      return capitalize(monthFormatter.format(new Date(year, month - 1, 1)));
+    };
+    const fortnightLabelFromKey = (key: 'Q1' | 'Q2' | 'MONTHLY' | 'NO_DATE'): string => {
+      switch (key) {
+        case 'MONTHLY':
+          return 'Liquidación mensual';
+        case 'Q1':
+          return 'Primera quincena (1-15)';
+        case 'Q2':
+          return 'Segunda quincena (16-fin)';
+        case 'NO_DATE':
+        default:
+          return 'Sin fecha definida';
+      }
+    };
 
     const monthMap = new Map<
       string,
@@ -26184,24 +26260,13 @@ const LiquidacionesPage: React.FC = () => {
       }
     >();
 
-    const getDateFromGroup = (group: LiquidacionGroup): Date | null => {
+    const getDateFromGroup = (group: LiquidacionGroup): { year: number; month: number; day: number } | null => {
       const source = group.main;
-      const rawIso =
-        source.fechaVencimiento
-        ?? source.fechaCargaIso
-        ?? source.fechaCarga
-        ?? null;
-
-      if (!rawIso) {
-        return null;
-      }
-
-      const parsed = new Date(rawIso);
-      if (Number.isNaN(parsed.getTime())) {
-        return null;
-      }
-
-      return parsed;
+      return (
+        parseCalendarDate(source.fechaVencimiento)
+        ?? parseCalendarDate(source.fechaCargaIso)
+        ?? parseCalendarDate(source.fechaCarga)
+      );
     };
 
     const monthOrderValue = (key: string): number | null => {
@@ -26217,30 +26282,25 @@ const LiquidacionesPage: React.FC = () => {
 
     liquidacionGroups.forEach((group) => {
       const date = getDateFromGroup(group);
-      const monthKey = date
-        ? `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`
-        : 'unknown';
-      const monthLabel = date ? capitalize(monthFormatter.format(date)) : 'Sin fecha';
+      const explicitMonthKey = normalizeMonthKey(group.main.monthKey);
+      const monthKey = explicitMonthKey ?? (date ? `${date.year}-${String(date.month).padStart(2, '0')}` : 'unknown');
+      const monthLabel = monthKey === 'unknown' ? 'Sin fecha' : monthLabelFromKey(monthKey);
 
       const normalizedTypeName = (
         (group.main.tipoNombre ?? '') + (group.main.nombre ?? '')
       ).toLowerCase();
       const isMonthlyDocument = normalizedTypeName.includes('mensual');
+      const explicitFortnightKey = normalizeFortnightKey(group.main.fortnightKey);
 
-      const quincenaKey = isMonthlyDocument
-        ? 'MONTHLY'
-        : date
-          ? date.getDate() <= 15
-            ? 'Q1'
-            : 'Q2'
-          : 'NO_DATE';
-      const quincenaLabel = isMonthlyDocument
-        ? 'Liquidación mensual'
-        : date
-          ? date.getDate() <= 15
-            ? 'Primera quincena (1-15)'
-            : 'Segunda quincena (16-fin)'
-          : 'Sin fecha definida';
+      const quincenaKey = explicitFortnightKey
+        ?? (isMonthlyDocument
+          ? 'MONTHLY'
+          : date
+            ? date.day <= 15
+              ? 'Q1'
+              : 'Q2'
+            : 'NO_DATE');
+      const quincenaLabel = fortnightLabelFromKey(quincenaKey);
 
       const monthBucket = monthMap.get(monthKey) ?? {
         monthKey,
@@ -48896,6 +48956,1259 @@ const WebRtcCallsPage: React.FC = () => {
   );
 };
 
+type FacturacionFormato = string;
+type FacturacionPeriodicidad = 'semanal' | 'quincenal' | 'mensual' | 'eventual';
+type FacturacionInvoiceStatus = 'emitida' | 'pendiente_cobro' | 'conciliada';
+
+type FacturacionClientConfig = {
+  id: string;
+  clienteId: number;
+  clienteNombre: string;
+  formato: FacturacionFormato;
+  periodicidad: FacturacionPeriodicidad;
+  condicionComercial: string;
+  importeBase: number;
+  updatedAt: string;
+};
+
+type FacturacionInvoice = {
+  id: string;
+  numero: string;
+  clienteId: number;
+  clienteNombre: string;
+  concepto: string;
+  periodo: string;
+  formato: FacturacionFormato;
+  periodicidad: FacturacionPeriodicidad;
+  condicionComercial: string;
+  importe: number;
+  emitidaAt: string;
+  origen: 'individual' | 'masiva';
+  arcaStatus: 'mock_emitida' | 'pendiente_envio' | 'enviada';
+  estado: FacturacionInvoiceStatus;
+  conciliadoMovimientoId: string | null;
+  conciliadoAt: string | null;
+  diferenciaMonto: number | null;
+};
+
+type FacturacionBankMovement = {
+  id: string;
+  fecha: string;
+  descripcion: string;
+  referencia: string;
+  monto: number;
+};
+
+type FacturacionConciliationMatch = {
+  invoiceId: string;
+  invoiceNumero: string;
+  movimientoId: string;
+  movimientoDescripcion: string;
+  movimientoReferencia: string;
+  montoFactura: number;
+  montoMovimiento: number;
+  diferenciaMonto: number;
+  criterio: string;
+};
+
+const FACTURACION_CLIENT_CONFIGS_STORAGE_KEY = 'facturacion.clientConfigs.v1';
+const FACTURACION_INVOICES_STORAGE_KEY = 'facturacion.invoices.v1';
+const FACTURACION_MOVEMENTS_STORAGE_KEY = 'facturacion.bankMovements.v1';
+const FACTURACION_DEFAULT_CONDICION = 'Cuenta corriente 30 dias';
+const FACTURACION_DEFAULT_CONCEPTO = 'Servicio logístico';
+const FACTURACION_OTROS_OPTION_VALUE = '__otros__';
+
+const normalizeFacturacionFormatoCode = (value: string | null | undefined): string => {
+  const raw = String(value ?? '').trim();
+  if (!raw) {
+    return '01';
+  }
+
+  const upper = raw.toUpperCase();
+  if (upper === 'A') {
+    return '01';
+  }
+  if (upper === 'B') {
+    return '06';
+  }
+  if (upper === 'C') {
+    return '11';
+  }
+  if (upper === 'PERSONALIZADO') {
+    return '99';
+  }
+
+  const digits = upper.replace(/\D/g, '');
+  if (digits.length === 0) {
+    return raw;
+  }
+  const numeric = Number(digits);
+  if (!Number.isFinite(numeric)) {
+    return raw;
+  }
+  return numeric < 100 ? String(numeric).padStart(2, '0') : String(numeric);
+};
+
+const readFacturacionStorage = <T,>(key: string, fallback: T): T => {
+  if (typeof window === 'undefined') {
+    return fallback;
+  }
+  try {
+    const raw = window.localStorage.getItem(key);
+    if (!raw) {
+      return fallback;
+    }
+    return JSON.parse(raw) as T;
+  } catch {
+    return fallback;
+  }
+};
+
+const writeFacturacionStorage = (key: string, value: unknown) => {
+  if (typeof window === 'undefined') {
+    return;
+  }
+  try {
+    window.localStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    // ignore write issues
+  }
+};
+
+const normalizeFacturacionToken = (value: string): string =>
+  value
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+
+const parseFacturacionAmountValue = (value: string | number | null | undefined): number | null => {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  const raw = String(value).trim();
+  if (!raw) {
+    return null;
+  }
+
+  const cleaned = raw
+    .replace(/\s+/g, '')
+    .replace(/\$/g, '')
+    .replace(/ars/gi, '')
+    .replace(/usd/gi, '');
+  const isNegative = cleaned.startsWith('-') || (cleaned.startsWith('(') && cleaned.endsWith(')'));
+  const unsigned = cleaned.replace(/[-()]/g, '');
+
+  let normalized = unsigned;
+  if (unsigned.includes(',') && unsigned.includes('.')) {
+    if (unsigned.lastIndexOf(',') > unsigned.lastIndexOf('.')) {
+      normalized = unsigned.replace(/\./g, '').replace(',', '.');
+    } else {
+      normalized = unsigned.replace(/,/g, '');
+    }
+  } else if (unsigned.includes(',')) {
+    normalized = unsigned.replace(/\./g, '').replace(',', '.');
+  } else if (/^\d{1,3}(\.\d{3})+$/.test(unsigned)) {
+    normalized = unsigned.replace(/\./g, '');
+  } else {
+    normalized = unsigned.replace(/,/g, '');
+  }
+
+  const numeric = Number(normalized);
+  if (!Number.isFinite(numeric)) {
+    return null;
+  }
+  return isNegative ? -Math.abs(numeric) : numeric;
+};
+
+const splitFacturacionDelimitedLine = (line: string, delimiter: string): string[] => {
+  const values: string[] = [];
+  let current = '';
+  let inQuotes = false;
+
+  for (let index = 0; index < line.length; index += 1) {
+    const char = line[index];
+
+    if (char === '"') {
+      const nextChar = line[index + 1];
+      if (inQuotes && nextChar === '"') {
+        current += '"';
+        index += 1;
+        continue;
+      }
+      inQuotes = !inQuotes;
+      continue;
+    }
+
+    if (char === delimiter && !inQuotes) {
+      values.push(current.trim());
+      current = '';
+      continue;
+    }
+
+    current += char;
+  }
+
+  values.push(current.trim());
+  return values;
+};
+
+const detectFacturacionDelimiter = (line: string): string => {
+  const candidates = [';', ',', '\t'];
+  const scored = candidates
+    .map((delimiter) => ({ delimiter, count: line.split(delimiter).length - 1 }))
+    .sort((a, b) => b.count - a.count);
+  return scored[0]?.count > 0 ? scored[0].delimiter : ';';
+};
+
+const parseFacturacionBankMovements = (content: string): FacturacionBankMovement[] => {
+  const lines = content
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+
+  if (lines.length === 0) {
+    return [];
+  }
+
+  const firstLine = lines[0].replace(/^\uFEFF/, '');
+  const delimiter = detectFacturacionDelimiter(firstLine);
+  const rows = [firstLine, ...lines.slice(1)].map((line) => splitFacturacionDelimitedLine(line, delimiter));
+  const normalizedHeaders = rows[0].map((value) => normalizeFacturacionToken(value));
+  const hasHeader = normalizedHeaders.some((value) =>
+    ['fecha', 'date', 'descripcion', 'detalle', 'concepto', 'referencia', 'monto', 'importe', 'amount'].includes(value)
+  );
+
+  const dataRows = hasHeader ? rows.slice(1) : rows;
+  const findHeaderIndex = (aliases: string[]) =>
+    normalizedHeaders.findIndex((header) => aliases.some((alias) => header === alias || header.includes(alias)));
+
+  const dateIndex = findHeaderIndex(['fecha', 'date']);
+  const descriptionIndex = findHeaderIndex(['descripcion', 'detalle', 'concepto']);
+  const referenceIndex = findHeaderIndex(['referencia', 'ref', 'comprobante', 'operacion', 'operacion id']);
+  const amountIndex = findHeaderIndex(['monto', 'importe', 'amount', 'credito', 'haber', 'abono']);
+
+  const parsed: FacturacionBankMovement[] = [];
+  dataRows.forEach((columns, index) => {
+    if (columns.length === 0) {
+      return;
+    }
+    const rawAmount = amountIndex >= 0 ? columns[amountIndex] : columns[columns.length - 1];
+    const amount = parseFacturacionAmountValue(rawAmount);
+    if (amount === null) {
+      return;
+    }
+
+    const dateValue =
+      (dateIndex >= 0 ? columns[dateIndex] : columns[0]) || new Date().toISOString().slice(0, 10);
+    const descriptionValue =
+      (descriptionIndex >= 0 ? columns[descriptionIndex] : columns[1]) ||
+      columns[0] ||
+      `Movimiento ${index + 1}`;
+    const referenceValue = (referenceIndex >= 0 ? columns[referenceIndex] : columns[2]) || '';
+
+    parsed.push({
+      id: `mov-${Date.now()}-${index}-${uniqueKey()}`,
+      fecha: dateValue,
+      descripcion: descriptionValue,
+      referencia: referenceValue,
+      monto: amount,
+    });
+  });
+
+  return parsed;
+};
+
+const buildFacturacionInvoiceNumber = () => {
+  const now = new Date();
+  const stamp = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}`;
+  const random = Math.floor(1000 + Math.random() * 9000);
+  return `FA-MOCK-${stamp}-${random}`;
+};
+
+const FacturacionPage: React.FC = () => {
+  const apiBaseUrl = useMemo(() => resolveApiBaseUrl(), []);
+  const authUser = useStoredAuthUser();
+  const actorHeaders = useMemo(() => buildActorHeaders(authUser), [authUser]);
+
+  const [clientes, setClientes] = useState<Cliente[]>([]);
+  const [clientesLoading, setClientesLoading] = useState(true);
+  const [clientesError, setClientesError] = useState<string | null>(null);
+
+  const [clientConfigs, setClientConfigs] = useState<FacturacionClientConfig[]>(() =>
+    readFacturacionStorage<FacturacionClientConfig[]>(FACTURACION_CLIENT_CONFIGS_STORAGE_KEY, []).map((item) => ({
+      ...item,
+      formato: normalizeFacturacionFormatoCode(item.formato),
+    }))
+  );
+  const [invoices, setInvoices] = useState<FacturacionInvoice[]>(() =>
+    readFacturacionStorage<FacturacionInvoice[]>(FACTURACION_INVOICES_STORAGE_KEY, []).map((item) => ({
+      ...item,
+      formato: normalizeFacturacionFormatoCode(item.formato),
+    }))
+  );
+  const [bankMovements, setBankMovements] = useState<FacturacionBankMovement[]>(() =>
+    readFacturacionStorage<FacturacionBankMovement[]>(FACTURACION_MOVEMENTS_STORAGE_KEY, [])
+  );
+  const [conciliationMatches, setConciliationMatches] = useState<FacturacionConciliationMatch[]>([]);
+
+  const [configClientId, setConfigClientId] = useState('');
+  const [configFormato, setConfigFormato] = useState<FacturacionFormato>('01');
+  const [showAllFormatoOptions, setShowAllFormatoOptions] = useState(false);
+  const [configPeriodicidad, setConfigPeriodicidad] = useState<FacturacionPeriodicidad>('mensual');
+  const [configCondicion, setConfigCondicion] = useState(FACTURACION_DEFAULT_CONDICION);
+  const [configImporteBase, setConfigImporteBase] = useState('');
+
+  const [singleClientId, setSingleClientId] = useState('');
+  const [singleConcepto, setSingleConcepto] = useState(FACTURACION_DEFAULT_CONCEPTO);
+  const [singlePeriodo, setSinglePeriodo] = useState(() => new Date().toISOString().slice(0, 7));
+  const [singleImporte, setSingleImporte] = useState('');
+
+  const [massiveConcepto, setMassiveConcepto] = useState(FACTURACION_DEFAULT_CONCEPTO);
+  const [massivePeriodo, setMassivePeriodo] = useState(() => new Date().toISOString().slice(0, 7));
+
+  const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  const [processing, setProcessing] = useState(false);
+
+  useEffect(() => {
+    writeFacturacionStorage(FACTURACION_CLIENT_CONFIGS_STORAGE_KEY, clientConfigs);
+  }, [clientConfigs]);
+
+  useEffect(() => {
+    writeFacturacionStorage(FACTURACION_INVOICES_STORAGE_KEY, invoices);
+  }, [invoices]);
+
+  useEffect(() => {
+    writeFacturacionStorage(FACTURACION_MOVEMENTS_STORAGE_KEY, bankMovements);
+  }, [bankMovements]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+
+    const fetchClientes = async () => {
+      try {
+        setClientesLoading(true);
+        setClientesError(null);
+
+        const response = await fetch(`${apiBaseUrl}/api/clientes`, {
+          signal: controller.signal,
+          credentials: 'include',
+          headers: {
+            Accept: 'application/json',
+            ...actorHeaders,
+          },
+        });
+        const payload = (await parseJsonSafe(response)) as { data?: Cliente[]; message?: string };
+
+        if (!response.ok) {
+          throw new Error(payload?.message ?? `Error ${response.status}: ${response.statusText}`);
+        }
+
+        const items = Array.isArray(payload?.data) ? payload.data : [];
+        setClientes(items);
+      } catch (err) {
+        if ((err as Error).name === 'AbortError') {
+          return;
+        }
+        setClientesError((err as Error).message ?? 'No se pudieron cargar los clientes.');
+      } finally {
+        setClientesLoading(false);
+      }
+    };
+
+    void fetchClientes();
+    return () => controller.abort();
+  }, [actorHeaders, apiBaseUrl]);
+
+  const clientOptions = useMemo(
+    () =>
+      clientes
+        .map((cliente) => ({
+          id: cliente.id,
+          nombre: (cliente.nombre ?? '').trim() || `Cliente #${cliente.id}`,
+        }))
+        .sort((a, b) => a.nombre.localeCompare(b.nombre, 'es')),
+    [clientes]
+  );
+
+  const comprobanteDescriptionByCode = useMemo(
+    () =>
+      new Map(
+        FACTURACION_COMPROBANTES_OPTIONS.map((item) => [normalizeFacturacionFormatoCode(item.code), item.description])
+      ),
+    []
+  );
+
+  const formatoOptionsDestacados = useMemo(
+    () =>
+      FACTURACION_FORMATOS_DESTACADOS.map((code) => {
+        const normalizedCode = normalizeFacturacionFormatoCode(code);
+        return {
+          code: normalizedCode,
+          description: comprobanteDescriptionByCode.get(normalizedCode) ?? normalizedCode,
+        };
+      }),
+    [comprobanteDescriptionByCode]
+  );
+
+  const formatoOptionsCompletos = useMemo(
+    () =>
+      FACTURACION_COMPROBANTES_OPTIONS.map((item) => ({
+        code: normalizeFacturacionFormatoCode(item.code),
+        description: item.description,
+      })),
+    []
+  );
+
+  const formatComprobanteLabel = useCallback(
+    (code: string | null | undefined): string => {
+      const normalizedCode = normalizeFacturacionFormatoCode(code);
+      const description = comprobanteDescriptionByCode.get(normalizedCode);
+      return description ? `${normalizedCode} - ${description}` : normalizedCode;
+    },
+    [comprobanteDescriptionByCode]
+  );
+
+  const configFormatoOptions = useMemo(() => {
+    const baseOptions = showAllFormatoOptions ? formatoOptionsCompletos : formatoOptionsDestacados;
+    const normalizedCurrent = normalizeFacturacionFormatoCode(configFormato);
+
+    if (!baseOptions.some((item) => item.code === normalizedCurrent)) {
+      const fallbackDescription = comprobanteDescriptionByCode.get(normalizedCurrent) ?? 'Formato personalizado';
+      return [{ code: normalizedCurrent, description: fallbackDescription }, ...baseOptions];
+    }
+    return baseOptions;
+  }, [
+    showAllFormatoOptions,
+    formatoOptionsCompletos,
+    formatoOptionsDestacados,
+    configFormato,
+    comprobanteDescriptionByCode,
+  ]);
+
+  const configByClientId = useMemo(
+    () => new Map(clientConfigs.map((config) => [config.clienteId, config])),
+    [clientConfigs]
+  );
+
+  useEffect(() => {
+    if (!configClientId && clientOptions.length > 0) {
+      setConfigClientId(String(clientOptions[0].id));
+    }
+    if (!singleClientId && clientOptions.length > 0) {
+      setSingleClientId(String(clientOptions[0].id));
+    }
+  }, [configClientId, singleClientId, clientOptions]);
+
+  useEffect(() => {
+    if (!configClientId) {
+      return;
+    }
+    const selectedId = Number(configClientId);
+    if (!Number.isFinite(selectedId)) {
+      return;
+    }
+    const existing = configByClientId.get(selectedId);
+    if (existing) {
+      setConfigFormato(normalizeFacturacionFormatoCode(existing.formato));
+      setConfigPeriodicidad(existing.periodicidad);
+      setConfigCondicion(existing.condicionComercial);
+      setConfigImporteBase(existing.importeBase.toString());
+      return;
+    }
+    setConfigFormato('01');
+    setConfigPeriodicidad('mensual');
+    setConfigCondicion(FACTURACION_DEFAULT_CONDICION);
+    setConfigImporteBase('');
+  }, [configByClientId, configClientId]);
+
+  useEffect(() => {
+    if (!singleClientId) {
+      return;
+    }
+    const selectedId = Number(singleClientId);
+    if (!Number.isFinite(selectedId)) {
+      return;
+    }
+    const existing = configByClientId.get(selectedId);
+    if (!existing) {
+      return;
+    }
+    setSingleImporte(existing.importeBase.toString());
+  }, [configByClientId, singleClientId]);
+
+  const totals = useMemo(() => {
+    const totalFacturas = invoices.length;
+    const totalEmitido = invoices.reduce((acc, invoice) => acc + (Number.isFinite(invoice.importe) ? invoice.importe : 0), 0);
+    const conciliadas = invoices.filter((invoice) => invoice.estado === 'conciliada');
+    const pendientes = invoices.filter((invoice) => invoice.estado !== 'conciliada');
+    const totalConciliado = conciliadas.reduce((acc, invoice) => acc + invoice.importe, 0);
+    const diferencias = conciliadas.filter((invoice) => Math.abs(invoice.diferenciaMonto ?? 0) > 0.009);
+
+    return {
+      totalFacturas,
+      totalEmitido,
+      conciliadas: conciliadas.length,
+      pendientes: pendientes.length,
+      totalConciliado,
+      diferenciasCount: diferencias.length,
+      diferenciasMonto: diferencias.reduce((acc, invoice) => acc + Math.abs(invoice.diferenciaMonto ?? 0), 0),
+    };
+  }, [invoices]);
+
+  const alerts = useMemo(() => {
+    const result: string[] = [];
+    if (totals.pendientes > 0) {
+      result.push(`Cobros pendientes: ${totals.pendientes} factura(s) sin conciliación.`);
+    }
+    if (totals.diferenciasCount > 0) {
+      result.push(
+        `Diferencias detectadas: ${totals.diferenciasCount} caso(s), desvío total ${formatCurrency(totals.diferenciasMonto)}.`
+      );
+    }
+    if (totals.pendientes === 0 && totals.diferenciasCount === 0 && totals.totalFacturas > 0) {
+      result.push('Sin alertas activas: todas las facturas emitidas están conciliadas sin diferencias.');
+    }
+    if (totals.totalFacturas === 0) {
+      result.push('Todavía no hay facturas emitidas en el entorno mock.');
+    }
+    return result;
+  }, [totals.diferenciasCount, totals.diferenciasMonto, totals.pendientes, totals.totalFacturas]);
+
+  const handleSaveClientConfig = (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setFeedback(null);
+
+    const clienteId = Number(configClientId);
+    if (!Number.isFinite(clienteId)) {
+      setFeedback({ type: 'error', message: 'Seleccioná un cliente para guardar su configuración.' });
+      return;
+    }
+
+    const cliente = clientOptions.find((item) => item.id === clienteId);
+    if (!cliente) {
+      setFeedback({ type: 'error', message: 'El cliente seleccionado no es válido.' });
+      return;
+    }
+
+    const importeBase = parseFacturacionAmountValue(configImporteBase);
+    if (importeBase === null || importeBase < 0) {
+      setFeedback({ type: 'error', message: 'Ingresá un importe base válido para el cliente.' });
+      return;
+    }
+
+    const configRecord: FacturacionClientConfig = {
+      id: configByClientId.get(clienteId)?.id ?? `cfg-${clienteId}-${uniqueKey()}`,
+      clienteId,
+      clienteNombre: cliente.nombre,
+      formato: normalizeFacturacionFormatoCode(configFormato),
+      periodicidad: configPeriodicidad,
+      condicionComercial: configCondicion.trim() || FACTURACION_DEFAULT_CONDICION,
+      importeBase,
+      updatedAt: new Date().toISOString(),
+    };
+
+    setClientConfigs((prev) => {
+      const next = [...prev.filter((item) => item.clienteId !== clienteId), configRecord];
+      return next.sort((a, b) => a.clienteNombre.localeCompare(b.clienteNombre, 'es'));
+    });
+    setFeedback({ type: 'success', message: `Configuración guardada para ${cliente.nombre}.` });
+  };
+
+  const handleDeleteClientConfig = (clienteId: number) => {
+    setFeedback(null);
+    const target = configByClientId.get(clienteId);
+    if (!target) {
+      return;
+    }
+    setClientConfigs((prev) => prev.filter((item) => item.clienteId !== clienteId));
+    setFeedback({ type: 'success', message: `Configuración eliminada para ${target.clienteNombre}.` });
+  };
+
+  const buildInvoiceFromConfig = (
+    target: {
+      clienteId: number;
+      clienteNombre: string;
+      formato: FacturacionFormato;
+      periodicidad: FacturacionPeriodicidad;
+      condicionComercial: string;
+      importeBase: number;
+    },
+    concepto: string,
+    periodo: string,
+    origen: 'individual' | 'masiva',
+    customImporte?: number | null
+  ): FacturacionInvoice => {
+    const importe = customImporte != null ? customImporte : target.importeBase;
+    const nowIso = new Date().toISOString();
+    return {
+      id: `fac-${Date.now()}-${uniqueKey()}`,
+      numero: buildFacturacionInvoiceNumber(),
+      clienteId: target.clienteId,
+      clienteNombre: target.clienteNombre,
+      concepto: concepto.trim() || FACTURACION_DEFAULT_CONCEPTO,
+      periodo: periodo.trim() || new Date().toISOString().slice(0, 7),
+      formato: normalizeFacturacionFormatoCode(target.formato),
+      periodicidad: target.periodicidad,
+      condicionComercial: target.condicionComercial,
+      importe,
+      emitidaAt: nowIso,
+      origen,
+      arcaStatus: 'mock_emitida',
+      estado: 'emitida',
+      conciliadoMovimientoId: null,
+      conciliadoAt: null,
+      diferenciaMonto: null,
+    };
+  };
+
+  const handleEmitSingleInvoice = (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setFeedback(null);
+
+    const clienteId = Number(singleClientId);
+    if (!Number.isFinite(clienteId)) {
+      setFeedback({ type: 'error', message: 'Seleccioná un cliente para emitir la factura.' });
+      return;
+    }
+
+    const cliente = clientOptions.find((item) => item.id === clienteId);
+    if (!cliente) {
+      setFeedback({ type: 'error', message: 'El cliente seleccionado no es válido.' });
+      return;
+    }
+
+    const selectedConfig = configByClientId.get(clienteId);
+    const fallbackConfig = {
+      clienteId,
+      clienteNombre: cliente.nombre,
+      formato: selectedConfig?.formato ?? '01',
+      periodicidad: selectedConfig?.periodicidad ?? 'mensual',
+      condicionComercial: selectedConfig?.condicionComercial ?? FACTURACION_DEFAULT_CONDICION,
+      importeBase: selectedConfig?.importeBase ?? 0,
+    };
+
+    const importe = parseFacturacionAmountValue(singleImporte);
+    if (importe === null || importe <= 0) {
+      setFeedback({ type: 'error', message: 'Ingresá un importe válido para emitir la factura.' });
+      return;
+    }
+
+    const newInvoice = buildInvoiceFromConfig(fallbackConfig, singleConcepto, singlePeriodo, 'individual', importe);
+    setInvoices((prev) => [newInvoice, ...prev]);
+    setFeedback({
+      type: 'success',
+      message: `Factura ${newInvoice.numero} emitida en modo mock para ${newInvoice.clienteNombre}.`,
+    });
+  };
+
+  const handleEmitMassiveInvoices = () => {
+    setFeedback(null);
+
+    const targets = clientConfigs.filter((config) => config.importeBase > 0);
+    if (targets.length === 0) {
+      setFeedback({
+        type: 'error',
+        message: 'No hay clientes configurados con importe base mayor a 0 para la emisión masiva.',
+      });
+      return;
+    }
+
+    const created = targets.map((target) =>
+      buildInvoiceFromConfig(
+        {
+          clienteId: target.clienteId,
+          clienteNombre: target.clienteNombre,
+          formato: target.formato,
+          periodicidad: target.periodicidad,
+          condicionComercial: target.condicionComercial,
+          importeBase: target.importeBase,
+        },
+        massiveConcepto,
+        massivePeriodo,
+        'masiva'
+      )
+    );
+
+    setInvoices((prev) => [...created, ...prev]);
+    setFeedback({
+      type: 'success',
+      message: `Se emitieron ${created.length} factura(s) masivas en modo mock.`,
+    });
+  };
+
+  const handleExportInvoices = () => {
+    if (invoices.length === 0) {
+      setFeedback({ type: 'error', message: 'No hay facturas para exportar.' });
+      return;
+    }
+    const rows: Array<Array<string | number | null | undefined>> = [
+      [
+        'Numero',
+        'Cliente',
+        'Periodo',
+        'Concepto',
+        'Formato',
+        'Periodicidad',
+        'Condicion comercial',
+        'Importe',
+        'Origen',
+        'Estado',
+        'ARCA',
+        'Fecha emision',
+        'Fecha conciliacion',
+      ],
+      ...invoices.map((invoice) => [
+        invoice.numero,
+        invoice.clienteNombre,
+        invoice.periodo,
+        invoice.concepto,
+        invoice.formato,
+        invoice.periodicidad,
+        invoice.condicionComercial,
+        invoice.importe,
+        invoice.origen,
+        invoice.estado,
+        invoice.arcaStatus,
+        invoice.emitidaAt,
+        invoice.conciliadoAt,
+      ]),
+    ];
+    downloadCsv(`facturacion-mock-${new Date().toISOString().slice(0, 10)}.csv`, rows);
+    setFeedback({ type: 'success', message: 'Exportación de facturas completada.' });
+  };
+
+  const handleLoadBankMovements = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) {
+      return;
+    }
+
+    setFeedback(null);
+    setProcessing(true);
+
+    try {
+      const content = await file.text();
+      const parsed = parseFacturacionBankMovements(content);
+      if (parsed.length === 0) {
+        throw new Error('No se encontraron movimientos válidos. Verificá columnas de fecha/descripcion/referencia/monto.');
+      }
+      setBankMovements(parsed);
+      setConciliationMatches([]);
+      setFeedback({ type: 'success', message: `Se cargaron ${parsed.length} movimiento(s) bancarios para conciliar.` });
+    } catch (err) {
+      setFeedback({ type: 'error', message: (err as Error).message ?? 'No se pudo procesar el archivo bancario.' });
+    } finally {
+      setProcessing(false);
+      event.target.value = '';
+    }
+  };
+
+  const handleRunAutoConciliation = () => {
+    setFeedback(null);
+    if (invoices.length === 0) {
+      setFeedback({ type: 'error', message: 'No hay facturas emitidas para conciliar.' });
+      return;
+    }
+    if (bankMovements.length === 0) {
+      setFeedback({ type: 'error', message: 'Cargá movimientos bancarios antes de conciliar.' });
+      return;
+    }
+
+    const normalizedMovements = bankMovements.map((movement) => ({
+      ...movement,
+      normalizedText: normalizeFacturacionToken(`${movement.descripcion} ${movement.referencia}`),
+      absAmount: Math.abs(movement.monto),
+    }));
+    const usedMovements = new Set<string>();
+    const matches: FacturacionConciliationMatch[] = [];
+
+    const updatedInvoices = invoices.map((invoice) => {
+      const absInvoiceAmount = Math.abs(invoice.importe);
+      const invoiceNumberToken = normalizeFacturacionToken(invoice.numero);
+      const clientTokens = normalizeFacturacionToken(invoice.clienteNombre)
+        .split(' ')
+        .filter((token) => token.length >= 4);
+
+      let chosen:
+        | {
+            movement: (typeof normalizedMovements)[number];
+            score: number;
+            diff: number;
+            criterio: string;
+          }
+        | null = null;
+
+      for (const movement of normalizedMovements) {
+        if (usedMovements.has(movement.id)) {
+          continue;
+        }
+
+        const diff = Math.abs(movement.absAmount - absInvoiceAmount);
+        const hasInvoiceNumber = invoiceNumberToken.length > 0 && movement.normalizedText.includes(invoiceNumberToken);
+        const hasClientToken =
+          clientTokens.length > 0 && clientTokens.some((token) => movement.normalizedText.includes(token));
+
+        let eligible = false;
+        let score = Number.MAX_SAFE_INTEGER;
+        let criterio = '';
+
+        if (hasInvoiceNumber && diff <= 500) {
+          eligible = true;
+          score = diff;
+          criterio = 'referencia de factura + monto';
+        } else if (hasClientToken && diff <= 200) {
+          eligible = true;
+          score = 1000 + diff;
+          criterio = 'cliente + monto aproximado';
+        } else if (diff <= 0.01) {
+          eligible = true;
+          score = 2000 + diff;
+          criterio = 'monto exacto';
+        }
+
+        if (!eligible) {
+          continue;
+        }
+        if (!chosen || score < chosen.score) {
+          chosen = { movement, score, diff, criterio };
+        }
+      }
+
+      const selected = chosen;
+      if (!selected) {
+        return {
+          ...invoice,
+          estado: 'pendiente_cobro' as FacturacionInvoiceStatus,
+          conciliadoMovimientoId: null,
+          conciliadoAt: null,
+          diferenciaMonto: null,
+        };
+      }
+
+      usedMovements.add(selected.movement.id);
+      const diferencia = Number((selected.movement.monto - invoice.importe).toFixed(2));
+      matches.push({
+        invoiceId: invoice.id,
+        invoiceNumero: invoice.numero,
+        movimientoId: selected.movement.id,
+        movimientoDescripcion: selected.movement.descripcion,
+        movimientoReferencia: selected.movement.referencia,
+        montoFactura: invoice.importe,
+        montoMovimiento: selected.movement.monto,
+        diferenciaMonto: diferencia,
+        criterio: selected.criterio,
+      });
+
+      return {
+        ...invoice,
+        estado: 'conciliada' as FacturacionInvoiceStatus,
+        conciliadoMovimientoId: selected.movement.id,
+        conciliadoAt: new Date().toISOString(),
+        diferenciaMonto: diferencia,
+      };
+    });
+
+    setInvoices(updatedInvoices);
+    setConciliationMatches(matches);
+    setFeedback({
+      type: 'success',
+      message: `Conciliación completada: ${matches.length} factura(s) conciliada(s), ${updatedInvoices.length - matches.length} pendiente(s).`,
+    });
+  };
+
+  return (
+    <DashboardLayout title="Facturación" subtitle="Módulo 3 - Facturación y conciliaciones (ARCA)">
+      <div className="summary-cards">
+        <div className="summary-card summary-card--accent">
+          <span className="summary-card__label">Facturas emitidas</span>
+          <strong className="summary-card__value">{totals.totalFacturas}</strong>
+        </div>
+        <div className="summary-card summary-card--info">
+          <span className="summary-card__label">Monto emitido</span>
+          <strong className="summary-card__value">{formatCurrency(totals.totalEmitido)}</strong>
+        </div>
+        <div className="summary-card summary-card--warning">
+          <span className="summary-card__label">Pendientes</span>
+          <strong className="summary-card__value">{totals.pendientes}</strong>
+        </div>
+        <div className="summary-card summary-card--neutral">
+          <span className="summary-card__label">Conciliadas</span>
+          <strong className="summary-card__value">{totals.conciliadas}</strong>
+        </div>
+        <div className="summary-card summary-card--danger">
+          <span className="summary-card__label">Diferencias</span>
+          <strong className="summary-card__value">{totals.diferenciasCount}</strong>
+        </div>
+      </div>
+
+      {feedback ? (
+        <p className={`form-info ${feedback.type === 'error' ? 'form-info--error' : 'form-info--success'}`}>
+          {feedback.message}
+        </p>
+      ) : null}
+
+      {clientesError ? <p className="form-info form-info--error">{clientesError}</p> : null}
+      {clientesLoading ? <p className="form-info">Cargando clientes para configuración de facturación...</p> : null}
+
+      <section className="dashboard-card facturacion-section">
+        <h3>Configuración por cliente</h3>
+        <p className="form-info">Definí condiciones comerciales, formato y periodicidad para emisión individual/masiva.</p>
+        <form onSubmit={handleSaveClientConfig}>
+          <div className="filters-grid facturacion-grid">
+            <label className="input-control">
+              <span>Cliente</span>
+              <select
+                value={configClientId}
+                onChange={(event) => setConfigClientId(event.target.value)}
+                disabled={clientOptions.length === 0}
+              >
+                {clientOptions.length === 0 ? <option value="">Sin clientes</option> : null}
+                {clientOptions.map((client) => (
+                  <option key={`cfg-${client.id}`} value={client.id}>
+                    {client.nombre}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="input-control">
+              <span>Formato</span>
+              <select
+                value={normalizeFacturacionFormatoCode(configFormato)}
+                onChange={(event) => {
+                  const nextValue = event.target.value;
+                  if (nextValue === FACTURACION_OTROS_OPTION_VALUE) {
+                    setShowAllFormatoOptions(true);
+                    return;
+                  }
+                  setConfigFormato(normalizeFacturacionFormatoCode(nextValue));
+                }}
+              >
+                {configFormatoOptions.map((item) => (
+                  <option key={`fmt-${item.code}`} value={item.code}>
+                    {item.code} - {item.description}
+                  </option>
+                ))}
+                {!showAllFormatoOptions ? (
+                  <option value={FACTURACION_OTROS_OPTION_VALUE}>Otro</option>
+                ) : null}
+              </select>
+              {showAllFormatoOptions ? (
+                <button
+                  type="button"
+                  className="secondary-action secondary-action--ghost facturacion-format-toggle"
+                  onClick={() => setShowAllFormatoOptions(false)}
+                >
+                  Ver solo formatos principales
+                </button>
+              ) : null}
+            </label>
+            <label className="input-control">
+              <span>Periodicidad</span>
+              <select
+                value={configPeriodicidad}
+                onChange={(event) => setConfigPeriodicidad(event.target.value as FacturacionPeriodicidad)}
+              >
+                <option value="semanal">Semanal</option>
+                <option value="quincenal">Quincenal</option>
+                <option value="mensual">Mensual</option>
+                <option value="eventual">Eventual</option>
+              </select>
+            </label>
+            <label className="input-control">
+              <span>Condición comercial</span>
+              <input
+                type="text"
+                value={configCondicion}
+                onChange={(event) => setConfigCondicion(event.target.value)}
+                placeholder="Ej: 50% anticipo / 50% contra entrega"
+              />
+            </label>
+            <label className="input-control">
+              <span>Importe base</span>
+              <input
+                type="text"
+                value={configImporteBase}
+                onChange={(event) => setConfigImporteBase(event.target.value)}
+                placeholder="Ej: 125000"
+              />
+            </label>
+          </div>
+          <div className="form-actions" style={{ marginTop: '0.75rem' }}>
+            <button type="submit" className="primary-action" disabled={processing}>
+              Guardar configuración
+            </button>
+          </div>
+        </form>
+
+        <div className="table-wrapper facturacion-table">
+          <table>
+            <thead>
+              <tr>
+                <th>Cliente</th>
+                <th>Formato</th>
+                <th>Periodicidad</th>
+                <th>Condición comercial</th>
+                <th>Importe base</th>
+                <th>Última actualización</th>
+                <th>Acciones</th>
+              </tr>
+            </thead>
+            <tbody>
+              {clientConfigs.length === 0 ? (
+                <tr>
+                  <td colSpan={7}>No hay configuraciones guardadas todavía.</td>
+                </tr>
+              ) : (
+                clientConfigs.map((config) => (
+                  <tr key={config.id}>
+                    <td>{config.clienteNombre}</td>
+                    <td>{formatComprobanteLabel(config.formato)}</td>
+                    <td>{config.periodicidad}</td>
+                    <td>{config.condicionComercial}</td>
+                    <td>{formatCurrency(config.importeBase)}</td>
+                    <td>{formatDateTime(config.updatedAt)}</td>
+                    <td>
+                      <button
+                        type="button"
+                        className="secondary-action secondary-action--ghost"
+                        onClick={() => handleDeleteClientConfig(config.clienteId)}
+                      >
+                        Eliminar
+                      </button>
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section className="dashboard-card facturacion-section">
+        <h3>Emisión (mock hoy, ARCA después)</h3>
+        <div className="facturacion-columns">
+          <div className="facturacion-box">
+            <h4 style={{ marginTop: 0 }}>Factura individual</h4>
+            <form onSubmit={handleEmitSingleInvoice}>
+              <div className="filters-grid facturacion-grid">
+                <label className="input-control">
+                  <span>Cliente</span>
+                  <select
+                    value={singleClientId}
+                    onChange={(event) => setSingleClientId(event.target.value)}
+                    disabled={clientOptions.length === 0}
+                  >
+                    {clientOptions.length === 0 ? <option value="">Sin clientes</option> : null}
+                    {clientOptions.map((client) => (
+                      <option key={`single-${client.id}`} value={client.id}>
+                        {client.nombre}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="input-control">
+                  <span>Período</span>
+                  <input type="month" value={singlePeriodo} onChange={(event) => setSinglePeriodo(event.target.value)} />
+                </label>
+                <label className="input-control">
+                  <span>Concepto</span>
+                  <input
+                    type="text"
+                    value={singleConcepto}
+                    onChange={(event) => setSingleConcepto(event.target.value)}
+                    placeholder="Ej: Servicio mensual de distribución"
+                  />
+                </label>
+                <label className="input-control">
+                  <span>Importe</span>
+                  <input
+                    type="text"
+                    value={singleImporte}
+                    onChange={(event) => setSingleImporte(event.target.value)}
+                    placeholder="Ej: 120000"
+                  />
+                </label>
+              </div>
+              <div className="form-actions" style={{ marginTop: '0.75rem' }}>
+                <button type="submit" className="primary-action">
+                  Emitir individual
+                </button>
+              </div>
+            </form>
+          </div>
+
+          <div className="facturacion-box">
+            <h4 style={{ marginTop: 0 }}>Facturación masiva</h4>
+            <p className="form-info">
+              Usa la configuración guardada por cliente e importe base. Clientes listos para masiva:{' '}
+              <strong>{clientConfigs.filter((config) => config.importeBase > 0).length}</strong>.
+            </p>
+            <div className="filters-grid facturacion-grid">
+              <label className="input-control">
+                <span>Período</span>
+                <input type="month" value={massivePeriodo} onChange={(event) => setMassivePeriodo(event.target.value)} />
+              </label>
+              <label className="input-control">
+                <span>Concepto base</span>
+                <input
+                  type="text"
+                  value={massiveConcepto}
+                  onChange={(event) => setMassiveConcepto(event.target.value)}
+                  placeholder="Ej: Servicio mensual"
+                />
+              </label>
+            </div>
+            <div className="form-actions" style={{ marginTop: '0.75rem' }}>
+              <button type="button" className="primary-action" onClick={handleEmitMassiveInvoices}>
+                Emitir masiva
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div className="form-actions" style={{ marginTop: '0.75rem', justifyContent: 'space-between' }}>
+          <small className="form-info">El registro se guarda automáticamente en este navegador (modo mock).</small>
+          <button type="button" className="secondary-action" onClick={handleExportInvoices}>
+            Exportar registro
+          </button>
+        </div>
+
+        <div className="table-wrapper facturacion-table">
+          <table>
+            <thead>
+              <tr>
+                <th>Número</th>
+                <th>Cliente</th>
+                <th>Período</th>
+                <th>Concepto</th>
+                <th>Importe</th>
+                <th>ARCA</th>
+                <th>Estado</th>
+                <th>Origen</th>
+                <th>Emitida</th>
+                <th>Conciliada</th>
+              </tr>
+            </thead>
+            <tbody>
+              {invoices.length === 0 ? (
+                <tr>
+                  <td colSpan={10}>No hay facturas emitidas todavía.</td>
+                </tr>
+              ) : (
+                invoices.slice(0, 40).map((invoice) => (
+                  <tr key={invoice.id}>
+                    <td>{invoice.numero}</td>
+                    <td>{invoice.clienteNombre}</td>
+                    <td>{invoice.periodo}</td>
+                    <td>{invoice.concepto}</td>
+                    <td>{formatCurrency(invoice.importe)}</td>
+                    <td>{invoice.arcaStatus === 'mock_emitida' ? 'Mock emitida' : invoice.arcaStatus}</td>
+                    <td>
+                      <span className={`facturacion-status facturacion-status--${invoice.estado.replace('_', '-')}`}>
+                        {invoice.estado === 'conciliada'
+                          ? 'Conciliada'
+                          : invoice.estado === 'pendiente_cobro'
+                          ? 'Pendiente cobro'
+                          : 'Emitida'}
+                      </span>
+                    </td>
+                    <td>{invoice.origen}</td>
+                    <td>{formatDateTime(invoice.emitidaAt)}</td>
+                    <td>{formatDateTime(invoice.conciliadoAt)}</td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section className="dashboard-card facturacion-section">
+        <h3>Conciliación automática (facturas vs banco)</h3>
+        <p className="form-info">
+          Primera versión: cargá extracto en CSV/TXT con columnas de fecha, descripción/referencia e importe.
+        </p>
+        <div className="facturacion-columns">
+          <div className="facturacion-box">
+            <label className="input-control">
+              <span>Archivo de movimientos bancarios</span>
+              <input
+                type="file"
+                accept=".csv,.txt,.tsv,text/csv,text/plain"
+                onChange={handleLoadBankMovements}
+                disabled={processing}
+              />
+            </label>
+            <div className="form-actions" style={{ marginTop: '0.75rem' }}>
+              <button type="button" className="primary-action" onClick={handleRunAutoConciliation} disabled={processing}>
+                {processing ? 'Procesando...' : 'Ejecutar conciliación automática'}
+              </button>
+              <button
+                type="button"
+                className="secondary-action"
+                onClick={() => {
+                  setBankMovements([]);
+                  setConciliationMatches([]);
+                  setFeedback({ type: 'success', message: 'Movimientos bancarios limpiados.' });
+                }}
+              >
+                Limpiar movimientos
+              </button>
+            </div>
+            <p className="form-info">Movimientos cargados: {bankMovements.length}</p>
+          </div>
+
+          <div className="facturacion-box">
+            <h4 style={{ marginTop: 0 }}>Alertas automáticas</h4>
+            <ul className="facturacion-alert-list">
+              {alerts.map((alert) => (
+                <li key={alert}>{alert}</li>
+              ))}
+            </ul>
+          </div>
+        </div>
+
+        <div className="table-wrapper facturacion-table">
+          <table>
+            <thead>
+              <tr>
+                <th>Factura</th>
+                <th>Criterio</th>
+                <th>Mov. banco</th>
+                <th>Referencia</th>
+                <th>Monto factura</th>
+                <th>Monto movimiento</th>
+                <th>Diferencia</th>
+              </tr>
+            </thead>
+            <tbody>
+              {conciliationMatches.length === 0 ? (
+                <tr>
+                  <td colSpan={7}>Sin conciliaciones todavía. Ejecutá la conciliación para ver matches.</td>
+                </tr>
+              ) : (
+                conciliationMatches.slice(0, 60).map((match) => (
+                  <tr key={`${match.invoiceId}-${match.movimientoId}`}>
+                    <td>{match.invoiceNumero}</td>
+                    <td>{match.criterio}</td>
+                    <td>{match.movimientoDescripcion}</td>
+                    <td>{match.movimientoReferencia || '—'}</td>
+                    <td>{formatCurrency(match.montoFactura)}</td>
+                    <td>{formatCurrency(match.montoMovimiento)}</td>
+                    <td>{formatCurrency(match.diferenciaMonto)}</td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </DashboardLayout>
+  );
+};
+
 const RequireAccess: React.FC<{ section: AccessSection; children: React.ReactElement }> = ({
   section,
   children,
@@ -49149,6 +50462,14 @@ const AppRoutes: React.FC = () => (
         element={
           <RequireAccess section="pagos">
             <LiquidacionesPage />
+          </RequireAccess>
+        }
+      />
+      <Route
+        path="/facturacion"
+        element={
+          <RequireAccess section="facturacion">
+            <FacturacionPage />
           </RequireAccess>
         }
       />

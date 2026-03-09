@@ -7510,3 +7510,102 @@ tbody tr:hover {
 .webrtc-recording-preview a:hover {
   text-decoration: underline;
 }
+
+.facturacion-section {
+  margin-top: 1rem;
+}
+
+.facturacion-section h3 {
+  margin-top: 0;
+  margin-bottom: 0.4rem;
+}
+
+.facturacion-grid {
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+}
+
+.facturacion-columns {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 1rem;
+}
+
+.facturacion-box {
+  background: #f8fbff;
+  border: 1px solid #dbe4f5;
+  border-radius: 14px;
+  padding: 0.85rem;
+}
+
+.facturacion-format-toggle {
+  align-self: flex-start;
+}
+
+.facturacion-table {
+  margin-top: 0.75rem;
+}
+
+.facturacion-status {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  padding: 0.18rem 0.6rem;
+  font-size: 0.76rem;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  text-transform: uppercase;
+}
+
+.facturacion-status--emitida {
+  background: rgba(59, 130, 246, 0.16);
+  color: #1d4ed8;
+}
+
+.facturacion-status--pendiente-cobro {
+  background: rgba(245, 158, 11, 0.18);
+  color: #b45309;
+}
+
+.facturacion-status--conciliada {
+  background: rgba(16, 185, 129, 0.16);
+  color: #047857;
+}
+
+.facturacion-alert-list {
+  margin: 0;
+  padding-left: 1.1rem;
+  display: grid;
+  gap: 0.4rem;
+  color: #334155;
+}
+
+[data-theme='dark'] .facturacion-box {
+  background: #0b1120;
+  border-color: #1c2740;
+}
+
+[data-theme='dark'] .facturacion-alert-list {
+  color: #c6d2ea;
+}
+
+[data-theme='dark'] .facturacion-status--emitida {
+  background: rgba(59, 130, 246, 0.2);
+  color: #93c5fd;
+}
+
+[data-theme='dark'] .facturacion-status--pendiente-cobro {
+  background: rgba(245, 158, 11, 0.2);
+  color: #fcd34d;
+}
+
+[data-theme='dark'] .facturacion-status--conciliada {
+  background: rgba(16, 185, 129, 0.2);
+  color: #6ee7b7;
+}
+
+@media (max-width: 680px) {
+  .facturacion-columns {
+    grid-template-columns: 1fr;
+  }
+}
