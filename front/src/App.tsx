@@ -8659,6 +8659,96 @@ const DashboardPage: React.FC<{
                 </div>
               </div>
 
+              {showRecentAltaPanel ? (
+                <>
+                  <div className="recent-altas-strip">
+                    <div style={{ marginBottom: '0.6rem' }}>
+                      <h3 style={{ margin: 0 }}>Altas recientes</h3>
+                      <p style={{ margin: 0, color: '#5a6a82' }}>Conteo de altas según filtros aplicados.</p>
+                    </div>
+                    <div className="recent-altas-strip__grid">
+                      <div className="recent-altas-strip__item">
+                        <span className="recent-altas-strip__label">Último día</span>
+                        <div className="recent-altas-strip__meta">
+                          <span className="recent-altas-strip__pill">↗</span>
+                          <div className="recent-altas-strip__value">{statsLoading ? '—' : recentAltaCounts.day}</div>
+                        </div>
+                      </div>
+                      <div className="recent-altas-strip__item">
+                        <span className="recent-altas-strip__label">Última semana</span>
+                        <div className="recent-altas-strip__meta">
+                          <span className="recent-altas-strip__pill recent-altas-strip__pill--flat">→</span>
+                          <div className="recent-altas-strip__value">{statsLoading ? '—' : recentAltaCounts.week}</div>
+                        </div>
+                      </div>
+                      <div className="recent-altas-strip__item">
+                        <span className="recent-altas-strip__label">Último mes</span>
+                        <div className="recent-altas-strip__meta">
+                          <span className="recent-altas-strip__pill">↗</span>
+                          <div className="recent-altas-strip__value">{statsLoading ? '—' : recentAltaCounts.month}</div>
+                        </div>
+                      </div>
+                      <div className="recent-altas-strip__item">
+                        <span className="recent-altas-strip__label">Último año</span>
+                        <div className="recent-altas-strip__meta">
+                          <span className="recent-altas-strip__pill">↗</span>
+                          <div className="recent-altas-strip__value">{statsLoading ? '—' : recentAltaCounts.year}</div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="recent-altas-strip status-strip">
+                    <div style={{ marginBottom: '0.6rem' }}>
+                      <h3 style={{ margin: 0 }}>Bajas, suspendidos y reclamos</h3>
+                      <p style={{ margin: 0, color: '#5a6a82' }}>Totales actuales y estado de reclamos.</p>
+                    </div>
+                    <div className="recent-altas-strip__grid">
+                      <div className="recent-altas-strip__item">
+                        <span className="recent-altas-strip__label">Bajas</span>
+                        <div className="recent-altas-strip__meta">
+                          <span className="recent-altas-strip__pill recent-altas-strip__pill--down">↓</span>
+                          <div className="recent-altas-strip__value">{statsLoading ? '—' : personalStats.baja}</div>
+                        </div>
+                      </div>
+                      <div className="recent-altas-strip__item">
+                        <span className="recent-altas-strip__label">Suspendidos</span>
+                        <div className="recent-altas-strip__meta">
+                          <span className="recent-altas-strip__pill recent-altas-strip__pill--flat">→</span>
+                          <div className="recent-altas-strip__value">
+                            {statsLoading ? '—' : personalStats.suspendido}
+                          </div>
+                        </div>
+                      </div>
+                      <div className="recent-altas-strip__item">
+                        <span className="recent-altas-strip__label">Reclamos</span>
+                        <div className="recent-altas-strip__meta">
+                          <span className="recent-altas-strip__pill">ℹ</span>
+                          <div className="recent-altas-strip__value">
+                            {reclamoStatsLoading ? '—' : reclamoStats.total}
+                          </div>
+                        </div>
+                        <div className="status-strip__subgrid">
+                          <div className="status-strip__subitem">
+                            <small>Resueltos</small>
+                            <strong>{reclamoStatsLoading ? '—' : reclamoStats.resueltos}</strong>
+                          </div>
+                          <div className="status-strip__subitem">
+                            <small>Rechazados</small>
+                            <strong>{reclamoStatsLoading ? '—' : reclamoStats.rechazados}</strong>
+                          </div>
+                        </div>
+                        {reclamoStatsError ? (
+                          <small className="form-info form-info--error" style={{ marginTop: '0.35rem' }}>
+                            {reclamoStatsError}
+                          </small>
+                        ) : null}
+                      </div>
+                    </div>
+                  </div>
+                </>
+              ) : null}
+
               <div className="team-editor">
                 <div className="team-editor__row">
                   <label className="input-control">
@@ -8909,96 +8999,6 @@ const DashboardPage: React.FC<{
               );
             })}
           </div>
-
-          {showRecentAltaPanel ? (
-            <div className="recent-altas-strip">
-              <div style={{ marginBottom: '0.6rem' }}>
-                <h3 style={{ margin: 0 }}>Altas recientes</h3>
-                <p style={{ margin: 0, color: '#5a6a82' }}>Conteo de altas según filtros aplicados.</p>
-              </div>
-              <div className="recent-altas-strip__grid">
-                <div className="recent-altas-strip__item">
-                  <span className="recent-altas-strip__label">Último día</span>
-                  <div className="recent-altas-strip__meta">
-                    <span className="recent-altas-strip__pill">↗</span>
-                    <div className="recent-altas-strip__value">{statsLoading ? '—' : recentAltaCounts.day}</div>
-                  </div>
-                </div>
-                <div className="recent-altas-strip__item">
-                  <span className="recent-altas-strip__label">Última semana</span>
-                  <div className="recent-altas-strip__meta">
-                    <span className="recent-altas-strip__pill recent-altas-strip__pill--flat">→</span>
-                    <div className="recent-altas-strip__value">{statsLoading ? '—' : recentAltaCounts.week}</div>
-                  </div>
-                </div>
-                <div className="recent-altas-strip__item">
-                  <span className="recent-altas-strip__label">Último mes</span>
-                  <div className="recent-altas-strip__meta">
-                    <span className="recent-altas-strip__pill">↗</span>
-                    <div className="recent-altas-strip__value">{statsLoading ? '—' : recentAltaCounts.month}</div>
-                  </div>
-                </div>
-                <div className="recent-altas-strip__item">
-                  <span className="recent-altas-strip__label">Último año</span>
-                  <div className="recent-altas-strip__meta">
-                    <span className="recent-altas-strip__pill">↗</span>
-                    <div className="recent-altas-strip__value">{statsLoading ? '—' : recentAltaCounts.year}</div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          ) : null}
-
-          {showRecentAltaPanel ? (
-            <div className="recent-altas-strip status-strip">
-              <div style={{ marginBottom: '0.6rem' }}>
-                <h3 style={{ margin: 0 }}>Bajas, suspendidos y reclamos</h3>
-                <p style={{ margin: 0, color: '#5a6a82' }}>Totales actuales y estado de reclamos.</p>
-              </div>
-              <div className="recent-altas-strip__grid">
-                <div className="recent-altas-strip__item">
-                  <span className="recent-altas-strip__label">Bajas</span>
-                  <div className="recent-altas-strip__meta">
-                    <span className="recent-altas-strip__pill recent-altas-strip__pill--down">↓</span>
-                    <div className="recent-altas-strip__value">{statsLoading ? '—' : personalStats.baja}</div>
-                  </div>
-                </div>
-                <div className="recent-altas-strip__item">
-                  <span className="recent-altas-strip__label">Suspendidos</span>
-                  <div className="recent-altas-strip__meta">
-                    <span className="recent-altas-strip__pill recent-altas-strip__pill--flat">→</span>
-                    <div className="recent-altas-strip__value">
-                      {statsLoading ? '—' : personalStats.suspendido}
-                    </div>
-                  </div>
-                </div>
-                <div className="recent-altas-strip__item">
-                  <span className="recent-altas-strip__label">Reclamos</span>
-                  <div className="recent-altas-strip__meta">
-                    <span className="recent-altas-strip__pill">ℹ</span>
-                    <div className="recent-altas-strip__value">
-                      {reclamoStatsLoading ? '—' : reclamoStats.total}
-                    </div>
-                  </div>
-                  <div className="status-strip__subgrid">
-                    <div className="status-strip__subitem">
-                      <small>Resueltos</small>
-                      <strong>{reclamoStatsLoading ? '—' : reclamoStats.resueltos}</strong>
-                    </div>
-                    <div className="status-strip__subitem">
-                      <small>Rechazados</small>
-                      <strong>{reclamoStatsLoading ? '—' : reclamoStats.rechazados}</strong>
-                    </div>
-                  </div>
-                  {reclamoStatsError ? (
-                    <small className="form-info form-info--error" style={{ marginTop: '0.35rem' }}>
-                      {reclamoStatsError}
-                    </small>
-                  ) : null}
-                </div>
-              </div>
-            </div>
-          ) : null}
         </>
       ) : null}
 
