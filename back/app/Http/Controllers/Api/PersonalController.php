@@ -248,6 +248,37 @@ class PersonalController extends Controller
         return 'TP' . $encodedId . '-' . $this->buildTransportistaQrSignature($personaId);
     }
 
+    protected function normalizeTaxIdFields(array $validated, array $labelsByField): array
+    {
+        foreach ($labelsByField as $field => $label) {
+            if (!array_key_exists($field, $validated)) {
+                continue;
+            }
+
+            $raw = $validated[$field];
+            if ($raw === null || $raw === '') {
+                $validated[$field] = null;
+                continue;
+            }
+
+            $normalized = preg_replace('/\D+/', '', (string) $raw) ?: '';
+            if ($normalized === '') {
+                $validated[$field] = null;
+                continue;
+            }
+
+            if (strlen($normalized) !== 11) {
+                throw ValidationException::withMessages([
+                    $field => "{$label} debe tener 11 dígitos.",
+                ]);
+            }
+
+            $validated[$field] = $normalized;
+        }
+
+        return $validated;
+    }
+
     protected function resolvePersonaIdFromTransportistaQrCode(string $code): ?int
     {
         if (! preg_match('/^TP([A-Z0-9]+)-([A-F0-9]{10})$/i', trim($code), $matches)) {
@@ -1113,6 +1144,13 @@ class PersonalController extends Controller
             'duenoObservaciones' => ['nullable', 'string'],
         ]);
 
+        $validated = $this->normalizeTaxIdFields($validated, [
+            'cuil' => 'CUIT/CUIL',
+            'cobradorCuil' => 'CUIT/CUIL del cobrador',
+            'duenoCuil' => 'CUIT/CUIL (Dueño)',
+            'duenoCuilCobrador' => 'CUIT/CUIL cobrador del dueño',
+        ]);
+
         $targetEstadoId = array_key_exists('estadoId', $validated) ? $validated['estadoId'] : $persona->estado_id;
         $currentEstadoNombre = $persona->estado?->nombre ?? $this->resolveEstadoName($persona->estado_id);
         $targetEstadoNombre = $targetEstadoId
@@ -1516,6 +1554,13 @@ class PersonalController extends Controller
             'autoApproveUserId' => ['nullable', 'integer', 'exists:users,id'],
         ]);
 
+        $validated = $this->normalizeTaxIdFields($validated, [
+            'cuil' => 'CUIT/CUIL',
+            'cobradorCuil' => 'CUIT/CUIL del cobrador',
+            'duenoCuil' => 'CUIT/CUIL (Dueño)',
+            'duenoCuilCobrador' => 'CUIT/CUIL cobrador del dueño',
+        ]);
+
         $autoApprove = array_key_exists('autoApprove', $validated) ? (bool) $validated['autoApprove'] : false;
         $autoApproveUserId = $validated['autoApproveUserId'] ?? null;
         $fechaAltaInput = $validated['fechaAlta'] ?? $validated['fechaAltaVinculacion'] ?? null;
@@ -1573,14 +1618,14 @@ class PersonalController extends Controller
         ]);
 
         $ownerPayload = [
-            'nombreapellido' => $request->input('duenoNombre'),
-            'fecha_nacimiento' => $request->input('duenoFechaNacimiento'),
-            'email' => $request->input('duenoEmail'),
-            'telefono' => $request->input('duenoTelefono'),
-            'cuil' => $request->input('duenoCuil'),
-            'cuil_cobrador' => $request->input('duenoCuilCobrador'),
-            'cbu_alias' => $request->input('duenoCbuAlias'),
-            'observaciones' => $request->input('duenoObservaciones'),
+            'nombreapellido' => $validated['duenoNombre'] ?? null,
+            'fecha_nacimiento' => $validated['duenoFechaNacimiento'] ?? null,
+            'email' => $validated['duenoEmail'] ?? null,
+            'telefono' => $validated['duenoTelefono'] ?? null,
+            'cuil' => $validated['duenoCuil'] ?? null,
+            'cuil_cobrador' => $validated['duenoCuilCobrador'] ?? null,
+            'cbu_alias' => $validated['duenoCbuAlias'] ?? null,
+            'observaciones' => $validated['duenoObservaciones'] ?? null,
         ];
 
         $hasOwnerData = collect($ownerPayload)
@@ -2702,7 +2747,7 @@ class PersonalController extends Controller
             'nombres' => ['label' => 'Nombre'],
             'apellidos' => ['label' => 'Apellido'],
             'legajo' => ['label' => 'Legajo'],
-            'cuil' => ['label' => 'CUIL'],
+            'cuil' => ['label' => 'CUIT/CUIL'],
             'telefono' => ['label' => 'Teléfono'],
             'email' => ['label' => 'Email'],
             'tipo' => [
@@ -2766,7 +2811,7 @@ class PersonalController extends Controller
             ],
             'cobrador_nombre' => ['label' => 'Nombre del cobrador'],
             'cobrador_email' => ['label' => 'Correo del cobrador'],
-            'cobrador_cuil' => ['label' => 'CUIL del cobrador'],
+            'cobrador_cuil' => ['label' => 'CUIT/CUIL del cobrador'],
             'cobrador_cbu_alias' => ['label' => 'CBU/Alias del cobrador'],
             'observaciontarifa' => ['label' => 'Observación tarifa'],
             'observaciones' => ['label' => 'Observaciones'],
@@ -2799,8 +2844,8 @@ class PersonalController extends Controller
             ],
             'email' => ['label' => 'Dueño correo'],
             'telefono' => ['label' => 'Dueño teléfono'],
-            'cuil' => ['label' => 'Dueño CUIL'],
-            'cuil_cobrador' => ['label' => 'Dueño CUIL cobrador'],
+            'cuil' => ['label' => 'Dueño CUIT/CUIL'],
+            'cuil_cobrador' => ['label' => 'Dueño CUIT/CUIL cobrador'],
             'cbu_alias' => ['label' => 'Dueño CBU alias'],
             'observaciones' => ['label' => 'Dueño observaciones'],
         ];

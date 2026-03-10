@@ -970,7 +970,7 @@ class ReclamoController extends Controller
         }
 
         $validated = $request->validate([
-            'status' => ['required', Rule::in(['aceptado', 'rechazado'])],
+            'status' => ['required', Rule::in(['aceptado', 'rechazado', 'a_revisar'])],
         ]);
 
         $newStatus = $validated['status'];
@@ -1329,6 +1329,15 @@ class ReclamoController extends Controller
 
     public function destroy(Reclamo $reclamo): JsonResponse
     {
+        $reclamo->loadMissing('tipo:id,nombre,slug');
+        $isReclamoAdelanto = $this->isReclamosYAdelantosType($reclamo->tipo, $reclamo->reclamo_type_id);
+
+        if ($isReclamoAdelanto && (bool) $reclamo->en_revision) {
+            return response()->json([
+                'message' => 'No podés eliminar un reclamo mientras el checklist esté activo.',
+            ], 423);
+        }
+
         DB::transaction(function () use ($reclamo) {
             $documents = $reclamo->documents()->get();
 
@@ -1539,6 +1548,7 @@ class ReclamoController extends Controller
         return [
             'creado' => 'Creado',
             'en_proceso' => 'En proceso',
+            'a_revisar' => 'A revisar',
             'aceptado' => 'Aceptado',
             'rechazado' => 'Rechazado',
             'finalizado' => 'Finalizado',

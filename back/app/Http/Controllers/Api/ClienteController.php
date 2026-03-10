@@ -43,12 +43,19 @@ class ClienteController extends Controller
             'sucursales.*.encargado_deposito' => ['nullable', 'string'],
         ]);
 
+        $documentoFiscal = $this->sanitizeDocument($validated['documento_fiscal'] ?? null);
+        if ($documentoFiscal !== null && strlen($documentoFiscal) !== 11) {
+            return response()->json([
+                'message' => 'El CUIT debe tener 11 dígitos.',
+            ], 422);
+        }
+
         $cliente = DB::transaction(function () use ($validated) {
             $cliente = Cliente::create([
                 'codigo' => $this->sanitizeString($validated['codigo'] ?? null),
                 'nombre' => $this->sanitizeString($validated['nombre'] ?? null),
                 'direccion' => $this->sanitizeString($validated['direccion'] ?? null),
-                'documento_fiscal' => $this->sanitizeString($validated['documento_fiscal'] ?? null),
+                'documento_fiscal' => $this->sanitizeDocument($validated['documento_fiscal'] ?? null),
             ]);
 
             foreach ($validated['sucursales'] ?? [] as $sucursalData) {
@@ -94,12 +101,19 @@ class ClienteController extends Controller
             'sucursales.*.encargado_deposito' => ['nullable', 'string'],
         ]);
 
+        $documentoFiscal = $this->sanitizeDocument($validated['documento_fiscal'] ?? null);
+        if ($documentoFiscal !== null && strlen($documentoFiscal) !== 11) {
+            return response()->json([
+                'message' => 'El CUIT debe tener 11 dígitos.',
+            ], 422);
+        }
+
         $cliente = DB::transaction(function () use ($cliente, $validated) {
             $cliente->fill([
                 'codigo' => $this->sanitizeString($validated['codigo'] ?? null),
                 'nombre' => $this->sanitizeString($validated['nombre'] ?? null),
                 'direccion' => $this->sanitizeString($validated['direccion'] ?? null),
-                'documento_fiscal' => $this->sanitizeString($validated['documento_fiscal'] ?? null),
+                'documento_fiscal' => $this->sanitizeDocument($validated['documento_fiscal'] ?? null),
             ]);
 
             $cliente->save();
@@ -205,5 +219,16 @@ class ClienteController extends Controller
         $trimmed = trim($value);
 
         return $trimmed === '' ? null : $trimmed;
+    }
+
+    private function sanitizeDocument(?string $value): ?string
+    {
+        if ($value === null) {
+            return null;
+        }
+
+        $digits = preg_replace('/\D+/', '', $value) ?: '';
+
+        return $digits !== '' ? $digits : null;
     }
 }

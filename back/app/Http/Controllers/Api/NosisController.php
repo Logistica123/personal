@@ -62,6 +62,7 @@ class NosisController extends Controller
             'valid' => $result['valid'],
             'data' => [
                 'raw' => $result['raw'],
+                'parsed' => $result['parsed'] ?? null,
             ],
         ]);
     }
@@ -106,6 +107,7 @@ class NosisController extends Controller
             'valid' => $result['valid'],
             'data' => [
                 'raw' => $result['raw'],
+                'parsed' => $result['parsed'] ?? null,
             ],
         ]);
     }
@@ -283,4 +285,3 @@ class NosisController extends Controller
         return round($cost, 4);
     }
 }
-

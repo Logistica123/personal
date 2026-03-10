@@ -24,4 +24,15 @@ class Cliente extends Model
     {
         return $this->hasMany(Sucursal::class, 'cliente_id');
     }
+
+    public function taxProfile()
+    {
+        return $this->hasOne(TaxProfile::class, 'entity_id')
+            ->where('entity_type', 'cliente');
+    }
+
+    public function taxDocuments()
+    {
+        return $this->hasMany(ClientTaxDocument::class, 'cliente_id');
+    }
 }

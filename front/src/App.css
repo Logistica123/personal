@@ -2387,6 +2387,11 @@ tbody tr:hover {
   color: #1d4ed8 !important;
 }
 
+.status-a_revisar {
+  background-color: rgba(245, 158, 11, 0.18) !important;
+  color: #b45309 !important;
+}
+
 .status-aceptado {
   background-color: rgba(16, 185, 129, 0.15) !important;
   color: #047857 !important;

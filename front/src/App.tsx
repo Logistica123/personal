@@ -139,6 +139,160 @@ type Cliente = {
   sucursales: Sucursal[];
 };
 
+type NosisSnapshotRecord = {
+  id: number;
+  snapshotType: string | null;
+  documento: string | null;
+  cbu: string | null;
+  valid: boolean;
+  message: string | null;
+  requestedAt: string | null;
+  requestedAtLabel?: string | null;
+  parsed?: Record<string, unknown> | null;
+};
+
+type ClientTaxDocumentRecord = {
+  id: number;
+  category: string | null;
+  title: string | null;
+  description: string | null;
+  fechaVencimiento: string | null;
+  mime: string | null;
+  size: number | null;
+  originalName: string | null;
+  createdAt: string | null;
+  downloadUrl: string | null;
+};
+
+type TaxProfileRecord = {
+  id?: number | null;
+  entityType?: string | null;
+  entityId?: number | null;
+  cuit: string | null;
+  razonSocial: string | null;
+  arcaStatus: string | null;
+  dgrStatus: string | null;
+  exclusionNotes: string | null;
+  exemptionNotes: string | null;
+  regimeNotes: string | null;
+  bankAccount: string | null;
+  bankAlias: string | null;
+  bankOwnerName: string | null;
+  bankOwnerDocument: string | null;
+  bankValidationStatus: string | null;
+  insuranceNotes: string | null;
+  observations: string | null;
+  latestNosisSnapshot?: NosisSnapshotRecord | null;
+  snapshots?: NosisSnapshotRecord[];
+  documents?: ClientTaxDocumentRecord[];
+};
+
+const readTaxSnapshotParsedText = (
+  parsed: Record<string, unknown> | null | undefined,
+  keys: string[]
+): string | null => {
+  if (!parsed) {
+    return null;
+  }
+
+  for (const key of keys) {
+    const value = parsed[key];
+    if (typeof value !== 'string') {
+      continue;
+    }
+
+    const trimmed = value.trim();
+    if (trimmed) {
+      return trimmed;
+    }
+  }
+
+  return null;
+};
+
+const isTaxSnapshotSuccessful = (snapshot: NosisSnapshotRecord): boolean => {
+  if (snapshot.valid) {
+    return true;
+  }
+
+  const parsed = snapshot.parsed ?? null;
+  const snapshotType = (snapshot.snapshotType ?? '').trim().toUpperCase();
+  const resultadoEstado = readTaxSnapshotParsedText(parsed, ['resultadoEstado']);
+  const resultadoNovedad = readTaxSnapshotParsedText(parsed, ['resultadoNovedad'])?.toLowerCase() ?? '';
+
+  if (snapshotType === 'DOCUMENTO' && resultadoEstado === '200' && ['ok', 'validado', 'aprobado'].includes(resultadoNovedad)) {
+    return true;
+  }
+
+  return false;
+};
+
+const resolveTaxSnapshotTypeLabel = (snapshot: NosisSnapshotRecord): string => {
+  const normalized = (snapshot.snapshotType ?? '').trim().toUpperCase();
+
+  if (normalized === 'CBU') {
+    return 'Validación bancaria';
+  }
+  if (normalized === 'DOCUMENTO') {
+    return 'Consulta CUIT/CUIL';
+  }
+
+  return 'Consulta Nosis';
+};
+
+const buildTaxSnapshotSummary = (snapshot: NosisSnapshotRecord) => {
+  const parsed = snapshot.parsed ?? null;
+  const snapshotType = (snapshot.snapshotType ?? '').trim().toUpperCase();
+  const isSuccess = isTaxSnapshotSuccessful(snapshot);
+  const razonSocial = readTaxSnapshotParsedText(parsed, ['razonSocial']);
+  const arcaStatus = readTaxSnapshotParsedText(parsed, ['arcaStatus']);
+  const dgrStatus = readTaxSnapshotParsedText(parsed, ['dgrStatus']);
+  const bankOwnerName = readTaxSnapshotParsedText(parsed, [
+    'bankOwnerName',
+    'titularCuenta',
+    'titular',
+    'nombreTitular',
+  ]);
+  const bankOwnerDocument = readTaxSnapshotParsedText(parsed, [
+    'bankOwnerDocument',
+    'documentoTitular',
+    'titularDocumento',
+    'cuitTitular',
+    'cuilTitular',
+  ]);
+  const resultText = readTaxSnapshotParsedText(
+    parsed,
+    snapshotType === 'CBU'
+      ? ['cbuEstado', 'cbuNovedad', 'resultadoNovedad', 'message']
+      : ['resultadoNovedad', 'message']
+  ) ?? snapshot.message;
+
+  const referenceParts = [snapshot.requestedAtLabel ?? 'Sin fecha'];
+  if (snapshot.documento) {
+    referenceParts.push(`CUIT/CUIL: ${snapshot.documento}`);
+  }
+  if (snapshot.cbu) {
+    referenceParts.push(`CBU: ${snapshot.cbu}`);
+  }
+
+  const detailParts = [
+    razonSocial,
+    arcaStatus ? `ARCA: ${arcaStatus}` : null,
+    dgrStatus ? `DGR: ${dgrStatus}` : null,
+    bankOwnerName ? `Titular: ${bankOwnerName}` : null,
+    bankOwnerDocument ? `Doc titular: ${bankOwnerDocument}` : null,
+  ].filter(Boolean) as string[];
+
+  return {
+    typeLabel: resolveTaxSnapshotTypeLabel(snapshot),
+    referenceText: referenceParts.join(' · '),
+    detailText: detailParts.join(' · '),
+    resultText,
+    statusLabel: isSuccess ? 'Validado' : 'Observado',
+    statusClassName: isSuccess ? 'badge badge--success' : 'badge badge--warning',
+  };
+};
+
 type Unidad = {
   id: number;
   matricula: string | null;
@@ -675,6 +829,11 @@ type PendingPersonalUpload = {
   visualClient?: string | null;
   previewUrl?: string | null;
 };
+
+const PERSON_TAX_ID_LABEL = 'CUIT/CUIL';
+const COLLECTOR_TAX_ID_LABEL = 'CUIT/CUIL del cobrador';
+const OWNER_TAX_ID_LABEL = 'CUIT/CUIL (Dueño)';
+const OWNER_COLLECTOR_TAX_ID_LABEL = 'CUIT/CUIL cobrador';
 
 const createImagePreviewUrl = (file: File): string | null => {
   if (!file || !file.type || !file.type.startsWith('image/')) {
@@ -9223,7 +9382,7 @@ const DashboardPage: React.FC<{
                     <>
                       <th>Código</th>
                       <th>Nombre</th>
-                      <th>Documento fiscal</th>
+                      <th>CUIT</th>
                       <th>Dirección</th>
                       <th>Sucursales</th>
                       <th>Acciones</th>
@@ -10988,13 +11147,24 @@ const ReclamosPage: React.FC = () => {
   }, []);
 
   const getTransportistaNames = useCallback(
-    (record: ReclamoRecord): string[] =>
-      getTransportistaEntries(record)
+    (record: ReclamoRecord): string[] => {
+      const names = getTransportistaEntries(record)
         .map((entry) => {
           const base = entry.nombre ?? entry.cliente ?? '';
           return typeof base === 'string' ? base.trim() : '';
         })
-        .filter((name) => name.length > 0),
+        .filter((name) => name.length > 0);
+
+      if (names.length > 0) {
+        return names;
+      }
+
+      const fallbackNames = [record.emisorFactura, record.distribuidorNombre]
+        .map((value) => (typeof value === 'string' ? value.trim() : ''))
+        .filter((value) => value.length > 0);
+
+      return fallbackNames;
+    },
     [getTransportistaEntries]
   );
 
@@ -11020,6 +11190,8 @@ const ReclamosPage: React.FC = () => {
       const label =
         names[0] ??
         record.transportista ??
+        record.emisorFactura ??
+        record.distribuidorNombre ??
         (entries[0]
           ? entries[0].nombre ??
             entries[0].cliente ??
@@ -11064,6 +11236,11 @@ const ReclamosPage: React.FC = () => {
         : undefined;
     return formatElapsedTime(reclamo.createdAt, endIso);
   }, []);
+
+  const resolveReclamoDescripcion = useCallback(
+    (reclamo: ReclamoRecord): string | null => reclamo.detalle ?? reclamo.concepto ?? null,
+    []
+  );
 
   useEffect(() => {
     const controller = new AbortController();
@@ -11459,7 +11636,7 @@ const ReclamosPage: React.FC = () => {
         rows.push([
           reclamo.fechaReclamo ?? '',
           reclamo.codigo ?? `#${reclamo.id}`,
-          reclamo.detalle ?? '',
+          resolveReclamoDescripcion(reclamo) ?? '',
           reclamo.creator ?? '',
           transportistaDisplay.restCount > 0
             ? `${transportistaDisplay.label} (+${transportistaDisplay.restCount})`
@@ -11496,6 +11673,7 @@ const ReclamosPage: React.FC = () => {
     sortedReclamos,
     formatTransportistaDisplay,
     resolveReclamoDemora,
+    resolveReclamoDescripcion,
     resolveReclamoResponsable,
   ]);
 
@@ -11547,7 +11725,7 @@ const ReclamosPage: React.FC = () => {
   }, []);
 
   const handleInlineAdelantoStatusChange = useCallback(
-    async (reclamo: ReclamoRecord, nextStatus: 'aceptado' | 'rechazado') => {
+    async (reclamo: ReclamoRecord, nextStatus: 'aceptado' | 'rechazado' | 'a_revisar') => {
       try {
         setStatusUpdatingId(reclamo.id);
 
@@ -11801,6 +11979,11 @@ const ReclamosPage: React.FC = () => {
   };
 
   const handleDeleteReclamo = async (reclamo: ReclamoRecord) => {
+    if (reclamo.enRevision) {
+      window.alert('No podés eliminar un reclamo mientras el checklist esté activo.');
+      return;
+    }
+
     if (
       !window.confirm(
         `¿Seguro que deseas eliminar el reclamo "${reclamo.codigo ?? `#${reclamo.id}`}"?`
@@ -11934,16 +12117,20 @@ const ReclamosPage: React.FC = () => {
                 const isStatusUpdating = statusUpdatingId === reclamo.id;
                 const isRevisionUpdating = revisionUpdatingId === reclamo.id;
                 const canInlineEditAdelanto = isAdelantoListMode && !isRevisionActive && !isRevisionUpdating;
-                const currentInlineStatus = ((reclamo.status ?? '').trim().toLowerCase() === 'aceptado' ||
-                  (reclamo.status ?? '').trim().toLowerCase() === 'rechazado')
-                  ? ((reclamo.status ?? '').trim().toLowerCase() as 'aceptado' | 'rechazado')
+                const normalizedInlineStatus = (reclamo.status ?? '').trim().toLowerCase();
+                const currentInlineStatus = (
+                  normalizedInlineStatus === 'aceptado' ||
+                  normalizedInlineStatus === 'rechazado' ||
+                  normalizedInlineStatus === 'a_revisar'
+                )
+                  ? (normalizedInlineStatus as 'aceptado' | 'rechazado' | 'a_revisar')
                   : '';
                 return (
                   <tr key={reclamo.id}>
                   <td>{reclamo.fechaReclamo ?? '—'}</td>
                   <td>{reclamo.codigo ?? `#${reclamo.id}`}</td>
-                  <td title={reclamo.detalle ?? undefined}>
-                    {truncateText(reclamo.detalle, 80)}
+                  <td title={resolveReclamoDescripcion(reclamo) ?? undefined}>
+                    {truncateText(resolveReclamoDescripcion(reclamo), 80)}
                   </td>
                   <td>{reclamo.creator ?? '—'}</td>
                   <td>
@@ -11969,12 +12156,13 @@ const ReclamosPage: React.FC = () => {
                           }
                           handleInlineAdelantoStatusChange(
                             reclamo,
-                            event.target.value as 'aceptado' | 'rechazado'
+                            event.target.value as 'aceptado' | 'rechazado' | 'a_revisar'
                           );
                         }}
                         disabled={!canInlineEditAdelanto || isStatusUpdating}
                       >
                         <option value="">Seleccionar</option>
+                        <option value="a_revisar">A revisar</option>
                         <option value="aceptado">Aceptado</option>
                         <option value="rechazado">Rechazado</option>
                       </select>
@@ -12045,7 +12233,7 @@ const ReclamosPage: React.FC = () => {
                         type="button"
                         aria-label={`Eliminar reclamo ${reclamo.codigo ?? ''}`}
                         onClick={() => handleDeleteReclamo(reclamo)}
-                        disabled={deletingReclamoId === reclamo.id}
+                        disabled={Boolean(reclamo.enRevision) || deletingReclamoId === reclamo.id}
                       >
                         🗑️
                       </button>
@@ -13589,7 +13777,7 @@ const ReclamoDetailPage: React.FC = () => {
       setSaveError(null);
       setSaveSuccess(null);
 
-      const response = await fetch(`${apiBaseUrl}/api/reclamos/${reclamoId}`, {
+      const requestInit: RequestInit = {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -13618,7 +13806,15 @@ const ReclamoDetailPage: React.FC = () => {
           aprobacionEstado: formValues.aprobacionEstado || null,
           aprobacionMotivo: formValues.aprobacionMotivo.trim() || null,
         }),
-      });
+      };
+
+      let response = await fetch(`${apiBaseUrl}/api/reclamos/${reclamoId}`, requestInit);
+      if (response.status === 405) {
+        response = await fetch(`${apiBaseUrl}/api/reclamos/${reclamoId}`, {
+          ...requestInit,
+          method: 'POST',
+        });
+      }
 
       if (!response.ok) {
         let message = `Error ${response.status}: ${response.statusText}`;
@@ -13888,7 +14084,7 @@ const ReclamoDetailPage: React.FC = () => {
       ['Campo', 'Valor'],
       ['ID transportista', info?.id ?? detail.transportistaId ?? ''],
       ['Nombre completo', info?.nombreCompleto ?? detail.transportista ?? ''],
-      ['CUIL', info?.cuil ?? ''],
+      [PERSON_TAX_ID_LABEL, info?.cuil ?? ''],
       ['Cliente', info?.cliente ?? detail.cliente ?? ''],
       ['Sucursal', info?.sucursal ?? ''],
       ['Unidad', info?.unidadDetalle ?? info?.unidad ?? ''],
@@ -14032,7 +14228,7 @@ const ReclamoDetailPage: React.FC = () => {
             ) : null}
             <div className="reclamo-card-grid">
               {renderReadOnlyField('Nombre completo', transportistaInfo?.nombreCompleto ?? detail.transportista)}
-              {renderReadOnlyField('CUIL', transportistaInfo?.cuil ?? '')}
+              {renderReadOnlyField(PERSON_TAX_ID_LABEL, transportistaInfo?.cuil ?? '')}
               {renderReadOnlyField('Cliente', transportistaInfo?.cliente ?? detail.cliente ?? '')}
               {renderReadOnlyField('Sucursal', transportistaInfo?.sucursal ?? '')}
               {renderReadOnlyField('Unidad', transportistaInfo?.unidadDetalle ?? transportistaInfo?.unidad ?? '')}
@@ -14455,7 +14651,7 @@ const PersonalPage: React.FC = () => {
       { key: 'id', label: 'ID' },
       { key: 'nombre', label: 'Nombre' },
       { key: 'legajo', label: 'Legajo' },
-      { key: 'cuil', label: 'CUIL' },
+      { key: 'cuil', label: PERSON_TAX_ID_LABEL },
       { key: 'telefono', label: 'Teléfono' },
       { key: 'email', label: 'Email' },
       { key: 'perfil', label: 'Perfil' },
@@ -15198,7 +15394,7 @@ const PersonalPage: React.FC = () => {
             { header: 'Nombres', resolve: (registro) => registro.nombres ?? '' },
             { header: 'Apellidos', resolve: (registro) => registro.apellidos ?? '' },
             { header: 'Legajo', resolve: (registro) => registro.legajo ?? '' },
-            { header: 'CUIL', resolve: (registro) => registro.cuil ?? '' },
+            { header: PERSON_TAX_ID_LABEL, resolve: (registro) => registro.cuil ?? '' },
             { header: 'Teléfono', resolve: (registro) => registro.telefono ?? '' },
             { header: 'Email', resolve: (registro) => registro.email ?? '' },
             { header: 'Perfil', resolve: (registro) => getPerfilDisplayLabel(registro.perfilValue ?? null, registro.perfil ?? '') },
@@ -15234,8 +15430,8 @@ const PersonalPage: React.FC = () => {
             { header: 'Tipo de solicitud', resolve: (registro) => registro.solicitudTipo ?? '' },
             { header: 'Dueño nombre', resolve: (registro) => registro.duenoNombre ?? '' },
             { header: 'Fecha nacimiento proveedor', resolve: (registro) => registro.duenoFechaNacimiento ?? '' },
-            { header: 'Dueño CUIL', resolve: (registro) => registro.duenoCuil ?? '' },
-            { header: 'Dueño CUIL cobrador', resolve: (registro) => registro.duenoCuilCobrador ?? '' },
+            { header: `Dueño ${PERSON_TAX_ID_LABEL}`, resolve: (registro) => registro.duenoCuil ?? '' },
+            { header: `Dueño ${OWNER_COLLECTOR_TAX_ID_LABEL}`, resolve: (registro) => registro.duenoCuilCobrador ?? '' },
             { header: 'Dueño CBU alias', resolve: (registro) => registro.duenoCbuAlias ?? '' },
             { header: 'Dueño correo', resolve: (registro) => registro.duenoEmail ?? '' },
             { header: 'Dueño teléfono', resolve: (registro) => registro.duenoTelefono ?? '' },
@@ -15702,7 +15898,7 @@ const PersonalPage: React.FC = () => {
               {isColumnVisible('id') ? <th>ID</th> : null}
               {isColumnVisible('nombre') ? <th>Nombre</th> : null}
               {isColumnVisible('legajo') ? <th>Legajo</th> : null}
-              {isColumnVisible('cuil') ? <th>CUIL</th> : null}
+              {isColumnVisible('cuil') ? <th>{PERSON_TAX_ID_LABEL}</th> : null}
               {isColumnVisible('telefono') ? <th>Teléfono</th> : null}
               {isColumnVisible('email') ? <th>Email</th> : null}
               {isColumnVisible('perfil') ? <th>Perfil</th> : null}
@@ -23334,12 +23530,12 @@ const CombustibleRunsPage: React.FC = () => {
                                 </td>
                                 <td>
                                   <div className="pending-match-provider-grid">
-                                    <span className="pending-match-provider-hint">Buscá por nombre, CUIL o patente.</span>
+                                    <span className="pending-match-provider-hint">Buscá por nombre, CUIT/CUIL o patente.</span>
                                     <div className="pending-match-search-row">
                                       <input
                                         value={draft.searchTerm}
                                         onChange={(event) => handleMatchDraftChange(key, 'searchTerm', event.target.value)}
-                                        placeholder="Buscar por nombre/cuil/patente"
+                                        placeholder="Buscar por nombre/cuit-cuil/patente"
                                       />
                                       <button
                                         type="button"
@@ -23517,12 +23713,12 @@ const CombustibleRunsPage: React.FC = () => {
                             <div className="pending-match-card__field">
                               <span className="pending-match-card__label">Proveedor a asignar</span>
                               <div className="pending-match-provider-grid">
-                                <span className="pending-match-provider-hint">Buscá por nombre, CUIL o patente.</span>
+                                <span className="pending-match-provider-hint">Buscá por nombre, CUIT/CUIL o patente.</span>
                                 <div className="pending-match-search-row">
                                   <input
                                     value={draft.searchTerm}
                                     onChange={(event) => handleMatchDraftChange(key, 'searchTerm', event.target.value)}
-                                    placeholder="Buscar por nombre/cuil/patente"
+                                    placeholder="Buscar por nombre/cuit-cuil/patente"
                                   />
                                   <button
                                     type="button"
@@ -24285,12 +24481,12 @@ const LiquidacionesPage: React.FC = () => {
     () => [
       { key: 'id', label: 'ID' },
       { key: 'nombre', label: 'Nombre' },
-      { key: 'cuil', label: 'CUIL' },
+      { key: 'cuil', label: PERSON_TAX_ID_LABEL },
       { key: 'telefono', label: 'Teléfono' },
       { key: 'email', label: 'Email' },
       { key: 'cbuAlias', label: 'CBU' },
       { key: 'cobradorCbuAlias', label: 'CBU cobrador' },
-      { key: 'cobradorCuil', label: 'CUIL cobrador' },
+      { key: 'cobradorCuil', label: COLLECTOR_TAX_ID_LABEL },
       { key: 'perfil', label: 'Perfil' },
       { key: 'agente', label: 'Agente' },
       { key: 'estado', label: 'Estado' },
@@ -24312,12 +24508,12 @@ const LiquidacionesPage: React.FC = () => {
     () => [
       { key: 'id', label: 'ID' },
       { key: 'nombre', label: 'Nombre' },
-      { key: 'cuil', label: 'CUIL' },
+      { key: 'cuil', label: PERSON_TAX_ID_LABEL },
       { key: 'telefono', label: 'Teléfono' },
       { key: 'email', label: 'Email' },
       { key: 'cbuAlias', label: 'CBU' },
       { key: 'cobradorCbuAlias', label: 'CBU cobrador' },
-      { key: 'cobradorCuil', label: 'CUIL cobrador' },
+      { key: 'cobradorCuil', label: COLLECTOR_TAX_ID_LABEL },
       { key: 'perfil', label: 'Perfil' },
       { key: 'agente', label: 'Agente' },
       { key: 'estado', label: 'Estado' },
@@ -25811,7 +26007,7 @@ const LiquidacionesPage: React.FC = () => {
     const columns: Array<{ header: string; resolve: (registro: PersonalRecord) => string | number | null | undefined }> = [
       { header: 'ID', resolve: (registro) => registro.id },
       { header: 'Nombre completo', resolve: (registro) => registro.nombre ?? '' },
-      { header: 'CUIL', resolve: (registro) => registro.cuil ?? '' },
+      { header: PERSON_TAX_ID_LABEL, resolve: (registro) => registro.cuil ?? '' },
       { header: 'Teléfono', resolve: (registro) => registro.telefono ?? '' },
       { header: 'Email', resolve: (registro) => registro.email ?? '' },
       { header: 'Perfil', resolve: (registro) => getPerfilDisplayLabel(registro.perfilValue ?? null, registro.perfil ?? '') },
@@ -28316,7 +28512,7 @@ const LiquidacionesPage: React.FC = () => {
 
     const providerIdentityParts = [providerName];
     if (providerCuil) {
-      providerIdentityParts.push(`CUIL ${providerCuil}`);
+      providerIdentityParts.push(`${PERSON_TAX_ID_LABEL} ${providerCuil}`);
     }
     if (providerCbu) {
       providerIdentityParts.push(`CBU ${providerCbu}`);
@@ -28324,7 +28520,7 @@ const LiquidacionesPage: React.FC = () => {
 
     const collectorIdentityParts = [collectorName];
     if (collectorCuil) {
-      collectorIdentityParts.push(`CUIL ${collectorCuil}`);
+      collectorIdentityParts.push(`${COLLECTOR_TAX_ID_LABEL} ${collectorCuil}`);
     }
     if (collectorCbu) {
       collectorIdentityParts.push(`CBU ${collectorCbu}`);
@@ -28420,12 +28616,12 @@ const LiquidacionesPage: React.FC = () => {
               ) : null}
               {isListColumnVisible('id') ? <th>ID</th> : null}
               {isListColumnVisible('nombre') ? <th>Nombre</th> : null}
-              {isListColumnVisible('cuil') ? <th>CUIL</th> : null}
+              {isListColumnVisible('cuil') ? <th>{PERSON_TAX_ID_LABEL}</th> : null}
               {isListColumnVisible('telefono') ? <th>Teléfono</th> : null}
               {isListColumnVisible('email') ? <th>Email</th> : null}
               {isListColumnVisible('cbuAlias') ? <th>CBU</th> : null}
               {isListColumnVisible('cobradorCbuAlias') ? <th>CBU cobrador</th> : null}
-              {isListColumnVisible('cobradorCuil') ? <th>CUIL cobrador</th> : null}
+              {isListColumnVisible('cobradorCuil') ? <th>{COLLECTOR_TAX_ID_LABEL}</th> : null}
               {isListColumnVisible('perfil') ? <th>Perfil</th> : null}
               {isListColumnVisible('agente') ? <th>Agente</th> : null}
               {isListColumnVisible('estado') ? <th>Estado</th> : null}
@@ -33473,7 +33669,7 @@ const ApprovalsRequestsPage: React.FC = () => {
         altaNosisLastLookupRef.current = { cuil, cbu, fechaNacimiento };
 
         const raw = payload?.data?.raw;
-        const parsed = typeof raw === 'string' ? parseNosisXml(raw) : null;
+        const parsed = payload?.data?.parsed ?? (typeof raw === 'string' ? parseNosisXml(raw) : null);
         const razonSocial = parsed?.razonSocial;
         const razonSplit = razonSocial ? splitRazonSocial(razonSocial) : null;
         const nombresFromNosis = razonSplit?.nombres ?? '';
@@ -33502,7 +33698,7 @@ const ApprovalsRequestsPage: React.FC = () => {
         if (controller.signal.aborted) {
           return;
         }
-        setAltaNosisError((err as Error).message ?? 'No se pudo validar CBU/CUIL.');
+        setAltaNosisError((err as Error).message ?? `No se pudo validar CBU/${PERSON_TAX_ID_LABEL}.`);
       } finally {
         setAltaNosisLoading(false);
       }
@@ -34109,14 +34305,14 @@ const sucursalOptions = useMemo(() => {
 
       if (!documento) {
         if (showValidationError) {
-          setError('Ingresá un CUIL para consultar en Nosis.');
+          setError(`Ingresá un ${PERSON_TAX_ID_LABEL} para consultar en Nosis.`);
         }
         return;
       }
 
       if (documento.length !== 11) {
         if (showValidationError) {
-          setError('Ingresá un CUIL válido de 11 dígitos.');
+          setError(`Ingresá un ${PERSON_TAX_ID_LABEL} válido de 11 dígitos.`);
         }
         return;
       }
@@ -34146,7 +34342,7 @@ const sucursalOptions = useMemo(() => {
 
         const payload = await response.json();
         const raw = payload?.data?.raw;
-        const parsed = typeof raw === 'string' ? parseNosisXml(raw) : null;
+        const parsed = payload?.data?.parsed ?? (typeof raw === 'string' ? parseNosisXml(raw) : null);
         const razonSocial = parsed?.razonSocial ?? '';
         const razonSplit = splitRazonSocial(razonSocial);
         const fullName = razonSocial.trim() || [razonSplit?.nombres ?? '', razonSplit?.apellidos ?? ''].filter(Boolean).join(' ').trim();
@@ -34624,7 +34820,7 @@ const sucursalOptions = useMemo(() => {
     if (!hasAltaRequiredFields(form)) {
       setFlash({
         type: 'error',
-        message: 'Completá CUIL, Patente, Cliente y Sucursal antes de enviar la solicitud.',
+        message: `Completá ${PERSON_TAX_ID_LABEL}, Patente, Cliente y Sucursal antes de enviar la solicitud.`,
       });
       return false;
     }
@@ -37704,7 +37900,7 @@ const sucursalOptions = useMemo(() => {
           <div className="review-summary-grid">
             <p><strong>Solicitud:</strong> #{selectedCambioAsignacion.id}</p>
             <p><strong>Proveedor:</strong> {nombreProveedor}</p>
-            <p><strong>CUIL:</strong> {cuilProveedor}</p>
+            <p><strong>{PERSON_TAX_ID_LABEL}:</strong> {cuilProveedor}</p>
             <p><strong>ID Proveedor:</strong> {form.personaId ?? '—'}</p>
             <p><strong>Responsable:</strong> {responsable}</p>
             <p><strong>Creada:</strong> {creada}</p>
@@ -38093,7 +38289,7 @@ const sucursalOptions = useMemo(() => {
               {renderAltaInput('Correo electrónico', 'email', true, 'email')}
               {renderAltaCheckbox('Tarifa especial', 'tarifaEspecial', 'Tiene tarifa especial')}
               {renderAltaInput('Observación tarifa', 'observacionTarifa')}
-              {renderAltaCuilInput('CUIL', 'cuil', 'titular')}
+              {renderAltaCuilInput(PERSON_TAX_ID_LABEL, 'cuil', 'titular')}
               {renderAltaInput('CBU/Alias', 'cbuAlias')}
               {renderAltaSelect('Pago', 'pago', PAGO_SELECT_OPTIONS, { placeholder: 'S/N factura' })}
               {renderAltaInput('Fecha de nacimiento', 'duenoFechaNacimiento', false, 'date')}
@@ -38114,7 +38310,7 @@ const sucursalOptions = useMemo(() => {
                 </label>
                 {renderAltaInput('Nombre completo del cobrador', 'cobradorNombre', altaForm.esCobrador)}
                 {renderAltaInput('Correo del cobrador', 'cobradorEmail', false, 'email')}
-                {renderAltaCuilInput('CUIL del cobrador', 'cobradorCuil', 'cobrador', altaForm.esCobrador, !altaForm.esCobrador)}
+                {renderAltaCuilInput(COLLECTOR_TAX_ID_LABEL, 'cobradorCuil', 'cobrador', altaForm.esCobrador, !altaForm.esCobrador)}
                 {renderAltaInput('CBU/Alias del cobrador', 'cobradorCbuAlias', altaForm.esCobrador)}
               </div>
             </div>
@@ -38130,7 +38326,7 @@ const sucursalOptions = useMemo(() => {
               {renderAltaInput('Teléfono', 'telefono', false, 'tel')}
               {renderAltaCheckbox('Tarifa especial', 'tarifaEspecial', 'Tiene tarifa especial')}
               {renderAltaInput('Observación tarifa', 'observacionTarifa')}
-              {renderAltaCuilInput('CUIL', 'cuil', 'titular')}
+              {renderAltaCuilInput(PERSON_TAX_ID_LABEL, 'cuil', 'titular')}
               {renderAltaInput('CBU/Alias', 'cbuAlias')}
               {renderAltaSelect('Pago', 'pago', PAGO_SELECT_OPTIONS, { placeholder: 'S/N factura' })}
               {renderAltaInput('Fecha de nacimiento', 'duenoFechaNacimiento', false, 'date')}
@@ -38233,8 +38429,8 @@ const sucursalOptions = useMemo(() => {
               {renderAltaInput('Nombre completo (Dueño)', 'duenoNombre')}
               {renderAltaInput('Fecha de nacimiento', 'duenoFechaNacimiento', false, 'date')}
               {renderAltaInput('Correo (Dueño)', 'duenoEmail', false, 'email')}
-              {renderAltaInput('CUIL (Dueño)', 'duenoCuil')}
-              {renderAltaInput('CUIL cobrador', 'duenoCuilCobrador')}
+              {renderAltaInput(OWNER_TAX_ID_LABEL, 'duenoCuil')}
+              {renderAltaInput(OWNER_COLLECTOR_TAX_ID_LABEL, 'duenoCuilCobrador')}
               {renderAltaInput('CBU/Alias (Dueño)', 'duenoCbuAlias')}
               {renderAltaInput('Teléfono (Dueño)', 'duenoTelefono', false, 'tel')}
               <label className="input-control" style={{ gridColumn: '1 / -1' }}>
@@ -38256,7 +38452,7 @@ const sucursalOptions = useMemo(() => {
             <div className="form-grid">
               {renderAltaInput('Nombres', 'nombres', true)}
               {renderAltaInput('Apellidos', 'apellidos', true)}
-              {renderAltaCuilInput('CUIL', 'cuil', 'titular')}
+              {renderAltaCuilInput(PERSON_TAX_ID_LABEL, 'cuil', 'titular')}
               {renderAltaInput('Correo electrónico', 'email', true, 'email')}
               {renderAltaInput('Teléfono', 'telefono', false, 'tel')}
               {renderAltaCheckbox('Combustible', 'combustible', 'Cuenta corrientes combustible')}
@@ -38290,7 +38486,7 @@ const sucursalOptions = useMemo(() => {
               {renderAltaInput('Correo electrónico', 'email', true, 'email')}
               {renderAltaCheckbox('Tarifa especial', 'tarifaEspecial', 'Tiene tarifa especial')}
               {renderAltaInput('Observación tarifa', 'observacionTarifa')}
-              {renderAltaCuilInput('CUIL', 'cuil', 'titular')}
+              {renderAltaCuilInput(PERSON_TAX_ID_LABEL, 'cuil', 'titular')}
               {renderAltaInput('CBU/Alias', 'cbuAlias')}
               {renderAltaSelect('Pago', 'pago', PAGO_SELECT_OPTIONS, { placeholder: 'S/N factura' })}
               {renderAltaCheckbox('Combustible', 'combustible', 'Cuenta corrientes combustible')}
@@ -38377,7 +38573,7 @@ const sucursalOptions = useMemo(() => {
       const commonFields = [
         { label: 'Nombres', value: reviewPersonaDetail.nombres },
         { label: 'Apellidos', value: reviewPersonaDetail.apellidos },
-        { label: 'CUIL', value: reviewPersonaDetail.cuil },
+        { label: PERSON_TAX_ID_LABEL, value: reviewPersonaDetail.cuil },
         { label: 'Teléfono', value: reviewPersonaDetail.telefono },
         { label: 'Correo electrónico', value: reviewPersonaDetail.email },
         { label: 'Pago', value: formatPagoLabel(reviewPersonaDetail.pago) || reviewPersonaDetail.pago },
@@ -38401,8 +38597,8 @@ const sucursalOptions = useMemo(() => {
         { label: 'Fecha de nacimiento', value: reviewPersonaDetail.duenoFechaNacimiento },
         { label: 'Correo (Dueño)', value: reviewPersonaDetail.duenoEmail },
         { label: 'Teléfono (Dueño)', value: reviewPersonaDetail.duenoTelefono },
-        { label: 'CUIL (Dueño)', value: reviewPersonaDetail.duenoCuil },
-        { label: 'CUIL cobrador', value: reviewPersonaDetail.duenoCuilCobrador },
+        { label: OWNER_TAX_ID_LABEL, value: reviewPersonaDetail.duenoCuil },
+        { label: OWNER_COLLECTOR_TAX_ID_LABEL, value: reviewPersonaDetail.duenoCuilCobrador },
         { label: 'CBU/Alias (Dueño)', value: reviewPersonaDetail.duenoCbuAlias },
         { label: 'Observaciones (Dueño)', value: reviewPersonaDetail.duenoObservaciones },
       ];
@@ -39140,7 +39336,7 @@ const sucursalOptions = useMemo(() => {
               <span>Buscar personal existente</span>
               <input
                 type="search"
-                placeholder="Nombre, CUIL, cliente, sucursal o ID"
+                placeholder="Nombre, CUIT/CUIL, cliente, sucursal o ID"
                 value={altaLookupTerm}
                 onChange={(event) => setAltaLookupTerm(event.target.value)}
               />
@@ -39211,7 +39407,7 @@ const sucursalOptions = useMemo(() => {
           </button>
         </div>
         {!hasAltaRequiredFields(altaForm) ? (
-          <p className="form-info form-info--error">Requerido para enviar: CUIL, Patente, Cliente y Sucursal.</p>
+          <p className="form-info form-info--error">Requerido para enviar: CUIT/CUIL, Patente, Cliente y Sucursal.</p>
         ) : null}
       </form>
     );
@@ -43193,7 +43389,7 @@ const PersonalEditPage: React.FC = () => {
     const lines = [
       ['Nombre', [record.nombres, record.apellidos].filter(Boolean).join(' ').trim()],
       ['Legajo', record.legajo ?? ''],
-      ['CUIL', record.cuil ?? ''],
+      [PERSON_TAX_ID_LABEL, record.cuil ?? ''],
       ['Teléfono', record.telefono ?? ''],
       ['Email', record.email ?? ''],
       ['Perfil', record.perfil ?? ''],
@@ -43902,7 +44098,7 @@ const PersonalEditPage: React.FC = () => {
             />
           </label>
           <label className="input-control">
-            <span>CUIL</span>
+            <span>{PERSON_TAX_ID_LABEL}</span>
             <input
               type="text"
               value={formValues.cuil}
@@ -44065,7 +44261,7 @@ const PersonalEditPage: React.FC = () => {
                 />
               </label>
               <label className="input-control">
-                <span>CUIL del cobrador</span>
+                <span>{COLLECTOR_TAX_ID_LABEL}</span>
                 <input
                   type="text"
                   value={formValues.cobradorCuil}
@@ -44233,7 +44429,7 @@ const PersonalEditPage: React.FC = () => {
               />
             </label>
             <label className="input-control">
-              <span>CUIL (Dueño)</span>
+              <span>{OWNER_TAX_ID_LABEL}</span>
               <input
                 type="text"
                 value={formValues.duenoCuil}
@@ -44242,7 +44438,7 @@ const PersonalEditPage: React.FC = () => {
               />
             </label>
             <label className="input-control">
-              <span>CUIL cobrador</span>
+              <span>{OWNER_COLLECTOR_TAX_ID_LABEL}</span>
               <input
                 type="text"
                 value={formValues.duenoCuilCobrador}
@@ -44456,6 +44652,16 @@ const PersonalEditPage: React.FC = () => {
           {commentInfo ? <p className="form-info form-info--success">{commentInfo}</p> : null}
         </div>
       </section>
+
+      <TaxProfileSection
+        entityType="persona"
+        entityId={detail?.id ?? null}
+        apiBaseUrl={apiBaseUrl}
+        actorHeaders={actorHeaders}
+        readOnly={isReadOnly}
+        title="Legajo impositivo"
+        subtitle="Datos fiscales y bancarios del proveedor/distribuidor con snapshots persistidos de Nosis."
+      />
 
       <section className="personal-edit-section">
         <h2>Documentos</h2>
@@ -45017,13 +45223,13 @@ const PersonalCreatePage: React.FC = () => {
       const documento = formValues.cuil.replace(/\D+/g, '');
       if (!documento) {
         if (showValidationError) {
-          setNosisLookupError('Ingresá un CUIL para consultar en Nosis.');
+          setNosisLookupError(`Ingresá un ${PERSON_TAX_ID_LABEL} para consultar en Nosis.`);
         }
         return;
       }
       if (documento.length !== 11) {
         if (showValidationError) {
-          setNosisLookupError('Ingresá un CUIL válido de 11 dígitos.');
+          setNosisLookupError(`Ingresá un ${PERSON_TAX_ID_LABEL} válido de 11 dígitos.`);
         }
         return;
       }
@@ -45053,7 +45259,7 @@ const PersonalCreatePage: React.FC = () => {
 
         const payload = await response.json();
         const raw = payload?.data?.raw;
-        const parsed = typeof raw === 'string' ? parseNosisXml(raw) : null;
+        const parsed = payload?.data?.parsed ?? (typeof raw === 'string' ? parseNosisXml(raw) : null);
         const razonSocial = parsed?.razonSocial ?? '';
         const razonSplit = splitRazonSocial(razonSocial);
         const fullName = razonSocial.trim();
@@ -45272,7 +45478,7 @@ const PersonalCreatePage: React.FC = () => {
                 </label>
                 {renderInput('Nombre completo del cobrador', 'cobradorNombre', formValues.esCobrador)}
                 {renderInput('Correo del cobrador', 'cobradorEmail', false, 'email')}
-                {renderInput('CUIL del cobrador', 'cobradorCuil', formValues.esCobrador)}
+                {renderInput(COLLECTOR_TAX_ID_LABEL, 'cobradorCuil', formValues.esCobrador)}
                 {renderInput('CBU/Alias del cobrador', 'cobradorCbuAlias', formValues.esCobrador)}
               </div>
             </div>
@@ -45317,8 +45523,8 @@ const PersonalCreatePage: React.FC = () => {
               {renderInput('Nombre completo (Dueño)', 'duenoNombre')}
               {renderInput('Fecha de nacimiento', 'duenoFechaNacimiento', false, 'date')}
               {renderInput('Correo (Dueño)', 'duenoEmail', false, 'email')}
-              {renderInput('CUIL (Dueño)', 'duenoCuil')}
-              {renderInput('CUIL cobrador', 'duenoCuilCobrador')}
+              {renderInput(OWNER_TAX_ID_LABEL, 'duenoCuil')}
+              {renderInput(OWNER_COLLECTOR_TAX_ID_LABEL, 'duenoCuilCobrador')}
               {renderInput('CBU/Alias (Dueño)', 'duenoCbuAlias')}
               {renderInput('Teléfono (Dueño)', 'duenoTelefono')}
               <label className="input-control" style={{ gridColumn: '1 / -1' }}>
@@ -45384,7 +45590,7 @@ const PersonalCreatePage: React.FC = () => {
 
   const renderCuilInput = () => (
     <label className="input-control">
-      <span>CUIL</span>
+      <span>{PERSON_TAX_ID_LABEL}</span>
       <input
         type="text"
         value={formValues.cuil}
@@ -46473,6 +46679,573 @@ const EditUnitPage: React.FC = () => {
   );
 };
 
+const createEmptyTaxProfileForm = (seed?: Partial<TaxProfileRecord>): TaxProfileRecord => ({
+  cuit: seed?.cuit ?? '',
+  razonSocial: seed?.razonSocial ?? '',
+  arcaStatus: seed?.arcaStatus ?? '',
+  dgrStatus: seed?.dgrStatus ?? '',
+  exclusionNotes: seed?.exclusionNotes ?? '',
+  exemptionNotes: seed?.exemptionNotes ?? '',
+  regimeNotes: seed?.regimeNotes ?? '',
+  bankAccount: seed?.bankAccount ?? '',
+  bankAlias: seed?.bankAlias ?? '',
+  bankOwnerName: seed?.bankOwnerName ?? '',
+  bankOwnerDocument: seed?.bankOwnerDocument ?? '',
+  bankValidationStatus: seed?.bankValidationStatus ?? '',
+  insuranceNotes: seed?.insuranceNotes ?? '',
+  observations: seed?.observations ?? '',
+  latestNosisSnapshot: seed?.latestNosisSnapshot ?? null,
+  snapshots: seed?.snapshots ?? [],
+  documents: seed?.documents ?? [],
+});
+
+type TaxProfileSectionProps = {
+  entityType: 'cliente' | 'persona';
+  entityId: number | null;
+  apiBaseUrl: string;
+  actorHeaders?: Record<string, string>;
+  readOnly?: boolean;
+  title: string;
+  subtitle: string;
+};
+
+const TaxProfileSection: React.FC<TaxProfileSectionProps> = ({
+  entityType,
+  entityId,
+  apiBaseUrl,
+  actorHeaders,
+  readOnly = false,
+  title,
+  subtitle,
+}) => {
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [formValues, setFormValues] = useState<TaxProfileRecord>(() => createEmptyTaxProfileForm());
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [saveInfo, setSaveInfo] = useState<string | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+  const [refreshError, setRefreshError] = useState<string | null>(null);
+  const [refreshInfo, setRefreshInfo] = useState<string | null>(null);
+  const [uploadingDocument, setUploadingDocument] = useState(false);
+  const [documentError, setDocumentError] = useState<string | null>(null);
+  const [documentInfo, setDocumentInfo] = useState<string | null>(null);
+  const [documentTitle, setDocumentTitle] = useState('');
+  const [documentCategory, setDocumentCategory] = useState('OTRO');
+  const [documentExpiry, setDocumentExpiry] = useState('');
+  const [documentDescription, setDocumentDescription] = useState('');
+  const [documentFile, setDocumentFile] = useState<File | null>(null);
+
+  const endpoint = useMemo(() => {
+    if (!entityId) {
+      return null;
+    }
+
+    return entityType === 'cliente'
+      ? `${apiBaseUrl}/api/clientes/${entityId}/legajo-impositivo`
+      : `${apiBaseUrl}/api/personal/${entityId}/legajo-impositivo`;
+  }, [apiBaseUrl, entityId, entityType]);
+
+  const applyPayload = useCallback((payload?: TaxProfileRecord | null) => {
+    setFormValues(createEmptyTaxProfileForm(payload ?? undefined));
+  }, []);
+
+  const fetchProfile = useCallback(async () => {
+    if (!endpoint) {
+      setLoading(false);
+      return;
+    }
+
+    try {
+      setLoading(true);
+      setLoadError(null);
+
+      const response = await fetch(endpoint, {
+        headers: {
+          Accept: 'application/json',
+          ...(actorHeaders ?? {}),
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error(`Error ${response.status}: ${response.statusText}`);
+      }
+
+      const payload = (await response.json()) as { data?: TaxProfileRecord };
+      applyPayload(payload?.data ?? null);
+    } catch (err) {
+      setLoadError((err as Error).message ?? 'No se pudo cargar el legajo impositivo.');
+    } finally {
+      setLoading(false);
+    }
+  }, [actorHeaders, applyPayload, endpoint]);
+
+  useEffect(() => {
+    void fetchProfile();
+  }, [fetchProfile]);
+
+  const handleInputChange = (field: keyof TaxProfileRecord) => (
+    event: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>
+  ) => {
+    const nextValue = event.target.value;
+    setFormValues((prev) => ({ ...prev, [field]: nextValue }));
+    setSaveError(null);
+    setSaveInfo(null);
+    setRefreshError(null);
+    setRefreshInfo(null);
+    setDocumentError(null);
+    setDocumentInfo(null);
+  };
+
+  const handleSave = async () => {
+    if (!endpoint || readOnly) {
+      return;
+    }
+
+    try {
+      setSaving(true);
+      setSaveError(null);
+      setSaveInfo(null);
+
+      const response = await fetch(endpoint, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+          ...(actorHeaders ?? {}),
+        },
+        body: JSON.stringify({
+          cuit: formValues.cuit?.trim() || null,
+          razonSocial: formValues.razonSocial?.trim() || null,
+          arcaStatus: formValues.arcaStatus?.trim() || null,
+          dgrStatus: formValues.dgrStatus?.trim() || null,
+          exclusionNotes: formValues.exclusionNotes?.trim() || null,
+          exemptionNotes: formValues.exemptionNotes?.trim() || null,
+          regimeNotes: formValues.regimeNotes?.trim() || null,
+          bankAccount: formValues.bankAccount?.trim() || null,
+          bankAlias: formValues.bankAlias?.trim() || null,
+          bankOwnerName: formValues.bankOwnerName?.trim() || null,
+          bankOwnerDocument: formValues.bankOwnerDocument?.trim() || null,
+          bankValidationStatus: formValues.bankValidationStatus?.trim() || null,
+          insuranceNotes: formValues.insuranceNotes?.trim() || null,
+          observations: formValues.observations?.trim() || null,
+        }),
+      });
+
+      if (!response.ok) {
+        let message = `Error ${response.status}: ${response.statusText}`;
+        try {
+          const payload = await response.json();
+          if (typeof payload?.message === 'string') {
+            message = payload.message;
+          }
+        } catch {
+          // ignore
+        }
+        throw new Error(message);
+      }
+
+      const payload = (await response.json()) as { message?: string; data?: TaxProfileRecord };
+      applyPayload(payload?.data ?? null);
+      setSaveInfo(payload?.message ?? 'Legajo impositivo guardado.');
+    } catch (err) {
+      setSaveError((err as Error).message ?? 'No se pudo guardar el legajo impositivo.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleRefreshNosis = async () => {
+    if (!endpoint) {
+      return;
+    }
+
+    try {
+      setRefreshing(true);
+      setRefreshError(null);
+      setRefreshInfo(null);
+
+      const response = await fetch(`${endpoint}/nosis-refresh`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+          ...(actorHeaders ?? {}),
+        },
+        body: JSON.stringify({
+          cuit: formValues.cuit?.trim() || null,
+          razonSocial: formValues.razonSocial?.trim() || null,
+          bankAccount: formValues.bankAccount?.trim() || null,
+          bankAlias: formValues.bankAlias?.trim() || null,
+        }),
+      });
+
+      if (!response.ok) {
+        let message = `Error ${response.status}: ${response.statusText}`;
+        try {
+          const payload = await response.json();
+          if (typeof payload?.message === 'string') {
+            message = payload.message;
+          }
+        } catch {
+          // ignore
+        }
+        throw new Error(message);
+      }
+
+      const payload = (await response.json()) as { message?: string; data?: TaxProfileRecord };
+      applyPayload(payload?.data ?? null);
+      setRefreshInfo(payload?.message ?? 'Snapshot de Nosis actualizado.');
+    } catch (err) {
+      setRefreshError((err as Error).message ?? 'No se pudo actualizar Nosis.');
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
+  const latestSnapshot = formValues.latestNosisSnapshot ?? null;
+  const snapshots = Array.isArray(formValues.snapshots) ? formValues.snapshots : [];
+  const documents = Array.isArray(formValues.documents) ? formValues.documents : [];
+  const cuitLabel = entityType === 'cliente' ? 'CUIT' : PERSON_TAX_ID_LABEL;
+  const resolveDocumentHref = useCallback((url: string | null) => {
+    const resolved = resolveApiUrl(apiBaseUrl, url);
+    if (!resolved) {
+      return null;
+    }
+    const token = readAuthTokenFromStorage();
+    if (!token) {
+      return resolved;
+    }
+    try {
+      const parsed = new URL(resolved, window.location.origin);
+      parsed.searchParams.set('api_token', token);
+      return parsed.toString();
+    } catch {
+      return resolved;
+    }
+  }, [apiBaseUrl]);
+  const latestSnapshotSummary = latestSnapshot ? buildTaxSnapshotSummary(latestSnapshot) : null;
+
+  const handleUploadDocument = async () => {
+    if (entityType !== 'cliente' || !endpoint || !documentFile) {
+      setDocumentError('Seleccioná un archivo para adjuntar al legajo.');
+      return;
+    }
+
+    try {
+      setUploadingDocument(true);
+      setDocumentError(null);
+      setDocumentInfo(null);
+
+      const formData = new FormData();
+      formData.append('archivo', documentFile);
+      formData.append('title', documentTitle.trim() || documentFile.name);
+      formData.append('category', documentCategory);
+      if (documentDescription.trim()) {
+        formData.append('description', documentDescription.trim());
+      }
+      if (documentExpiry) {
+        formData.append('fechaVencimiento', documentExpiry);
+      }
+
+      const response = await fetch(`${endpoint}/documentos`, {
+        method: 'POST',
+        headers: {
+          Accept: 'application/json',
+          ...(actorHeaders ?? {}),
+        },
+        body: formData,
+      });
+
+      if (!response.ok) {
+        let message = `Error ${response.status}: ${response.statusText}`;
+        try {
+          const payload = await response.json();
+          if (typeof payload?.message === 'string') {
+            message = payload.message;
+          }
+        } catch {
+          // ignore
+        }
+        throw new Error(message);
+      }
+
+      const payload = (await response.json()) as { message?: string; data?: ClientTaxDocumentRecord };
+      setFormValues((prev) => ({
+        ...prev,
+        documents: payload?.data ? [payload.data, ...(prev.documents ?? [])] : prev.documents ?? [],
+      }));
+      setDocumentTitle('');
+      setDocumentCategory('OTRO');
+      setDocumentExpiry('');
+      setDocumentDescription('');
+      setDocumentFile(null);
+      setDocumentInfo(payload?.message ?? 'Documento cargado.');
+    } catch (err) {
+      setDocumentError((err as Error).message ?? 'No se pudo cargar el documento.');
+    } finally {
+      setUploadingDocument(false);
+    }
+  };
+
+  const handleDeleteDocument = async (documentId: number) => {
+    if (entityType !== 'cliente' || !endpoint || readOnly) {
+      return;
+    }
+
+    try {
+      setDocumentError(null);
+      setDocumentInfo(null);
+
+      const response = await fetch(`${endpoint}/documentos/${documentId}`, {
+        method: 'DELETE',
+        headers: {
+          Accept: 'application/json',
+          ...(actorHeaders ?? {}),
+        },
+      });
+
+      if (!response.ok) {
+        let message = `Error ${response.status}: ${response.statusText}`;
+        try {
+          const payload = await response.json();
+          if (typeof payload?.message === 'string') {
+            message = payload.message;
+          }
+        } catch {
+          // ignore
+        }
+        throw new Error(message);
+      }
+
+      setFormValues((prev) => ({
+        ...prev,
+        documents: (prev.documents ?? []).filter((item) => item.id !== documentId),
+      }));
+      setDocumentInfo('Documento eliminado correctamente.');
+    } catch (err) {
+      setDocumentError((err as Error).message ?? 'No se pudo eliminar el documento.');
+    }
+  };
+
+  return (
+    <section className="personal-edit-section">
+      <div className="review-comments__header">
+        <div>
+          <h2>{title}</h2>
+          <p className="form-info">{subtitle}</p>
+        </div>
+        <div className="form-actions">
+          <button type="button" className="secondary-action" onClick={() => void fetchProfile()} disabled={loading || refreshing}>
+            {loading ? 'Actualizando...' : 'Recargar'}
+          </button>
+          <button type="button" className="secondary-action" onClick={() => void handleRefreshNosis()} disabled={refreshing || loading}>
+            {refreshing ? 'Consultando Nosis...' : 'Actualizar Nosis'}
+          </button>
+          {!readOnly ? (
+            <button type="button" className="primary-action" onClick={() => void handleSave()} disabled={saving || loading}>
+              {saving ? 'Guardando...' : 'Guardar legajo'}
+            </button>
+          ) : null}
+        </div>
+      </div>
+
+      {loadError ? <p className="form-info form-info--error">{loadError}</p> : null}
+      {saveError ? <p className="form-info form-info--error">{saveError}</p> : null}
+      {refreshError ? <p className="form-info form-info--error">{refreshError}</p> : null}
+      {saveInfo ? <p className="form-info form-info--success">{saveInfo}</p> : null}
+      {refreshInfo ? <p className="form-info form-info--success">{refreshInfo}</p> : null}
+
+      {loading ? <p className="form-info">Cargando legajo impositivo...</p> : null}
+
+      {!loading ? (
+        <>
+          <div className="form-grid">
+            <label className="input-control">
+              <span>{cuitLabel}</span>
+              <input value={formValues.cuit ?? ''} onChange={handleInputChange('cuit')} disabled={readOnly} />
+            </label>
+            <label className="input-control">
+              <span>Razón social</span>
+              <input value={formValues.razonSocial ?? ''} onChange={handleInputChange('razonSocial')} disabled={readOnly} />
+            </label>
+            <label className="input-control">
+              <span>Estado ARCA</span>
+              <input value={formValues.arcaStatus ?? ''} onChange={handleInputChange('arcaStatus')} disabled={readOnly} />
+            </label>
+            <label className="input-control">
+              <span>Estado DGR</span>
+              <input value={formValues.dgrStatus ?? ''} onChange={handleInputChange('dgrStatus')} disabled={readOnly} />
+            </label>
+            <label className="input-control">
+              <span>Cuenta bancaria</span>
+              <input value={formValues.bankAccount ?? ''} onChange={handleInputChange('bankAccount')} disabled={readOnly} />
+            </label>
+            <label className="input-control">
+              <span>Alias bancario</span>
+              <input value={formValues.bankAlias ?? ''} onChange={handleInputChange('bankAlias')} disabled={readOnly} />
+            </label>
+            <label className="input-control">
+              <span>Titular cuenta</span>
+              <input value={formValues.bankOwnerName ?? ''} onChange={handleInputChange('bankOwnerName')} disabled={readOnly} />
+            </label>
+            <label className="input-control">
+              <span>Documento titular</span>
+              <input value={formValues.bankOwnerDocument ?? ''} onChange={handleInputChange('bankOwnerDocument')} disabled={readOnly} />
+            </label>
+            <label className="input-control">
+              <span>Validación bancaria</span>
+              <input value={formValues.bankValidationStatus ?? ''} onChange={handleInputChange('bankValidationStatus')} disabled={readOnly} />
+            </label>
+          </div>
+
+          <div className="form-grid">
+            <label className="input-control" style={{ gridColumn: '1 / -1' }}>
+              <span>Exclusiones</span>
+              <textarea rows={2} value={formValues.exclusionNotes ?? ''} onChange={handleInputChange('exclusionNotes')} disabled={readOnly} />
+            </label>
+            <label className="input-control" style={{ gridColumn: '1 / -1' }}>
+              <span>Exenciones</span>
+              <textarea rows={2} value={formValues.exemptionNotes ?? ''} onChange={handleInputChange('exemptionNotes')} disabled={readOnly} />
+            </label>
+            <label className="input-control" style={{ gridColumn: '1 / -1' }}>
+              <span>Regímenes específicos</span>
+              <textarea rows={2} value={formValues.regimeNotes ?? ''} onChange={handleInputChange('regimeNotes')} disabled={readOnly} />
+            </label>
+            <label className="input-control" style={{ gridColumn: '1 / -1' }}>
+              <span>Seguros</span>
+              <textarea rows={2} value={formValues.insuranceNotes ?? ''} onChange={handleInputChange('insuranceNotes')} disabled={readOnly} />
+            </label>
+            <label className="input-control" style={{ gridColumn: '1 / -1' }}>
+              <span>Observaciones</span>
+              <textarea rows={3} value={formValues.observations ?? ''} onChange={handleInputChange('observations')} disabled={readOnly} />
+            </label>
+          </div>
+
+          {latestSnapshot ? (
+            <div className="document-extra-info">
+              <p className="form-info">
+                Último snapshot Nosis: {latestSnapshotSummary?.typeLabel ?? 'N/D'} · {latestSnapshot.requestedAtLabel ?? 'Sin fecha'}
+              </p>
+              <p className="form-info">
+                Estado: {latestSnapshotSummary?.statusLabel ?? 'N/D'}{latestSnapshotSummary?.resultText ? ` · ${latestSnapshotSummary.resultText}` : ''}
+              </p>
+              {latestSnapshotSummary?.detailText ? <p className="form-info">{latestSnapshotSummary.detailText}</p> : null}
+            </div>
+          ) : (
+            <p className="form-info">Todavía no hay snapshots guardados de Nosis.</p>
+          )}
+
+          {snapshots.length > 0 ? (
+            <ul className="document-status-list">
+              {snapshots.map((snapshot) => (
+                (() => {
+                  const summary = buildTaxSnapshotSummary(snapshot);
+                  const isLatest = latestSnapshot?.id === snapshot.id;
+
+                  return (
+                    <li key={snapshot.id} className="document-status-item">
+                      <div className="document-status-info">
+                        <span>{summary.typeLabel}</span>
+                        <small>{summary.referenceText}</small>
+                        {summary.detailText ? <small>{summary.detailText}</small> : null}
+                        {summary.resultText ? <small>Resultado: {summary.resultText}</small> : null}
+                      </div>
+                      <div className="document-status-actions">
+                        {isLatest ? <span className="badge">Último</span> : null}
+                        <span className={summary.statusClassName}>{summary.statusLabel}</span>
+                      </div>
+                    </li>
+                  );
+                })()
+              ))}
+            </ul>
+          ) : null}
+
+          {entityType === 'cliente' ? (
+            <section className="personal-edit-section">
+              <h3>Adjuntos del legajo</h3>
+              <p className="form-info">Usá esta sección para constancias, exclusiones, exenciones y regímenes del cliente.</p>
+              {documentError ? <p className="form-info form-info--error">{documentError}</p> : null}
+              {documentInfo ? <p className="form-info form-info--success">{documentInfo}</p> : null}
+
+              {!readOnly ? (
+                <div className="form-grid">
+                  <label className="input-control">
+                    <span>Categoría</span>
+                    <select value={documentCategory} onChange={(event) => setDocumentCategory(event.target.value)}>
+                      <option value="OTRO">Otro</option>
+                      <option value="CONSTANCIA_ARCA">Constancia ARCA</option>
+                      <option value="CONSTANCIA_DGR">Constancia DGR</option>
+                      <option value="EXCLUSION">Exclusión</option>
+                      <option value="EXENCION">Exención</option>
+                      <option value="REGIMEN_ESPECIAL">Régimen especial</option>
+                    </select>
+                  </label>
+                  <label className="input-control">
+                    <span>Título</span>
+                    <input value={documentTitle} onChange={(event) => setDocumentTitle(event.target.value)} />
+                  </label>
+                  <label className="input-control">
+                    <span>Fecha de vencimiento</span>
+                    <input type="date" value={documentExpiry} onChange={(event) => setDocumentExpiry(event.target.value)} />
+                  </label>
+                  <label className="input-control">
+                    <span>Archivo</span>
+                    <input type="file" onChange={(event) => setDocumentFile(event.target.files?.[0] ?? null)} />
+                  </label>
+                  <label className="input-control" style={{ gridColumn: '1 / -1' }}>
+                    <span>Descripción</span>
+                    <textarea rows={2} value={documentDescription} onChange={(event) => setDocumentDescription(event.target.value)} />
+                  </label>
+                </div>
+              ) : null}
+
+              {!readOnly ? (
+                <div className="form-actions">
+                  <button type="button" className="primary-action" onClick={() => void handleUploadDocument()} disabled={uploadingDocument}>
+                    {uploadingDocument ? 'Cargando...' : 'Adjuntar documento'}
+                  </button>
+                </div>
+              ) : null}
+
+              {documents.length > 0 ? (
+                <ul className="document-status-list">
+                  {documents.map((document) => (
+                    <li key={document.id} className="document-status-item">
+                      <div className="document-status-info">
+                        <span>{document.title ?? document.originalName ?? `Documento #${document.id}`}</span>
+                        <small>
+                          {document.category ?? 'OTRO'}
+                          {document.fechaVencimiento ? ` · Vence: ${document.fechaVencimiento}` : ''}
+                        </small>
+                      </div>
+                      <div className="document-status-actions">
+                        {document.downloadUrl ? (
+                          <a className="secondary-action" href={resolveDocumentHref(document.downloadUrl) ?? undefined} target="_blank" rel="noopener noreferrer">
+                            Descargar
+                          </a>
+                        ) : null}
+                        {!readOnly ? (
+                          <button type="button" className="secondary-action secondary-action--ghost" onClick={() => void handleDeleteDocument(document.id)}>
+                            Eliminar
+                          </button>
+                        ) : null}
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="form-info">Todavía no hay adjuntos cargados en el legajo.</p>
+              )}
+            </section>
+          ) : null}
+        </>
+      ) : null}
+    </section>
+  );
+};
+
 const CreateClientPage: React.FC = () => {
   const navigate = useNavigate();
   const apiBaseUrl = useMemo(() => resolveApiBaseUrl(), []);
@@ -46639,7 +47412,7 @@ const CreateClientPage: React.FC = () => {
             />
           </label>
           <label className="input-control">
-            <span>Documento fiscal</span>
+            <span>CUIT</span>
             <input
               type="text"
               value={formValues.documento_fiscal}
@@ -46734,6 +47507,8 @@ const EditClientPage: React.FC = () => {
   const { clienteId } = useParams<{ clienteId: string }>();
   const navigate = useNavigate();
   const apiBaseUrl = useMemo(() => resolveApiBaseUrl(), []);
+  const authUser = useStoredAuthUser();
+  const actorHeaders = useMemo(() => buildActorHeaders(authUser), [authUser]);
 
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -46951,7 +47726,7 @@ const EditClientPage: React.FC = () => {
             />
           </label>
           <label className="input-control">
-            <span>Documento fiscal</span>
+            <span>CUIT</span>
             <input
               type="text"
               value={formValues.documento_fiscal}
@@ -47038,6 +47813,14 @@ const EditClientPage: React.FC = () => {
           </button>
         </div>
       </form>
+      <TaxProfileSection
+        entityType="cliente"
+        entityId={clienteId ? Number(clienteId) : null}
+        apiBaseUrl={apiBaseUrl}
+        actorHeaders={actorHeaders}
+        title="Legajo impositivo"
+        subtitle="Base mínima para CUIT, estados impositivos, exclusiones, exenciones y snapshots de Nosis."
+      />
     </DashboardLayout>
   );
 };

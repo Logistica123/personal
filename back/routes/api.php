@@ -18,6 +18,7 @@ use App\Http\Controllers\Api\TeamGroupController;
 use App\Http\Controllers\Api\TicketRequestController;
 use App\Http\Controllers\Api\NosisController;
 use App\Http\Controllers\Api\TarifaImagenController;
+use App\Http\Controllers\Api\TaxProfileController;
 use App\Http\Controllers\Api\SolicitudPersonalController;
 use App\Http\Controllers\Api\VacacionesDiasController;
 use App\Http\Controllers\Api\DistriappController;
@@ -63,6 +64,9 @@ Route::middleware('auth.api')->group(function () {
     Route::get('/personal/{persona}', [PersonalController::class, 'show']);
     Route::put('/personal/{persona}', [PersonalController::class, 'update']);
     Route::post('/personal/{persona}', [PersonalController::class, 'update']);
+    Route::get('/personal/{persona}/legajo-impositivo', [TaxProfileController::class, 'showPersona']);
+    Route::put('/personal/{persona}/legajo-impositivo', [TaxProfileController::class, 'updatePersona']);
+    Route::post('/personal/{persona}/legajo-impositivo/nosis-refresh', [TaxProfileController::class, 'refreshPersonaNosis']);
     Route::post('/personal/{persona}/contact-reveal', [PersonalController::class, 'logContactReveal']);
     Route::delete('/personal/{persona}', [PersonalController::class, 'destroy']);
 
@@ -81,6 +85,13 @@ Route::middleware('auth.api')->group(function () {
     Route::post('/clientes', [ClienteController::class, 'store']);
     Route::put('/clientes/{cliente}', [ClienteController::class, 'update']);
     Route::delete('/clientes/{cliente}', [ClienteController::class, 'destroy']);
+    Route::get('/clientes/{cliente}/legajo-impositivo', [TaxProfileController::class, 'showCliente']);
+    Route::put('/clientes/{cliente}/legajo-impositivo', [TaxProfileController::class, 'updateCliente']);
+    Route::post('/clientes/{cliente}/legajo-impositivo/nosis-refresh', [TaxProfileController::class, 'refreshClienteNosis']);
+    Route::post('/clientes/{cliente}/legajo-impositivo/documentos', [TaxProfileController::class, 'storeClienteDocument']);
+    Route::delete('/clientes/{cliente}/legajo-impositivo/documentos/{documento}', [TaxProfileController::class, 'destroyClienteDocument']);
+    Route::get('/clientes/{cliente}/legajo-impositivo/documentos/{documento}/descargar', [TaxProfileController::class, 'downloadClienteDocument'])
+        ->name('clientes.legajo.documentos.descargar');
 
     Route::get('/unidades', [UnidadController::class, 'index']);
     Route::post('/unidades', [UnidadController::class, 'store']);
@@ -108,6 +119,7 @@ Route::middleware('auth.api')->group(function () {
     Route::patch('/reclamos/{reclamo}/adelanto-status', [ReclamoController::class, 'updateAdelantoStatus']);
     Route::patch('/reclamos/{reclamo}/revision', [ReclamoController::class, 'updateRevision']);
     Route::put('/reclamos/{reclamo}', [ReclamoController::class, 'update']);
+    Route::post('/reclamos/{reclamo}', [ReclamoController::class, 'update']);
     Route::delete('/reclamos/{reclamo}', [ReclamoController::class, 'destroy']);
     Route::post('/reclamos/{reclamo}/comments', [ReclamoController::class, 'storeComment']);
     Route::post('/reclamos/{reclamo}/documentos', [ReclamoController::class, 'storeDocument']);

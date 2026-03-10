@@ -140,4 +140,10 @@ class Persona extends Model
             ->hasMany(TransportistaQrAccessLog::class, 'persona_id')
             ->orderByDesc('created_at');
     }
+
+    public function taxProfile()
+    {
+        return $this->hasOne(TaxProfile::class, 'entity_id')
+            ->where('entity_type', 'persona');
+    }
 }
