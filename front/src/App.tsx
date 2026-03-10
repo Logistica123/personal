@@ -34434,6 +34434,33 @@ const sucursalOptions = useMemo(() => {
     [actorHeaders, apiBaseUrl]
   );
 
+  const resolveAltaUploadErrorMessage = useCallback(async (response: Response, fileName: string): Promise<string> => {
+    if (response.status === 413) {
+      return `${fileName}: el archivo supera el límite permitido por el servidor.`;
+    }
+
+    try {
+      const uploadPayload = await parseJsonSafe(response);
+      if (typeof uploadPayload?.message === 'string' && uploadPayload.message.trim().length > 0) {
+        return `${fileName}: ${uploadPayload.message}`;
+      }
+
+      if (uploadPayload?.errors) {
+        const firstUploadError = Object.values(uploadPayload.errors)[0];
+        if (Array.isArray(firstUploadError) && firstUploadError[0]) {
+          return `${fileName}: ${firstUploadError[0]}`;
+        }
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message.trim() : '';
+      if (message.length > 0) {
+        return `${fileName}: ${message}`;
+      }
+    }
+
+    return `${fileName}: Error ${response.status}${response.statusText ? ` ${response.statusText}` : ''}`;
+  }, []);
+
   const handleAltaFilesChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const files = filesFromEvent(event.target.files);
 
@@ -34614,22 +34641,7 @@ const sucursalOptions = useMemo(() => {
           );
 
           if (!uploadResponse.ok) {
-            let uploadMessage = `${item.file.name}: Error ${uploadResponse.status}`;
-            try {
-              const uploadPayload = await uploadResponse.json();
-              if (typeof uploadPayload?.message === 'string') {
-                uploadMessage = `${item.file.name}: ${uploadPayload.message}`;
-              } else if (uploadPayload?.errors) {
-                const firstUploadError = Object.values(uploadPayload.errors)[0];
-                if (Array.isArray(firstUploadError) && firstUploadError[0]) {
-                  uploadMessage = `${item.file.name}: ${firstUploadError[0]}`;
-                }
-              }
-            } catch {
-              // ignore
-            }
-
-            uploadErrors.push(uploadMessage);
+            uploadErrors.push(await resolveAltaUploadErrorMessage(uploadResponse, item.file.name));
             continue;
           }
 
@@ -34924,29 +34936,14 @@ const sucursalOptions = useMemo(() => {
             formData.append('fechaVencimiento', item.vence);
           }
 
-          try {
-            const uploadResponse = await fetch(
+        try {
+          const uploadResponse = await fetch(
               `${apiBaseUrl}/api/personal/${personaId}/documentos`,
               buildPersonalUploadRequestInit(formData)
             );
 
             if (!uploadResponse.ok) {
-              let uploadMessage = `${item.file.name}: Error ${uploadResponse.status}`;
-              try {
-                const uploadPayload = await uploadResponse.json();
-                if (typeof uploadPayload?.message === 'string') {
-                  uploadMessage = `${item.file.name}: ${uploadPayload.message}`;
-                } else if (uploadPayload?.errors) {
-                  const firstUploadError = Object.values(uploadPayload.errors)[0];
-                  if (Array.isArray(firstUploadError) && firstUploadError[0]) {
-                    uploadMessage = `${item.file.name}: ${firstUploadError[0]}`;
-                  }
-                }
-              } catch {
-                // ignore
-              }
-
-              uploadErrors.push(uploadMessage);
+              uploadErrors.push(await resolveAltaUploadErrorMessage(uploadResponse, item.file.name));
               continue;
             }
 
@@ -35153,22 +35150,7 @@ const sucursalOptions = useMemo(() => {
             );
 
             if (!uploadResponse.ok) {
-              let uploadMessage = `${item.file.name}: Error ${uploadResponse.status}`;
-              try {
-                const uploadPayload = await uploadResponse.json();
-                if (typeof uploadPayload?.message === 'string') {
-                  uploadMessage = `${item.file.name}: ${uploadPayload.message}`;
-                } else if (uploadPayload?.errors) {
-                  const firstUploadError = Object.values(uploadPayload.errors)[0];
-                  if (Array.isArray(firstUploadError) && firstUploadError[0]) {
-                    uploadMessage = `${item.file.name}: ${firstUploadError[0]}`;
-                  }
-                }
-              } catch {
-                // ignore
-              }
-
-              uploadErrors.push(uploadMessage);
+              uploadErrors.push(await resolveAltaUploadErrorMessage(uploadResponse, item.file.name));
               continue;
             }
 
