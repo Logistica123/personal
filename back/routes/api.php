@@ -105,6 +105,8 @@ Route::middleware('auth.api')->group(function () {
     Route::get('/reclamos', [ReclamoController::class, 'index']);
     Route::post('/reclamos', [ReclamoController::class, 'store']);
     Route::get('/reclamos/{reclamo}', [ReclamoController::class, 'show']);
+    Route::patch('/reclamos/{reclamo}/adelanto-status', [ReclamoController::class, 'updateAdelantoStatus']);
+    Route::patch('/reclamos/{reclamo}/revision', [ReclamoController::class, 'updateRevision']);
     Route::put('/reclamos/{reclamo}', [ReclamoController::class, 'update']);
     Route::delete('/reclamos/{reclamo}', [ReclamoController::class, 'destroy']);
     Route::post('/reclamos/{reclamo}/comments', [ReclamoController::class, 'storeComment']);

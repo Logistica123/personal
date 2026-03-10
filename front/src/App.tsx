@@ -1282,6 +1282,7 @@ type ReclamoRecord = {
   aprobacionEstadoLabel?: string | null;
   aprobacionMotivo?: string | null;
   bloqueadoEn?: string | null;
+  enRevision?: boolean;
   tipo: string | null;
   tipoSlug?: string | null;
   tipoId: number | null;
@@ -10931,6 +10932,7 @@ const ReclamosPage: React.FC = () => {
   const apiBaseUrl = useMemo(() => resolveApiBaseUrl(), []);
   const authUser = useStoredAuthUser();
   const userRole = useMemo(() => getUserRole(authUser), [authUser]);
+  const actorHeaders = useMemo(() => buildActorHeaders(authUser), [authUser]);
   const canViewReclamoImportes = useMemo(
     () => isElevatedRole(userRole) && userRole !== 'asesor',
     [userRole]
@@ -10954,6 +10956,8 @@ const ReclamosPage: React.FC = () => {
   const [dateTo, setDateTo] = useState('');
   const [sortField, setSortField] = useState<'fecha' | 'codigo'>('fecha');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
+  const [statusUpdatingId, setStatusUpdatingId] = useState<number | null>(null);
+  const [revisionUpdatingId, setRevisionUpdatingId] = useState<number | null>(null);
   const reclamosTipoParam = useMemo(
     () =>
       (new URLSearchParams(location.search).get('tipo') ?? '')
@@ -11528,6 +11532,100 @@ const ReclamosPage: React.FC = () => {
     setDateTo('');
   };
 
+  const applyReclamoListUpdate = useCallback((updatedReclamo: ReclamoRecord) => {
+    setReclamos((prev) =>
+      prev.map((item) =>
+        item.id === updatedReclamo.id
+          ? {
+              ...item,
+              ...updatedReclamo,
+              transportistas: updatedReclamo.transportistas ?? item.transportistas,
+            }
+          : item
+      )
+    );
+  }, []);
+
+  const handleInlineAdelantoStatusChange = useCallback(
+    async (reclamo: ReclamoRecord, nextStatus: 'aceptado' | 'rechazado') => {
+      try {
+        setStatusUpdatingId(reclamo.id);
+
+        const response = await fetch(`${apiBaseUrl}/api/reclamos/${reclamo.id}/adelanto-status`, {
+          method: 'PATCH',
+          headers: {
+            'Content-Type': 'application/json',
+            ...actorHeaders,
+          },
+          body: JSON.stringify({ status: nextStatus }),
+        });
+
+        if (!response.ok) {
+          let message = `Error ${response.status}: ${response.statusText}`;
+          try {
+            const payload = await response.json();
+            if (typeof payload?.message === 'string') {
+              message = payload.message;
+            }
+          } catch {
+            // ignore
+          }
+          throw new Error(message);
+        }
+
+        const payload = (await response.json()) as { data?: ReclamoRecord };
+        if (payload?.data) {
+          applyReclamoListUpdate(payload.data);
+        }
+      } catch (err) {
+        window.alert((err as Error).message ?? 'No se pudo actualizar el estado.');
+      } finally {
+        setStatusUpdatingId(null);
+      }
+    },
+    [actorHeaders, apiBaseUrl, applyReclamoListUpdate]
+  );
+
+  const handleRevisionToggle = useCallback(
+    async (reclamo: ReclamoRecord, nextValue: boolean) => {
+      try {
+        setRevisionUpdatingId(reclamo.id);
+
+        const response = await fetch(`${apiBaseUrl}/api/reclamos/${reclamo.id}/revision`, {
+          method: 'PATCH',
+          headers: {
+            'Content-Type': 'application/json',
+            ...actorHeaders,
+          },
+          body: JSON.stringify({ enRevision: nextValue }),
+        });
+
+        if (!response.ok) {
+          let message = `Error ${response.status}: ${response.statusText}`;
+          try {
+            const payload = await response.json();
+            if (typeof payload?.message === 'string') {
+              message = payload.message;
+            }
+          } catch {
+            // ignore
+          }
+          throw new Error(message);
+        }
+
+        const payload = (await response.json()) as { data?: ReclamoRecord };
+        if (payload?.data) {
+          applyReclamoListUpdate(payload.data);
+        }
+      } catch (err) {
+        window.alert((err as Error).message ?? 'No se pudo actualizar el checklist.');
+      } finally {
+        setRevisionUpdatingId(null);
+      }
+    },
+    [actorHeaders, apiBaseUrl, applyReclamoListUpdate]
+  );
+
   const headerContent = (
     <>
       <div className="card-header card-header--compact">
@@ -11832,6 +11930,14 @@ const ReclamosPage: React.FC = () => {
                 const canSeeFacturado =
                   canViewReclamoImportes && (reclamo.status ?? '').trim().toLowerCase() === 'finalizado';
                 const responsable = resolveReclamoResponsable(reclamo);
+                const isRevisionActive = Boolean(reclamo.enRevision);
+                const isStatusUpdating = statusUpdatingId === reclamo.id;
+                const isRevisionUpdating = revisionUpdatingId === reclamo.id;
+                const canInlineEditAdelanto = isAdelantoListMode && !isRevisionActive && !isRevisionUpdating;
+                const currentInlineStatus = ((reclamo.status ?? '').trim().toLowerCase() === 'aceptado' ||
+                  (reclamo.status ?? '').trim().toLowerCase() === 'rechazado')
+                  ? ((reclamo.status ?? '').trim().toLowerCase() as 'aceptado' | 'rechazado')
+                  : '';
                 return (
                   <tr key={reclamo.id}>
                   <td>{reclamo.fechaReclamo ?? '—'}</td>
@@ -11853,11 +11959,32 @@ const ReclamosPage: React.FC = () => {
                   <td>{responsable ?? '—'}</td>
                   <td>{formatReclamoTipoLabel(reclamo.tipo) || '—'}</td>
                   <td>
-                    <span
-                      className={`status-badge status-badge--state status-${(reclamo.status ?? '').toLowerCase()}`}
-                    >
-                      {reclamo.statusLabel ?? reclamo.status ?? '—'}
-                    </span>
+                    {isAdelantoListMode ? (
+                      <select
+                        className="reclamo-inline-select"
+                        value={currentInlineStatus}
+                        onChange={(event) => {
+                          if (!event.target.value) {
+                            return;
+                          }
+                          handleInlineAdelantoStatusChange(
+                            reclamo,
+                            event.target.value as 'aceptado' | 'rechazado'
+                          );
+                        }}
+                        disabled={!canInlineEditAdelanto || isStatusUpdating}
+                      >
+                        <option value="">Seleccionar</option>
+                        <option value="aceptado">Aceptado</option>
+                        <option value="rechazado">Rechazado</option>
+                      </select>
+                    ) : (
+                      <span
+                        className={`status-badge status-badge--state status-${(reclamo.status ?? '').toLowerCase()}`}
+                      >
+                        {reclamo.statusLabel ?? reclamo.status ?? '—'}
+                      </span>
+                    )}
                   </td>
                   <td>{reclamo.fechaCompromisoPago ?? '—'}</td>
                   <td title={reclamo.aprobacionMotivo ?? undefined}>{reclamo.aprobacionEstadoLabel ?? '—'}</td>
@@ -11888,11 +12015,29 @@ const ReclamosPage: React.FC = () => {
                   ) : null}
                   <td>{resolveReclamoDemora(reclamo)}</td>
                   <td>
-                    <div className="action-buttons">
+                    <div className="action-buttons action-buttons--reclamos">
+                      {isAdelantoListMode ? (
+                        <label
+                          className={`reclamo-action-lock${isRevisionActive ? ' is-active' : ''}`}
+                          title={
+                            isRevisionActive
+                              ? 'Checklist activo. Desmarcalo para volver a editar.'
+                              : 'Marcar checklist para bloquear edición.'
+                          }
+                        >
+                          <input
+                            type="checkbox"
+                            checked={isRevisionActive}
+                            onChange={(event) => handleRevisionToggle(reclamo, event.target.checked)}
+                            disabled={isRevisionUpdating || isStatusUpdating}
+                          />
+                        </label>
+                      ) : null}
                       <button
                         type="button"
                         aria-label={`Editar reclamo ${reclamo.codigo ?? ''}`}
                         onClick={() => handleEditReclamo(reclamo)}
+                        disabled={isRevisionActive || isRevisionUpdating || isStatusUpdating}
                       >
                         ✏️
                       </button>
@@ -13124,6 +13269,7 @@ const ReclamoDetailPage: React.FC = () => {
   const apiBaseUrl = useMemo(() => resolveApiBaseUrl(), []);
   const authUser = useStoredAuthUser();
   const userRole = useMemo(() => getUserRole(authUser), [authUser]);
+  const actorHeaders = useMemo(() => buildActorHeaders(authUser), [authUser]);
   const canViewReclamoImportes = useMemo(
     () => isElevatedRole(userRole) && userRole !== 'asesor',
     [userRole]
@@ -13165,6 +13311,7 @@ const ReclamoDetailPage: React.FC = () => {
   const [documentError, setDocumentError] = useState<string | null>(null);
   const transportistaInfo = detail?.transportistaDetail;
   const isReclamoAdelanto = Boolean(detail?.isReclamoAdelanto);
+  const isReclamoLocked = Boolean(detail?.enRevision);
   const clienteOptions = useMemo(() => {
     const names = new Set<string>();
     (meta?.clientes ?? []).forEach((cliente) => {
@@ -13378,6 +13525,11 @@ const ReclamoDetailPage: React.FC = () => {
       return;
     }
 
+    if (detail.enRevision) {
+      setSaveError('Este reclamo está marcado en checklist. Desmarcalo en el listado para poder editarlo.');
+      return;
+    }
+
     const targetStatus = formValues.status || detail.status || meta?.estados[0]?.value || '';
 
     if (!targetStatus) {
@@ -13441,6 +13593,7 @@ const ReclamoDetailPage: React.FC = () => {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
+          ...actorHeaders,
         },
         body: JSON.stringify({
           detalle: formValues.detalle.trim() || null,
@@ -13936,6 +14089,7 @@ const ReclamoDetailPage: React.FC = () => {
                 value={formValues.detalle}
                 onChange={(event) => setFormValues((prev) => ({ ...prev, detalle: event.target.value }))}
                 rows={4}
+                disabled={isReclamoLocked}
               />
             </label>
           </section>
@@ -14053,7 +14207,13 @@ const ReclamoDetailPage: React.FC = () => {
               <h3>Estado del reclamo</h3>
               <span className="status-pill">{detail.statusLabel ?? detail.status ?? '—'}</span>
             </div>
+            {isReclamoLocked ? (
+              <p className="form-info">
+                El checklist está activo. Desmarcalo desde el listado para volver a editar este reclamo.
+              </p>
+            ) : null}
 
+            <fieldset className="reclamo-status-fieldset" disabled={saving || isReclamoLocked}>
             <label className="input-control">
               <span>Responsable / Cliente</span>
               <select
@@ -14235,6 +14395,7 @@ const ReclamoDetailPage: React.FC = () => {
                 {saving ? 'Guardando...' : 'Guardar cambios'}
               </button>
             </div>
+            </fieldset>
           </form>
         </aside>
       </div>

@@ -224,6 +224,23 @@ class ReclamoController extends Controller
         return null;
     }
 
+    protected function loadReclamoIndexRelations(Reclamo $reclamo): Reclamo
+    {
+        return $reclamo->loadMissing([
+            'creator:id,name',
+            'agente:id,name',
+            'tipo:id,nombre,slug',
+            'persona' => fn ($query) => $query->select(
+                'id',
+                'nombres',
+                'apellidos',
+                'cliente_id',
+                'patente'
+            ),
+            'persona.cliente:id,nombre',
+        ]);
+    }
+
     public function index(Request $request): JsonResponse
     {
         $canViewImportes = $this->canViewReclamoImportes($request);
@@ -617,6 +634,12 @@ class ReclamoController extends Controller
         $reclamo->loadMissing('agente:id,name', 'tipo:id,nombre,slug');
         $isReclamoAdelanto = $this->isReclamosYAdelantosType($reclamo->tipo, (int) ($validated['tipoId'] ?? $reclamo->reclamo_type_id));
 
+        if ($isReclamoAdelanto && (bool) $reclamo->en_revision) {
+            return response()->json([
+                'message' => 'Este reclamo está marcado en checklist. Desmarcalo para volver a editarlo.',
+            ], 423);
+        }
+
         $incomingClienteNombre = array_key_exists('clienteNombre', $validated)
             ? $this->normalizeNullableString($validated['clienteNombre'])
             : $this->normalizeNullableString($reclamo->cliente_nombre);
@@ -926,6 +949,97 @@ class ReclamoController extends Controller
         return response()->json([
             'message' => 'Reclamo actualizado correctamente.',
             'data' => $this->transformReclamo($reclamo, true, $canViewImportes),
+        ]);
+    }
+
+    public function updateAdelantoStatus(Request $request, Reclamo $reclamo): JsonResponse
+    {
+        $canViewImportes = $this->canViewReclamoImportes($request);
+        $this->loadReclamoIndexRelations($reclamo);
+
+        if (! $this->isReclamosYAdelantosType($reclamo->tipo, $reclamo->reclamo_type_id)) {
+            return response()->json([
+                'message' => 'Solo los reclamos de tipo Reclamos y Adelantos permiten este cambio.',
+            ], 422);
+        }
+
+        if ((bool) $reclamo->en_revision) {
+            return response()->json([
+                'message' => 'El checklist está activo. Desmarcalo para modificar el estado.',
+            ], 423);
+        }
+
+        $validated = $request->validate([
+            'status' => ['required', Rule::in(['aceptado', 'rechazado'])],
+        ]);
+
+        $newStatus = $validated['status'];
+        $oldStatus = $reclamo->status;
+
+        if ($oldStatus !== $newStatus) {
+            DB::transaction(function () use ($request, $reclamo, $oldStatus, $newStatus) {
+                $reclamo->status = $newStatus;
+                $reclamo->save();
+
+                $this->recordStatusChange($reclamo, $oldStatus, $newStatus, $request->user()?->id);
+            });
+        }
+
+        $reclamo->refresh();
+        $this->loadReclamoIndexRelations($reclamo);
+
+        return response()->json([
+            'message' => 'Estado actualizado correctamente.',
+            'data' => $this->transformReclamo($reclamo, false, $canViewImportes),
+        ]);
+    }
+
+    public function updateRevision(Request $request, Reclamo $reclamo): JsonResponse
+    {
+        $canViewImportes = $this->canViewReclamoImportes($request);
+        $this->loadReclamoIndexRelations($reclamo);
+
+        if (! $this->isReclamosYAdelantosType($reclamo->tipo, $reclamo->reclamo_type_id)) {
+            return response()->json([
+                'message' => 'Solo los reclamos de tipo Reclamos y Adelantos permiten checklist de trabajo.',
+            ], 422);
+        }
+
+        $validated = $request->validate([
+            'enRevision' => ['required', 'boolean'],
+        ]);
+
+        $newValue = (bool) $validated['enRevision'];
+        $oldValue = (bool) $reclamo->en_revision;
+
+        if ($newValue !== $oldValue) {
+            DB::transaction(function () use ($request, $reclamo, $newValue, $oldValue) {
+                $reclamo->en_revision = $newValue;
+                $reclamo->save();
+
+                $this->recordComment(
+                    $reclamo,
+                    $newValue
+                        ? 'Checklist de trabajo activado. La edición quedó bloqueada.'
+                        : 'Checklist de trabajo desactivado. La edición volvió a habilitarse.',
+                    [
+                        'field' => 'en_revision',
+                        'old' => $oldValue,
+                        'new' => $newValue,
+                    ],
+                    $request->user()?->id
+                );
+            });
+        }
+
+        $reclamo->refresh();
+        $this->loadReclamoIndexRelations($reclamo);
+
+        return response()->json([
+            'message' => $newValue
+                ? 'Checklist activado. La edición quedó bloqueada.'
+                : 'Checklist desactivado. Ya podés editar el reclamo.',
+            'data' => $this->transformReclamo($reclamo, false, $canViewImportes),
         ]);
     }
 
@@ -1333,6 +1447,7 @@ class ReclamoController extends Controller
             'aprobacionEstadoLabel' => $this->aprobacionEstadoLabel($this->normalizeAprobacionEstado($reclamo->aprobacion_estado)),
             'aprobacionMotivo' => $reclamo->aprobacion_motivo,
             'bloqueadoEn' => $reclamo->bloqueado_en?->toIso8601String(),
+            'enRevision' => (bool) $reclamo->en_revision,
             'tipo' => $reclamo->tipo?->nombre,
             'tipoSlug' => $reclamo->tipo?->slug,
             'tipoId' => $reclamo->reclamo_type_id,
