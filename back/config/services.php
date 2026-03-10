@@ -89,6 +89,14 @@ return [
             'outbound_twiml_url' => env('TWILIO_OUTBOUND_TWIML_URL'),
             'signature_url' => env('TWILIO_SIGNATURE_URL'),
         ],
+        'anura' => [
+            'enabled' => env('ANURA_ENABLED', false),
+            'api_base_url' => env('ANURA_API_BASE_URL', 'https://api.anura.com.ar'),
+            'click2dial_endpoint' => env('ANURA_CLICK2DIAL_ENDPOINT'),
+            'click2dial_token' => env('ANURA_CLICK2DIAL_TOKEN'),
+            'webhook_token' => env('ANURA_WEBHOOK_TOKEN'),
+            'timeout' => env('ANURA_TIMEOUT', 15),
+        ],
     ],
 
     'whatsapp' => [

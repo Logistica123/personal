@@ -138,6 +138,93 @@ class CallControllerTest extends TestCase
         ]);
     }
 
+    public function test_anura_click2dial_creates_phone_session(): void
+    {
+        config([
+            'services.voice.driver' => 'anura',
+            'services.voice.anura.enabled' => false,
+        ]);
+
+        $token = 'token-anura-click2dial';
+        $this->createAuthUser('calls.anura@example.com', $token);
+        $headers = $this->authHeaders($token);
+
+        $response = $this->postJson('/api/calls/anura/click2dial', [
+            'called' => '52630006',
+            'extension' => '3006',
+            'customs' => ['crm-44'],
+        ], $headers)
+            ->assertCreated()
+            ->assertJsonPath('data.called', '52630006')
+            ->assertJsonPath('data.extension', '3006')
+            ->assertJsonPath('data.session.provider', 'anura')
+            ->assertJsonPath('data.session.channel', 'phone')
+            ->assertJsonPath('data.mock', true);
+
+        $sessionId = (int) $response->json('data.session.id');
+        $session = CallSession::query()->findOrFail($sessionId);
+
+        $this->assertSame('initiated', $session->status);
+        $this->assertSame('52630006', $session->to_phone);
+        $this->assertSame('3006', $session->metadata['anura']['extension'] ?? null);
+        $this->assertSame($session->uuid, $session->metadata['anura']['customs'][0] ?? null);
+    }
+
+    public function test_anura_webhook_updates_existing_session(): void
+    {
+        config([
+            'services.voice.driver' => 'anura',
+            'services.voice.anura.webhook_token' => 'anura-webhook-secret',
+        ]);
+
+        $session = CallSession::query()->create([
+            'uuid' => (string) \Illuminate\Support\Str::uuid(),
+            'provider' => 'anura',
+            'direction' => 'outbound',
+            'channel' => 'phone',
+            'status' => 'initiated',
+            'to_phone' => '52630008',
+            'started_at' => now(),
+            'metadata' => [
+                'source' => 'test-suite',
+                'anura' => [
+                    'extension' => '3006',
+                ],
+            ],
+        ]);
+
+        $this->post('/api/voice/anura/status', [
+            'event' => 'TALK',
+            'custom1' => $session->uuid,
+            'call_id' => 'ANURA-001',
+            'called' => '52630008',
+            'extension' => '3006',
+        ], [
+            'Authorization' => 'Bearer anura-webhook-secret',
+        ])->assertOk();
+
+        $session->refresh();
+        $this->assertSame('answered', $session->status);
+        $this->assertSame('ANURA-001', $session->provider_call_sid);
+        $this->assertNotNull($session->answered_at);
+
+        $this->post('/api/voice/anura/status', [
+            'event' => 'END',
+            'custom1' => $session->uuid,
+            'call_id' => 'ANURA-001',
+            'called' => '52630008',
+            'duration' => 42,
+            'status' => 'completed',
+        ], [
+            'Authorization' => 'Bearer anura-webhook-secret',
+        ])->assertOk();
+
+        $session->refresh();
+        $this->assertSame('completed', $session->status);
+        $this->assertSame(42, $session->duration_seconds);
+        $this->assertNotNull($session->ended_at);
+    }
+
     public function test_twilio_webhook_updates_existing_session_with_valid_signature(): void
     {
         config([

@@ -214,6 +214,7 @@ Route::middleware('auth.api')->group(function () {
     Route::get('/distriapp/mobile/module/{module}', [DistriappController::class, 'mobileModule']);
 
     Route::post('/calls/token', [CallController::class, 'token'])->middleware('throttle:20,1');
+    Route::post('/calls/anura/click2dial', [CallController::class, 'anuraClickToDial'])->middleware('throttle:20,1');
     Route::post('/calls/whatsapp/start', [CallController::class, 'whatsappStart'])->middleware('throttle:20,1');
     Route::get('/calls/webrtc/config', [CallController::class, 'webrtcConfig'])->middleware('throttle:30,1');
     Route::get('/calls/sessions', [CallController::class, 'index'])->middleware('throttle:30,1');
@@ -229,6 +230,9 @@ Route::middleware('auth.api')->group(function () {
 
 Route::post('/voice/twilio/status', [CallController::class, 'twilioStatusWebhook'])
     ->name('voice.twilio.status')
+    ->middleware('throttle:120,1');
+Route::post('/voice/anura/status', [CallController::class, 'anuraStatusWebhook'])
+    ->name('voice.anura.status')
     ->middleware('throttle:120,1');
 Route::match(['GET', 'POST'], '/voice/twilio/twiml/outbound', [CallController::class, 'twilioOutboundTwiml'])
     ->name('voice.twilio.twiml.outbound')

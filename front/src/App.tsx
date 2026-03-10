@@ -10965,6 +10965,9 @@ const ReclamosPage: React.FC = () => {
     [location.search]
   );
   const isAdelantoListMode = reclamosTipoParam === 'adelanto' || reclamosTipoParam === 'reclamos-y-adelantos';
+  const reclamosPageTitle = isAdelantoListMode
+    ? 'Gestión de reclamos y adelantos'
+    : 'Gestión de reclamos';
   const getTransportistaEntries = useCallback((record: ReclamoRecord): ReclamoTransportistaSummary[] => {
     if (Array.isArray(record.transportistas) && record.transportistas.length > 0) {
       return record.transportistas;
@@ -11037,6 +11040,16 @@ const ReclamosPage: React.FC = () => {
       };
     },
     [getTransportistaEntries, getTransportistaNames]
+  );
+
+  const scopedReclamos = useMemo(
+    () =>
+      reclamos.filter((reclamo) =>
+        isAdelantoListMode
+          ? isReclamoAdelantoTypeName(reclamo.tipo)
+          : !isReclamoAdelantoTypeName(reclamo.tipo)
+      ),
+    [reclamos, isAdelantoListMode]
   );
 
   const resolveReclamoDemora = useCallback((reclamo: ReclamoRecord) => {
@@ -11151,7 +11164,7 @@ const ReclamosPage: React.FC = () => {
 
   const agenteOptions = useMemo(
     () => {
-      const fromReclamos = reclamos
+      const fromReclamos = scopedReclamos
         .map((reclamo) => {
           const agente = (reclamo.agente ?? '').trim();
           if (agente) {
@@ -11163,39 +11176,39 @@ const ReclamosPage: React.FC = () => {
         .filter((value): value is string => Boolean(value));
       return Array.from(new Set([...agentesCatalog, ...fromReclamos])).sort((a, b) => a.localeCompare(b));
     },
-    [agentesCatalog, reclamos]
+    [agentesCatalog, scopedReclamos]
   );
 
   const creatorOptions = useMemo(
     () =>
       Array.from(
         new Set(
-          reclamos
+          scopedReclamos
             .map((reclamo) => reclamo.creator)
             .filter((value): value is string => Boolean(value))
         )
       ).sort((a, b) => a.localeCompare(b)),
-    [reclamos]
+    [scopedReclamos]
   );
 
   const clienteOptions = useMemo(() => {
     const unique = Array.from(
       new Set(
-        reclamos
+        scopedReclamos
           .map((reclamo) => reclamo.cliente?.trim())
           .filter((value): value is string => Boolean(value))
       )
     );
     return unique.sort((a, b) => a.localeCompare(b));
-  }, [reclamos]);
+  }, [scopedReclamos]);
 
   const transportistaOptions = useMemo(() => {
     const names = new Set<string>();
-    reclamos.forEach((reclamo) => {
+    scopedReclamos.forEach((reclamo) => {
       getTransportistaNames(reclamo).forEach((name) => names.add(name));
     });
     return Array.from(names).sort((a, b) => a.localeCompare(b));
-  }, [reclamos, getTransportistaNames]);
+  }, [scopedReclamos, getTransportistaNames]);
 
   const resolveReclamoResponsable = useCallback((reclamo: ReclamoRecord): string | null => {
     const agente = (reclamo.agente ?? '').trim();
@@ -11213,7 +11226,7 @@ const ReclamosPage: React.FC = () => {
 
   const estadoOptions = useMemo(() => {
     const map = new Map<string, string>();
-    reclamos.forEach((reclamo) => {
+    scopedReclamos.forEach((reclamo) => {
       if (reclamo.status) {
         map.set(reclamo.status, reclamo.statusLabel ?? reclamo.status);
       }
@@ -11221,31 +11234,32 @@ const ReclamosPage: React.FC = () => {
     return Array.from(map.entries())
       .map(([value, label]) => ({ value, label }))
       .sort((a, b) => a.label.localeCompare(b.label));
-  }, [reclamos]);
+  }, [scopedReclamos]);
 
   const tipoOptions = useMemo(
     () =>
       Array.from(
         new Set(
-          reclamos
+          scopedReclamos
             .map((reclamo) => reclamo.tipo)
             .filter((value): value is string => Boolean(value))
         )
       ).sort((a, b) => a.localeCompare(b)),
-    [reclamos]
+    [scopedReclamos]
   );
 
   useEffect(() => {
-    if (!isAdelantoListMode) {
+    if (isAdelantoListMode) {
+      const adelantoTipo = tipoOptions.find((option) => isReclamoAdelantoTypeName(option));
+      if (!adelantoTipo) {
+        return;
+      }
+
+      setTipoFilter((prev) => (prev === adelantoTipo ? prev : adelantoTipo));
       return;
     }
 
-    const adelantoTipo = tipoOptions.find((option) => isReclamoAdelantoTypeName(option));
-    if (!adelantoTipo) {
-      return;
-    }
-
-    setTipoFilter((prev) => (prev === adelantoTipo ? prev : adelantoTipo));
+    setTipoFilter((prev) => (isReclamoAdelantoTypeName(prev) ? '' : prev));
   }, [isAdelantoListMode, tipoOptions]);
 
   const filteredReclamos = useMemo(() => {
@@ -11276,7 +11290,7 @@ const ReclamosPage: React.FC = () => {
         ? currentCutoffStartMs
         : null;
 
-    return reclamos.filter((reclamo) => {
+    return scopedReclamos.filter((reclamo) => {
       const responsable = resolveReclamoResponsable(reclamo) ?? '';
 
       if (agenteFilter.length > 0 && !agenteFilter.includes(responsable)) {
@@ -11299,9 +11313,6 @@ const ReclamosPage: React.FC = () => {
       }
 
       if (tipoFilter && reclamo.tipo !== tipoFilter) {
-        return false;
-      }
-      if (isAdelantoListMode && !tipoFilter && !isReclamoAdelantoTypeName(reclamo.tipo)) {
         return false;
       }
 
@@ -11351,7 +11362,7 @@ const ReclamosPage: React.FC = () => {
       return fields.some((field) => field?.toLowerCase().includes(term));
     });
   }, [
-    reclamos,
+    scopedReclamos,
     searchTerm,
     agenteFilter,
     creatorFilter,
@@ -11359,7 +11370,6 @@ const ReclamosPage: React.FC = () => {
     clienteFilter,
     statusFilter,
     tipoFilter,
-    isAdelantoListMode,
     creationWeekFilter,
     dateFrom,
     dateTo,
@@ -11475,9 +11485,10 @@ const ReclamosPage: React.FC = () => {
     }
 
     const today = new Date().toISOString().slice(0, 10);
-    downloadCsv(`reclamos-${today}.csv`, rows);
+    downloadCsv(`${isAdelantoListMode ? 'reclamos-y-adelantos' : 'reclamos'}-${today}.csv`, rows);
   }, [
     canViewReclamoImportes,
+    isAdelantoListMode,
     sortedReclamos,
     formatTransportistaDisplay,
     resolveReclamoDemora,
@@ -11497,12 +11508,12 @@ const ReclamosPage: React.FC = () => {
       return 'No hay reclamos para mostrar.';
     }
 
-    if (filteredReclamos.length === reclamos.length) {
-      return `Mostrando ${reclamos.length} reclamo${reclamos.length === 1 ? '' : 's'}`;
+    if (filteredReclamos.length === scopedReclamos.length) {
+      return `Mostrando ${scopedReclamos.length} reclamo${scopedReclamos.length === 1 ? '' : 's'}`;
     }
 
-    return `Mostrando ${filteredReclamos.length} de ${reclamos.length} reclamos`;
-  }, [loading, error, filteredReclamos.length, reclamos.length]);
+    return `Mostrando ${filteredReclamos.length} de ${scopedReclamos.length} reclamos`;
+  }, [loading, error, filteredReclamos.length, scopedReclamos.length]);
 
   const handleResetFilters = () => {
     setSearchTerm('');
@@ -11511,7 +11522,7 @@ const ReclamosPage: React.FC = () => {
     setTransportistaFilter('');
     setClienteFilter('');
     setStatusFilter('');
-    setTipoFilter('');
+    setTipoFilter(isAdelantoListMode ? (tipoOptions.find((option) => isReclamoAdelantoTypeName(option)) ?? '') : '');
     setCreationWeekFilter('all');
     setDateFrom('');
     setDateTo('');
@@ -11519,6 +11530,24 @@ const ReclamosPage: React.FC = () => {
 
   const headerContent = (
     <>
+      <div className="card-header card-header--compact">
+        <div className="approvals-tabs">
+          <button
+            type="button"
+            className={`approvals-tab${!isAdelantoListMode ? ' is-active' : ''}`}
+            onClick={() => navigate('/reclamos')}
+          >
+            Reclamos
+          </button>
+          <button
+            type="button"
+            className={`approvals-tab${isAdelantoListMode ? ' is-active' : ''}`}
+            onClick={() => navigate('/reclamos?tipo=adelanto')}
+          >
+            Reclamos y adelantos
+          </button>
+        </div>
+      </div>
       <div className="card-header card-header--compact">
         <div className="search-wrapper">
           <input
@@ -11628,7 +11657,11 @@ const ReclamosPage: React.FC = () => {
           </label>
           <label className="filter-field">
             <span>Tipo de reclamo</span>
-            <select value={tipoFilter} onChange={(event) => setTipoFilter(event.target.value)} disabled={isAdelantoListMode}>
+            <select
+              value={tipoFilter}
+              onChange={(event) => setTipoFilter(event.target.value)}
+              disabled={isAdelantoListMode}
+            >
               <option value="">Tipo de reclamo</option>
               {tipoOptions.map((option) => (
                 <option key={option} value={option}>
@@ -11653,7 +11686,7 @@ const ReclamosPage: React.FC = () => {
           <button
             className="primary-action"
             type="button"
-            onClick={() => navigate('/reclamos/nuevo')}
+            onClick={() => navigate(isAdelantoListMode ? '/reclamos/nuevo?tipo=adelanto' : '/reclamos/nuevo')}
           >
             Crear reclamo
           </button>
@@ -11713,8 +11746,8 @@ const ReclamosPage: React.FC = () => {
 
   return (
     <DashboardLayout
-      title={isAdelantoListMode ? 'Gestión de reclamos de adelanto' : 'Gestión de reclamos'}
-      subtitle={isAdelantoListMode ? 'Gestión de reclamos de adelanto' : 'Gestión de reclamos'}
+      title={reclamosPageTitle}
+      subtitle={reclamosPageTitle}
       headerContent={headerContent}
     >
       {flashMessage ? (
@@ -47898,6 +47931,19 @@ type WhatsAppStartResponse = {
   message?: string;
 };
 
+type AnuraClickToDialResponse = {
+  data?: {
+    session?: NativeCallSession;
+    called?: string;
+    extension?: string;
+    customs?: string[];
+    mock?: boolean;
+  };
+  message?: string;
+};
+
+const ANURA_EXTENSION_STORAGE_KEY = 'calls.anura.extension';
+
 const WebRtcCallsPage: React.FC = () => {
   const authUser = useStoredAuthUser();
   const navigate = useNavigate();
@@ -47911,6 +47957,10 @@ const WebRtcCallsPage: React.FC = () => {
   const [activeRole, setActiveRole] = useState<'initiator' | 'target' | null>(null);
   const [statusMessage, setStatusMessage] = useState('Sin llamada activa.');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [anuraCalled, setAnuraCalled] = useState('');
+  const [anuraExtension, setAnuraExtension] = useState('');
+  const [anuraStatus, setAnuraStatus] = useState<string | null>(null);
+  const [anuraErrorMessage, setAnuraErrorMessage] = useState<string | null>(null);
   const [whatsAppPhone, setWhatsAppPhone] = useState('');
   const [whatsAppMessage, setWhatsAppMessage] = useState('Hola, te contacto desde la app. ¿Podés atender una llamada por WhatsApp?');
   const [whatsAppStatus, setWhatsAppStatus] = useState<string | null>(null);
@@ -48191,6 +48241,31 @@ const WebRtcCallsPage: React.FC = () => {
     },
     [resetActiveCallState]
   );
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    const storedExtension = window.localStorage.getItem(ANURA_EXTENSION_STORAGE_KEY);
+    if (storedExtension) {
+      setAnuraExtension(storedExtension);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    const normalized = anuraExtension.trim();
+    if (normalized) {
+      window.localStorage.setItem(ANURA_EXTENSION_STORAGE_KEY, normalized);
+      return;
+    }
+
+    window.localStorage.removeItem(ANURA_EXTENSION_STORAGE_KEY);
+  }, [anuraExtension]);
 
   const fetchWebRtcConfig = useCallback(async () => {
     try {
@@ -48803,10 +48878,50 @@ const WebRtcCallsPage: React.FC = () => {
     }
   };
 
+  const handleStartAnuraCall = async () => {
+    setErrorMessage(null);
+    setAnuraErrorMessage(null);
+    setAnuraStatus(null);
+
+    if (anuraCalled.trim().length === 0) {
+      setAnuraErrorMessage('Ingresá el número de destino.');
+      return;
+    }
+
+    if (anuraExtension.trim().length === 0) {
+      setAnuraErrorMessage('Ingresá tu extensión o interno.');
+      return;
+    }
+
+    try {
+      setIsBusy(true);
+      const payload = (await apiJson('/api/calls/anura/click2dial', {
+        method: 'POST',
+        body: JSON.stringify({
+          called: anuraCalled.trim(),
+          extension: anuraExtension.trim(),
+        }),
+      })) as AnuraClickToDialResponse;
+
+      const called = payload?.data?.called ?? anuraCalled.trim();
+      const extension = payload?.data?.extension ?? anuraExtension.trim();
+      const isMock = Boolean(payload?.data?.mock);
+      setAnuraStatus(
+        isMock
+          ? `Simulación Anura lista: extensión ${extension}, destino ${called}.`
+          : `Click2Dial enviado a Anura: suena la extensión ${extension} y luego marca ${called}.`
+      );
+    } catch (error) {
+      setAnuraErrorMessage((error as Error).message ?? 'No se pudo iniciar la llamada por Anura.');
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
   return (
     <DashboardLayout
       title="Llamadas WebRTC"
-      subtitle="Señalización propia sin Twilio"
+      subtitle="WebRTC nativo, WhatsApp y central telefónica"
       headerContent={
         <div className="card-header card-header--compact">
           <button type="button" className="secondary-action" onClick={() => navigate('/dashboard')}>
@@ -48916,6 +49031,38 @@ const WebRtcCallsPage: React.FC = () => {
             </div>
           ) : null}
           {errorMessage ? <p className="form-info form-info--error">{errorMessage}</p> : null}
+        </section>
+
+        <section className="webrtc-card">
+          <h3>Llamar por central (Anura)</h3>
+          <div className="webrtc-row">
+            <label className="input-control">
+              <span>Número destino</span>
+              <input
+                type="text"
+                value={anuraCalled}
+                onChange={(event) => setAnuraCalled(event.target.value)}
+                placeholder="Ej: 52630008 o +5491155551234"
+                disabled={isBusy}
+              />
+            </label>
+            <label className="input-control">
+              <span>Extensión origen</span>
+              <input
+                type="text"
+                value={anuraExtension}
+                onChange={(event) => setAnuraExtension(event.target.value)}
+                placeholder="Ej: 3006"
+                disabled={isBusy}
+              />
+            </label>
+            <button type="button" className="secondary-action" onClick={handleStartAnuraCall} disabled={isBusy}>
+              Click2Dial
+            </button>
+          </div>
+          <p className="webrtc-status">La central hace sonar tu interno o softphone y, al atender, marca el destino.</p>
+          {anuraStatus ? <p className="form-info form-info--success">{anuraStatus}</p> : null}
+          {anuraErrorMessage ? <p className="form-info form-info--error">{anuraErrorMessage}</p> : null}
         </section>
 
         <section className="webrtc-card">

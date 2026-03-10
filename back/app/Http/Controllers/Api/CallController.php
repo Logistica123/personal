@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\CallSession;
 use App\Models\User;
+use App\Services\Voice\AnuraVoiceService;
 use App\Services\Voice\TwilioVoiceService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -13,9 +14,10 @@ use RuntimeException;
 
 class CallController extends Controller
 {
-    public function __construct(private readonly TwilioVoiceService $voiceService)
-    {
-    }
+    public function __construct(
+        private readonly TwilioVoiceService $voiceService,
+        private readonly AnuraVoiceService $anuraVoiceService
+    ) {}
 
     public function token(Request $request): JsonResponse
     {
@@ -154,6 +156,118 @@ class CallController extends Controller
                 'session' => $this->serializeSession($session),
                 'deeplink' => $deeplink,
                 'normalizedPhone' => '+' . $normalizedPhone,
+            ],
+        ], 201);
+    }
+
+    public function anuraClickToDial(Request $request): JsonResponse
+    {
+        /** @var User $user */
+        $user = $request->user();
+
+        $validated = $request->validate([
+            'called' => ['required', 'string', 'max:32'],
+            'extension' => ['required', 'string', 'max:20'],
+            'target_user_id' => ['nullable', 'integer', 'exists:users,id'],
+            'target_identity' => ['nullable', 'string', 'max:120'],
+            'customs' => ['nullable', 'array', 'max:4'],
+            'customs.*' => ['nullable', 'string', 'max:120'],
+        ]);
+
+        $called = $this->normalizeDialPhone((string) $validated['called']);
+        if ($called === '') {
+            return response()->json([
+                'message' => 'El número de destino no es válido para Click2Dial.',
+            ], 422);
+        }
+
+        $extension = $this->normalizeExtension((string) $validated['extension']);
+        if ($extension === '') {
+            return response()->json([
+                'message' => 'La extensión no es válida.',
+            ], 422);
+        }
+
+        $targetIdentity = $validated['target_identity'] ?? null;
+        if (! $targetIdentity && ! empty($validated['target_user_id'])) {
+            $targetIdentity = 'user-' . (int) $validated['target_user_id'];
+        }
+
+        $sessionUuid = (string) Str::uuid();
+        $customs = array_merge(
+            [$sessionUuid, (string) $user->id],
+            array_values(array_filter(
+                array_map(static fn ($value) => trim((string) $value), $validated['customs'] ?? []),
+                static fn ($value) => $value !== ''
+            ))
+        );
+        $customs = array_slice($customs, 0, 6);
+
+        $session = CallSession::query()->create([
+            'uuid' => $sessionUuid,
+            'initiator_user_id' => $user->id,
+            'target_user_id' => $validated['target_user_id'] ?? null,
+            'provider' => $this->anuraVoiceService->providerName(),
+            'direction' => 'outbound',
+            'channel' => 'phone',
+            'status' => 'initiated',
+            'initiator_identity' => 'user-' . $user->id,
+            'target_identity' => $targetIdentity,
+            'to_phone' => $called,
+            'started_at' => now(),
+            'metadata' => [
+                'source' => 'anura_click2dial',
+                'anura' => [
+                    'extension' => $extension,
+                    'customs' => $customs,
+                ],
+            ],
+        ]);
+
+        try {
+            $dialResult = $this->anuraVoiceService->createClickToDial($called, $extension, $customs);
+
+            $metadata = is_array($session->metadata) ? $session->metadata : [];
+            $metadata['anura'] = array_merge($metadata['anura'] ?? [], [
+                'last_api_status' => $dialResult['status'] ?? null,
+                'mock' => (bool) ($dialResult['mock'] ?? false),
+                'last_api_response' => $dialResult['response'] ?? null,
+            ]);
+
+            $session->forceFill([
+                'status' => $this->mapAnuraApiStatus((string) ($dialResult['status'] ?? 'queued')),
+                'provider_call_sid' => $dialResult['sid'] ?? $session->provider_call_sid,
+                'metadata' => $metadata,
+            ])->save();
+        } catch (RuntimeException $exception) {
+            $session->forceFill([
+                'status' => 'failed',
+                'end_reason' => 'anura_click2dial_error',
+                'ended_at' => now(),
+                'metadata' => array_merge($session->metadata ?? [], [
+                    'anura' => array_merge(($session->metadata['anura'] ?? []), [
+                        'error' => $exception->getMessage(),
+                    ]),
+                ]),
+            ])->save();
+
+            return response()->json([
+                'message' => $exception->getMessage(),
+                'data' => [
+                    'session' => $this->serializeSession($session),
+                    'called' => $called,
+                    'extension' => $extension,
+                ],
+            ], 422);
+        }
+
+        return response()->json([
+            'data' => [
+                'session' => $this->serializeSession($session),
+                'called' => $called,
+                'extension' => $extension,
+                'customs' => $customs,
+                'mock' => (bool) (($session->metadata['anura']['mock'] ?? false)),
             ],
         ], 201);
     }
@@ -597,6 +711,111 @@ class CallController extends Controller
         return response($xml, 200)->header('Content-Type', 'text/xml; charset=UTF-8');
     }
 
+    public function anuraStatusWebhook(Request $request): JsonResponse
+    {
+        if (! $this->anuraVoiceService->validateWebhookRequest($request)) {
+            return response()->json(['message' => 'Token de webhook Anura inválido.'], 403);
+        }
+
+        $payload = $request->all();
+        $event = strtoupper($this->readFirstPayloadValue($payload, [
+            'event',
+            'hook',
+            'trigger',
+            'call_event',
+        ]));
+
+        if ($event === '') {
+            return response()->json(['message' => 'El evento de Anura es obligatorio.'], 422);
+        }
+
+        $providerCallSid = $this->readFirstPayloadValue($payload, [
+            'call_id',
+            'callid',
+            'call_uuid',
+            'provider_call_sid',
+            'sid',
+        ]);
+        $sessionHint = $this->readFirstPayloadValue($payload, [
+            'custom1',
+            'custom_1',
+            'session_uuid',
+            'session_id',
+        ]);
+
+        $session = $this->resolveAnuraSession($providerCallSid, $sessionHint);
+        $status = $this->mapAnuraWebhookStatus($event, $payload);
+        $duration = $this->readFirstNumericPayloadValue($payload, [
+            'duration',
+            'call_duration',
+            'billsec',
+            'talk_duration',
+        ]);
+
+        if (! $session) {
+            $directionRaw = strtoupper($this->readFirstPayloadValue($payload, [
+                'direction',
+                'call_direction',
+            ]));
+            $session = CallSession::query()->create([
+                'uuid' => is_string($sessionHint) && Str::isUuid($sessionHint) ? $sessionHint : (string) Str::uuid(),
+                'provider' => $this->anuraVoiceService->providerName(),
+                'direction' => $directionRaw === 'IN' ? 'inbound' : 'outbound',
+                'channel' => 'phone',
+                'status' => $status,
+                'from_phone' => $this->readFirstPayloadValue($payload, ['from', 'caller', 'callerid', 'src']),
+                'to_phone' => $this->readFirstPayloadValue($payload, ['to', 'called', 'called_number', 'dst']),
+                'provider_call_sid' => $providerCallSid !== '' ? $providerCallSid : null,
+                'started_at' => now(),
+                'metadata' => [
+                    'source' => 'anura_webhook',
+                ],
+            ]);
+        } else {
+            $session->status = $status;
+            if ($providerCallSid !== '' && ! $session->provider_call_sid) {
+                $session->provider_call_sid = $providerCallSid;
+            }
+        }
+
+        if ($status === 'answered' && ! $session->answered_at) {
+            $session->answered_at = now();
+        }
+
+        if ($this->isTerminalStatus($status) && ! $session->ended_at) {
+            $session->ended_at = now();
+        }
+
+        if ($duration !== null) {
+            $session->duration_seconds = $duration;
+        }
+
+        if ($this->isTerminalStatus($status) && ! $session->duration_seconds && $session->answered_at && $session->ended_at) {
+            $session->duration_seconds = max(0, $session->ended_at->diffInSeconds($session->answered_at, false));
+        }
+
+        $metadata = is_array($session->metadata) ? $session->metadata : [];
+        $metadata['anura'] = array_merge($metadata['anura'] ?? [], [
+            'extension' => $this->readFirstPayloadValue($payload, ['extension', 'exten']),
+            'customs' => $this->extractAnuraCustoms($payload, $metadata['anura']['customs'] ?? []),
+            'last_webhook' => [
+                'event' => $event,
+                'status' => $status,
+                'call_id' => $providerCallSid !== '' ? $providerCallSid : null,
+                'duration' => $duration,
+                'received_at' => now()->toIso8601String(),
+            ],
+        ]);
+
+        $session->metadata = $metadata;
+        $session->save();
+
+        return response()->json([
+            'ok' => true,
+            'data' => $this->serializeSession($session),
+        ]);
+    }
+
     private function canAccessSession(User $user, CallSession $session): bool
     {
         if (strtolower((string) $user->role) === 'admin') {
@@ -650,6 +869,58 @@ class CallController extends Controller
             'no-answer' => 'no-answer',
             'failed' => 'failed',
             'canceled' => 'canceled',
+            default => 'initiated',
+        };
+    }
+
+    private function mapAnuraApiStatus(string $status): string
+    {
+        $normalized = strtolower(trim($status));
+
+        return match ($normalized) {
+            'ringing' => 'ringing',
+            'answered', 'in-progress', 'in_progress', 'talk' => 'answered',
+            'completed', 'success', 'ok' => 'completed',
+            'busy' => 'busy',
+            'no-answer', 'no_answer' => 'no-answer',
+            'failed', 'error' => 'failed',
+            default => 'initiated',
+        };
+    }
+
+    private function mapAnuraWebhookStatus(string $event, array $payload): string
+    {
+        $rawStatus = strtolower($this->readFirstPayloadValue($payload, [
+            'status',
+            'call_status',
+            'result',
+            'disposition',
+            'hangup_cause',
+            'hangupcause',
+        ]));
+
+        if ($rawStatus !== '') {
+            return match ($rawStatus) {
+                'ringing' => 'ringing',
+                'talk', 'answered', 'in-progress', 'in_progress' => 'answered',
+                'completed', 'success', 'ok' => 'completed',
+                'busy' => 'busy',
+                'no-answer', 'no_answer' => 'no-answer',
+                'failed', 'error' => 'failed',
+                'canceled', 'cancelled' => 'canceled',
+                default => match ($event) {
+                    'START' => 'ringing',
+                    'TALK' => 'answered',
+                    'END' => 'completed',
+                    default => 'initiated',
+                },
+            };
+        }
+
+        return match ($event) {
+            'START' => 'ringing',
+            'TALK' => 'answered',
+            'END' => 'completed',
             default => 'initiated',
         };
     }
@@ -817,5 +1088,105 @@ class CallController extends Controller
         $query = $message !== '' ? '?text=' . urlencode($message) : '';
 
         return $baseUrl . '/' . $normalizedPhone . $query;
+    }
+
+    private function normalizeDialPhone(string $rawPhone): string
+    {
+        $trimmed = trim($rawPhone);
+        $hasPlus = str_starts_with($trimmed, '+');
+        $digits = preg_replace('/\D+/', '', $trimmed) ?? '';
+
+        if (strlen($digits) < 3 || strlen($digits) > 20) {
+            return '';
+        }
+
+        return $hasPlus ? '+' . $digits : $digits;
+    }
+
+    private function normalizeExtension(string $rawExtension): string
+    {
+        $digits = preg_replace('/\D+/', '', $rawExtension) ?? '';
+
+        if (strlen($digits) < 2 || strlen($digits) > 12) {
+            return '';
+        }
+
+        return $digits;
+    }
+
+    private function readFirstPayloadValue(array $payload, array $keys): string
+    {
+        foreach ($keys as $key) {
+            $value = $payload[$key] ?? null;
+            if (is_string($value) && trim($value) !== '') {
+                return trim($value);
+            }
+            if (is_numeric($value)) {
+                return trim((string) $value);
+            }
+        }
+
+        return '';
+    }
+
+    private function readFirstNumericPayloadValue(array $payload, array $keys): ?int
+    {
+        foreach ($keys as $key) {
+            $value = $payload[$key] ?? null;
+            if (is_numeric($value)) {
+                return (int) $value;
+            }
+        }
+
+        return null;
+    }
+
+    private function resolveAnuraSession(string $providerCallSid, string $sessionHint): ?CallSession
+    {
+        if ($providerCallSid !== '') {
+            $match = CallSession::query()->where('provider_call_sid', $providerCallSid)->first();
+            if ($match) {
+                return $match;
+            }
+        }
+
+        if ($sessionHint !== '') {
+            if (Str::isUuid($sessionHint)) {
+                $match = CallSession::query()->where('uuid', $sessionHint)->first();
+                if ($match) {
+                    return $match;
+                }
+            }
+
+            if (ctype_digit($sessionHint)) {
+                return CallSession::query()->find((int) $sessionHint);
+            }
+        }
+
+        return null;
+    }
+
+    private function extractAnuraCustoms(array $payload, array $fallback = []): array
+    {
+        $customs = [];
+
+        $rawArray = $payload['customs'] ?? null;
+        if (is_array($rawArray)) {
+            $customs = array_values(array_filter(
+                array_map(static fn ($value) => trim((string) $value), $rawArray),
+                static fn ($value) => $value !== ''
+            ));
+        }
+
+        if ($customs === []) {
+            for ($index = 1; $index <= 6; $index++) {
+                $value = $this->readFirstPayloadValue($payload, ["custom{$index}", "custom_{$index}"]);
+                if ($value !== '') {
+                    $customs[] = $value;
+                }
+            }
+        }
+
+        return $customs !== [] ? array_slice($customs, 0, 6) : array_values(array_slice($fallback, 0, 6));
     }
 }
