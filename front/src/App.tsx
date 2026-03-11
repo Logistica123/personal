@@ -43589,9 +43589,10 @@ const PersonalEditPage: React.FC = () => {
         : (canEditCbu ? (formValues.duenoCbuAlias.trim() || null) : (detail?.duenoCbuAlias ?? null));
       const cbuAlias = canEditCbu ? (formValues.cbuAlias.trim() || null) : (detail?.cbuAlias ?? null);
 
-      const response = await fetch(`${apiBaseUrl}/api/personal/${personaId}`, {
+      const requestInit: RequestInit = {
         method: 'PUT',
         headers: {
+          Accept: 'application/json',
           'Content-Type': 'application/json',
           ...actorHeaders,
         },
@@ -43633,7 +43634,15 @@ const PersonalEditPage: React.FC = () => {
           duenoCbuAlias,
           duenoObservaciones: formValues.duenoObservaciones.trim() || null,
         }),
-      });
+      };
+
+      let response = await fetch(`${apiBaseUrl}/api/personal/${personaId}`, requestInit);
+      if (response.status === 405) {
+        response = await fetch(`${apiBaseUrl}/api/personal/${personaId}`, {
+          ...requestInit,
+          method: 'POST',
+        });
+      }
 
       if (!response.ok) {
         let message = `Error ${response.status}: ${response.statusText}`;
