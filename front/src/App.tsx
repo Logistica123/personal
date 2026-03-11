@@ -49011,6 +49011,52 @@ const ActivosAsesoresPage: React.FC = () => {
     transportistaActivo: '',
     numero: '',
   });
+  const [filters, setFilters] = useState({
+    encargado: '',
+    lider: '',
+    asesorComercial: '',
+    rol: '',
+    transportistaActivo: '',
+    numero: '',
+  });
+
+  const filteredRecords = useMemo(() => {
+    const normalize = (value: string | null | undefined) =>
+      (value ?? '')
+        .trim()
+        .toLowerCase()
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '');
+
+    return records.filter((record) => {
+      if (filters.encargado && !normalize(record.encargado).includes(normalize(filters.encargado))) {
+        return false;
+      }
+      if (filters.lider && !normalize(record.lider).includes(normalize(filters.lider))) {
+        return false;
+      }
+      if (
+        filters.asesorComercial &&
+        !normalize(record.asesorComercial).includes(normalize(filters.asesorComercial))
+      ) {
+        return false;
+      }
+      if (filters.rol && !normalize(record.rol).includes(normalize(filters.rol))) {
+        return false;
+      }
+      if (
+        filters.transportistaActivo &&
+        !normalize(record.transportistaActivo).includes(normalize(filters.transportistaActivo))
+      ) {
+        return false;
+      }
+      if (filters.numero && !normalize(record.numero).includes(normalize(filters.numero))) {
+        return false;
+      }
+
+      return true;
+    });
+  }, [filters, records]);
 
   const loadRecords = useCallback(async () => {
     try {
@@ -49234,7 +49280,7 @@ const ActivosAsesoresPage: React.FC = () => {
   return (
     <DashboardLayout
       title="BDD Activos x Asesores Comerciales"
-      subtitle={`Registros cargados: ${records.length}`}
+      subtitle={`Mostrando ${filteredRecords.length} de ${records.length} registros`}
       headerContent={headerContent}
     >
       <section className="personal-edit-section">
@@ -49267,8 +49313,8 @@ const ActivosAsesoresPage: React.FC = () => {
         {loading ? <p className="form-info">Cargando registros...</p> : null}
         {loadError ? <p className="form-info form-info--error">{loadError}</p> : null}
         {!loading && !loadError ? (
-          <div className="table-wrapper">
-            <table>
+          <div className="table-wrapper bdd-activos-table-wrapper">
+            <table className="bdd-activos-table">
               <thead>
                 <tr>
                   <th>Encargado</th>
@@ -49279,14 +49325,94 @@ const ActivosAsesoresPage: React.FC = () => {
                   <th>Número</th>
                   <th>Acciones</th>
                 </tr>
+                <tr className="bdd-activos-table__filters">
+                  <th>
+                    <input
+                      className="bdd-activos-table__filter-input"
+                      type="search"
+                      value={filters.encargado}
+                      onChange={(event) => setFilters((prev) => ({ ...prev, encargado: event.target.value }))}
+                      placeholder="Filtrar"
+                    />
+                  </th>
+                  <th>
+                    <input
+                      className="bdd-activos-table__filter-input"
+                      type="search"
+                      value={filters.lider}
+                      onChange={(event) => setFilters((prev) => ({ ...prev, lider: event.target.value }))}
+                      placeholder="Filtrar"
+                    />
+                  </th>
+                  <th>
+                    <input
+                      className="bdd-activos-table__filter-input"
+                      type="search"
+                      value={filters.asesorComercial}
+                      onChange={(event) =>
+                        setFilters((prev) => ({ ...prev, asesorComercial: event.target.value }))
+                      }
+                      placeholder="Filtrar"
+                    />
+                  </th>
+                  <th>
+                    <input
+                      className="bdd-activos-table__filter-input"
+                      type="search"
+                      value={filters.rol}
+                      onChange={(event) => setFilters((prev) => ({ ...prev, rol: event.target.value }))}
+                      placeholder="Filtrar"
+                    />
+                  </th>
+                  <th>
+                    <input
+                      className="bdd-activos-table__filter-input"
+                      type="search"
+                      value={filters.transportistaActivo}
+                      onChange={(event) =>
+                        setFilters((prev) => ({ ...prev, transportistaActivo: event.target.value }))
+                      }
+                      placeholder="Filtrar"
+                    />
+                  </th>
+                  <th>
+                    <input
+                      className="bdd-activos-table__filter-input"
+                      type="search"
+                      value={filters.numero}
+                      onChange={(event) => setFilters((prev) => ({ ...prev, numero: event.target.value }))}
+                      placeholder="Filtrar"
+                    />
+                  </th>
+                  <th className="bdd-activos-table__filter-actions">
+                    <button
+                      type="button"
+                      className="secondary-action secondary-action--ghost bdd-activos-table__clear"
+                      onClick={() =>
+                        setFilters({
+                          encargado: '',
+                          lider: '',
+                          asesorComercial: '',
+                          rol: '',
+                          transportistaActivo: '',
+                          numero: '',
+                        })
+                      }
+                    >
+                      Limpiar
+                    </button>
+                  </th>
+                </tr>
               </thead>
               <tbody>
-                {records.length === 0 ? (
+                {filteredRecords.length === 0 ? (
                   <tr>
-                    <td colSpan={7}>No hay registros cargados.</td>
+                    <td colSpan={7}>
+                      {records.length === 0 ? 'No hay registros cargados.' : 'No hay resultados para los filtros actuales.'}
+                    </td>
                   </tr>
                 ) : (
-                  records.map((record) => (
+                  filteredRecords.map((record) => (
                     <tr key={record.id}>
                       <td>{record.encargado ?? '—'}</td>
                       <td>{record.lider ?? '—'}</td>
