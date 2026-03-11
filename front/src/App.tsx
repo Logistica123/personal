@@ -12810,6 +12810,37 @@ const CreateReclamoPage: React.FC = () => {
     }
   };
 
+  const handleDistribuidorSearchChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const { value } = event.target;
+    const normalized = value.trim().toLowerCase();
+    const match = normalized.length > 0 ? transportistaLookup.get(normalized) : undefined;
+
+    setFormValues((prev) => {
+      const nextTransportistaId = match ? String(match.id) : '';
+
+      if (prev.distribuidorNombre === value && prev.transportistaId === nextTransportistaId) {
+        return prev;
+      }
+
+      return {
+        ...prev,
+        distribuidorNombre: value,
+        transportistaId: nextTransportistaId,
+      };
+    });
+
+    if (match) {
+      setTransportistaSearch(match.label);
+      return;
+    }
+
+    if (normalized.length === 0) {
+      setTransportistaSearch('');
+      setTransportistaDetail(null);
+      setTransportistaDetailError(null);
+    }
+  };
+
   const handleClearTransportista = () => {
     setTransportistaSearch('');
     setTransportistaDetail(null);
@@ -12921,14 +12952,19 @@ const CreateReclamoPage: React.FC = () => {
       return;
     }
 
+    const nombreCompleto =
+      `${transportistaDetail.nombres ?? ''} ${transportistaDetail.apellidos ?? ''}`.trim() || '';
+
     setFormValues((prev) => ({
       ...prev,
       clienteNombre: prev.clienteNombre || transportistaDetail.cliente || '',
       sucursalNombre: prev.sucursalNombre || transportistaDetail.sucursal || '',
       distribuidorNombre:
         prev.distribuidorNombre ||
-        `${transportistaDetail.nombres ?? ''} ${transportistaDetail.apellidos ?? ''}`.trim() ||
+        nombreCompleto ||
         '',
+      emisorFactura: prev.emisorFactura || nombreCompleto || '',
+      cuitCobrador: prev.cuitCobrador || transportistaDetail.cuil || '',
     }));
   }, [transportistaDetail, isReclamoAdelantoSelected]);
 
@@ -13608,10 +13644,16 @@ const CreateReclamoPage: React.FC = () => {
                 <span>Nombre distribuidor</span>
                 <input
                   type="text"
+                  list="reclamo-distribuidores-list"
                   value={formValues.distribuidorNombre}
-                  onChange={(event) => setFormValues((prev) => ({ ...prev, distribuidorNombre: event.target.value }))}
+                  onChange={handleDistribuidorSearchChange}
                   required
                 />
+                <datalist id="reclamo-distribuidores-list">
+                  {transportistaOptions.map((option) => (
+                    <option key={`reclamo-distribuidor-${option.id}`} value={option.label} />
+                  ))}
+                </datalist>
               </label>
               <label className="input-control">
                 <span>Dueño / emisor factura</span>
