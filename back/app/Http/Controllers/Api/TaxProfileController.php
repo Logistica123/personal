@@ -245,6 +245,36 @@ class TaxProfileController extends Controller
             'razonSocial' => ['nullable', 'string', 'max:255'],
             'arcaStatus' => ['nullable', 'string', 'max:255'],
             'dgrStatus' => ['nullable', 'string', 'max:255'],
+            'fiscalAddressStreet' => ['nullable', 'string', 'max:255'],
+            'fiscalAddressNumber' => ['nullable', 'string', 'max:20'],
+            'fiscalAddressFloor' => ['nullable', 'string', 'max:20'],
+            'fiscalAddressUnit' => ['nullable', 'string', 'max:20'],
+            'fiscalAddressLocality' => ['nullable', 'string', 'max:255'],
+            'fiscalAddressPostalCode' => ['nullable', 'string', 'max:20'],
+            'fiscalAddressProvince' => ['nullable', 'string', 'max:120'],
+            'activityMainCode' => ['nullable', 'string', 'max:20'],
+            'activityMainDescription' => ['nullable', 'string', 'max:255'],
+            'activityMainSector' => ['nullable', 'string', 'max:120'],
+            'activityMainStartDate' => ['nullable', 'date'],
+            'afipKeyStatus' => ['nullable', 'string', 'max:120'],
+            'afipKeyStatusDate' => ['nullable', 'date'],
+            'ivaRegistered' => ['nullable', 'boolean'],
+            'ivaWithholdingExclusion' => ['nullable', 'boolean'],
+            'ivaRegisteredAt' => ['nullable', 'date'],
+            'ivaCondition' => ['nullable', 'string', 'max:120'],
+            'gananciasRegistered' => ['nullable', 'boolean'],
+            'gananciasWithholdingExclusion' => ['nullable', 'boolean'],
+            'gananciasRegisteredAt' => ['nullable', 'date'],
+            'gananciasCondition' => ['nullable', 'string', 'max:120'],
+            'monotributoRegistered' => ['nullable', 'boolean'],
+            'monotributoRegisteredAt' => ['nullable', 'date'],
+            'monotributoCategory' => ['nullable', 'string', 'max:40'],
+            'monotributoType' => ['nullable', 'string', 'max:255'],
+            'monotributoActivity' => ['nullable', 'string', 'max:255'],
+            'monotributoSeniorityMonths' => ['nullable', 'integer', 'min:0'],
+            'isEmployee' => ['nullable', 'boolean'],
+            'isEmployer' => ['nullable', 'boolean'],
+            'isRetired' => ['nullable', 'boolean'],
             'exclusionNotes' => ['nullable', 'string'],
             'exemptionNotes' => ['nullable', 'string'],
             'regimeNotes' => ['nullable', 'string'],
@@ -281,6 +311,36 @@ class TaxProfileController extends Controller
             'razon_social' => $this->sanitizeString($validated['razonSocial'] ?? ($defaults['razonSocial'] ?? null)),
             'arca_status' => $this->sanitizeString($validated['arcaStatus'] ?? null),
             'dgr_status' => $this->sanitizeString($validated['dgrStatus'] ?? null),
+            'fiscal_address_street' => $this->sanitizeString($validated['fiscalAddressStreet'] ?? null),
+            'fiscal_address_number' => $this->sanitizeString($validated['fiscalAddressNumber'] ?? null),
+            'fiscal_address_floor' => $this->sanitizeString($validated['fiscalAddressFloor'] ?? null),
+            'fiscal_address_unit' => $this->sanitizeString($validated['fiscalAddressUnit'] ?? null),
+            'fiscal_address_locality' => $this->sanitizeString($validated['fiscalAddressLocality'] ?? null),
+            'fiscal_address_postal_code' => $this->sanitizeString($validated['fiscalAddressPostalCode'] ?? null),
+            'fiscal_address_province' => $this->sanitizeString($validated['fiscalAddressProvince'] ?? null),
+            'activity_main_code' => $this->sanitizeString($validated['activityMainCode'] ?? null),
+            'activity_main_description' => $this->sanitizeString($validated['activityMainDescription'] ?? null),
+            'activity_main_sector' => $this->sanitizeString($validated['activityMainSector'] ?? null),
+            'activity_main_started_at' => $this->sanitizeDate($validated['activityMainStartDate'] ?? null),
+            'afip_key_status' => $this->sanitizeString($validated['afipKeyStatus'] ?? null),
+            'afip_key_status_at' => $this->sanitizeDate($validated['afipKeyStatusDate'] ?? null),
+            'iva_inscripto' => $this->sanitizeBoolean($validated['ivaRegistered'] ?? null),
+            'iva_exento_retencion' => $this->sanitizeBoolean($validated['ivaWithholdingExclusion'] ?? null),
+            'iva_registered_at' => $this->sanitizeDate($validated['ivaRegisteredAt'] ?? null),
+            'iva_condition' => $this->sanitizeString($validated['ivaCondition'] ?? null),
+            'ganancias_inscripto' => $this->sanitizeBoolean($validated['gananciasRegistered'] ?? null),
+            'ganancias_exento_retencion' => $this->sanitizeBoolean($validated['gananciasWithholdingExclusion'] ?? null),
+            'ganancias_registered_at' => $this->sanitizeDate($validated['gananciasRegisteredAt'] ?? null),
+            'ganancias_condition' => $this->sanitizeString($validated['gananciasCondition'] ?? null),
+            'monotributo_inscripto' => $this->sanitizeBoolean($validated['monotributoRegistered'] ?? null),
+            'monotributo_registered_at' => $this->sanitizeDate($validated['monotributoRegisteredAt'] ?? null),
+            'monotributo_category' => $this->sanitizeString($validated['monotributoCategory'] ?? null),
+            'monotributo_type' => $this->sanitizeString($validated['monotributoType'] ?? null),
+            'monotributo_activity' => $this->sanitizeString($validated['monotributoActivity'] ?? null),
+            'monotributo_seniority_months' => $this->sanitizeInteger($validated['monotributoSeniorityMonths'] ?? null),
+            'is_employee' => $this->sanitizeBoolean($validated['isEmployee'] ?? null),
+            'is_employer' => $this->sanitizeBoolean($validated['isEmployer'] ?? null),
+            'is_retired' => $this->sanitizeBoolean($validated['isRetired'] ?? null),
             'exclusion_notes' => $this->sanitizeText($validated['exclusionNotes'] ?? null),
             'exemption_notes' => $this->sanitizeText($validated['exemptionNotes'] ?? null),
             'regime_notes' => $this->sanitizeText($validated['regimeNotes'] ?? null),
@@ -347,16 +407,22 @@ class TaxProfileController extends Controller
             null,
             $lookup
         );
+        $profileDocumentBeforeRefresh = $this->sanitizeDocument($profile->cuit);
+        $documentChanged = $profileDocumentBeforeRefresh !== null && $profileDocumentBeforeRefresh !== $documento;
+        $fallbackRazonSocial = $this->sanitizeString($validated['razonSocial'] ?? null)
+            ?? $this->sanitizeString($defaults['razonSocial'] ?? null);
+        if (!$documentChanged) {
+            $fallbackRazonSocial = $fallbackRazonSocial ?? $profile->razon_social;
+        }
 
         $profile->cuit = $lookup['parsed']['documentoNormalizado']
             ?? $lookup['parsed']['documento']
             ?? $documento;
         $profile->razon_social = $lookup['parsed']['razonSocial']
-            ?? $this->sanitizeString($validated['razonSocial'] ?? null)
-            ?? $profile->razon_social
-            ?? ($defaults['razonSocial'] ?? null);
+            ?? $fallbackRazonSocial;
         $profile->arca_status = $this->inferArcaStatus($lookupParsed) ?? $profile->arca_status;
         $profile->dgr_status = $this->inferDgrStatus($lookupParsed) ?? $profile->dgr_status;
+        $this->fillProfileFromNosisParsed($profile, $lookupParsed);
         $profile->latest_nosis_snapshot_id = $documentSnapshot->id;
 
         $bankAccount = $requestedBankAccount
@@ -387,6 +453,7 @@ class TaxProfileController extends Controller
                 ?? (($bankValidation['valid'] ?? false) ? 'validado' : 'observado');
             $profile->arca_status = $this->inferArcaStatus($bankParsed) ?? $profile->arca_status;
             $profile->dgr_status = $this->inferDgrStatus($bankParsed) ?? $profile->dgr_status;
+            $this->fillProfileFromNosisParsed($profile, $bankParsed);
             $profile->latest_nosis_snapshot_id = $bankSnapshot->id;
             $snapshots[] = $bankSnapshot;
         }
@@ -463,6 +530,37 @@ class TaxProfileController extends Controller
             'razonSocial' => $profile?->razon_social ?? ($defaults['razonSocial'] ?? null),
             'arcaStatus' => $profile?->arca_status,
             'dgrStatus' => $profile?->dgr_status,
+            'fiscalAddressStreet' => $profile?->fiscal_address_street,
+            'fiscalAddressNumber' => $profile?->fiscal_address_number,
+            'fiscalAddressFloor' => $profile?->fiscal_address_floor,
+            'fiscalAddressUnit' => $profile?->fiscal_address_unit,
+            'fiscalAddressLocality' => $profile?->fiscal_address_locality,
+            'fiscalAddressPostalCode' => $profile?->fiscal_address_postal_code,
+            'fiscalAddressProvince' => $profile?->fiscal_address_province,
+            'activityMainCode' => $profile?->activity_main_code,
+            'activityMainDescription' => $profile?->activity_main_description,
+            'activityMainSector' => $profile?->activity_main_sector,
+            'activityMainStartDate' => $this->formatDateValue($profile?->activity_main_started_at),
+            'activities' => $this->formatActivities($profile?->activities),
+            'afipKeyStatus' => $profile?->afip_key_status,
+            'afipKeyStatusDate' => $this->formatDateValue($profile?->afip_key_status_at),
+            'ivaRegistered' => $profile?->iva_inscripto,
+            'ivaWithholdingExclusion' => $profile?->iva_exento_retencion,
+            'ivaRegisteredAt' => $this->formatDateValue($profile?->iva_registered_at),
+            'ivaCondition' => $profile?->iva_condition,
+            'gananciasRegistered' => $profile?->ganancias_inscripto,
+            'gananciasWithholdingExclusion' => $profile?->ganancias_exento_retencion,
+            'gananciasRegisteredAt' => $this->formatDateValue($profile?->ganancias_registered_at),
+            'gananciasCondition' => $profile?->ganancias_condition,
+            'monotributoRegistered' => $profile?->monotributo_inscripto,
+            'monotributoRegisteredAt' => $this->formatDateValue($profile?->monotributo_registered_at),
+            'monotributoCategory' => $profile?->monotributo_category,
+            'monotributoType' => $profile?->monotributo_type,
+            'monotributoActivity' => $profile?->monotributo_activity,
+            'monotributoSeniorityMonths' => $profile?->monotributo_seniority_months,
+            'isEmployee' => $profile?->is_employee,
+            'isEmployer' => $profile?->is_employer,
+            'isRetired' => $profile?->is_retired,
             'exclusionNotes' => $profile?->exclusion_notes,
             'exemptionNotes' => $profile?->exemption_notes,
             'regimeNotes' => $profile?->regime_notes,
@@ -593,6 +691,45 @@ class TaxProfileController extends Controller
         return $this->sanitizeString($value);
     }
 
+    private function sanitizeBoolean(mixed $value): ?bool
+    {
+        if ($value === null || $value === '') {
+            return null;
+        }
+
+        if (is_bool($value)) {
+            return $value;
+        }
+
+        return filter_var($value, FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE);
+    }
+
+    private function sanitizeInteger(mixed $value): ?int
+    {
+        if ($value === null || $value === '') {
+            return null;
+        }
+
+        if (is_int($value)) {
+            return $value;
+        }
+
+        if (is_numeric($value)) {
+            return (int) $value;
+        }
+
+        return null;
+    }
+
+    private function sanitizeDate(?string $value): ?string
+    {
+        if ($value === null || trim($value) === '') {
+            return null;
+        }
+
+        return Carbon::parse($value)->toDateString();
+    }
+
     private function sanitizeDocument(?string $value): ?string
     {
         if ($value === null) {
@@ -609,6 +746,70 @@ class TaxProfileController extends Controller
         $digits = $this->sanitizeDocument($value);
 
         return $digits !== null ? substr($digits, 0, 30) : null;
+    }
+
+    private function formatDateValue(mixed $value): ?string
+    {
+        if ($value === null || $value === '') {
+            return null;
+        }
+
+        try {
+            if ($value instanceof Carbon) {
+                return $value->toDateString();
+            }
+
+            return Carbon::parse((string) $value)->toDateString();
+        } catch (\Throwable) {
+            return null;
+        }
+    }
+
+    private function fillProfileFromNosisParsed(TaxProfile $profile, array $parsed): void
+    {
+        $fields = [
+            'fiscal_address_street' => $this->arrayString($parsed, ['fiscalAddressStreet']),
+            'fiscal_address_number' => $this->arrayString($parsed, ['fiscalAddressNumber']),
+            'fiscal_address_floor' => $this->arrayString($parsed, ['fiscalAddressFloor']),
+            'fiscal_address_unit' => $this->arrayString($parsed, ['fiscalAddressUnit']),
+            'fiscal_address_locality' => $this->arrayString($parsed, ['fiscalAddressLocality']),
+            'fiscal_address_postal_code' => $this->arrayString($parsed, ['fiscalAddressPostalCode']),
+            'fiscal_address_province' => $this->arrayString($parsed, ['fiscalAddressProvince']),
+            'activity_main_code' => $this->arrayString($parsed, ['activityMainCode']),
+            'activity_main_description' => $this->arrayString($parsed, ['activityMainDescription']),
+            'activity_main_sector' => $this->arrayString($parsed, ['activityMainSector']),
+            'activity_main_started_at' => $this->arrayDate($parsed, ['activityMainStartDate']),
+            'afip_key_status' => $this->arrayString($parsed, ['afipKeyStatus']),
+            'afip_key_status_at' => $this->arrayDate($parsed, ['afipKeyStatusDate']),
+            'iva_inscripto' => $this->arrayBool($parsed, ['ivaRegistered']),
+            'iva_exento_retencion' => $this->arrayBool($parsed, ['ivaWithholdingExclusion']),
+            'iva_registered_at' => $this->arrayDate($parsed, ['ivaRegisteredAt']),
+            'iva_condition' => $this->arrayString($parsed, ['ivaCondition']),
+            'ganancias_inscripto' => $this->arrayBool($parsed, ['gananciasRegistered']),
+            'ganancias_exento_retencion' => $this->arrayBool($parsed, ['gananciasWithholdingExclusion']),
+            'ganancias_registered_at' => $this->arrayDate($parsed, ['gananciasRegisteredAt']),
+            'ganancias_condition' => $this->arrayString($parsed, ['gananciasCondition']),
+            'monotributo_inscripto' => $this->arrayBool($parsed, ['monotributoRegistered']),
+            'monotributo_registered_at' => $this->arrayDate($parsed, ['monotributoRegisteredAt']),
+            'monotributo_category' => $this->arrayString($parsed, ['monotributoCategory']),
+            'monotributo_type' => $this->arrayString($parsed, ['monotributoType']),
+            'monotributo_activity' => $this->arrayString($parsed, ['monotributoActivity']),
+            'monotributo_seniority_months' => $this->arrayInt($parsed, ['monotributoSeniorityMonths']),
+            'is_employee' => $this->arrayBool($parsed, ['isEmployee']),
+            'is_employer' => $this->arrayBool($parsed, ['isEmployer']),
+            'is_retired' => $this->arrayBool($parsed, ['isRetired']),
+        ];
+
+        foreach ($fields as $attribute => $value) {
+            if ($value !== null) {
+                $profile->{$attribute} = $value;
+            }
+        }
+
+        $activities = $this->sanitizeActivities($parsed['activities'] ?? null);
+        if ($activities !== null) {
+            $profile->activities = $activities;
+        }
     }
 
     private function inferArcaStatus(array $parsed): ?string
@@ -672,6 +873,101 @@ class TaxProfileController extends Controller
         ]) ?? ($valid ? 'validado' : null);
     }
 
+    private function formatActivities(mixed $value): array
+    {
+        $activities = $this->sanitizeActivities($value);
+
+        return $activities ?? [];
+    }
+
+    private function sanitizeActivities(mixed $value): ?array
+    {
+        if (!is_array($value)) {
+            return null;
+        }
+
+        $activities = [];
+
+        foreach ($value as $item) {
+            if (!is_array($item)) {
+                continue;
+            }
+
+            $code = $this->sanitizeString($item['code'] ?? null);
+            $description = $this->sanitizeString($item['description'] ?? null);
+            $sector = $this->sanitizeString($item['sector'] ?? null);
+            $startDate = $this->formatDateValue($item['startDate'] ?? null);
+
+            if ($code === null && $description === null && $sector === null && $startDate === null) {
+                continue;
+            }
+
+            $activities[] = [
+                'code' => $code,
+                'description' => $description,
+                'sector' => $sector,
+                'startDate' => $startDate,
+            ];
+        }
+
+        return $activities;
+    }
+
+    private function arrayBool(array $payload, array $keys): ?bool
+    {
+        foreach ($keys as $key) {
+            if (!array_key_exists($key, $payload)) {
+                continue;
+            }
+
+            $value = $this->sanitizeBoolean($payload[$key]);
+            if ($value !== null) {
+                return $value;
+            }
+        }
+
+        return null;
+    }
+
+    private function arrayInt(array $payload, array $keys): ?int
+    {
+        foreach ($keys as $key) {
+            if (!array_key_exists($key, $payload)) {
+                continue;
+            }
+
+            $value = $this->sanitizeInteger($payload[$key]);
+            if ($value !== null) {
+                return $value;
+            }
+        }
+
+        return null;
+    }
+
+    private function arrayDate(array $payload, array $keys): ?string
+    {
+        foreach ($keys as $key) {
+            if (!array_key_exists($key, $payload)) {
+                continue;
+            }
+
+            $value = $payload[$key];
+            if (!is_scalar($value)) {
+                continue;
+            }
+
+            $text = trim((string) $value);
+            if ($text === '') {
+                continue;
+            }
+
+            return $this->normalizeDateString($text);
+        }
+
+        return null;
+    }
+
     private function arrayString(array $payload, array $keys): ?string
     {
         foreach ($keys as $key) {
@@ -691,5 +987,31 @@ class TaxProfileController extends Controller
         }
 
         return null;
+    }
+
+    private function normalizeDateString(?string $value): ?string
+    {
+        if ($value === null) {
+            return null;
+        }
+
+        $trimmed = trim($value);
+        if ($trimmed === '') {
+            return null;
+        }
+
+        if (preg_match('/^(\d{4})(\d{2})(\d{2})$/', $trimmed, $matches) === 1) {
+            return "{$matches[1]}-{$matches[2]}-{$matches[3]}";
+        }
+
+        if (preg_match('/^(\d{2})\/(\d{2})\/(\d{4})$/', $trimmed, $matches) === 1) {
+            return "{$matches[3]}-{$matches[2]}-{$matches[1]}";
+        }
+
+        try {
+            return Carbon::parse($trimmed)->toDateString();
+        } catch (\Throwable) {
+            return null;
+        }
     }
 }

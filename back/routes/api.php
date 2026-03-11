@@ -11,6 +11,7 @@ use App\Http\Controllers\Api\NotificationController;
 use App\Http\Controllers\Api\PersonalDocumentController;
 use App\Http\Controllers\Api\PersonalCommentController;
 use App\Http\Controllers\Api\AttendanceController;
+use App\Http\Controllers\Api\ActivoAsesorComercialController;
 use App\Http\Controllers\Api\WorkflowTaskController;
 use App\Http\Controllers\Api\GeneralInfoController;
 use App\Http\Controllers\Api\AuditController;
@@ -92,6 +93,12 @@ Route::middleware('auth.api')->group(function () {
     Route::delete('/clientes/{cliente}/legajo-impositivo/documentos/{documento}', [TaxProfileController::class, 'destroyClienteDocument']);
     Route::get('/clientes/{cliente}/legajo-impositivo/documentos/{documento}/descargar', [TaxProfileController::class, 'downloadClienteDocument'])
         ->name('clientes.legajo.documentos.descargar');
+
+    Route::get('/bdd-activos-asesores', [ActivoAsesorComercialController::class, 'index']);
+    Route::post('/bdd-activos-asesores', [ActivoAsesorComercialController::class, 'store']);
+    Route::post('/bdd-activos-asesores/import', [ActivoAsesorComercialController::class, 'import']);
+    Route::put('/bdd-activos-asesores/{activoAsesorComercial}', [ActivoAsesorComercialController::class, 'update']);
+    Route::delete('/bdd-activos-asesores/{activoAsesorComercial}', [ActivoAsesorComercialController::class, 'destroy']);
 
     Route::get('/unidades', [UnidadController::class, 'index']);
     Route::post('/unidades', [UnidadController::class, 'store']);

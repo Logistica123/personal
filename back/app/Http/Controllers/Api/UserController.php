@@ -39,6 +39,7 @@ class UserController extends Controller
         'pagos',
         'tarifas',
         'bases',
+        'bdd-activos-asesores',
         'documentos',
         'configuracion',
     ];

@@ -164,6 +164,14 @@ type ClientTaxDocumentRecord = {
   downloadUrl: string | null;
 };
 
+type TaxActivityRecord = {
+  index?: number | null;
+  code: string | null;
+  description: string | null;
+  sector: string | null;
+  startDate: string | null;
+};
+
 type TaxProfileRecord = {
   id?: number | null;
   entityType?: string | null;
@@ -172,6 +180,37 @@ type TaxProfileRecord = {
   razonSocial: string | null;
   arcaStatus: string | null;
   dgrStatus: string | null;
+  fiscalAddressStreet: string | null;
+  fiscalAddressNumber: string | null;
+  fiscalAddressFloor: string | null;
+  fiscalAddressUnit: string | null;
+  fiscalAddressLocality: string | null;
+  fiscalAddressPostalCode: string | null;
+  fiscalAddressProvince: string | null;
+  activityMainCode: string | null;
+  activityMainDescription: string | null;
+  activityMainSector: string | null;
+  activityMainStartDate: string | null;
+  activities?: TaxActivityRecord[];
+  afipKeyStatus: string | null;
+  afipKeyStatusDate: string | null;
+  ivaRegistered: boolean | null;
+  ivaWithholdingExclusion: boolean | null;
+  ivaRegisteredAt: string | null;
+  ivaCondition: string | null;
+  gananciasRegistered: boolean | null;
+  gananciasWithholdingExclusion: boolean | null;
+  gananciasRegisteredAt: string | null;
+  gananciasCondition: string | null;
+  monotributoRegistered: boolean | null;
+  monotributoRegisteredAt: string | null;
+  monotributoCategory: string | null;
+  monotributoType: string | null;
+  monotributoActivity: string | null;
+  monotributoSeniorityMonths: number | null;
+  isEmployee: boolean | null;
+  isEmployer: boolean | null;
+  isRetired: boolean | null;
   exclusionNotes: string | null;
   exemptionNotes: string | null;
   regimeNotes: string | null;
@@ -293,6 +332,229 @@ const buildTaxSnapshotSummary = (snapshot: NosisSnapshotRecord) => {
   };
 };
 
+const readTaxSnapshotParsedBoolean = (
+  parsed: Record<string, unknown> | null | undefined,
+  keys: string[]
+): boolean | null => {
+  if (!parsed) {
+    return null;
+  }
+
+  for (const key of keys) {
+    const value = parsed[key];
+    if (typeof value === 'boolean') {
+      return value;
+    }
+    if (typeof value !== 'string') {
+      continue;
+    }
+
+    const normalized = value.trim().toLowerCase();
+    if (!normalized) {
+      continue;
+    }
+    if (['si', 'sí', 's', 'true', '1', 'activo', 'validado'].includes(normalized)) {
+      return true;
+    }
+    if (['no', 'false', '0', '-', 'inactivo', 'rechazado'].includes(normalized)) {
+      return false;
+    }
+  }
+
+  return null;
+};
+
+const readTaxSnapshotParsedNumber = (
+  parsed: Record<string, unknown> | null | undefined,
+  keys: string[]
+): number | null => {
+  if (!parsed) {
+    return null;
+  }
+
+  for (const key of keys) {
+    const value = parsed[key];
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      return value;
+    }
+    if (typeof value !== 'string') {
+      continue;
+    }
+
+    const digits = value.trim().replace(/[^\d-]+/g, '');
+    if (!digits || digits === '-') {
+      continue;
+    }
+
+    const parsedNumber = Number(digits);
+    if (!Number.isNaN(parsedNumber)) {
+      return parsedNumber;
+    }
+  }
+
+  return null;
+};
+
+const normalizeNosisDateValue = (value: string | null | undefined): string | null => {
+  const raw = (value ?? '').trim();
+  if (!raw) {
+    return null;
+  }
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+    return raw;
+  }
+  const compactMatch = raw.match(/^(\d{4})(\d{2})(\d{2})$/);
+  if (compactMatch) {
+    const [, year, month, day] = compactMatch;
+    return `${year}-${month}-${day}`;
+  }
+  const slashMatch = raw.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+  if (slashMatch) {
+    const [, day, month, year] = slashMatch;
+    return `${year}-${month}-${day}`;
+  }
+  return null;
+};
+
+const normalizeTaxActivities = (value: unknown): TaxActivityRecord[] => {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .map((item): TaxActivityRecord | null => {
+      if (!item || typeof item !== 'object') {
+        return null;
+      }
+
+      const record = item as Record<string, unknown>;
+      const index = typeof record.index === 'number' && Number.isFinite(record.index) ? record.index : null;
+      const code = typeof record.code === 'string' && record.code.trim() ? record.code.trim() : null;
+      const description =
+        typeof record.description === 'string' && record.description.trim() ? record.description.trim() : null;
+      const sector = typeof record.sector === 'string' && record.sector.trim() ? record.sector.trim() : null;
+      const startDate = normalizeNosisDateValue(
+        typeof record.startDate === 'string' ? record.startDate : null
+      );
+
+      if (!code && !description && !sector && !startDate) {
+        return null;
+      }
+
+      return {
+        index,
+        code,
+        description,
+        sector,
+        startDate,
+      };
+    })
+    .filter((item): item is TaxActivityRecord => item !== null);
+};
+
+const resolveParsedArcaStatus = (parsed: Record<string, unknown> | null | undefined): string | null => {
+  const explicit = readTaxSnapshotParsedText(parsed, [
+    'arcaStatus',
+    'afipStatus',
+    'estadoFiscal',
+    'condicionFiscal',
+    'afipKeyStatus',
+  ]);
+  if (explicit) {
+    return explicit;
+  }
+
+  const novedad = readTaxSnapshotParsedText(parsed, ['resultadoNovedad', 'message']);
+  const estado = readTaxSnapshotParsedText(parsed, ['resultadoEstado']);
+  if (novedad && estado && estado !== '200') {
+    return `${novedad} (código ${estado})`;
+  }
+
+  return novedad ?? (estado && estado !== '200' ? `Código ${estado}` : null);
+};
+
+const mergeTaxProfileWithNosisParsed = (
+  current: TaxProfileRecord,
+  parsed: Record<string, unknown> | null | undefined
+): TaxProfileRecord => {
+  if (!parsed) {
+    return current;
+  }
+
+  const next: TaxProfileRecord = { ...current };
+
+  const assignText = (field: keyof TaxProfileRecord, keys: string[]) => {
+    const value = readTaxSnapshotParsedText(parsed, keys);
+    if (value !== null) {
+      (next as Record<string, unknown>)[field as string] = value;
+    }
+  };
+
+  const assignDate = (field: keyof TaxProfileRecord, keys: string[]) => {
+    const value = normalizeNosisDateValue(readTaxSnapshotParsedText(parsed, keys));
+    if (value !== null) {
+      (next as Record<string, unknown>)[field as string] = value;
+    }
+  };
+
+  const assignBoolean = (field: keyof TaxProfileRecord, keys: string[]) => {
+    const value = readTaxSnapshotParsedBoolean(parsed, keys);
+    if (value !== null) {
+      (next as Record<string, unknown>)[field as string] = value;
+    }
+  };
+
+  const assignNumber = (field: keyof TaxProfileRecord, keys: string[]) => {
+    const value = readTaxSnapshotParsedNumber(parsed, keys);
+    if (value !== null) {
+      (next as Record<string, unknown>)[field as string] = value;
+    }
+  };
+
+  assignText('cuit', ['documentoNormalizado', 'documento', 'VI_Identificacion', 'VI_DNI']);
+  assignText('razonSocial', ['razonSocial', 'VI_RazonSocial']);
+  const arcaStatus = resolveParsedArcaStatus(parsed);
+  if (arcaStatus !== null) {
+    (next as Record<string, unknown>).arcaStatus = arcaStatus;
+  }
+  assignText('dgrStatus', ['dgrStatus', 'estadoDgr', 'condicionDgr', 'ingresosBrutosEstado']);
+  assignText('fiscalAddressStreet', ['fiscalAddressStreet', 'VI_DomAF_Calle']);
+  assignText('fiscalAddressNumber', ['fiscalAddressNumber', 'VI_DomAF_Nro']);
+  assignText('fiscalAddressFloor', ['fiscalAddressFloor', 'VI_DomAF_Piso']);
+  assignText('fiscalAddressUnit', ['fiscalAddressUnit', 'VI_DomAF_Dto']);
+  assignText('fiscalAddressLocality', ['fiscalAddressLocality', 'VI_DomAF_Loc']);
+  assignText('fiscalAddressPostalCode', ['fiscalAddressPostalCode', 'VI_DomAF_CP']);
+  assignText('fiscalAddressProvince', ['fiscalAddressProvince', 'VI_DomAF_Prov']);
+  assignText('activityMainCode', ['activityMainCode', 'VI_Act01_Cod']);
+  assignText('activityMainDescription', ['activityMainDescription', 'VI_Act01_Descrip']);
+  assignText('activityMainSector', ['activityMainSector', 'VI_Act01_Sector']);
+  assignDate('activityMainStartDate', ['activityMainStartDate', 'VI_Act01_FecInicio']);
+  if (Array.isArray(parsed.activities)) {
+    next.activities = normalizeTaxActivities(parsed.activities);
+  }
+  assignText('afipKeyStatus', ['afipKeyStatus', 'VI_Inscrip_EstadoClave']);
+  assignDate('afipKeyStatusDate', ['afipKeyStatusDate', 'VI_Inscrip_EstadoClave_Fecha']);
+  assignBoolean('ivaRegistered', ['ivaRegistered', 'VI_Inscrip_IVA']);
+  assignBoolean('ivaWithholdingExclusion', ['ivaWithholdingExclusion', 'VI_Inscrip_IVA_Excluido']);
+  assignDate('ivaRegisteredAt', ['ivaRegisteredAt', 'VI_Inscrip_IVA_Fec']);
+  assignText('ivaCondition', ['ivaCondition', 'VI_Inscrip_IVA_Condicion']);
+  assignBoolean('gananciasRegistered', ['gananciasRegistered', 'VI_Inscrip_GCIA']);
+  assignBoolean('gananciasWithholdingExclusion', ['gananciasWithholdingExclusion', 'VI_Inscrip_Gcia_Excluido']);
+  assignDate('gananciasRegisteredAt', ['gananciasRegisteredAt', 'VI_Inscrip_Gcia_Fec']);
+  assignText('gananciasCondition', ['gananciasCondition', 'VI_Inscrip_GCIA_Condicion']);
+  assignBoolean('monotributoRegistered', ['monotributoRegistered', 'VI_Inscrip_Monotributo_Es']);
+  assignDate('monotributoRegisteredAt', ['monotributoRegisteredAt', 'VI_Inscrip_Monotributo_Fec']);
+  assignText('monotributoCategory', ['monotributoCategory', 'VI_Inscrip_Monotributo']);
+  assignText('monotributoType', ['monotributoType', 'VI_Inscrip_Monotributo_Tipo']);
+  assignText('monotributoActivity', ['monotributoActivity', 'VI_Inscrip_Monotributo_Act']);
+  assignNumber('monotributoSeniorityMonths', ['monotributoSeniorityMonths', 'VI_Inscrip_Monotributo_Antiguedad']);
+  assignBoolean('isEmployee', ['isEmployee', 'VI_Empleado_Es']);
+  assignBoolean('isEmployer', ['isEmployer', 'VI_Empleador_Es']);
+  assignBoolean('isRetired', ['isRetired', 'VI_Jubilado_Es']);
+
+  return next;
+};
+
 type Unidad = {
   id: number;
   matricula: string | null;
@@ -310,6 +572,17 @@ type Usuario = {
   status?: string | null;
   role?: string | null;
   permissions?: string[] | null;
+};
+type ActivoAsesorComercialRecord = {
+  id: number;
+  encargado: string | null;
+  lider: string | null;
+  asesorComercial: string | null;
+  rol: string | null;
+  transportistaActivo: string | null;
+  numero: string | null;
+  rowOrder?: number | null;
+  updatedAt?: string | null;
 };
 type RrhhUserDocument = {
   id: number;
@@ -408,6 +681,7 @@ type AccessSection =
   | 'aprobaciones'
   | 'solicitud-personal'
   | 'bases'
+  | 'bdd-activos-asesores'
   | 'documentos'
   | 'configuracion';
 
@@ -1340,6 +1614,7 @@ const USER_PERMISSION_OPTIONS: Array<{ value: AccessSection; label: string }> = 
   { value: 'combustible', label: 'Combustible' },
   { value: 'tarifas', label: 'Tarifas' },
   { value: 'bases', label: 'Bases de distribución' },
+  { value: 'bdd-activos-asesores', label: 'BDD Activos x Asesores Comerciales' },
   { value: 'documentos', label: 'Documentos' },
   { value: 'configuracion', label: 'Configuración' },
 ];
@@ -1364,7 +1639,15 @@ const canAccessSection = (
   }
 
   if (Array.isArray(permissions)) {
-    return permissions.includes(section);
+    if (permissions.includes(section)) {
+      return true;
+    }
+
+    if (section === 'bdd-activos-asesores') {
+      return role === 'asesor';
+    }
+
+    return false;
   }
 
   switch (section) {
@@ -1399,6 +1682,8 @@ const canAccessSection = (
     case 'bases':
     case 'documentos':
       return true;
+    case 'bdd-activos-asesores':
+      return role === 'asesor';
     default:
       return true;
   }
@@ -4796,6 +5081,14 @@ const DashboardLayout: React.FC<{
               className={({ isActive }) => `sidebar-link${isActive ? ' is-active' : ''}`}
             >
               Bases de Distribución
+            </NavLink>
+          ) : null}
+          {canAccessSection(userRole, 'bdd-activos-asesores', authUser?.permissions) ? (
+            <NavLink
+              to="/bdd-activos-asesores-comerciales"
+              className={({ isActive }) => `sidebar-link${isActive ? ' is-active' : ''}`}
+            >
+              BDD Activos x Asesores Comerciales
             </NavLink>
           ) : null}
 
@@ -42702,6 +42995,10 @@ const PersonalEditPage: React.FC = () => {
   const actorHeaders = useMemo(() => buildActorHeaders(authUser), [authUser]);
   const isReadOnly = userRole === 'operator' || !canManagePersonal;
   const canEditCbu = userRole === 'admin' || userRole === 'admin2';
+  const [nosisLookupLoading, setNosisLookupLoading] = useState(false);
+  const [nosisLookupError, setNosisLookupError] = useState<string | null>(null);
+  const [nosisLookupInfo, setNosisLookupInfo] = useState<string | null>(null);
+  const nosisLastLookupRef = useRef<string | null>(null);
   const [detail, setDetail] = useState<PersonalDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -42800,6 +43097,51 @@ const PersonalEditPage: React.FC = () => {
 
     return detail.documents.find((doc) => doc.id === selectedDocumentId) ?? null;
   }, [detail, selectedDocumentId]);
+  const splitRazonSocial = useCallback((razonSocial: string | null | undefined) => {
+    if (!razonSocial) {
+      return null;
+    }
+    const raw = razonSocial.trim();
+    if (!raw) {
+      return null;
+    }
+    const parts = raw.split(',');
+    if (parts.length >= 2) {
+      return { apellidos: parts[0].trim(), nombres: parts.slice(1).join(' ').trim() };
+    }
+    const tokens = raw.split(/\s+/);
+    if (tokens.length >= 2) {
+      return { apellidos: tokens[0], nombres: tokens.slice(1).join(' ').trim() };
+    }
+    return { apellidos: '', nombres: raw };
+  }, []);
+  const parseNosisXml = useCallback((payload: string) => {
+    try {
+      const parser = new DOMParser();
+      const doc = parser.parseFromString(payload, 'application/xml');
+
+      const getText = (selector: string) => doc.getElementsByTagName(selector)?.[0]?.textContent?.trim() ?? '';
+      const contenido = doc.getElementsByTagName('Contenido')?.[0] ?? null;
+      const resultado = contenido?.getElementsByTagName('Resultado')?.[0] ?? null;
+      const datos = contenido?.getElementsByTagName('Datos')?.[0] ?? null;
+      const persona = datos?.getElementsByTagName('Persona')?.[0] ?? null;
+
+      const razonSocial = persona ? (persona.getElementsByTagName('RazonSocial')[0]?.textContent?.trim() ?? '') : '';
+      const documento = persona ? (persona.getElementsByTagName('Documento')[0]?.textContent?.trim() ?? '') : '';
+      const fechaNacimiento = persona ? (persona.getElementsByTagName('FechaNacimiento')[0]?.textContent?.trim() ?? '') : '';
+      const resultadoNovedad = resultado ? (resultado.getElementsByTagName('Novedad')[0]?.textContent?.trim() ?? '') : '';
+      const message = resultadoNovedad || getText('Novedad') || payload;
+
+      return {
+        message,
+        razonSocial,
+        documento,
+        fechaNacimiento,
+      };
+    } catch {
+      return null;
+    }
+  }, []);
 
   const documentsWithStatus = useMemo(() => {
     if (!detail) {
@@ -42981,6 +43323,115 @@ const PersonalEditPage: React.FC = () => {
       esCobrador: checked,
     }));
   };
+
+  const lookupNosisByDocumento = useCallback(
+    async (showValidationError = true) => {
+      if (nosisLookupLoading) {
+        return;
+      }
+
+      const documento = formValues.cuil.replace(/\D+/g, '');
+      if (!documento) {
+        if (showValidationError) {
+          setNosisLookupError(`Ingresá un ${PERSON_TAX_ID_LABEL} para consultar en Nosis.`);
+        }
+        return;
+      }
+      if (documento.length !== 11) {
+        if (showValidationError) {
+          setNosisLookupError(`Ingresá un ${PERSON_TAX_ID_LABEL} válido de 11 dígitos.`);
+        }
+        return;
+      }
+
+      if (!showValidationError && nosisLastLookupRef.current === documento) {
+        return;
+      }
+
+      const url = new URL(`${apiBaseUrl}/api/nosis/consultar-documento`);
+      url.searchParams.set('documento', documento);
+
+      try {
+        setNosisLookupLoading(true);
+        setNosisLookupError(null);
+        setNosisLookupInfo(null);
+
+        const response = await fetch(url.toString(), {
+          headers: {
+            Accept: 'application/json',
+            ...actorHeaders,
+          },
+        });
+
+        if (!response.ok) {
+          throw new Error(`Error ${response.status}: ${response.statusText}`);
+        }
+
+        const payload = await response.json();
+        const raw = payload?.data?.raw;
+        const parsed = payload?.data?.parsed ?? (typeof raw === 'string' ? parseNosisXml(raw) : null);
+        const razonSocial = typeof parsed?.razonSocial === 'string' ? parsed.razonSocial : '';
+        const razonSplit = splitRazonSocial(razonSocial);
+        const fullName = razonSocial.trim();
+        const nombresFromNosis = razonSplit?.nombres ?? '';
+        const apellidosFromNosis = razonSplit?.apellidos ?? '';
+        const documentoFromNosis = typeof parsed?.documento === 'string' ? parsed.documento.replace(/\D+/g, '') : '';
+        const fechaNacimientoFromNosis = normalizeNosisDateValue(
+          typeof parsed?.fechaNacimiento === 'string' ? parsed.fechaNacimiento : ''
+        ) ?? '';
+        const shouldReplaceIdentity = (detail?.cuil ?? '').replace(/\D+/g, '') !== documento;
+
+        setFormValues((prev) => {
+          const next = { ...prev };
+          const profileIsCobrador = prev.perfilValue === 2;
+
+          if (profileIsCobrador) {
+            const fullNameFallback = fullName || [nombresFromNosis, apellidosFromNosis].filter(Boolean).join(' ').trim();
+            if ((shouldReplaceIdentity || !prev.nombres.trim()) && fullNameFallback) {
+              next.nombres = fullNameFallback;
+            }
+            if (shouldReplaceIdentity && prev.apellidos.trim()) {
+              next.apellidos = '';
+            }
+          } else {
+            if ((shouldReplaceIdentity || !prev.nombres.trim()) && nombresFromNosis) {
+              next.nombres = nombresFromNosis;
+            }
+            if ((shouldReplaceIdentity || !prev.apellidos.trim()) && apellidosFromNosis) {
+              next.apellidos = apellidosFromNosis;
+            }
+          }
+
+          if ((shouldReplaceIdentity || !prev.cuil.trim()) && documentoFromNosis) {
+            next.cuil = documentoFromNosis;
+          }
+          if ((shouldReplaceIdentity || !prev.duenoFechaNacimiento) && fechaNacimientoFromNosis) {
+            next.duenoFechaNacimiento = fechaNacimientoFromNosis;
+          }
+
+          return next;
+        });
+
+        nosisLastLookupRef.current = documento;
+        setNosisLookupInfo(
+          (typeof parsed?.message === 'string' && parsed.message.trim()) || payload?.message || 'Datos consultados en Nosis.'
+        );
+      } catch (err) {
+        setNosisLookupError((err as Error).message ?? 'No se pudo consultar Nosis.');
+      } finally {
+        setNosisLookupLoading(false);
+      }
+    },
+    [
+      actorHeaders,
+      apiBaseUrl,
+      detail?.cuil,
+      formValues.cuil,
+      nosisLookupLoading,
+      parseNosisXml,
+      splitRazonSocial,
+    ]
+  );
 
   const handlePendingFilesSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
     const files = event.target.files;
@@ -44096,9 +44547,36 @@ const PersonalEditPage: React.FC = () => {
             <input
               type="text"
               value={formValues.cuil}
-              onChange={(event) => setFormValues((prev) => ({ ...prev, cuil: event.target.value }))}
+              onChange={(event) => {
+                const nextValue = event.target.value.replace(/\D+/g, '').slice(0, 11);
+                setFormValues((prev) => ({ ...prev, cuil: nextValue }));
+                setNosisLookupError(null);
+                setNosisLookupInfo(null);
+                nosisLastLookupRef.current = null;
+              }}
+              onBlur={() => {
+                const documento = formValues.cuil.replace(/\D+/g, '');
+                if (documento.length === 11) {
+                  void lookupNosisByDocumento(false);
+                }
+              }}
               placeholder="Ingresar"
+              inputMode="numeric"
+              maxLength={11}
             />
+            <button
+              type="button"
+              className="secondary-action"
+              onClick={() => {
+                void lookupNosisByDocumento(true);
+              }}
+              disabled={nosisLookupLoading || isReadOnly}
+              style={{ alignSelf: 'flex-start' }}
+            >
+              {nosisLookupLoading ? 'Consultando...' : 'Autocompletar'}
+            </button>
+            {nosisLookupError ? <span className="form-info form-info--error">{nosisLookupError}</span> : null}
+            {!nosisLookupError && nosisLookupInfo ? <span className="form-info form-info--success">{nosisLookupInfo}</span> : null}
           </label>
           <label className="input-control">
             <span>Teléfono</span>
@@ -46678,6 +47156,37 @@ const createEmptyTaxProfileForm = (seed?: Partial<TaxProfileRecord>): TaxProfile
   razonSocial: seed?.razonSocial ?? '',
   arcaStatus: seed?.arcaStatus ?? '',
   dgrStatus: seed?.dgrStatus ?? '',
+  fiscalAddressStreet: seed?.fiscalAddressStreet ?? '',
+  fiscalAddressNumber: seed?.fiscalAddressNumber ?? '',
+  fiscalAddressFloor: seed?.fiscalAddressFloor ?? '',
+  fiscalAddressUnit: seed?.fiscalAddressUnit ?? '',
+  fiscalAddressLocality: seed?.fiscalAddressLocality ?? '',
+  fiscalAddressPostalCode: seed?.fiscalAddressPostalCode ?? '',
+  fiscalAddressProvince: seed?.fiscalAddressProvince ?? '',
+  activityMainCode: seed?.activityMainCode ?? '',
+  activityMainDescription: seed?.activityMainDescription ?? '',
+  activityMainSector: seed?.activityMainSector ?? '',
+  activityMainStartDate: seed?.activityMainStartDate ?? '',
+  activities: normalizeTaxActivities(seed?.activities),
+  afipKeyStatus: seed?.afipKeyStatus ?? '',
+  afipKeyStatusDate: seed?.afipKeyStatusDate ?? '',
+  ivaRegistered: seed?.ivaRegistered ?? null,
+  ivaWithholdingExclusion: seed?.ivaWithholdingExclusion ?? null,
+  ivaRegisteredAt: seed?.ivaRegisteredAt ?? '',
+  ivaCondition: seed?.ivaCondition ?? '',
+  gananciasRegistered: seed?.gananciasRegistered ?? null,
+  gananciasWithholdingExclusion: seed?.gananciasWithholdingExclusion ?? null,
+  gananciasRegisteredAt: seed?.gananciasRegisteredAt ?? '',
+  gananciasCondition: seed?.gananciasCondition ?? '',
+  monotributoRegistered: seed?.monotributoRegistered ?? null,
+  monotributoRegisteredAt: seed?.monotributoRegisteredAt ?? '',
+  monotributoCategory: seed?.monotributoCategory ?? '',
+  monotributoType: seed?.monotributoType ?? '',
+  monotributoActivity: seed?.monotributoActivity ?? '',
+  monotributoSeniorityMonths: seed?.monotributoSeniorityMonths ?? null,
+  isEmployee: seed?.isEmployee ?? null,
+  isEmployer: seed?.isEmployer ?? null,
+  isRetired: seed?.isRetired ?? null,
   exclusionNotes: seed?.exclusionNotes ?? '',
   exemptionNotes: seed?.exemptionNotes ?? '',
   regimeNotes: seed?.regimeNotes ?? '',
@@ -46721,6 +47230,10 @@ const TaxProfileSection: React.FC<TaxProfileSectionProps> = ({
   const [refreshing, setRefreshing] = useState(false);
   const [refreshError, setRefreshError] = useState<string | null>(null);
   const [refreshInfo, setRefreshInfo] = useState<string | null>(null);
+  const [lookupLoading, setLookupLoading] = useState(false);
+  const [lookupError, setLookupError] = useState<string | null>(null);
+  const [lookupInfo, setLookupInfo] = useState<string | null>(null);
+  const lastLookupRef = useRef<string | null>(null);
   const [uploadingDocument, setUploadingDocument] = useState(false);
   const [documentError, setDocumentError] = useState<string | null>(null);
   const [documentInfo, setDocumentInfo] = useState<string | null>(null);
@@ -46729,6 +47242,7 @@ const TaxProfileSection: React.FC<TaxProfileSectionProps> = ({
   const [documentExpiry, setDocumentExpiry] = useState('');
   const [documentDescription, setDocumentDescription] = useState('');
   const [documentFile, setDocumentFile] = useState<File | null>(null);
+  const cuitLabel = entityType === 'cliente' ? 'CUIT' : PERSON_TAX_ID_LABEL;
 
   const endpoint = useMemo(() => {
     if (!entityId) {
@@ -46779,7 +47293,7 @@ const TaxProfileSection: React.FC<TaxProfileSectionProps> = ({
   }, [fetchProfile]);
 
   const handleInputChange = (field: keyof TaxProfileRecord) => (
-    event: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>
+    event: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>
   ) => {
     const nextValue = event.target.value;
     setFormValues((prev) => ({ ...prev, [field]: nextValue }));
@@ -46787,9 +47301,110 @@ const TaxProfileSection: React.FC<TaxProfileSectionProps> = ({
     setSaveInfo(null);
     setRefreshError(null);
     setRefreshInfo(null);
+    setLookupError(null);
+    setLookupInfo(null);
+    setDocumentError(null);
+    setDocumentInfo(null);
+    if (field === 'cuit') {
+      lastLookupRef.current = null;
+    }
+  };
+
+  const handleNullableBooleanChange = (
+    field:
+      | 'ivaRegistered'
+      | 'ivaWithholdingExclusion'
+      | 'gananciasRegistered'
+      | 'gananciasWithholdingExclusion'
+      | 'monotributoRegistered'
+      | 'isEmployee'
+      | 'isEmployer'
+      | 'isRetired'
+  ) => (event: React.ChangeEvent<HTMLSelectElement>) => {
+    const raw = event.target.value;
+    const nextValue = raw === '' ? null : raw === 'true';
+    setFormValues((prev) => ({ ...prev, [field]: nextValue }));
+    setSaveError(null);
+    setSaveInfo(null);
+    setRefreshError(null);
+    setRefreshInfo(null);
+    setLookupError(null);
+    setLookupInfo(null);
     setDocumentError(null);
     setDocumentInfo(null);
   };
+
+  const handleLookupDocumento = useCallback(
+    async (showValidationError = true) => {
+      if (lookupLoading) {
+        return;
+      }
+
+      const documento = (formValues.cuit ?? '').replace(/\D+/g, '');
+      if (!documento) {
+        if (showValidationError) {
+          setLookupError(`Ingresá un ${cuitLabel} para consultar en Nosis.`);
+        }
+        return;
+      }
+      if (documento.length !== 11) {
+        if (showValidationError) {
+          setLookupError(`Ingresá un ${cuitLabel} válido de 11 dígitos.`);
+        }
+        return;
+      }
+      if (!showValidationError && lastLookupRef.current === documento) {
+        return;
+      }
+
+      const url = new URL(`${apiBaseUrl}/api/nosis/consultar-documento`);
+      url.searchParams.set('documento', documento);
+
+      try {
+        setLookupLoading(true);
+        setLookupError(null);
+        setLookupInfo(null);
+
+        const response = await fetch(url.toString(), {
+          headers: {
+            Accept: 'application/json',
+            ...(actorHeaders ?? {}),
+          },
+        });
+
+        if (!response.ok) {
+          let message = `Error ${response.status}: ${response.statusText}`;
+          try {
+            const payload = await response.json();
+            if (typeof payload?.message === 'string') {
+              message = payload.message;
+            }
+          } catch {
+            // ignore
+          }
+          throw new Error(message);
+        }
+
+        const payload = (await response.json()) as {
+          message?: string;
+          data?: { parsed?: Record<string, unknown> | null };
+        };
+        const parsed = payload?.data?.parsed ?? null;
+        setFormValues((prev) => mergeTaxProfileWithNosisParsed(prev, parsed));
+        lastLookupRef.current = documento;
+        setLookupInfo(
+          readTaxSnapshotParsedText(parsed, ['message', 'resultadoNovedad'])
+            ?? payload?.message
+            ?? 'Datos consultados en Nosis.'
+        );
+      } catch (err) {
+        setLookupError((err as Error).message ?? 'No se pudo consultar Nosis.');
+      } finally {
+        setLookupLoading(false);
+      }
+    },
+    [actorHeaders, apiBaseUrl, cuitLabel, formValues.cuit, lookupLoading]
+  );
 
   const handleSave = async () => {
     if (!endpoint || readOnly) {
@@ -46813,6 +47428,39 @@ const TaxProfileSection: React.FC<TaxProfileSectionProps> = ({
           razonSocial: formValues.razonSocial?.trim() || null,
           arcaStatus: formValues.arcaStatus?.trim() || null,
           dgrStatus: formValues.dgrStatus?.trim() || null,
+          fiscalAddressStreet: formValues.fiscalAddressStreet?.trim() || null,
+          fiscalAddressNumber: formValues.fiscalAddressNumber?.trim() || null,
+          fiscalAddressFloor: formValues.fiscalAddressFloor?.trim() || null,
+          fiscalAddressUnit: formValues.fiscalAddressUnit?.trim() || null,
+          fiscalAddressLocality: formValues.fiscalAddressLocality?.trim() || null,
+          fiscalAddressPostalCode: formValues.fiscalAddressPostalCode?.trim() || null,
+          fiscalAddressProvince: formValues.fiscalAddressProvince?.trim() || null,
+          activityMainCode: formValues.activityMainCode?.trim() || null,
+          activityMainDescription: formValues.activityMainDescription?.trim() || null,
+          activityMainSector: formValues.activityMainSector?.trim() || null,
+          activityMainStartDate: formValues.activityMainStartDate || null,
+          afipKeyStatus: formValues.afipKeyStatus?.trim() || null,
+          afipKeyStatusDate: formValues.afipKeyStatusDate || null,
+          ivaRegistered: formValues.ivaRegistered,
+          ivaWithholdingExclusion: formValues.ivaWithholdingExclusion,
+          ivaRegisteredAt: formValues.ivaRegisteredAt || null,
+          ivaCondition: formValues.ivaCondition?.trim() || null,
+          gananciasRegistered: formValues.gananciasRegistered,
+          gananciasWithholdingExclusion: formValues.gananciasWithholdingExclusion,
+          gananciasRegisteredAt: formValues.gananciasRegisteredAt || null,
+          gananciasCondition: formValues.gananciasCondition?.trim() || null,
+          monotributoRegistered: formValues.monotributoRegistered,
+          monotributoRegisteredAt: formValues.monotributoRegisteredAt || null,
+          monotributoCategory: formValues.monotributoCategory?.trim() || null,
+          monotributoType: formValues.monotributoType?.trim() || null,
+          monotributoActivity: formValues.monotributoActivity?.trim() || null,
+          monotributoSeniorityMonths:
+            formValues.monotributoSeniorityMonths == null || Number.isNaN(Number(formValues.monotributoSeniorityMonths))
+              ? null
+              : Number(formValues.monotributoSeniorityMonths),
+          isEmployee: formValues.isEmployee,
+          isEmployer: formValues.isEmployer,
+          isRetired: formValues.isRetired,
           exclusionNotes: formValues.exclusionNotes?.trim() || null,
           exemptionNotes: formValues.exemptionNotes?.trim() || null,
           regimeNotes: formValues.regimeNotes?.trim() || null,
@@ -46900,7 +47548,7 @@ const TaxProfileSection: React.FC<TaxProfileSectionProps> = ({
   const latestSnapshot = formValues.latestNosisSnapshot ?? null;
   const snapshots = Array.isArray(formValues.snapshots) ? formValues.snapshots : [];
   const documents = Array.isArray(formValues.documents) ? formValues.documents : [];
-  const cuitLabel = entityType === 'cliente' ? 'CUIT' : PERSON_TAX_ID_LABEL;
+  const activities = normalizeTaxActivities(formValues.activities);
   const resolveDocumentHref = useCallback((url: string | null) => {
     const resolved = resolveApiUrl(apiBaseUrl, url);
     if (!resolved) {
@@ -46919,6 +47567,8 @@ const TaxProfileSection: React.FC<TaxProfileSectionProps> = ({
     }
   }, [apiBaseUrl]);
   const latestSnapshotSummary = latestSnapshot ? buildTaxSnapshotSummary(latestSnapshot) : null;
+  const formatNullableBooleanValue = (value: boolean | null | undefined) =>
+    value == null ? '' : String(value);
 
   const handleUploadDocument = async () => {
     if (entityType !== 'cliente' || !endpoint || !documentFile) {
@@ -47047,8 +47697,10 @@ const TaxProfileSection: React.FC<TaxProfileSectionProps> = ({
       {loadError ? <p className="form-info form-info--error">{loadError}</p> : null}
       {saveError ? <p className="form-info form-info--error">{saveError}</p> : null}
       {refreshError ? <p className="form-info form-info--error">{refreshError}</p> : null}
+      {lookupError ? <p className="form-info form-info--error">{lookupError}</p> : null}
       {saveInfo ? <p className="form-info form-info--success">{saveInfo}</p> : null}
       {refreshInfo ? <p className="form-info form-info--success">{refreshInfo}</p> : null}
+      {!lookupError && lookupInfo ? <p className="form-info form-info--success">{lookupInfo}</p> : null}
 
       {loading ? <p className="form-info">Cargando legajo impositivo...</p> : null}
 
@@ -47057,7 +47709,38 @@ const TaxProfileSection: React.FC<TaxProfileSectionProps> = ({
           <div className="form-grid">
             <label className="input-control">
               <span>{cuitLabel}</span>
-              <input value={formValues.cuit ?? ''} onChange={handleInputChange('cuit')} disabled={readOnly} />
+              <input
+                value={formValues.cuit ?? ''}
+                onChange={(event) => {
+                  const nextValue = event.target.value.replace(/\D+/g, '').slice(0, 11);
+                  setFormValues((prev) => ({ ...prev, cuit: nextValue }));
+                  setSaveError(null);
+                  setSaveInfo(null);
+                  setRefreshError(null);
+                  setRefreshInfo(null);
+                  setLookupError(null);
+                  setLookupInfo(null);
+                  lastLookupRef.current = null;
+                }}
+                onBlur={() => {
+                  const documento = (formValues.cuit ?? '').replace(/\D+/g, '');
+                  if (documento.length === 11) {
+                    void handleLookupDocumento(false);
+                  }
+                }}
+                disabled={readOnly}
+                inputMode="numeric"
+                maxLength={11}
+              />
+              <button
+                type="button"
+                className="secondary-action"
+                onClick={() => void handleLookupDocumento(true)}
+                disabled={lookupLoading || readOnly || loading}
+                style={{ alignSelf: 'flex-start' }}
+              >
+                {lookupLoading ? 'Consultando...' : 'Autocompletar'}
+              </button>
             </label>
             <label className="input-control">
               <span>Razón social</span>
@@ -47071,6 +47754,245 @@ const TaxProfileSection: React.FC<TaxProfileSectionProps> = ({
               <span>Estado DGR</span>
               <input value={formValues.dgrStatus ?? ''} onChange={handleInputChange('dgrStatus')} disabled={readOnly} />
             </label>
+          </div>
+
+          <div className="personal-section">
+            <h3>Domicilio fiscal</h3>
+            <div className="form-grid">
+              <label className="input-control">
+                <span>Calle</span>
+                <input value={formValues.fiscalAddressStreet ?? ''} onChange={handleInputChange('fiscalAddressStreet')} disabled={readOnly} />
+              </label>
+              <label className="input-control">
+                <span>Número</span>
+                <input value={formValues.fiscalAddressNumber ?? ''} onChange={handleInputChange('fiscalAddressNumber')} disabled={readOnly} />
+              </label>
+              <label className="input-control">
+                <span>Piso</span>
+                <input value={formValues.fiscalAddressFloor ?? ''} onChange={handleInputChange('fiscalAddressFloor')} disabled={readOnly} />
+              </label>
+              <label className="input-control">
+                <span>Departamento</span>
+                <input value={formValues.fiscalAddressUnit ?? ''} onChange={handleInputChange('fiscalAddressUnit')} disabled={readOnly} />
+              </label>
+              <label className="input-control">
+                <span>Localidad</span>
+                <input value={formValues.fiscalAddressLocality ?? ''} onChange={handleInputChange('fiscalAddressLocality')} disabled={readOnly} />
+              </label>
+              <label className="input-control">
+                <span>Código postal</span>
+                <input value={formValues.fiscalAddressPostalCode ?? ''} onChange={handleInputChange('fiscalAddressPostalCode')} disabled={readOnly} />
+              </label>
+              <label className="input-control">
+                <span>Provincia</span>
+                <input value={formValues.fiscalAddressProvince ?? ''} onChange={handleInputChange('fiscalAddressProvince')} disabled={readOnly} />
+              </label>
+            </div>
+          </div>
+
+          <div className="personal-section">
+            <h3>Actividad AFIP</h3>
+            <div className="form-grid">
+              <label className="input-control">
+                <span>Código actividad principal</span>
+                <input value={formValues.activityMainCode ?? ''} onChange={handleInputChange('activityMainCode')} disabled={readOnly} />
+              </label>
+              <label className="input-control" style={{ gridColumn: 'span 2' }}>
+                <span>Descripción actividad principal</span>
+                <textarea
+                  rows={3}
+                  value={formValues.activityMainDescription ?? ''}
+                  onChange={handleInputChange('activityMainDescription')}
+                  disabled={readOnly}
+                  style={{ resize: 'vertical', minHeight: '88px' }}
+                />
+              </label>
+              <label className="input-control">
+                <span>Sector</span>
+                <input value={formValues.activityMainSector ?? ''} onChange={handleInputChange('activityMainSector')} disabled={readOnly} />
+              </label>
+              <label className="input-control">
+                <span>Fecha inicio</span>
+                <input type="date" value={formValues.activityMainStartDate ?? ''} onChange={handleInputChange('activityMainStartDate')} disabled={readOnly} />
+              </label>
+            </div>
+            {activities.length > 1 ? (
+              <div style={{ marginTop: '1rem' }}>
+                <h4 style={{ marginBottom: '0.75rem' }}>Actividades adicionales</h4>
+                <div style={{ display: 'grid', gap: '0.75rem' }}>
+                  {activities.slice(1).map((activity, index) => (
+                    <div
+                      key={`${activity.index ?? index}-${activity.code ?? 'actividad'}`}
+                      style={{
+                        border: '1px solid var(--color-border, #d8e1ef)',
+                        borderRadius: '12px',
+                        padding: '0.9rem',
+                        background: '#f8fbff',
+                      }}
+                    >
+                      <div className="form-grid">
+                        <label className="input-control">
+                          <span>Código</span>
+                          <input value={activity.code ?? ''} readOnly disabled />
+                        </label>
+                        <label className="input-control" style={{ gridColumn: 'span 2' }}>
+                          <span>Descripción</span>
+                          <textarea
+                            rows={3}
+                            value={activity.description ?? ''}
+                            readOnly
+                            disabled
+                            style={{ resize: 'vertical', minHeight: '88px' }}
+                          />
+                        </label>
+                        <label className="input-control">
+                          <span>Sector</span>
+                          <input value={activity.sector ?? ''} readOnly disabled />
+                        </label>
+                        <label className="input-control">
+                          <span>Fecha inicio</span>
+                          <input type="date" value={activity.startDate ?? ''} readOnly disabled />
+                        </label>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+          </div>
+
+          <div className="personal-section">
+            <h3>Situación fiscal</h3>
+            <div className="form-grid">
+              <label className="input-control">
+                <span>Estado clave AFIP</span>
+                <input value={formValues.afipKeyStatus ?? ''} onChange={handleInputChange('afipKeyStatus')} disabled={readOnly} />
+              </label>
+              <label className="input-control">
+                <span>Fecha estado clave AFIP</span>
+                <input type="date" value={formValues.afipKeyStatusDate ?? ''} onChange={handleInputChange('afipKeyStatusDate')} disabled={readOnly} />
+              </label>
+              <label className="input-control">
+                <span>Inscripción IVA</span>
+                <select value={formatNullableBooleanValue(formValues.ivaRegistered)} onChange={handleNullableBooleanChange('ivaRegistered')} disabled={readOnly}>
+                  <option value="">Sin dato</option>
+                  <option value="true">Sí</option>
+                  <option value="false">No</option>
+                </select>
+              </label>
+              <label className="input-control">
+                <span>Exclusión retención IVA</span>
+                <select value={formatNullableBooleanValue(formValues.ivaWithholdingExclusion)} onChange={handleNullableBooleanChange('ivaWithholdingExclusion')} disabled={readOnly}>
+                  <option value="">Sin dato</option>
+                  <option value="true">Sí</option>
+                  <option value="false">No</option>
+                </select>
+              </label>
+              <label className="input-control">
+                <span>Fecha inscripción IVA</span>
+                <input type="date" value={formValues.ivaRegisteredAt ?? ''} onChange={handleInputChange('ivaRegisteredAt')} disabled={readOnly} />
+              </label>
+              <label className="input-control">
+                <span>Condición IVA</span>
+                <input value={formValues.ivaCondition ?? ''} onChange={handleInputChange('ivaCondition')} disabled={readOnly} />
+              </label>
+              <label className="input-control">
+                <span>Inscripción Ganancias</span>
+                <select value={formatNullableBooleanValue(formValues.gananciasRegistered)} onChange={handleNullableBooleanChange('gananciasRegistered')} disabled={readOnly}>
+                  <option value="">Sin dato</option>
+                  <option value="true">Sí</option>
+                  <option value="false">No</option>
+                </select>
+              </label>
+              <label className="input-control">
+                <span>Exclusión retención Ganancias</span>
+                <select value={formatNullableBooleanValue(formValues.gananciasWithholdingExclusion)} onChange={handleNullableBooleanChange('gananciasWithholdingExclusion')} disabled={readOnly}>
+                  <option value="">Sin dato</option>
+                  <option value="true">Sí</option>
+                  <option value="false">No</option>
+                </select>
+              </label>
+              <label className="input-control">
+                <span>Fecha inscripción Ganancias</span>
+                <input type="date" value={formValues.gananciasRegisteredAt ?? ''} onChange={handleInputChange('gananciasRegisteredAt')} disabled={readOnly} />
+              </label>
+              <label className="input-control">
+                <span>Condición Ganancias</span>
+                <input value={formValues.gananciasCondition ?? ''} onChange={handleInputChange('gananciasCondition')} disabled={readOnly} />
+              </label>
+              <label className="input-control">
+                <span>Monotributista</span>
+                <select value={formatNullableBooleanValue(formValues.monotributoRegistered)} onChange={handleNullableBooleanChange('monotributoRegistered')} disabled={readOnly}>
+                  <option value="">Sin dato</option>
+                  <option value="true">Sí</option>
+                  <option value="false">No</option>
+                </select>
+              </label>
+              <label className="input-control">
+                <span>Fecha alta monotributo</span>
+                <input type="date" value={formValues.monotributoRegisteredAt ?? ''} onChange={handleInputChange('monotributoRegisteredAt')} disabled={readOnly} />
+              </label>
+              <label className="input-control">
+                <span>Categoría monotributo</span>
+                <input value={formValues.monotributoCategory ?? ''} onChange={handleInputChange('monotributoCategory')} disabled={readOnly} />
+              </label>
+              <label className="input-control">
+                <span>Tipo monotributo</span>
+                <input value={formValues.monotributoType ?? ''} onChange={handleInputChange('monotributoType')} disabled={readOnly} />
+              </label>
+              <label className="input-control">
+                <span>Actividad monotributo</span>
+                <input value={formValues.monotributoActivity ?? ''} onChange={handleInputChange('monotributoActivity')} disabled={readOnly} />
+              </label>
+              <label className="input-control">
+                <span>Antigüedad monotributo (meses)</span>
+                <input
+                  type="number"
+                  min="0"
+                  value={formValues.monotributoSeniorityMonths ?? ''}
+                  onChange={(event) =>
+                    setFormValues((prev) => ({
+                      ...prev,
+                      monotributoSeniorityMonths: event.target.value === '' ? null : Number(event.target.value),
+                    }))
+                  }
+                  disabled={readOnly}
+                />
+              </label>
+            </div>
+          </div>
+
+          <div className="personal-section">
+            <h3>Condición laboral</h3>
+            <div className="form-grid">
+              <label className="input-control">
+                <span>Es empleado</span>
+                <select value={formatNullableBooleanValue(formValues.isEmployee)} onChange={handleNullableBooleanChange('isEmployee')} disabled={readOnly}>
+                  <option value="">Sin dato</option>
+                  <option value="true">Sí</option>
+                  <option value="false">No</option>
+                </select>
+              </label>
+              <label className="input-control">
+                <span>Es empleador</span>
+                <select value={formatNullableBooleanValue(formValues.isEmployer)} onChange={handleNullableBooleanChange('isEmployer')} disabled={readOnly}>
+                  <option value="">Sin dato</option>
+                  <option value="true">Sí</option>
+                  <option value="false">No</option>
+                </select>
+              </label>
+              <label className="input-control">
+                <span>Es jubilado</span>
+                <select value={formatNullableBooleanValue(formValues.isRetired)} onChange={handleNullableBooleanChange('isRetired')} disabled={readOnly}>
+                  <option value="">Sin dato</option>
+                  <option value="true">Sí</option>
+                  <option value="false">No</option>
+                </select>
+              </label>
+            </div>
+          </div>
+
+          <div className="form-grid">
             <label className="input-control">
               <span>Cuenta bancaria</span>
               <input value={formValues.bankAccount ?? ''} onChange={handleInputChange('bankAccount')} disabled={readOnly} />
@@ -48021,6 +48943,424 @@ const BaseDistribucionDetailPage: React.FC = () => {
         {submitError ? <p className="form-info form-info--error">{submitError}</p> : null}
         {successMessage ? <p className="form-info form-info--success">{successMessage}</p> : null}
       </div>
+    </DashboardLayout>
+  );
+};
+
+const ActivosAsesoresPage: React.FC = () => {
+  const apiBaseUrl = useMemo(() => resolveApiBaseUrl(), []);
+  const [records, setRecords] = useState<ActivoAsesorComercialRecord[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [actionInfo, setActionInfo] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const [deletingId, setDeletingId] = useState<number | null>(null);
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [modalOpen, setModalOpen] = useState(false);
+  const [editingRecord, setEditingRecord] = useState<ActivoAsesorComercialRecord | null>(null);
+  const [modalError, setModalError] = useState<string | null>(null);
+  const [formValues, setFormValues] = useState({
+    encargado: '',
+    lider: '',
+    asesorComercial: '',
+    rol: '',
+    transportistaActivo: '',
+    numero: '',
+  });
+
+  const loadRecords = useCallback(async () => {
+    try {
+      setLoading(true);
+      setLoadError(null);
+
+      const response = await fetch(`${apiBaseUrl}/api/bdd-activos-asesores`);
+      const payload = (await parseJsonSafe(response).catch(() => null)) as {
+        data?: ActivoAsesorComercialRecord[];
+        message?: string;
+      } | null;
+
+      if (!response.ok) {
+        throw new Error(payload?.message ?? 'No se pudo cargar la base de activos.');
+      }
+
+      const payloadData = payload?.data;
+      const loadedRecords = Array.isArray(payloadData) ? payloadData : [];
+      setRecords(loadedRecords);
+    } catch (err) {
+      setLoadError((err as Error).message ?? 'No se pudo cargar la base de activos.');
+    } finally {
+      setLoading(false);
+    }
+  }, [apiBaseUrl]);
+
+  useEffect(() => {
+    void loadRecords();
+  }, [loadRecords]);
+
+  const resetForm = useCallback(() => {
+    setEditingRecord(null);
+    setModalError(null);
+    setFormValues({
+      encargado: '',
+      lider: '',
+      asesorComercial: '',
+      rol: '',
+      transportistaActivo: '',
+      numero: '',
+    });
+  }, []);
+
+  const openCreateModal = () => {
+    resetForm();
+    setModalOpen(true);
+  };
+
+  const openEditModal = (record: ActivoAsesorComercialRecord) => {
+    setEditingRecord(record);
+    setModalError(null);
+    setFormValues({
+      encargado: record.encargado ?? '',
+      lider: record.lider ?? '',
+      asesorComercial: record.asesorComercial ?? '',
+      rol: record.rol ?? '',
+      transportistaActivo: record.transportistaActivo ?? '',
+      numero: record.numero ?? '',
+    });
+    setModalOpen(true);
+  };
+
+  const closeModal = () => {
+    setModalOpen(false);
+    resetForm();
+  };
+
+  const handleSave = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+
+    const payloadBody = {
+      encargado: formValues.encargado.trim() || null,
+      lider: formValues.lider.trim() || null,
+      asesorComercial: formValues.asesorComercial.trim() || null,
+      rol: formValues.rol.trim() || null,
+      transportistaActivo: formValues.transportistaActivo.trim() || null,
+      numero: formValues.numero.trim() || null,
+    };
+
+    const hasAnyValue = Object.values(payloadBody).some((value) => value !== null);
+    if (!hasAnyValue) {
+      setModalError('Ingresá al menos un campo para guardar el registro.');
+      return;
+    }
+
+    try {
+      setSaving(true);
+      setModalError(null);
+      setActionError(null);
+      setActionInfo(null);
+
+      const isEditing = Boolean(editingRecord?.id);
+      const url = isEditing
+        ? `${apiBaseUrl}/api/bdd-activos-asesores/${editingRecord?.id}`
+        : `${apiBaseUrl}/api/bdd-activos-asesores`;
+      const response = await fetch(url, {
+        method: isEditing ? 'PUT' : 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payloadBody),
+      });
+      const payload = (await parseJsonSafe(response).catch(() => null)) as {
+        data?: ActivoAsesorComercialRecord;
+        message?: string;
+      } | null;
+
+      if (!response.ok) {
+        throw new Error(payload?.message ?? 'No se pudo guardar el registro.');
+      }
+
+      const savedRecord = payload?.data ?? null;
+      if (savedRecord) {
+        setRecords((prev) => {
+          if (isEditing) {
+            return prev.map((item) => (item.id === savedRecord.id ? savedRecord : item));
+          }
+
+          return [...prev, savedRecord];
+        });
+      }
+
+      setActionInfo(payload?.message ?? (isEditing ? 'Activo actualizado correctamente.' : 'Activo agregado correctamente.'));
+      closeModal();
+    } catch (err) {
+      setModalError((err as Error).message ?? 'No se pudo guardar el registro.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDelete = async (record: ActivoAsesorComercialRecord) => {
+    const label = record.transportistaActivo?.trim() || record.asesorComercial?.trim() || `ID ${record.id}`;
+    const confirmed = window.confirm(`¿Seguro que querés eliminar el registro "${label}"?`);
+    if (!confirmed) {
+      return;
+    }
+
+    try {
+      setDeletingId(record.id);
+      setActionError(null);
+      setActionInfo(null);
+
+      const response = await fetch(`${apiBaseUrl}/api/bdd-activos-asesores/${record.id}`, {
+        method: 'DELETE',
+      });
+      const payload = (await parseJsonSafe(response).catch(() => null)) as { message?: string } | null;
+
+      if (!response.ok) {
+        throw new Error(payload?.message ?? 'No se pudo eliminar el registro.');
+      }
+
+      setRecords((prev) => prev.filter((item) => item.id !== record.id));
+      setActionInfo(payload?.message ?? 'Activo eliminado correctamente.');
+    } catch (err) {
+      setActionError((err as Error).message ?? 'No se pudo eliminar el registro.');
+    } finally {
+      setDeletingId(null);
+    }
+  };
+
+  const handleImport = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+
+    if (!selectedFile) {
+      setActionError('Seleccioná un archivo Excel o CSV para importar.');
+      return;
+    }
+
+    try {
+      setImporting(true);
+      setActionError(null);
+      setActionInfo(null);
+
+      const formData = new FormData();
+      formData.append('file', selectedFile, selectedFile.name);
+
+      const response = await fetch(`${apiBaseUrl}/api/bdd-activos-asesores/import`, {
+        method: 'POST',
+        body: formData,
+      });
+      const payload = (await parseJsonSafe(response).catch(() => null)) as {
+        data?: ActivoAsesorComercialRecord[];
+        message?: string;
+        meta?: { imported?: number; fileName?: string | null };
+      } | null;
+
+      if (!response.ok) {
+        throw new Error(payload?.message ?? 'No se pudo importar la base.');
+      }
+
+      const payloadData = payload?.data;
+      const importedRecords = Array.isArray(payloadData) ? payloadData : [];
+      setRecords(importedRecords);
+      setSelectedFile(null);
+      setActionInfo(
+        payload?.message
+          ? `${payload.message} ${payload?.meta?.imported ? `Registros importados: ${payload.meta.imported}.` : ''}`.trim()
+          : 'Base importada correctamente.'
+      );
+    } catch (err) {
+      setActionError((err as Error).message ?? 'No se pudo importar la base.');
+    } finally {
+      setImporting(false);
+    }
+  };
+
+  const headerContent = (
+    <div className="card-header">
+      <div className="filters-actions" style={{ flex: 1 }}>
+        <p className="form-info" style={{ margin: 0 }}>
+          Cargá la base desde Excel y gestioná los activos asignados a asesores comerciales.
+        </p>
+      </div>
+      <button type="button" className="primary-action" onClick={openCreateModal}>
+        Agregar activo
+      </button>
+    </div>
+  );
+
+  return (
+    <DashboardLayout
+      title="BDD Activos x Asesores Comerciales"
+      subtitle={`Registros cargados: ${records.length}`}
+      headerContent={headerContent}
+    >
+      <section className="personal-edit-section">
+        <h2>Importar Excel</h2>
+        <form className="edit-form" onSubmit={handleImport}>
+          <div className="form-grid">
+            <label className="input-control">
+              <span>Archivo</span>
+              <input
+                type="file"
+                accept=".xlsx,.csv,.txt"
+                onChange={(event) => setSelectedFile(event.target.files?.[0] ?? null)}
+              />
+            </label>
+          </div>
+          <p className="form-info">La importación reemplaza la base actual y luego la muestra en pantalla.</p>
+          <div className="form-actions">
+            <button type="submit" className="primary-action" disabled={importing}>
+              {importing ? 'Importando...' : 'Subir Excel'}
+            </button>
+          </div>
+        </form>
+      </section>
+
+      {actionError ? <p className="form-info form-info--error">{actionError}</p> : null}
+      {actionInfo ? <p className="form-info form-info--success">{actionInfo}</p> : null}
+
+      <section className="personal-edit-section">
+        <h2>Base cargada</h2>
+        {loading ? <p className="form-info">Cargando registros...</p> : null}
+        {loadError ? <p className="form-info form-info--error">{loadError}</p> : null}
+        {!loading && !loadError ? (
+          <div className="table-wrapper">
+            <table>
+              <thead>
+                <tr>
+                  <th>Encargado</th>
+                  <th>Líder</th>
+                  <th>Asesor comercial</th>
+                  <th>Rol</th>
+                  <th>Transportista (Activo)</th>
+                  <th>Número</th>
+                  <th>Acciones</th>
+                </tr>
+              </thead>
+              <tbody>
+                {records.length === 0 ? (
+                  <tr>
+                    <td colSpan={7}>No hay registros cargados.</td>
+                  </tr>
+                ) : (
+                  records.map((record) => (
+                    <tr key={record.id}>
+                      <td>{record.encargado ?? '—'}</td>
+                      <td>{record.lider ?? '—'}</td>
+                      <td>{record.asesorComercial ?? '—'}</td>
+                      <td>{record.rol ?? '—'}</td>
+                      <td>{record.transportistaActivo ?? '—'}</td>
+                      <td>{record.numero ?? '—'}</td>
+                      <td>
+                        <div className="action-buttons">
+                          <button type="button" aria-label="Editar registro" onClick={() => openEditModal(record)}>
+                            ✏️
+                          </button>
+                          <button
+                            type="button"
+                            aria-label="Eliminar registro"
+                            onClick={() => handleDelete(record)}
+                            disabled={deletingId === record.id}
+                          >
+                            🗑️
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        ) : null}
+      </section>
+
+      {modalOpen ? (
+        <div className="permissions-modal" role="dialog" aria-modal="true">
+          <div className="permissions-modal__backdrop" onClick={closeModal} />
+          <div className="permissions-modal__content">
+            <div className="permissions-modal__header">
+              <div>
+                <h3>{editingRecord ? 'Editar activo' : 'Agregar activo'}</h3>
+                <p>Podés modificar cualquier campo manualmente.</p>
+              </div>
+              <button type="button" onClick={closeModal} aria-label="Cerrar">
+                ×
+              </button>
+            </div>
+            <form className="edit-form" onSubmit={handleSave} style={{ padding: '1rem' }}>
+              <div className="form-grid">
+                <label className="input-control">
+                  <span>Encargado</span>
+                  <input
+                    type="text"
+                    value={formValues.encargado}
+                    onChange={(event) => setFormValues((prev) => ({ ...prev, encargado: event.target.value }))}
+                    placeholder="Ingresar"
+                  />
+                </label>
+                <label className="input-control">
+                  <span>Líder</span>
+                  <input
+                    type="text"
+                    value={formValues.lider}
+                    onChange={(event) => setFormValues((prev) => ({ ...prev, lider: event.target.value }))}
+                    placeholder="Ingresar"
+                  />
+                </label>
+                <label className="input-control">
+                  <span>Asesor comercial</span>
+                  <input
+                    type="text"
+                    value={formValues.asesorComercial}
+                    onChange={(event) => setFormValues((prev) => ({ ...prev, asesorComercial: event.target.value }))}
+                    placeholder="Ingresar"
+                  />
+                </label>
+                <label className="input-control">
+                  <span>Rol</span>
+                  <input
+                    type="text"
+                    value={formValues.rol}
+                    onChange={(event) => setFormValues((prev) => ({ ...prev, rol: event.target.value }))}
+                    placeholder="Ingresar"
+                  />
+                </label>
+                <label className="input-control">
+                  <span>Transportista (Activo)</span>
+                  <input
+                    type="text"
+                    value={formValues.transportistaActivo}
+                    onChange={(event) =>
+                      setFormValues((prev) => ({ ...prev, transportistaActivo: event.target.value }))
+                    }
+                    placeholder="Ingresar"
+                  />
+                </label>
+                <label className="input-control">
+                  <span>Número</span>
+                  <input
+                    type="text"
+                    value={formValues.numero}
+                    onChange={(event) => setFormValues((prev) => ({ ...prev, numero: event.target.value }))}
+                    placeholder="Ingresar"
+                  />
+                </label>
+              </div>
+              {modalError ? <p className="form-info form-info--error">{modalError}</p> : null}
+              <div className="form-actions">
+                <button type="button" className="secondary-action" onClick={closeModal}>
+                  Cancelar
+                </button>
+                <button type="submit" className="primary-action" disabled={saving}>
+                  {saving ? 'Guardando...' : 'Guardar'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      ) : null}
     </DashboardLayout>
   );
 };
@@ -51419,6 +52759,14 @@ const AppRoutes: React.FC = () => (
         element={
           <RequireAccess section="bases">
             <BaseDistribucionDetailPage />
+          </RequireAccess>
+        }
+      />
+      <Route
+        path="/bdd-activos-asesores-comerciales"
+        element={
+          <RequireAccess section="bdd-activos-asesores">
+            <ActivosAsesoresPage />
           </RequireAccess>
         }
       />
