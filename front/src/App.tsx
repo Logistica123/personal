@@ -14663,6 +14663,7 @@ const PersonalPage: React.FC = () => {
       { key: 'pago', label: 'Pago' },
       { key: 'cliente', label: 'Cliente' },
       { key: 'unidad', label: 'Unidad' },
+      { key: 'patente', label: 'Patente' },
       { key: 'sucursal', label: 'Sucursal' },
       { key: 'fechaAlta', label: 'Fecha alta' },
       { key: 'fechaBaja', label: 'Fecha baja' },
@@ -15910,6 +15911,7 @@ const PersonalPage: React.FC = () => {
               {isColumnVisible('pago') ? <th>Pago</th> : null}
               {isColumnVisible('cliente') ? <th>Cliente</th> : null}
               {isColumnVisible('unidad') ? <th>Unidad</th> : null}
+              {isColumnVisible('patente') ? <th>Patente</th> : null}
               {isColumnVisible('sucursal') ? <th>Sucursal</th> : null}
               {isColumnVisible('fechaAlta') ? <th>Fecha alta</th> : null}
               {isColumnVisible('fechaBaja') ? <th>Fecha baja</th> : null}
@@ -16009,6 +16011,7 @@ const PersonalPage: React.FC = () => {
                   {isColumnVisible('pago') ? <td>{formatPagoLabel(registro.pago) || '—'}</td> : null}
                   {isColumnVisible('cliente') ? <td>{registro.cliente ?? '—'}</td> : null}
                   {isColumnVisible('unidad') ? <td>{registro.unidad ?? '—'}</td> : null}
+                  {isColumnVisible('patente') ? <td>{registro.patente ?? '—'}</td> : null}
                   {isColumnVisible('sucursal') ? <td>{registro.sucursal ?? '—'}</td> : null}
                   {isColumnVisible('fechaAlta') ? <td>{registro.fechaAlta ?? '—'}</td> : null}
                   {isColumnVisible('fechaBaja') ? <td>{registro.fechaBaja ?? '—'}</td> : null}
