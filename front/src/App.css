@@ -7824,3 +7824,296 @@ tbody tr:hover {
     grid-template-columns: 1fr;
   }
 }
+
+.recibos-page {
+  display: grid;
+  grid-template-columns: minmax(340px, 420px) minmax(0, 1fr);
+  gap: 1rem;
+  align-items: start;
+}
+
+.recibos-editor .card-header,
+.recibos-preview-card .card-header {
+  align-items: flex-start;
+}
+
+.recibos-editor__grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.85rem;
+}
+
+.recibos-editor__group + .recibos-editor__group {
+  margin-top: 1.25rem;
+}
+
+.recibos-editor__group h4 {
+  margin: 0 0 0.75rem;
+  font-size: 0.92rem;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: #35507d;
+}
+
+.recibos-editor__field--wide {
+  grid-column: span 2;
+}
+
+.recibos-summary {
+  margin-top: 0.9rem;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.85rem;
+}
+
+.recibos-editor__table-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+}
+
+.recibos-editor__table-header h4 {
+  margin: 0;
+}
+
+.recibos-editor__table-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.recibos-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+  min-height: 46px;
+  padding: 0.75rem 0.9rem;
+  border: 1px solid #dbe4f5;
+  border-radius: 12px;
+  background: #f8fbff;
+  color: #35507d;
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.recibos-check input {
+  margin: 0;
+}
+
+.recibos-editor__table input {
+  width: 100%;
+  min-width: 0;
+}
+
+.recibo-preview-shell {
+  overflow-x: auto;
+  padding-bottom: 0.35rem;
+}
+
+.recibo-document {
+  min-width: 920px;
+  background: #ffffff;
+  color: #111827;
+  border: 1px solid #111827;
+  box-shadow: 0 18px 40px rgba(15, 23, 42, 0.12);
+}
+
+.recibo-document__top {
+  display: grid;
+  grid-template-columns: 1.45fr 0.44fr 0.9fr;
+  border-bottom: 1px solid #111827;
+}
+
+.recibo-document__company,
+.recibo-document__voucher,
+.recibo-document__meta,
+.recibo-document__client,
+.recibo-document__amounts,
+.recibo-document__table,
+.recibo-document__footer {
+  padding: 12px 14px;
+}
+
+.recibo-document__company {
+  min-height: 168px;
+}
+
+.recibo-document__logo {
+  max-width: 260px;
+  max-height: 94px;
+  display: block;
+  margin-bottom: 12px;
+  object-fit: contain;
+}
+
+.recibo-document__company-lines {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 0.9rem;
+  line-height: 1.25;
+}
+
+.recibo-document__company-lines strong {
+  font-size: 1rem;
+}
+
+.recibo-document__voucher {
+  border-left: 1px solid #111827;
+  border-right: 1px solid #111827;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  text-align: center;
+}
+
+.recibo-document__voucher-letter {
+  font-size: 4.5rem;
+  line-height: 1;
+}
+
+.recibo-document__voucher-text {
+  font-size: 1.05rem;
+  font-weight: 800;
+  line-height: 1.35;
+  letter-spacing: 0.02em;
+}
+
+.recibo-document__title {
+  font-size: 2rem;
+  font-weight: 900;
+  letter-spacing: 0.04em;
+  text-align: center;
+}
+
+.recibo-document__serial {
+  margin-top: 0.35rem;
+  font-size: 1.15rem;
+  text-align: center;
+}
+
+.recibo-document__serial span {
+  margin: 0 0.45rem;
+}
+
+.recibo-document__meta-grid,
+.recibo-document__client-grid,
+.recibo-document__amount-grid {
+  display: grid;
+  gap: 0.35rem 1rem;
+}
+
+.recibo-document__meta-grid {
+  grid-template-columns: 1fr auto;
+  margin-top: 1.1rem;
+  align-items: center;
+}
+
+.recibo-document__label {
+  font-weight: 800;
+}
+
+.recibo-document__client {
+  display: grid;
+  grid-template-columns: 1.75fr 0.95fr;
+  gap: 1.4rem;
+  border-bottom: 1px solid #111827;
+}
+
+.recibo-document__client-grid span {
+  line-height: 1.35;
+}
+
+.recibo-document__amount-grid {
+  grid-template-columns: 1fr auto;
+  max-width: 580px;
+  align-items: center;
+}
+
+.recibo-document__value-right {
+  text-align: right;
+}
+
+.recibo-document__total-row {
+  font-weight: 900;
+  font-size: 1.05rem;
+}
+
+.recibo-document__table {
+  border-top: 1px solid #111827;
+}
+
+.recibo-document__table-title {
+  margin-bottom: 0.35rem;
+  font-size: 1rem;
+  font-weight: 900;
+}
+
+.recibo-document__table table {
+  background: #ffffff;
+  color: #111827;
+}
+
+.recibo-document__table th,
+.recibo-document__table td {
+  border: 1px solid #111827;
+  padding: 0.4rem 0.5rem;
+}
+
+.recibo-document__footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 1rem;
+  border-top: 1px solid #111827;
+  font-size: 1rem;
+  font-weight: 900;
+}
+
+[data-theme='dark'] .recibos-editor__group h4 {
+  color: #9db6e4;
+}
+
+[data-theme='dark'] .recibos-check {
+  background: #0b1120;
+  border-color: #1c2740;
+  color: #d6e1f6;
+}
+
+[data-theme='dark'] .recibo-document {
+  box-shadow: 0 18px 42px rgba(0, 0, 0, 0.45);
+}
+
+@media (max-width: 1100px) {
+  .recibos-page {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 720px) {
+  .recibos-editor__grid {
+    grid-template-columns: 1fr;
+  }
+
+  .recibos-editor__field--wide {
+    grid-column: span 1;
+  }
+
+  .recibos-summary {
+    grid-template-columns: 1fr;
+  }
+
+  .recibos-editor__table-header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .recibos-editor__table-actions {
+    justify-content: stretch;
+  }
+}
