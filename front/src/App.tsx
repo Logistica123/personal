@@ -1310,6 +1310,7 @@ type ReciboDraft = {
   empresaIva: string;
   empresaCuit: string;
   empresaInicioActividad: string;
+  clienteId: string;
   clienteNombre: string;
   clienteDireccion1: string;
   clienteDireccion2: string;
@@ -1322,6 +1323,28 @@ type ReciboDraft = {
   retencionesIibb: string;
   retencionesGanancias: string;
   comprobantes: ReciboComprobante[];
+};
+
+type LiquidacionReciboEstado = 'emitido' | 'anulado';
+
+type LiquidacionReciboRecord = {
+  id: number;
+  puntoVenta: string;
+  numeroRecibo: string;
+  serial: string;
+  fecha: string | null;
+  estado: LiquidacionReciboEstado;
+  totalCobro: number | string | null;
+  totalImputado: number | string | null;
+  emitidoPor?: string | null;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+  anuladoAt?: string | null;
+  anuladoPor?: string | null;
+  anuladoLeyenda?: string | null;
+  anuladoMotivo?: string | null;
+  clienteNombre?: string | null;
+  draft?: Partial<ReciboDraft> | null;
 };
 
 const RECIBOS_STORAGE_KEY = 'liquidaciones.recibosDraft';
@@ -1346,11 +1369,12 @@ const createDefaultReciboDraft = (): ReciboDraft => ({
   empresaIva: 'I.V.A. RESPONSABLE INSCRIPTO',
   empresaCuit: '30-71706098-5',
   empresaInicioActividad: '2020-08-11',
-  clienteNombre: 'OCA LOG S.A.',
-  clienteDireccion1: 'ALFEREZ H. BOUCHARD 4177-1°P-T2',
-  clienteDireccion2: 'MUNRO - PCIA. BUENOS AIRES',
-  clienteCuit: '30-71702439-3',
-  clienteIva: 'RESP. INSCRIPTO',
+  clienteId: '',
+  clienteNombre: '',
+  clienteDireccion1: '',
+  clienteDireccion2: '',
+  clienteCuit: '',
+  clienteIva: '',
   fechaCobro: '2025-07-15',
   detalleCobro: 'ECHEQ BANCO SUPERVIELLE',
   importeRecibido: '8406974,86',
@@ -1452,37 +1476,380 @@ const incrementFormattedNumber = (value: string, fallbackSize = 1): string => {
   return `${trimmed.slice(0, match.index)}${nextValue}${trimmed.slice(match.index + digits.length)}`;
 };
 
-const readStoredReciboDraft = (): ReciboDraft => {
+const normalizeTextValue = (value: string | null | undefined): string => {
+  if (typeof value !== 'string') {
+    return '';
+  }
+  return value.trim();
+};
+
+const buildReciboClienteDraft = (cliente: Cliente, ivaCondition?: string | null) => {
+  const direccionCliente = normalizeTextValue(cliente.direccion);
+  const preferredSucursal =
+    cliente.sucursales.find((item) => normalizeTextValue(item.direccion) || normalizeTextValue(item.nombre)) ?? null;
+  const sucursalDireccion = normalizeTextValue(preferredSucursal?.direccion);
+  const sucursalNombre = normalizeTextValue(preferredSucursal?.nombre);
+  const clienteNombre = normalizeTextValue(cliente.nombre);
+  const clienteCuit = normalizeTextValue(cliente.documento_fiscal);
+  const clienteIva = normalizeTextValue(ivaCondition);
+  const clienteDireccion1 = direccionCliente || sucursalDireccion;
+  const clienteDireccion2 =
+    [sucursalDireccion, sucursalNombre].find((value) => value && value !== clienteDireccion1) ?? '';
+
+  return {
+    clienteId: String(cliente.id),
+    clienteNombre,
+    clienteDireccion1,
+    clienteDireccion2,
+    clienteCuit,
+    clienteIva,
+  };
+};
+
+const normalizeReciboDraft = (raw?: Partial<ReciboDraft> | null): ReciboDraft => {
   const fallback = createDefaultReciboDraft();
-  if (typeof window === 'undefined') {
+  if (!raw || typeof raw !== 'object') {
     return fallback;
+  }
+
+  const comprobantes = Array.isArray(raw.comprobantes)
+    ? raw.comprobantes
+        .filter((item) => Boolean(item) && typeof item === 'object')
+        .map((item) => createReciboComprobante(item as Partial<ReciboComprobante>))
+    : fallback.comprobantes;
+
+  return {
+    ...fallback,
+    ...raw,
+    comprobantes: comprobantes.length > 0 ? comprobantes : fallback.comprobantes,
+  };
+};
+
+const readStoredReciboDraft = (): ReciboDraft => {
+  if (typeof window === 'undefined') {
+    return createDefaultReciboDraft();
   }
 
   try {
     const raw = window.localStorage.getItem(RECIBOS_STORAGE_KEY);
     if (!raw) {
-      return fallback;
+      return createDefaultReciboDraft();
     }
 
     const parsed = JSON.parse(raw) as Partial<ReciboDraft> | null;
-    if (!parsed || typeof parsed !== 'object') {
-      return fallback;
-    }
-
-    const comprobantes = Array.isArray(parsed.comprobantes)
-      ? parsed.comprobantes
-          .filter((item) => Boolean(item) && typeof item === 'object')
-          .map((item) => createReciboComprobante(item as Partial<ReciboComprobante>))
-      : fallback.comprobantes;
-
-    return {
-      ...fallback,
-      ...parsed,
-      comprobantes: comprobantes.length > 0 ? comprobantes : fallback.comprobantes,
-    };
+    return normalizeReciboDraft(parsed);
   } catch {
-    return fallback;
+    return createDefaultReciboDraft();
   }
+};
+
+const buildNextReciboDraft = (draft: ReciboDraft): ReciboDraft => ({
+  ...draft,
+  numeroRecibo: draft.autoNumeroRecibo ? incrementFormattedNumber(draft.numeroRecibo, 8) : draft.numeroRecibo,
+  comprobantes: draft.autoNumeroFactura
+    ? draft.comprobantes.map((item) => ({
+        ...item,
+        numeroFactura: item.numeroFactura
+          ? incrementFormattedNumber(item.numeroFactura)
+          : incrementFormattedNumber('', 8),
+      }))
+    : draft.comprobantes,
+});
+
+const buildReciboWatermarkText = (recibo: LiquidacionReciboRecord | null): string | null => {
+  if (!recibo || recibo.estado !== 'anulado') {
+    return null;
+  }
+
+  const customLabel = recibo.anuladoLeyenda?.trim();
+  return customLabel && customLabel.length > 0 ? customLabel : 'RECIBO ANULADO';
+};
+
+const buildReciboPrintHtml = (
+  draft: ReciboDraft,
+  options: {
+    pointOfSaleLabel: string;
+    receiptNumberLabel: string;
+    totalCobro: number;
+    totalImputado: number;
+    watermarkText?: string | null;
+  }
+): string => {
+  const logoUrl =
+    typeof window !== 'undefined' ? `${window.location.origin}/logo-empresa.png` : '/logo-empresa.png';
+  const rowsHtml = draft.comprobantes
+    .map(
+      (item) => `
+        <tr>
+          <td>${escapeHtml(formatReciboDate(item.fecha))}</td>
+          <td>${escapeHtml(item.numeroFactura || '—')}</td>
+          <td style="text-align:right;">${escapeHtml(formatReciboAmount(item.totalFactura))}</td>
+          <td style="text-align:right;">${escapeHtml(formatReciboAmount(item.imputado))}</td>
+        </tr>
+      `
+    )
+    .join('');
+  const watermarkHtml = options.watermarkText
+    ? `<div class="recibo-print__watermark"><span>${escapeHtml(options.watermarkText)}</span></div>`
+    : '';
+
+  return `<!doctype html>
+    <html lang="es">
+      <head>
+        <meta charset="utf-8" />
+        <title>Recibo ${options.pointOfSaleLabel}-${options.receiptNumberLabel}</title>
+        <style>
+          @page { size: A4 landscape; margin: 10mm; }
+          * { box-sizing: border-box; }
+          body {
+            margin: 0;
+            color: #111827;
+            font-family: Arial, Helvetica, sans-serif;
+            background: #ffffff;
+          }
+          .recibo-print {
+            position: relative;
+            width: 100%;
+            overflow: hidden;
+            border: 1px solid #111827;
+          }
+          .recibo-print__watermark {
+            position: absolute;
+            inset: 0;
+            z-index: 5;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            pointer-events: none;
+          }
+          .recibo-print__watermark span {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: min(62%, 540px);
+            max-width: calc(100% - 144px);
+            padding: 18px 26px;
+            border: 6px solid rgba(220, 38, 38, 0.72);
+            color: rgba(220, 38, 38, 0.34);
+            font-size: 42px;
+            font-weight: 900;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            line-height: 0.92;
+            text-align: center;
+            transform: rotate(-28deg);
+            white-space: normal;
+          }
+          .recibo-print__top {
+            display: grid;
+            grid-template-columns: 1.4fr 0.42fr 0.88fr;
+            border-bottom: 1px solid #111827;
+          }
+          .recibo-print__company,
+          .recibo-print__voucher,
+          .recibo-print__meta,
+          .recibo-print__client,
+          .recibo-print__amounts,
+          .recibo-print__table,
+          .recibo-print__footer {
+            padding: 10px 12px;
+          }
+          .recibo-print__company {
+            min-height: 158px;
+          }
+          .recibo-print__voucher {
+            border-left: 1px solid #111827;
+            border-right: 1px solid #111827;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            text-align: center;
+          }
+          .recibo-print__voucher-letter {
+            font-size: 70px;
+            line-height: 1;
+          }
+          .recibo-print__voucher-text {
+            font-size: 14px;
+            font-weight: 700;
+            line-height: 1.4;
+          }
+          .recibo-print__meta-title {
+            font-size: 24px;
+            font-weight: 800;
+            letter-spacing: 0.04em;
+            text-align: center;
+          }
+          .recibo-print__meta-serial {
+            margin-top: 4px;
+            font-size: 18px;
+            text-align: center;
+          }
+          .recibo-print__meta-grid,
+          .recibo-print__client-grid,
+          .recibo-print__amount-grid {
+            display: grid;
+            gap: 6px 16px;
+          }
+          .recibo-print__meta-grid {
+            grid-template-columns: 1fr auto;
+            margin-top: 18px;
+          }
+          .recibo-print__client {
+            display: grid;
+            grid-template-columns: 1.8fr 0.9fr;
+            gap: 24px;
+            border-bottom: 1px solid #111827;
+          }
+          .recibo-print__amounts {
+            padding-top: 14px;
+            padding-bottom: 16px;
+          }
+          .recibo-print__amount-grid {
+            grid-template-columns: 1fr auto;
+            max-width: 560px;
+          }
+          .recibo-print__amount-grid--total {
+            font-weight: 800;
+            margin-top: 2px;
+          }
+          .recibo-print__label {
+            font-weight: 700;
+          }
+          .recibo-print__value-right {
+            text-align: right;
+          }
+          .recibo-print__logo {
+            max-width: 230px;
+            max-height: 86px;
+            display: block;
+            margin-bottom: 10px;
+          }
+          .recibo-print__company-lines {
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+            font-size: 13px;
+            line-height: 1.25;
+          }
+          .recibo-print__company-lines strong {
+            font-size: 14px;
+          }
+          .recibo-print__table {
+            border-top: 1px solid #111827;
+          }
+          .recibo-print__table-title {
+            margin-bottom: 2px;
+            font-size: 14px;
+            font-weight: 800;
+          }
+          table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 13px;
+            background: #ffffff;
+          }
+          th, td {
+            padding: 4px 6px;
+            border: 1px solid #111827;
+          }
+          th {
+            text-align: left;
+          }
+          .recibo-print__footer {
+            display: flex;
+            justify-content: flex-end;
+            gap: 14px;
+            border-top: 1px solid #111827;
+            font-size: 15px;
+            font-weight: 800;
+          }
+        </style>
+      </head>
+      <body>
+        <article class="recibo-print">
+          ${watermarkHtml}
+          <section class="recibo-print__top">
+            <div class="recibo-print__company">
+              <img class="recibo-print__logo" src="${escapeHtml(logoUrl)}" alt="Logo empresa" />
+              <div class="recibo-print__company-lines">
+                <strong>${escapeHtml(draft.empresaNombre)}</strong>
+                <span>${escapeHtml(draft.empresaDireccion1)}</span>
+                <span>${escapeHtml(draft.empresaDireccion2)}</span>
+                <span>${escapeHtml(draft.empresaIva)}</span>
+              </div>
+            </div>
+            <div class="recibo-print__voucher">
+              <div class="recibo-print__voucher-letter">X</div>
+              <div class="recibo-print__voucher-text">DOCUMENTO<br />NO VALIDO<br />COMO FACTURA</div>
+            </div>
+            <div class="recibo-print__meta">
+              <div class="recibo-print__meta-title">RECIBO</div>
+              <div class="recibo-print__meta-serial">${escapeHtml(options.pointOfSaleLabel)} - ${escapeHtml(options.receiptNumberLabel)}</div>
+              <div class="recibo-print__meta-grid">
+                <span class="recibo-print__label">FECHA:</span>
+                <span>${escapeHtml(formatReciboDate(draft.fecha))}</span>
+                <span class="recibo-print__label">CUIT:</span>
+                <span>${escapeHtml(draft.empresaCuit || '—')}</span>
+                <span class="recibo-print__label">INICIO DE ACT.:</span>
+                <span>${escapeHtml(formatReciboDate(draft.empresaInicioActividad))}</span>
+              </div>
+            </div>
+          </section>
+          <section class="recibo-print__client">
+            <div class="recibo-print__client-grid">
+              <span><span class="recibo-print__label">CLIENTE</span> ${escapeHtml(draft.clienteNombre || '—')}</span>
+              <span><span class="recibo-print__label">DIRECCION</span> ${escapeHtml(draft.clienteDireccion1 || '—')}</span>
+              <span>${escapeHtml(draft.clienteDireccion2 || '')}</span>
+            </div>
+            <div class="recibo-print__client-grid">
+              <span><span class="recibo-print__label">CUIT</span> ${escapeHtml(draft.clienteCuit || '—')}</span>
+              <span><span class="recibo-print__label">IVA</span> ${escapeHtml(draft.clienteIva || '—')}</span>
+            </div>
+          </section>
+          <section class="recibo-print__amounts">
+            <div class="recibo-print__amount-grid">
+              <span class="recibo-print__label">FECHA DEL COBRO</span>
+              <span class="recibo-print__value-right">${escapeHtml(formatReciboDate(draft.fechaCobro))}</span>
+              <span class="recibo-print__label">DETALLE DEL COBRO</span>
+              <span class="recibo-print__value-right">${escapeHtml(draft.detalleCobro || '—')}</span>
+              <span class="recibo-print__label">IMPORTE RECIBIDO</span>
+              <span class="recibo-print__value-right">${escapeHtml(formatReciboAmount(draft.importeRecibido, { emptyAsZero: true }))}</span>
+              <span class="recibo-print__label">RETENCIONES IVA</span>
+              <span class="recibo-print__value-right">${escapeHtml(formatReciboAmount(draft.retencionesIva, { emptyAsZero: true }))}</span>
+              <span class="recibo-print__label">RETENCIONES IIBB</span>
+              <span class="recibo-print__value-right">${escapeHtml(formatReciboAmount(draft.retencionesIibb, { emptyAsZero: true }))}</span>
+              <span class="recibo-print__label">RETENCIONES GANANCIAS</span>
+              <span class="recibo-print__value-right">${escapeHtml(formatReciboAmount(draft.retencionesGanancias, { emptyAsZero: true }))}</span>
+              <span class="recibo-print__label recibo-print__amount-grid--total">TOTAL COBRO</span>
+              <span class="recibo-print__value-right recibo-print__amount-grid--total">${escapeHtml(formatReciboAmount(options.totalCobro, { emptyAsZero: true }))}</span>
+            </div>
+          </section>
+          <section class="recibo-print__table">
+            <div class="recibo-print__table-title">DETALLE DE COMPROBANTES IMPUTADOS</div>
+            <table>
+              <thead>
+                <tr>
+                  <th>FECHA</th>
+                  <th>N° FACT</th>
+                  <th>TOTAL FACT</th>
+                  <th>IMPUTADO</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${rowsHtml || '<tr><td colspan="4">Sin comprobantes imputados.</td></tr>'}
+              </tbody>
+            </table>
+          </section>
+          <section class="recibo-print__footer">
+            <span>TOTAL IMPUTADO</span>
+            <span>${escapeHtml(formatReciboAmount(options.totalImputado, { emptyAsZero: true }))}</span>
+          </section>
+        </article>
+      </body>
+    </html>`;
 };
 
 type AltaAttachmentItem = {
@@ -24792,10 +25159,26 @@ const CombustibleRunsPage: React.FC = () => {
 };
 
 const RecibosPage: React.FC = () => {
+  const apiBaseUrl = useMemo(() => resolveApiBaseUrl(), []);
+  const authUser = useStoredAuthUser();
+  const actorHeaders = useMemo(() => buildActorHeaders(authUser), [authUser]);
   const [draft, setDraft] = useState<ReciboDraft>(() => readStoredReciboDraft());
+  const [clientes, setClientes] = useState<Cliente[]>([]);
+  const [clientesLoading, setClientesLoading] = useState(false);
+  const [clientesError, setClientesError] = useState<string | null>(null);
+  const [receipts, setReceipts] = useState<LiquidacionReciboRecord[]>([]);
+  const [receiptsLoading, setReceiptsLoading] = useState(false);
+  const [receiptsError, setReceiptsError] = useState<string | null>(null);
+  const [receiptSearch, setReceiptSearch] = useState('');
+  const [selectedReceipt, setSelectedReceipt] = useState<LiquidacionReciboRecord | null>(null);
+  const [savingReceipt, setSavingReceipt] = useState(false);
+  const [annullingReceipt, setAnnullingReceipt] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [actionInfo, setActionInfo] = useState<string | null>(null);
+  const clientIvaCacheRef = useRef<Record<number, string>>({});
 
   useEffect(() => {
-    if (typeof window === 'undefined') {
+    if (typeof window === 'undefined' || selectedReceipt) {
       return;
     }
 
@@ -24804,24 +25187,160 @@ const RecibosPage: React.FC = () => {
     } catch {
       // ignore storage failures
     }
-  }, [draft]);
+  }, [draft, selectedReceipt]);
 
   const pointOfSaleLabel = useMemo(() => formatReciboSerial(draft.puntoVenta, 4), [draft.puntoVenta]);
   const receiptNumberLabel = useMemo(() => formatReciboSerial(draft.numeroRecibo, 8), [draft.numeroRecibo]);
-
-  const totalCobro = useMemo(() => {
-    return (
+  const totalCobro = useMemo(
+    () =>
       (parseLocalizedDecimal(draft.importeRecibido) ?? 0) +
       (parseLocalizedDecimal(draft.retencionesIva) ?? 0) +
       (parseLocalizedDecimal(draft.retencionesIibb) ?? 0) +
-      (parseLocalizedDecimal(draft.retencionesGanancias) ?? 0)
-    );
-  }, [draft.importeRecibido, draft.retencionesGanancias, draft.retencionesIibb, draft.retencionesIva]);
-
+      (parseLocalizedDecimal(draft.retencionesGanancias) ?? 0),
+    [draft.importeRecibido, draft.retencionesGanancias, draft.retencionesIibb, draft.retencionesIva]
+  );
   const totalImputado = useMemo(
     () => draft.comprobantes.reduce((sum, item) => sum + (parseLocalizedDecimal(item.imputado) ?? 0), 0),
     [draft.comprobantes]
   );
+  const watermarkText = useMemo(() => buildReciboWatermarkText(selectedReceipt), [selectedReceipt]);
+  const editorDisabled = Boolean(selectedReceipt);
+
+  const loadReceipts = useCallback(
+    async (searchText = '') => {
+      try {
+        setReceiptsLoading(true);
+        setReceiptsError(null);
+
+        const url = new URL(`${apiBaseUrl}/api/liquidaciones/recibos`);
+        if (searchText.trim()) {
+          url.searchParams.set('q', searchText.trim());
+        }
+        url.searchParams.set('per_page', '25');
+
+        const response = await fetch(url.toString(), {
+          headers: {
+            Accept: 'application/json',
+            ...actorHeaders,
+          },
+        });
+        const payload = (await parseJsonSafe(response)) as {
+          data?: LiquidacionReciboRecord[];
+          message?: string;
+        };
+
+        if (!response.ok) {
+          throw new Error(payload?.message ?? 'No se pudieron cargar los recibos emitidos.');
+        }
+
+        setReceipts(Array.isArray(payload?.data) ? payload.data : []);
+      } catch (err) {
+        setReceipts([]);
+        setReceiptsError((err as Error).message ?? 'No se pudieron cargar los recibos emitidos.');
+      } finally {
+        setReceiptsLoading(false);
+      }
+    },
+    [actorHeaders, apiBaseUrl]
+  );
+
+  const loadClientes = useCallback(async () => {
+    try {
+      setClientesLoading(true);
+      setClientesError(null);
+
+      const response = await fetch(`${apiBaseUrl}/api/clientes`, {
+        headers: {
+          Accept: 'application/json',
+          ...actorHeaders,
+        },
+      });
+      const payload = (await parseJsonSafe(response)) as {
+        data?: Cliente[];
+        message?: string;
+      };
+
+      if (!response.ok) {
+        throw new Error(payload?.message ?? 'No se pudieron cargar los clientes.');
+      }
+
+      setClientes(Array.isArray(payload?.data) ? payload.data : []);
+    } catch (err) {
+      setClientes([]);
+      setClientesError((err as Error).message ?? 'No se pudieron cargar los clientes.');
+    } finally {
+      setClientesLoading(false);
+    }
+  }, [actorHeaders, apiBaseUrl]);
+
+  const fetchClienteIvaCondition = useCallback(
+    async (clienteId: number): Promise<string> => {
+      if (!Number.isFinite(clienteId) || clienteId <= 0) {
+        return '';
+      }
+
+      if (Object.prototype.hasOwnProperty.call(clientIvaCacheRef.current, clienteId)) {
+        return clientIvaCacheRef.current[clienteId] ?? '';
+      }
+
+      const response = await fetch(`${apiBaseUrl}/api/clientes/${clienteId}/legajo-impositivo`, {
+        headers: {
+          Accept: 'application/json',
+          ...actorHeaders,
+        },
+      });
+      const payload = (await parseJsonSafe(response)) as {
+        data?: TaxProfileRecord;
+        message?: string;
+      };
+
+      if (!response.ok) {
+        throw new Error(payload?.message ?? 'No se pudo cargar la condición impositiva del cliente.');
+      }
+
+      const ivaCondition = normalizeTextValue(payload?.data?.ivaCondition);
+      clientIvaCacheRef.current[clienteId] = ivaCondition;
+      return ivaCondition;
+    },
+    [actorHeaders, apiBaseUrl]
+  );
+
+  useEffect(() => {
+    void loadClientes();
+  }, [loadClientes]);
+
+  useEffect(() => {
+    void loadReceipts();
+  }, [loadReceipts]);
+
+  useEffect(() => {
+    if (clientes.length === 0) {
+      return;
+    }
+
+    setDraft((prev) => {
+      if (prev.clienteId) {
+        return prev;
+      }
+
+      const normalizedNombre = normalizeTextValue(prev.clienteNombre).toLowerCase();
+      if (!normalizedNombre) {
+        return prev;
+      }
+
+      const matchedClient = clientes.find(
+        (cliente) => normalizeTextValue(cliente.nombre).toLowerCase() === normalizedNombre
+      );
+      if (!matchedClient) {
+        return prev;
+      }
+
+      return {
+        ...prev,
+        clienteId: String(matchedClient.id),
+      };
+    });
+  }, [clientes]);
 
   const handleFieldChange = useCallback(
     (
@@ -24841,6 +25360,51 @@ const RecibosPage: React.FC = () => {
         setDraft((prev) => ({ ...prev, [field]: nextValue }));
       },
     []
+  );
+
+  const handleClienteChange = useCallback(
+    async (event: React.ChangeEvent<HTMLSelectElement>) => {
+      const nextClienteId = event.target.value;
+      setActionError(null);
+
+      if (!nextClienteId) {
+        setDraft((prev) => ({
+          ...prev,
+          clienteId: '',
+          clienteNombre: '',
+          clienteDireccion1: '',
+          clienteDireccion2: '',
+          clienteCuit: '',
+          clienteIva: '',
+        }));
+        return;
+      }
+
+      const selectedClient = clientes.find((cliente) => String(cliente.id) === nextClienteId);
+      if (!selectedClient) {
+        return;
+      }
+
+      setDraft((prev) => ({
+        ...prev,
+        ...buildReciboClienteDraft(selectedClient),
+      }));
+
+      try {
+        const ivaCondition = await fetchClienteIvaCondition(selectedClient.id);
+        setDraft((prev) =>
+          prev.clienteId === String(selectedClient.id)
+            ? {
+                ...prev,
+                clienteIva: ivaCondition,
+              }
+            : prev
+        );
+      } catch (err) {
+        setActionError((err as Error).message ?? 'No se pudo completar la condición impositiva del cliente.');
+      }
+    },
+    [clientes, fetchClienteIvaCondition]
   );
 
   const handleComprobanteChange = useCallback(
@@ -24867,277 +25431,178 @@ const RecibosPage: React.FC = () => {
   }, []);
 
   const handleReset = useCallback(() => {
+    setSelectedReceipt(null);
     setDraft(createDefaultReciboDraft());
+    setActionError(null);
+    setActionInfo('Borrador restablecido.');
   }, []);
 
-  const printHtml = useMemo(() => {
-    const logoUrl =
-      typeof window !== 'undefined' ? `${window.location.origin}/logo-empresa.png` : '/logo-empresa.png';
+  const handleNewDraft = useCallback(() => {
+    setSelectedReceipt(null);
+    setDraft(readStoredReciboDraft());
+    setActionError(null);
+    setActionInfo(null);
+  }, []);
 
-    const rowsHtml = draft.comprobantes
-      .map(
-        (item) => `
-          <tr>
-            <td>${escapeHtml(formatReciboDate(item.fecha))}</td>
-            <td>${escapeHtml(item.numeroFactura || '—')}</td>
-            <td style="text-align:right;">${escapeHtml(formatReciboAmount(item.totalFactura))}</td>
-            <td style="text-align:right;">${escapeHtml(formatReciboAmount(item.imputado))}</td>
-          </tr>
-        `
-      )
-      .join('');
-
-    return `<!doctype html>
-      <html lang="es">
-        <head>
-          <meta charset="utf-8" />
-          <title>Recibo ${pointOfSaleLabel}-${receiptNumberLabel}</title>
-          <style>
-            @page { size: A4 landscape; margin: 10mm; }
-            * { box-sizing: border-box; }
-            body {
-              margin: 0;
-              color: #111827;
-              font-family: Arial, Helvetica, sans-serif;
-              background: #ffffff;
-            }
-            .recibo-print {
-              width: 100%;
-              border: 1px solid #111827;
-            }
-            .recibo-print__top {
-              display: grid;
-              grid-template-columns: 1.4fr 0.42fr 0.88fr;
-              border-bottom: 1px solid #111827;
-            }
-            .recibo-print__company,
-            .recibo-print__voucher,
-            .recibo-print__meta,
-            .recibo-print__client,
-            .recibo-print__amounts,
-            .recibo-print__table,
-            .recibo-print__footer {
-              padding: 10px 12px;
-            }
-            .recibo-print__company {
-              min-height: 158px;
-            }
-            .recibo-print__voucher {
-              border-left: 1px solid #111827;
-              border-right: 1px solid #111827;
-              display: flex;
-              flex-direction: column;
-              align-items: center;
-              justify-content: center;
-              gap: 8px;
-              text-align: center;
-            }
-            .recibo-print__voucher-letter {
-              font-size: 70px;
-              line-height: 1;
-            }
-            .recibo-print__voucher-text {
-              font-size: 14px;
-              font-weight: 700;
-              line-height: 1.4;
-            }
-            .recibo-print__meta-title {
-              font-size: 24px;
-              font-weight: 800;
-              letter-spacing: 0.04em;
-              text-align: center;
-            }
-            .recibo-print__meta-serial {
-              margin-top: 4px;
-              font-size: 18px;
-              text-align: center;
-            }
-            .recibo-print__meta-grid,
-            .recibo-print__client-grid,
-            .recibo-print__amount-grid {
-              display: grid;
-              gap: 6px 16px;
-            }
-            .recibo-print__meta-grid {
-              grid-template-columns: 1fr auto;
-              margin-top: 18px;
-            }
-            .recibo-print__client {
-              display: grid;
-              grid-template-columns: 1.8fr 0.9fr;
-              gap: 24px;
-              border-bottom: 1px solid #111827;
-            }
-            .recibo-print__amounts {
-              padding-top: 14px;
-              padding-bottom: 16px;
-            }
-            .recibo-print__amount-grid {
-              grid-template-columns: 1fr auto;
-              max-width: 560px;
-            }
-            .recibo-print__amount-grid--total {
-              font-weight: 800;
-              margin-top: 2px;
-            }
-            .recibo-print__label {
-              font-weight: 700;
-            }
-            .recibo-print__value-right {
-              text-align: right;
-            }
-            .recibo-print__logo {
-              max-width: 230px;
-              max-height: 86px;
-              display: block;
-              margin-bottom: 10px;
-            }
-            .recibo-print__company-lines {
-              display: flex;
-              flex-direction: column;
-              gap: 2px;
-              font-size: 13px;
-              line-height: 1.25;
-            }
-            .recibo-print__company-lines strong {
-              font-size: 14px;
-            }
-            .recibo-print__table {
-              border-top: 1px solid #111827;
-            }
-            .recibo-print__table-title {
-              margin-bottom: 2px;
-              font-size: 14px;
-              font-weight: 800;
-            }
-            table {
-              width: 100%;
-              border-collapse: collapse;
-              font-size: 13px;
-            }
-            th, td {
-              padding: 4px 6px;
-              border: 1px solid #111827;
-            }
-            th {
-              text-align: left;
-            }
-            .recibo-print__footer {
-              display: flex;
-              justify-content: flex-end;
-              gap: 14px;
-              border-top: 1px solid #111827;
-              font-size: 15px;
-              font-weight: 800;
-            }
-          </style>
-        </head>
-        <body>
-          <article class="recibo-print">
-            <section class="recibo-print__top">
-              <div class="recibo-print__company">
-                <img class="recibo-print__logo" src="${escapeHtml(logoUrl)}" alt="Logo empresa" />
-                <div class="recibo-print__company-lines">
-                  <strong>${escapeHtml(draft.empresaNombre)}</strong>
-                  <span>${escapeHtml(draft.empresaDireccion1)}</span>
-                  <span>${escapeHtml(draft.empresaDireccion2)}</span>
-                  <span>${escapeHtml(draft.empresaIva)}</span>
-                </div>
-              </div>
-              <div class="recibo-print__voucher">
-                <div class="recibo-print__voucher-letter">X</div>
-                <div class="recibo-print__voucher-text">DOCUMENTO<br />NO VALIDO<br />COMO FACTURA</div>
-              </div>
-              <div class="recibo-print__meta">
-                <div class="recibo-print__meta-title">RECIBO</div>
-                <div class="recibo-print__meta-serial">${escapeHtml(pointOfSaleLabel)} - ${escapeHtml(receiptNumberLabel)}</div>
-                <div class="recibo-print__meta-grid">
-                  <span class="recibo-print__label">FECHA:</span>
-                  <span>${escapeHtml(formatReciboDate(draft.fecha))}</span>
-                  <span class="recibo-print__label">CUIT:</span>
-                  <span>${escapeHtml(draft.empresaCuit || '—')}</span>
-                  <span class="recibo-print__label">INICIO DE ACT.:</span>
-                  <span>${escapeHtml(formatReciboDate(draft.empresaInicioActividad))}</span>
-                </div>
-              </div>
-            </section>
-            <section class="recibo-print__client">
-              <div class="recibo-print__client-grid">
-                <span><span class="recibo-print__label">CLIENTE</span> ${escapeHtml(draft.clienteNombre || '—')}</span>
-                <span><span class="recibo-print__label">DIRECCION</span> ${escapeHtml(draft.clienteDireccion1 || '—')}</span>
-                <span>${escapeHtml(draft.clienteDireccion2 || '')}</span>
-              </div>
-              <div class="recibo-print__client-grid">
-                <span><span class="recibo-print__label">CUIT</span> ${escapeHtml(draft.clienteCuit || '—')}</span>
-                <span><span class="recibo-print__label">IVA</span> ${escapeHtml(draft.clienteIva || '—')}</span>
-              </div>
-            </section>
-            <section class="recibo-print__amounts">
-              <div class="recibo-print__amount-grid">
-                <span class="recibo-print__label">FECHA DEL COBRO</span>
-                <span class="recibo-print__value-right">${escapeHtml(formatReciboDate(draft.fechaCobro))}</span>
-                <span class="recibo-print__label">DETALLE DEL COBRO</span>
-                <span class="recibo-print__value-right">${escapeHtml(draft.detalleCobro || '—')}</span>
-                <span class="recibo-print__label">IMPORTE RECIBIDO</span>
-                <span class="recibo-print__value-right">${escapeHtml(formatReciboAmount(draft.importeRecibido, { emptyAsZero: true }))}</span>
-                <span class="recibo-print__label">RETENCIONES IVA</span>
-                <span class="recibo-print__value-right">${escapeHtml(formatReciboAmount(draft.retencionesIva, { emptyAsZero: true }))}</span>
-                <span class="recibo-print__label">RETENCIONES IIBB</span>
-                <span class="recibo-print__value-right">${escapeHtml(formatReciboAmount(draft.retencionesIibb, { emptyAsZero: true }))}</span>
-                <span class="recibo-print__label">RETENCIONES GANANCIAS</span>
-                <span class="recibo-print__value-right">${escapeHtml(formatReciboAmount(draft.retencionesGanancias, { emptyAsZero: true }))}</span>
-                <span class="recibo-print__label recibo-print__amount-grid--total">TOTAL COBRO</span>
-                <span class="recibo-print__value-right recibo-print__amount-grid--total">${escapeHtml(formatReciboAmount(totalCobro, { emptyAsZero: true }))}</span>
-              </div>
-            </section>
-            <section class="recibo-print__table">
-              <div class="recibo-print__table-title">DETALLE DE COMPROBANTES IMPUTADOS</div>
-              <table>
-                <thead>
-                  <tr>
-                    <th>FECHA</th>
-                    <th>N° FACT</th>
-                    <th>TOTAL FACT</th>
-                    <th>IMPUTADO</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  ${rowsHtml || '<tr><td colspan="4">Sin comprobantes imputados.</td></tr>'}
-                </tbody>
-              </table>
-            </section>
-            <section class="recibo-print__footer">
-              <span>TOTAL IMPUTADO</span>
-              <span>${escapeHtml(formatReciboAmount(totalImputado, { emptyAsZero: true }))}</span>
-            </section>
-          </article>
-        </body>
-      </html>`;
-  }, [draft, pointOfSaleLabel, receiptNumberLabel, totalCobro, totalImputado]);
-
-  const handlePrint = useCallback(() => {
+  const openPrintWindow = useCallback((html: string) => {
     const win = window.open('', '_blank');
     if (!win) {
       window.alert('No se pudo abrir la vista de impresión.');
-      return;
+      return false;
     }
-    win.document.write(printHtml);
+
+    win.document.write(html);
     win.document.close();
     win.focus();
     win.print();
-    setDraft((prev) => ({
-      ...prev,
-      numeroRecibo: prev.autoNumeroRecibo ? incrementFormattedNumber(prev.numeroRecibo, 8) : prev.numeroRecibo,
-      comprobantes: prev.autoNumeroFactura
-        ? prev.comprobantes.map((item) => ({
-            ...item,
-            numeroFactura: item.numeroFactura
-              ? incrementFormattedNumber(item.numeroFactura)
-              : incrementFormattedNumber('', 8),
-          }))
-        : prev.comprobantes,
-    }));
-  }, [printHtml]);
+    return true;
+  }, []);
+
+  const handleSelectReceipt = useCallback((receipt: LiquidacionReciboRecord) => {
+    setSelectedReceipt(receipt);
+    setDraft(normalizeReciboDraft(receipt.draft));
+    setActionError(null);
+    setActionInfo(`Recibo ${receipt.serial} cargado para reimpresión.`);
+  }, []);
+
+  const handleSearchReceipts = useCallback(
+    async (event: React.FormEvent<HTMLFormElement>) => {
+      event.preventDefault();
+      await loadReceipts(receiptSearch);
+    },
+    [loadReceipts, receiptSearch]
+  );
+
+  const previewHtml = useMemo(
+    () =>
+      buildReciboPrintHtml(draft, {
+        pointOfSaleLabel,
+        receiptNumberLabel,
+        totalCobro,
+        totalImputado,
+        watermarkText,
+      }),
+    [draft, pointOfSaleLabel, receiptNumberLabel, totalCobro, totalImputado, watermarkText]
+  );
+
+  const handlePrint = useCallback(async () => {
+    setActionError(null);
+    setActionInfo(null);
+
+    if (selectedReceipt) {
+      if (openPrintWindow(previewHtml)) {
+        setActionInfo(`Recibo ${selectedReceipt.serial} enviado a impresión.`);
+      }
+      return;
+    }
+
+    try {
+      setSavingReceipt(true);
+
+      const response = await fetch(`${apiBaseUrl}/api/liquidaciones/recibos`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+          ...actorHeaders,
+        },
+        body: JSON.stringify({
+          draft,
+          totalCobro,
+          totalImputado,
+        }),
+      });
+      const payload = (await parseJsonSafe(response)) as {
+        message?: string;
+        data?: LiquidacionReciboRecord;
+      };
+
+      if (!response.ok) {
+        throw new Error(payload?.message ?? 'No se pudo emitir el recibo.');
+      }
+
+      const savedReceipt = payload?.data;
+      if (!savedReceipt) {
+        throw new Error('No se recibió el recibo emitido desde el servidor.');
+      }
+
+      const savedDraft = normalizeReciboDraft(savedReceipt.draft);
+      const savedPointOfSaleLabel = formatReciboSerial(savedReceipt.puntoVenta || savedDraft.puntoVenta, 4);
+      const savedReceiptNumberLabel = formatReciboSerial(savedReceipt.numeroRecibo || savedDraft.numeroRecibo, 8);
+      const savedTotalCobro = parseLocalizedDecimal(savedReceipt.totalCobro) ?? totalCobro;
+      const savedTotalImputado = parseLocalizedDecimal(savedReceipt.totalImputado) ?? totalImputado;
+      openPrintWindow(
+        buildReciboPrintHtml(savedDraft, {
+          pointOfSaleLabel: savedPointOfSaleLabel,
+          receiptNumberLabel: savedReceiptNumberLabel,
+          totalCobro: savedTotalCobro,
+          totalImputado: savedTotalImputado,
+        })
+      );
+
+      setDraft((prev) => buildNextReciboDraft(prev));
+      setActionInfo(payload?.message ?? `Recibo ${savedReceipt.serial} emitido correctamente.`);
+      await loadReceipts(receiptSearch);
+    } catch (err) {
+      setActionError((err as Error).message ?? 'No se pudo emitir el recibo.');
+    } finally {
+      setSavingReceipt(false);
+    }
+  }, [actorHeaders, apiBaseUrl, draft, loadReceipts, openPrintWindow, previewHtml, receiptSearch, selectedReceipt, totalCobro, totalImputado]);
+
+  const handleAnular = useCallback(async () => {
+    if (!selectedReceipt || selectedReceipt.estado === 'anulado') {
+      return;
+    }
+
+    const leyendaInput = window.prompt('Leyenda de anulación', selectedReceipt.anuladoLeyenda?.trim() || 'RECIBO ANULADO');
+    if (leyendaInput === null) {
+      return;
+    }
+    const leyenda = leyendaInput.trim() || 'RECIBO ANULADO';
+    const motivoInput = window.prompt('Motivo de anulación (opcional)', selectedReceipt.anuladoMotivo?.trim() || '');
+    if (motivoInput === null) {
+      return;
+    }
+
+    try {
+      setAnnullingReceipt(true);
+      setActionError(null);
+      setActionInfo(null);
+
+      const response = await fetch(`${apiBaseUrl}/api/liquidaciones/recibos/${selectedReceipt.id}/anular`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+          ...actorHeaders,
+        },
+        body: JSON.stringify({
+          leyenda,
+          motivo: motivoInput.trim() || null,
+        }),
+      });
+      const payload = (await parseJsonSafe(response)) as {
+        message?: string;
+        data?: LiquidacionReciboRecord;
+      };
+
+      if (!response.ok) {
+        throw new Error(payload?.message ?? 'No se pudo anular el recibo.');
+      }
+
+      if (payload?.data) {
+        setSelectedReceipt(payload.data);
+        setDraft(normalizeReciboDraft(payload.data.draft));
+      }
+      setActionInfo(payload?.message ?? 'Recibo anulado correctamente.');
+      await loadReceipts(receiptSearch);
+    } catch (err) {
+      setActionError((err as Error).message ?? 'No se pudo anular el recibo.');
+    } finally {
+      setAnnullingReceipt(false);
+    }
+  }, [actorHeaders, apiBaseUrl, loadReceipts, receiptSearch, selectedReceipt]);
 
   return (
     <DashboardLayout
@@ -25145,11 +25610,21 @@ const RecibosPage: React.FC = () => {
       subtitle="Recibos"
       headerContent={
         <div className="filters-actions">
-          <button type="button" className="secondary-action" onClick={handleReset}>
-            Restablecer ejemplo
+          <button type="button" className="secondary-action" onClick={handleNewDraft}>
+            Nuevo borrador
           </button>
-          <button type="button" className="primary-action" onClick={handlePrint}>
-            Imprimir recibo
+          {!selectedReceipt ? (
+            <button type="button" className="secondary-action" onClick={handleReset}>
+              Restablecer ejemplo
+            </button>
+          ) : null}
+          {selectedReceipt && selectedReceipt.estado !== 'anulado' ? (
+            <button type="button" className="secondary-action" onClick={() => void handleAnular()} disabled={annullingReceipt}>
+              {annullingReceipt ? 'Anulando...' : 'Anular recibo'}
+            </button>
+          ) : null}
+          <button type="button" className="primary-action" onClick={() => void handlePrint()} disabled={savingReceipt}>
+            {savingReceipt ? 'Emitiendo...' : selectedReceipt ? 'Reimprimir recibo' : 'Emitir e imprimir'}
           </button>
         </div>
       }
@@ -25162,207 +25637,277 @@ const RecibosPage: React.FC = () => {
             </div>
           </header>
           <div className="card-body">
-            <div className="recibos-editor__grid">
-              <label className="input-control">
-                <span>Punto de venta</span>
-                <input value={draft.puntoVenta} onChange={handleFieldChange('puntoVenta')} placeholder="0001" />
-              </label>
-              <label className="input-control">
-                <span>Número de recibo</span>
-                <input value={draft.numeroRecibo} onChange={handleFieldChange('numeroRecibo')} placeholder="00000005" />
-              </label>
-              <label className="recibos-check">
-                <input
-                  type="checkbox"
-                  checked={draft.autoNumeroRecibo}
-                  onChange={handleToggleChange('autoNumeroRecibo')}
-                />
-                <span>Auto incrementar recibo al imprimir</span>
-              </label>
-              <label className="input-control">
-                <span>Fecha recibo</span>
-                <input type="date" value={draft.fecha} onChange={handleFieldChange('fecha')} />
-              </label>
-              <label className="input-control">
-                <span>CUIT empresa</span>
-                <input value={draft.empresaCuit} onChange={handleFieldChange('empresaCuit')} />
-              </label>
-              <label className="input-control">
-                <span>Inicio de actividad</span>
-                <input
-                  type="date"
-                  value={draft.empresaInicioActividad}
-                  onChange={handleFieldChange('empresaInicioActividad')}
-                />
-              </label>
-              <label className="input-control">
-                <span>Condición IVA empresa</span>
-                <input value={draft.empresaIva} onChange={handleFieldChange('empresaIva')} />
-              </label>
-            </div>
-
-            <div className="recibos-editor__group">
-              <h4>Empresa</h4>
-              <div className="recibos-editor__grid">
-                <label className="input-control recibos-editor__field--wide">
-                  <span>Razón social</span>
-                  <input value={draft.empresaNombre} onChange={handleFieldChange('empresaNombre')} />
-                </label>
-                <label className="input-control">
-                  <span>Dirección línea 1</span>
-                  <input value={draft.empresaDireccion1} onChange={handleFieldChange('empresaDireccion1')} />
-                </label>
-                <label className="input-control">
-                  <span>Dirección línea 2</span>
-                  <input value={draft.empresaDireccion2} onChange={handleFieldChange('empresaDireccion2')} />
-                </label>
-              </div>
-            </div>
-
-            <div className="recibos-editor__group">
-              <h4>Cliente</h4>
-              <div className="recibos-editor__grid">
-                <label className="input-control recibos-editor__field--wide">
-                  <span>Cliente</span>
-                  <input value={draft.clienteNombre} onChange={handleFieldChange('clienteNombre')} />
-                </label>
-                <label className="input-control">
-                  <span>CUIT cliente</span>
-                  <input value={draft.clienteCuit} onChange={handleFieldChange('clienteCuit')} />
-                </label>
-                <label className="input-control">
-                  <span>Condición IVA cliente</span>
-                  <input value={draft.clienteIva} onChange={handleFieldChange('clienteIva')} />
-                </label>
-                <label className="input-control">
-                  <span>Dirección línea 1</span>
-                  <input value={draft.clienteDireccion1} onChange={handleFieldChange('clienteDireccion1')} />
-                </label>
-                <label className="input-control">
-                  <span>Dirección línea 2</span>
-                  <input value={draft.clienteDireccion2} onChange={handleFieldChange('clienteDireccion2')} />
-                </label>
-              </div>
-            </div>
-
-            <div className="recibos-editor__group">
-              <h4>Cobro</h4>
-              <div className="recibos-editor__grid">
-                <label className="input-control">
-                  <span>Fecha del cobro</span>
-                  <input type="date" value={draft.fechaCobro} onChange={handleFieldChange('fechaCobro')} />
-                </label>
-                <label className="input-control recibos-editor__field--wide">
-                  <span>Detalle del cobro</span>
-                  <input value={draft.detalleCobro} onChange={handleFieldChange('detalleCobro')} />
-                </label>
-                <label className="input-control">
-                  <span>Importe recibido</span>
-                  <input value={draft.importeRecibido} onChange={handleFieldChange('importeRecibido')} placeholder="0,00" />
-                </label>
-                <label className="input-control">
-                  <span>Retenciones IVA</span>
-                  <input value={draft.retencionesIva} onChange={handleFieldChange('retencionesIva')} placeholder="0,00" />
-                </label>
-                <label className="input-control">
-                  <span>Retenciones IIBB</span>
-                  <input value={draft.retencionesIibb} onChange={handleFieldChange('retencionesIibb')} placeholder="0,00" />
-                </label>
-                <label className="input-control">
-                  <span>Retenciones ganancias</span>
-                  <input
-                    value={draft.retencionesGanancias}
-                    onChange={handleFieldChange('retencionesGanancias')}
-                    placeholder="0,00"
-                  />
-                </label>
-              </div>
-              <div className="recibos-summary">
-                <div className="summary-card">
-                  <span className="summary-card__label">Total cobro</span>
-                  <strong className="summary-card__value">{formatReciboAmount(totalCobro, { emptyAsZero: true })}</strong>
-                </div>
-                <div className="summary-card">
-                  <span className="summary-card__label">Total imputado</span>
-                  <strong className="summary-card__value">{formatReciboAmount(totalImputado, { emptyAsZero: true })}</strong>
-                </div>
-              </div>
-            </div>
-
             <div className="recibos-editor__group">
               <div className="recibos-editor__table-header">
-                <h4>Comprobantes imputados</h4>
-                <div className="recibos-editor__table-actions">
-                  <label className="recibos-check">
-                    <input
-                      type="checkbox"
-                      checked={draft.autoNumeroFactura}
-                      onChange={handleToggleChange('autoNumeroFactura')}
-                    />
-                    <span>Auto incrementar facturas al imprimir</span>
-                  </label>
-                  <button type="button" className="secondary-action" onClick={handleAddComprobante}>
-                    Agregar comprobante
+                <h4>Recibos emitidos</h4>
+                <form className="recibos-history__search" onSubmit={handleSearchReceipts}>
+                  <input
+                    value={receiptSearch}
+                    onChange={(event) => setReceiptSearch(event.target.value)}
+                    placeholder="Buscar por número o cliente"
+                  />
+                  <button type="submit" className="secondary-action" disabled={receiptsLoading}>
+                    Buscar
                   </button>
-                </div>
+                </form>
               </div>
-              <div className="table-wrapper recibos-editor__table">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Fecha</th>
-                      <th>N° factura</th>
-                      <th>Total factura</th>
-                      <th>Imputado</th>
-                      <th>Acción</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {draft.comprobantes.map((item) => (
-                      <tr key={item.id}>
-                        <td>
-                          <input
-                            type="date"
-                            value={item.fecha}
-                            onChange={(event) => handleComprobanteChange(item.id, 'fecha', event.target.value)}
-                          />
-                        </td>
-                        <td>
-                          <input
-                            value={item.numeroFactura}
-                            onChange={(event) => handleComprobanteChange(item.id, 'numeroFactura', event.target.value)}
-                            placeholder="00002-00000167"
-                          />
-                        </td>
-                        <td>
-                          <input
-                            value={item.totalFactura}
-                            onChange={(event) => handleComprobanteChange(item.id, 'totalFactura', event.target.value)}
-                            placeholder="0,00"
-                          />
-                        </td>
-                        <td>
-                          <input
-                            value={item.imputado}
-                            onChange={(event) => handleComprobanteChange(item.id, 'imputado', event.target.value)}
-                            placeholder="0,00"
-                          />
-                        </td>
-                        <td>
-                          <button
-                            type="button"
-                            className="secondary-action"
-                            onClick={() => handleRemoveComprobante(item.id)}
-                          >
-                            Quitar
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+              <div className="recibos-history">
+                {receiptsLoading ? <p className="helper-text">Cargando recibos emitidos...</p> : null}
+                {!receiptsLoading && receiptsError ? <p className="form-info form-info--error">{receiptsError}</p> : null}
+                {!receiptsLoading && !receiptsError && receipts.length === 0 ? (
+                  <p className="helper-text">No hay recibos emitidos para el criterio actual.</p>
+                ) : null}
+                {!receiptsLoading && !receiptsError
+                  ? receipts.map((item) => (
+                      <button
+                        key={item.id}
+                        type="button"
+                        className={`recibos-history__item${selectedReceipt?.id === item.id ? ' is-active' : ''}`}
+                        onClick={() => handleSelectReceipt(item)}
+                      >
+                        <div>
+                          <strong>{item.serial}</strong>
+                          <span>{item.clienteNombre || 'Sin cliente'}</span>
+                        </div>
+                        <div>
+                          <span>{formatReciboDate(item.fecha)}</span>
+                          <span className={`recibos-status recibos-status--${item.estado}`}>
+                            {item.estado === 'anulado' ? 'Anulado' : 'Emitido'}
+                          </span>
+                        </div>
+                      </button>
+                    ))
+                  : null}
               </div>
             </div>
+
+            {actionError ? <p className="form-info form-info--error">{actionError}</p> : null}
+            {!actionError && actionInfo ? <p className="form-info form-info--success">{actionInfo}</p> : null}
+
+            {selectedReceipt ? (
+              <div className="recibos-issued-banner">
+                <strong>{selectedReceipt.serial}</strong>
+                <span>
+                  {selectedReceipt.estado === 'anulado'
+                    ? `${buildReciboWatermarkText(selectedReceipt)}${selectedReceipt.anuladoAt ? ` · ${formatDateTime(selectedReceipt.anuladoAt)}` : ''}`
+                    : `Emitido${selectedReceipt.createdAt ? ` · ${formatDateTime(selectedReceipt.createdAt)}` : ''}`}
+                </span>
+              </div>
+            ) : (
+              <p className="helper-text">
+                El borrador actual se guarda localmente. Al emitir, el recibo queda persistido y luego se puede reimprimir o anular.
+              </p>
+            )}
+
+            <fieldset className="recibos-editor__fieldset" disabled={editorDisabled}>
+              <div className="recibos-editor__grid">
+                <label className="input-control">
+                  <span>Punto de venta</span>
+                  <input value={draft.puntoVenta} placeholder="0001" disabled readOnly />
+                </label>
+                <label className="input-control">
+                  <span>Número de recibo</span>
+                  <input value={draft.numeroRecibo} onChange={handleFieldChange('numeroRecibo')} placeholder="00000005" />
+                </label>
+                <label className="recibos-check">
+                  <input
+                    type="checkbox"
+                    checked={draft.autoNumeroRecibo}
+                    onChange={handleToggleChange('autoNumeroRecibo')}
+                    disabled
+                  />
+                  <span>Auto incrementar recibo al imprimir</span>
+                </label>
+                <label className="input-control">
+                  <span>Fecha recibo</span>
+                  <input type="date" value={draft.fecha} disabled readOnly />
+                </label>
+                <label className="input-control">
+                  <span>CUIT empresa</span>
+                  <input value={draft.empresaCuit} disabled readOnly />
+                </label>
+                <label className="input-control">
+                  <span>Inicio de actividad</span>
+                  <input type="date" value={draft.empresaInicioActividad} disabled readOnly />
+                </label>
+                <label className="input-control">
+                  <span>Condición IVA empresa</span>
+                  <input value={draft.empresaIva} disabled readOnly />
+                </label>
+              </div>
+
+              <div className="recibos-editor__group">
+                <h4>Empresa</h4>
+                <div className="recibos-editor__grid">
+                  <label className="input-control recibos-editor__field--wide">
+                    <span>Razón social</span>
+                    <input value={draft.empresaNombre} disabled readOnly />
+                  </label>
+                  <label className="input-control">
+                    <span>Dirección línea 1</span>
+                    <input value={draft.empresaDireccion1} disabled readOnly />
+                  </label>
+                  <label className="input-control">
+                    <span>Dirección línea 2</span>
+                    <input value={draft.empresaDireccion2} disabled readOnly />
+                  </label>
+                </div>
+              </div>
+
+              <div className="recibos-editor__group">
+                <h4>Cliente</h4>
+                {clientesLoading ? <p className="helper-text">Cargando clientes...</p> : null}
+                {!clientesLoading && clientesError ? <p className="form-info form-info--error">{clientesError}</p> : null}
+                <div className="recibos-editor__grid">
+                  <label className="input-control recibos-editor__field--wide">
+                    <span>Cliente</span>
+                    <select value={draft.clienteId} onChange={handleClienteChange}>
+                      <option value="">Seleccionar cliente</option>
+                      {clientes.map((cliente) => (
+                        <option key={cliente.id} value={cliente.id}>
+                          {normalizeTextValue(cliente.nombre) || `Cliente #${cliente.id}`}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="input-control">
+                    <span>CUIT cliente</span>
+                    <input value={draft.clienteCuit} disabled readOnly />
+                  </label>
+                  <label className="input-control">
+                    <span>Condición IVA cliente</span>
+                    <input value={draft.clienteIva} disabled readOnly />
+                  </label>
+                  <label className="input-control">
+                    <span>Dirección línea 1</span>
+                    <input value={draft.clienteDireccion1} disabled readOnly />
+                  </label>
+                  <label className="input-control">
+                    <span>Dirección línea 2</span>
+                    <input value={draft.clienteDireccion2} disabled readOnly />
+                  </label>
+                </div>
+              </div>
+
+              <div className="recibos-editor__group">
+                <h4>Cobro</h4>
+                <div className="recibos-editor__grid">
+                  <label className="input-control">
+                    <span>Fecha del cobro</span>
+                    <input type="date" value={draft.fechaCobro} onChange={handleFieldChange('fechaCobro')} />
+                  </label>
+                  <label className="input-control recibos-editor__field--wide">
+                    <span>Detalle del cobro</span>
+                    <input value={draft.detalleCobro} onChange={handleFieldChange('detalleCobro')} />
+                  </label>
+                  <label className="input-control">
+                    <span>Importe recibido</span>
+                    <input value={draft.importeRecibido} onChange={handleFieldChange('importeRecibido')} placeholder="0,00" />
+                  </label>
+                  <label className="input-control">
+                    <span>Retenciones IVA</span>
+                    <input value={draft.retencionesIva} onChange={handleFieldChange('retencionesIva')} placeholder="0,00" />
+                  </label>
+                  <label className="input-control">
+                    <span>Retenciones IIBB</span>
+                    <input value={draft.retencionesIibb} onChange={handleFieldChange('retencionesIibb')} placeholder="0,00" />
+                  </label>
+                  <label className="input-control">
+                    <span>Retenciones ganancias</span>
+                    <input
+                      value={draft.retencionesGanancias}
+                      onChange={handleFieldChange('retencionesGanancias')}
+                      placeholder="0,00"
+                    />
+                  </label>
+                </div>
+                <div className="recibos-summary">
+                  <div className="summary-card">
+                    <span className="summary-card__label">Total cobro</span>
+                    <strong className="summary-card__value">{formatReciboAmount(totalCobro, { emptyAsZero: true })}</strong>
+                  </div>
+                  <div className="summary-card">
+                    <span className="summary-card__label">Total imputado</span>
+                    <strong className="summary-card__value">{formatReciboAmount(totalImputado, { emptyAsZero: true })}</strong>
+                  </div>
+                </div>
+              </div>
+
+              <div className="recibos-editor__group">
+                <div className="recibos-editor__table-header">
+                  <h4>Comprobantes imputados</h4>
+                  <div className="recibos-editor__table-actions">
+                    <label className="recibos-check">
+                      <input
+                        type="checkbox"
+                        checked={draft.autoNumeroFactura}
+                        onChange={handleToggleChange('autoNumeroFactura')}
+                      />
+                      <span>Auto incrementar facturas al imprimir</span>
+                    </label>
+                    <button type="button" className="secondary-action" onClick={handleAddComprobante}>
+                      Agregar comprobante
+                    </button>
+                  </div>
+                </div>
+                <div className="table-wrapper recibos-editor__table">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Fecha</th>
+                        <th>N° factura</th>
+                        <th>Total factura</th>
+                        <th>Imputado</th>
+                        <th>Acción</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {draft.comprobantes.map((item) => (
+                        <tr key={item.id}>
+                          <td>
+                            <input
+                              type="date"
+                              value={item.fecha}
+                              onChange={(event) => handleComprobanteChange(item.id, 'fecha', event.target.value)}
+                            />
+                          </td>
+                          <td>
+                            <input
+                              value={item.numeroFactura}
+                              onChange={(event) => handleComprobanteChange(item.id, 'numeroFactura', event.target.value)}
+                              placeholder="00002-00000167"
+                            />
+                          </td>
+                          <td>
+                            <input
+                              value={item.totalFactura}
+                              onChange={(event) => handleComprobanteChange(item.id, 'totalFactura', event.target.value)}
+                              placeholder="0,00"
+                            />
+                          </td>
+                          <td>
+                            <input
+                              value={item.imputado}
+                              onChange={(event) => handleComprobanteChange(item.id, 'imputado', event.target.value)}
+                              placeholder="0,00"
+                            />
+                          </td>
+                          <td>
+                            <button
+                              type="button"
+                              className="secondary-action"
+                              onClick={() => handleRemoveComprobante(item.id)}
+                            >
+                              Quitar
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </fieldset>
           </div>
         </section>
 
@@ -25371,10 +25916,18 @@ const RecibosPage: React.FC = () => {
             <div>
               <h3>Vista previa</h3>
             </div>
+            <span className={`recibos-status recibos-status--${selectedReceipt?.estado ?? 'borrador'}`}>
+              {selectedReceipt ? (selectedReceipt.estado === 'anulado' ? 'Anulado' : 'Emitido') : 'Borrador'}
+            </span>
           </header>
           <div className="card-body">
             <div className="recibo-preview-shell">
-              <article className="recibo-document">
+              <article className={`recibo-document${watermarkText ? ' recibo-document--anulado' : ''}`}>
+                {watermarkText ? (
+                  <div className="recibo-document__watermark">
+                    <span>{watermarkText}</span>
+                  </div>
+                ) : null}
                 <section className="recibo-document__top">
                   <div className="recibo-document__company">
                     <img className="recibo-document__logo" src="/logo-empresa.png" alt="Logística Argentina" />

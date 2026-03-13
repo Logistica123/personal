@@ -24,6 +24,7 @@ use App\Http\Controllers\Api\SolicitudPersonalController;
 use App\Http\Controllers\Api\VacacionesDiasController;
 use App\Http\Controllers\Api\DistriappController;
 use App\Http\Controllers\Api\LiquidacionRunController;
+use App\Http\Controllers\Api\LiquidacionReciboController;
 use App\Http\Controllers\Api\UserDocumentController;
 use App\Http\Controllers\Api\CallController;
 use Illuminate\Support\Facades\Route;
@@ -205,6 +206,10 @@ Route::middleware('auth.api')->group(function () {
     Route::get('/liquidaciones/distribuidores/{distribuidor}', [LiquidacionRunController::class, 'showDistribuidor']);
     Route::patch('/liquidaciones/distribuidores/{distribuidor}', [LiquidacionRunController::class, 'updateDistribuidor']);
     Route::patch('/liquidaciones/lineas/{linea}', [LiquidacionRunController::class, 'updateLinea']);
+    Route::get('/liquidaciones/recibos', [LiquidacionReciboController::class, 'index']);
+    Route::post('/liquidaciones/recibos', [LiquidacionReciboController::class, 'store']);
+    Route::get('/liquidaciones/recibos/{recibo}', [LiquidacionReciboController::class, 'show']);
+    Route::post('/liquidaciones/recibos/{recibo}/anular', [LiquidacionReciboController::class, 'anular']);
     Route::post('/combustible/extractos/preview', [\App\Http\Controllers\Api\FuelExtractController::class, 'preview']);
     Route::post('/combustible/extractos/process', [\App\Http\Controllers\Api\FuelExtractController::class, 'process']);
     Route::get('/combustible/distribuidores', [\App\Http\Controllers\Api\FuelModuleController::class, 'distributors']);
