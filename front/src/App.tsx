@@ -14246,6 +14246,20 @@ const CreateReclamoPage: React.FC = () => {
                 </datalist>
               </label>
               <label className="input-control">
+                <span>Agente responsable</span>
+                <select
+                  value={formValues.agenteId}
+                  onChange={(event) => setFormValues((prev) => ({ ...prev, agenteId: event.target.value }))}
+                >
+                  <option value="">Seleccionar</option>
+                  {meta.agentes.map((agente) => (
+                    <option key={`reclamo-adelanto-agente-${agente.id}`} value={agente.id}>
+                      {agente.nombre ?? `Agente #${agente.id}`}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="input-control">
                 <span>Dueño / emisor factura</span>
                 <input
                   type="text"
