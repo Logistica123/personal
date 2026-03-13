@@ -25142,7 +25142,6 @@ const RecibosPage: React.FC = () => {
           <header className="card-header">
             <div>
               <h3>Datos editables</h3>
-              <p className="helper-text">El recibo se actualiza en tiempo real y usa el logo `front/public/logo-empresa.png`.</p>
             </div>
           </header>
           <div className="card-body">
@@ -25354,7 +25353,6 @@ const RecibosPage: React.FC = () => {
           <header className="card-header">
             <div>
               <h3>Vista previa</h3>
-              <p className="helper-text">Formato inspirado en el modelo de recibo que pasaste, listo para impresión horizontal.</p>
             </div>
           </header>
           <div className="card-body">
