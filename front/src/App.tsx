@@ -4012,10 +4012,12 @@ const DashboardLayout: React.FC<{
     location.pathname.startsWith('/combustible');
   const isLiquidacionesExtractosRoute = location.pathname.startsWith('/liquidaciones/extractos');
   const isRecibosRoute = location.pathname.startsWith('/liquidaciones/recibos');
+  const isLiquidacionesClienteRoute = location.pathname.startsWith('/liquidaciones/cliente');
   const isLiquidacionesRoute =
     (location.pathname === '/liquidaciones' || /^\/liquidaciones\/\d+$/.test(location.pathname)) &&
     !isLiquidacionesExtractosRoute &&
-    !isRecibosRoute;
+    !isRecibosRoute &&
+    !isLiquidacionesClienteRoute;
   const isCombustibleRoute = location.pathname.startsWith('/combustible');
   const isPagosRoute = location.pathname.startsWith('/pagos');
   const personalEstadoParam = useMemo(() => {
@@ -5230,6 +5232,15 @@ const DashboardLayout: React.FC<{
                       onClick={() => navigate('/liquidaciones/recibos')}
                     >
                       Recibos
+                    </button>
+                  ) : null}
+                  {canAccessSection(userRole, 'liquidaciones', authUser?.permissions) ? (
+                    <button
+                      type="button"
+                      className={`sidebar-sublink${isLiquidacionesClienteRoute ? ' is-active' : ''}`}
+                      onClick={() => navigate('/liquidaciones/cliente')}
+                    >
+                      Cliente
                     </button>
                   ) : null}
                   {canAccessSection(userRole, 'pagos', authUser?.permissions) ? (
@@ -8218,7 +8229,9 @@ const DashboardPage: React.FC<{
       if (!response.ok) {
         let message = `Error ${response.status}: ${response.statusText}`;
         try {
-          const payload = await response.json();
+          const payload = (await parseJsonSafe(response).catch(() => null)) as {
+            message?: string;
+          } | null;
           if (typeof payload?.message === 'string') {
             message = payload.message;
           }
@@ -8751,7 +8764,9 @@ const DashboardPage: React.FC<{
       if (!response.ok) {
         let message = `Error ${response.status}: ${response.statusText}`;
         try {
-          const payload = await response.json();
+          const payload = (await parseJsonSafe(response).catch(() => null)) as {
+            message?: string;
+          } | null;
           if (typeof payload?.message === 'string') {
             message = payload.message;
           }
@@ -11482,7 +11497,9 @@ const UnitsPage: React.FC = () => {
       if (!response.ok) {
         let message = `Error ${response.status}: ${response.statusText}`;
         try {
-          const payload = await response.json();
+          const payload = (await parseJsonSafe(response).catch(() => null)) as {
+            message?: string;
+          } | null;
           if (typeof payload?.message === 'string') {
             message = payload.message;
           }
@@ -25486,6 +25503,19 @@ const RecibosPage: React.FC = () => {
   );
 };
 
+const LiquidacionesClientePage: React.FC = () => (
+  <DashboardLayout title="Liquidaciones" subtitle="Cliente">
+    <section className="dashboard-card">
+      <header className="card-header">
+        <h3>Cliente</h3>
+      </header>
+      <div className="card-body">
+        <p className="helper-text">Espacio reservado para la gestión de clientes dentro del módulo de liquidaciones.</p>
+      </div>
+    </section>
+  </DashboardLayout>
+);
+
 const LiquidacionesPage: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
@@ -35820,6 +35850,7 @@ const sucursalOptions = useMemo(() => {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
+            Accept: 'application/json',
             ...actorHeaders,
           },
           body: JSON.stringify(requestPayload),
@@ -35827,23 +35858,21 @@ const sucursalOptions = useMemo(() => {
 
         if (!response.ok) {
           let message = `Error ${response.status}: ${response.statusText}`;
-          try {
-            const errorPayload = await response.json();
-            if (typeof errorPayload?.message === 'string') {
-              message = errorPayload.message;
-            } else if (errorPayload?.errors) {
-              const firstError = Object.values(errorPayload.errors)[0];
-              if (Array.isArray(firstError) && firstError[0]) {
-                message = firstError[0] as string;
-              }
+          const errorPayload = (await parseJsonSafe(response).catch(() => null)) as
+            | { message?: string; errors?: Record<string, unknown> }
+            | null;
+          if (typeof errorPayload?.message === 'string') {
+            message = errorPayload.message;
+          } else if (errorPayload?.errors) {
+            const firstError = Object.values(errorPayload.errors)[0];
+            if (Array.isArray(firstError) && firstError[0]) {
+              message = firstError[0] as string;
             }
-          } catch {
-            // ignore
           }
           throw new Error(message);
         }
 
-        const payload = (await response.json()) as { message?: string; data?: { id?: number } };
+        const payload = (await parseJsonSafe(response)) as { message?: string; data?: { id?: number } };
         personaId = payload.data?.id ?? null;
         if (personaId) {
           cacheSolicitudCreated(personaId, new Date().toISOString());
@@ -36117,6 +36146,7 @@ const sucursalOptions = useMemo(() => {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          Accept: 'application/json',
           ...actorHeaders,
         },
         body: JSON.stringify(requestPayload),
@@ -36126,7 +36156,10 @@ const sucursalOptions = useMemo(() => {
         let message = `Error ${response.status}: ${response.statusText}`;
 
         try {
-          const errorPayload = await response.json();
+          const errorPayload = (await parseJsonSafe(response).catch(() => null)) as {
+            message?: string;
+            errors?: Record<string, unknown>;
+          } | null;
           if (typeof errorPayload?.message === 'string') {
             message = errorPayload.message;
           } else if (errorPayload?.errors) {
@@ -36142,7 +36175,7 @@ const sucursalOptions = useMemo(() => {
         throw new Error(message);
       }
 
-      const payload = (await response.json()) as { message?: string; data?: { id?: number } };
+      const payload = (await parseJsonSafe(response)) as { message?: string; data?: { id?: number } };
       const personaId = payload.data?.id ?? null;
       // Algunos backends no devuelven created_at; guardamos el timestamp de creación apenas recibimos el ID.
       if (personaId) {
@@ -36326,6 +36359,7 @@ const sucursalOptions = useMemo(() => {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
+          Accept: 'application/json',
           ...actorHeaders,
         },
         body: JSON.stringify(requestPayload),
@@ -36341,7 +36375,9 @@ const sucursalOptions = useMemo(() => {
       if (!response.ok) {
         let message = `Error ${response.status}: ${response.statusText}`;
         try {
-          const payload = await response.json();
+          const payload = (await parseJsonSafe(response).catch(() => null)) as {
+            message?: string;
+          } | null;
           if (typeof payload?.message === 'string') {
             message = payload.message;
           }
@@ -36351,7 +36387,7 @@ const sucursalOptions = useMemo(() => {
         throw new Error(message);
       }
 
-      const payload = (await response.json()) as {
+      const payload = (await parseJsonSafe(response)) as {
         message?: string;
         data?: PersonalDetail;
       };
@@ -37212,7 +37248,9 @@ const sucursalOptions = useMemo(() => {
       if (!response.ok) {
         let message = `Error ${response.status}: ${response.statusText}`;
         try {
-          const payload = await response.json();
+          const payload = (await parseJsonSafe(response).catch(() => null)) as {
+            message?: string;
+          } | null;
           if (typeof payload?.message === 'string') {
             message = payload.message;
           }
@@ -48564,7 +48602,9 @@ const TaxProfileSection: React.FC<TaxProfileSectionProps> = ({
       if (!response.ok) {
         let message = `Error ${response.status}: ${response.statusText}`;
         try {
-          const payload = await response.json();
+          const payload = (await parseJsonSafe(response).catch(() => null)) as {
+            message?: string;
+          } | null;
           if (typeof payload?.message === 'string') {
             message = payload.message;
           }
@@ -48574,7 +48614,10 @@ const TaxProfileSection: React.FC<TaxProfileSectionProps> = ({
         throw new Error(message);
       }
 
-      const payload = (await response.json()) as { message?: string; data?: ClientTaxDocumentRecord };
+      const payload = (await parseJsonSafe(response)) as {
+        message?: string;
+        data?: ClientTaxDocumentRecord;
+      };
       setFormValues((prev) => ({
         ...prev,
         documents: payload?.data ? [payload.data, ...(prev.documents ?? [])] : prev.documents ?? [],
@@ -53949,6 +53992,14 @@ const AppRoutes: React.FC = () => (
         element={
           <RequireAccess section="liquidaciones">
             <LiquidacionesPage />
+          </RequireAccess>
+        }
+      />
+      <Route
+        path="/liquidaciones/cliente"
+        element={
+          <RequireAccess section="liquidaciones">
+            <LiquidacionesClientePage />
           </RequireAccess>
         }
       />
