@@ -31458,6 +31458,8 @@ const UsersPage: React.FC = () => {
 
 const RrhhPage: React.FC = () => {
   const apiBaseUrl = useMemo(() => resolveApiBaseUrl(), []);
+  const authUser = useStoredAuthUser();
+  const actorHeaders = useMemo(() => buildActorHeaders(authUser), [authUser]);
   const [usuarios, setUsuarios] = useState<Usuario[]>([]);
   const [usuariosLoading, setUsuariosLoading] = useState(true);
   const [usuariosError, setUsuariosError] = useState<string | null>(null);
@@ -31515,6 +31517,10 @@ const RrhhPage: React.FC = () => {
       setDocumentsError(null);
       try {
         const response = await fetch(`${apiBaseUrl}/api/usuarios/${userIdRaw}/documentos`, {
+          headers: {
+            Accept: 'application/json',
+            ...actorHeaders,
+          },
           credentials: 'include',
         });
         const payload = (await parseJsonSafe(response)) as { data?: RrhhUserDocument[]; message?: string };
@@ -31529,7 +31535,7 @@ const RrhhPage: React.FC = () => {
         setDocumentsLoading(false);
       }
     },
-    [apiBaseUrl]
+    [actorHeaders, apiBaseUrl]
   );
 
   useEffect(() => {
@@ -31541,6 +31547,10 @@ const RrhhPage: React.FC = () => {
       try {
         const response = await fetch(`${apiBaseUrl}/api/usuarios`, {
           signal: controller.signal,
+          headers: {
+            Accept: 'application/json',
+            ...actorHeaders,
+          },
           credentials: 'include',
         });
         const payload = (await parseJsonSafe(response)) as { data?: Usuario[]; message?: string };
@@ -31575,7 +31585,7 @@ const RrhhPage: React.FC = () => {
       cancelled = true;
       controller.abort();
     };
-  }, [apiBaseUrl]);
+  }, [actorHeaders, apiBaseUrl]);
 
   useEffect(() => {
     void loadDocuments(selectedUserId);
@@ -31613,6 +31623,10 @@ const RrhhPage: React.FC = () => {
 
       const response = await fetch(`${apiBaseUrl}/api/usuarios/${selectedUserId}/documentos`, {
         method: 'POST',
+        headers: {
+          Accept: 'application/json',
+          ...actorHeaders,
+        },
         body: formData,
         credentials: 'include',
       });
@@ -31650,6 +31664,10 @@ const RrhhPage: React.FC = () => {
     try {
       const response = await fetch(`${apiBaseUrl}/api/usuarios/${selectedUserId}/documentos/${documento.id}`, {
         method: 'DELETE',
+        headers: {
+          Accept: 'application/json',
+          ...actorHeaders,
+        },
         credentials: 'include',
       });
       const payload = (await parseJsonSafe(response)) as { message?: string };
