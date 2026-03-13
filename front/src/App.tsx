@@ -34718,9 +34718,6 @@ const ApprovalsRequestsPage: React.FC = () => {
   const [aumentoFilesVersion, setAumentoFilesVersion] = useState(0);
   const [adelantoAttachments, setAdelantoAttachments] = useState<File[]>([]);
   const [adelantoFilesVersion, setAdelantoFilesVersion] = useState(0);
-  const altaNosisLastLookupRef = useRef<{ cuil: string; cbu: string; fechaNacimiento: string } | null>(null);
-  const [altaNosisLoading, setAltaNosisLoading] = useState(false);
-  const [altaNosisError, setAltaNosisError] = useState<string | null>(null);
   const altaNosisTitularLastLookupRef = useRef<string | null>(null);
   const altaNosisCobradorLastLookupRef = useRef<string | null>(null);
   const [altaNosisTitularLoading, setAltaNosisTitularLoading] = useState(false);
@@ -34925,95 +34922,6 @@ const ApprovalsRequestsPage: React.FC = () => {
     }
     setActiveTab((prev) => (prev === 'list' || prev === 'adelanto' || prev === 'prestamo' || prev === 'vacaciones' ? prev : 'list'));
   }, [isSolicitudPersonalView]);
-
-  useEffect(() => {
-    if (activeTab !== 'altas') {
-      return;
-    }
-
-    const cuil = altaForm.cuil.trim();
-    const cbu = altaForm.cbuAlias.trim();
-    const fechaNacimiento = altaForm.duenoFechaNacimiento.trim();
-    if (!cuil || cbu.length < 10) {
-      return;
-    }
-
-    const last = altaNosisLastLookupRef.current;
-    if (last && last.cuil === cuil && last.cbu === cbu && last.fechaNacimiento === fechaNacimiento) {
-      return;
-    }
-
-    const controller = new AbortController();
-    const url = new URL(`${apiBaseUrl}/api/nosis/validar-cbu`);
-    url.searchParams.set('documento', cuil);
-    url.searchParams.set('cbu', cbu);
-    if (fechaNacimiento) {
-      url.searchParams.set('fechaNacimiento', fechaNacimiento);
-    }
-
-    const run = async () => {
-      try {
-        setAltaNosisLoading(true);
-        setAltaNosisError(null);
-        setFlash(null);
-
-        const response = await fetch(url.toString(), {
-          signal: controller.signal,
-          headers: {
-            Accept: 'application/json',
-            ...actorHeaders,
-          },
-        });
-
-        if (!response.ok) {
-          throw new Error(`Error ${response.status}: ${response.statusText}`);
-        }
-
-        const payload = await response.json();
-        altaNosisLastLookupRef.current = { cuil, cbu, fechaNacimiento };
-
-        const raw = payload?.data?.raw;
-        const parsed = payload?.data?.parsed ?? (typeof raw === 'string' ? parseNosisXml(raw) : null);
-        const razonSocial = parsed?.razonSocial;
-        const razonSplit = razonSocial ? splitRazonSocial(razonSocial) : null;
-        const nombresFromNosis = razonSplit?.nombres ?? '';
-        const apellidosFromNosis = razonSplit?.apellidos ?? '';
-        const documentoFromNosis = (parsed?.documento ?? '').replace(/\D+/g, '');
-        const fechaNacimientoFromNosis = normalizeNosisDate(parsed?.fechaNacimiento ?? '');
-
-        if (razonSplit || parsed?.message || payload?.message) {
-          setFlash({
-            type: payload?.valid ? 'success' : 'error',
-            message: parsed?.message || payload?.message || 'Respuesta de Nosis',
-          });
-        }
-
-        if (payload?.valid) {
-          setAltaFormDirty(true);
-          setAltaForm((prev) => ({
-            ...prev,
-            ...(nombresFromNosis && !prev.nombres ? { nombres: nombresFromNosis } : {}),
-            ...(apellidosFromNosis && !prev.apellidos ? { apellidos: apellidosFromNosis } : {}),
-            ...(documentoFromNosis && !prev.cuil ? { cuil: documentoFromNosis } : {}),
-            ...(fechaNacimientoFromNosis && !prev.duenoFechaNacimiento ? { duenoFechaNacimiento: fechaNacimientoFromNosis } : {}),
-          }));
-        }
-      } catch (err) {
-        if (controller.signal.aborted) {
-          return;
-        }
-        setAltaNosisError((err as Error).message ?? `No se pudo validar CBU/${PERSON_TAX_ID_LABEL}.`);
-      } finally {
-        setAltaNosisLoading(false);
-      }
-    };
-
-    run();
-
-    return () => {
-      controller.abort();
-    };
-  }, [activeTab, altaForm.cuil, altaForm.cbuAlias, altaForm.duenoFechaNacimiento, apiBaseUrl, actorHeaders, normalizeNosisDate, parseNosisXml, splitRazonSocial]);
 
   useEffect(() => {
     if (!personaIdFromQuery) {
@@ -38261,15 +38169,6 @@ const sucursalOptions = useMemo(() => {
               setAltaNosisCobradorError(null);
               setAltaNosisCobradorInfo(null);
               altaNosisCobradorLastLookupRef.current = null;
-            }
-          }}
-          onBlur={() => {
-            if (disabled) {
-              return;
-            }
-            const documento = altaForm[field].replace(/\D+/g, '');
-            if (documento.length === 11) {
-              void lookupAltaNosisByDocumento(target, false);
             }
           }}
           placeholder="Ingresar"
@@ -45570,12 +45469,6 @@ const PersonalEditPage: React.FC = () => {
                 setNosisLookupInfo(null);
                 nosisLastLookupRef.current = null;
               }}
-              onBlur={() => {
-                const documento = formValues.cuil.replace(/\D+/g, '');
-                if (documento.length === 11) {
-                  void lookupNosisByDocumento(false);
-                }
-              }}
               placeholder="Ingresar"
               inputMode="numeric"
               maxLength={11}
@@ -47088,12 +46981,6 @@ const PersonalCreatePage: React.FC = () => {
           setNosisLookupError(null);
           setNosisLookupInfo(null);
           nosisLastLookupRef.current = null;
-        }}
-        onBlur={() => {
-          const documento = formValues.cuil.replace(/\D+/g, '');
-          if (documento.length === 11) {
-            void lookupNosisByDocumento(false);
-          }
         }}
         placeholder="Ingresar"
         inputMode="numeric"
@@ -48742,12 +48629,6 @@ const TaxProfileSection: React.FC<TaxProfileSectionProps> = ({
                   setLookupError(null);
                   setLookupInfo(null);
                   lastLookupRef.current = null;
-                }}
-                onBlur={() => {
-                  const documento = (formValues.cuit ?? '').replace(/\D+/g, '');
-                  if (documento.length === 11) {
-                    void handleLookupDocumento(false);
-                  }
                 }}
                 disabled={readOnly}
                 inputMode="numeric"
