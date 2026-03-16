@@ -302,6 +302,16 @@ class FacturaController extends Controller
     private function validateDraftPayload(Request $request): array
     {
         $periodos = array_column(PeriodoFacturado::cases(), 'value');
+        $condicionesVenta = [
+            'CONTADO',
+            'TARJETA_DEBITO',
+            'TARJETA_CREDITO',
+            'CUENTA_CORRIENTE',
+            'CHEQUE',
+            'TRANSFERENCIA_BANCARIA',
+            'OTRA',
+            'OTROS_MEDIOS_PAGO_ELECTRONICO',
+        ];
 
         $validated = $request->validate([
             'emisor_id' => ['required', 'integer', Rule::exists('arca_emisor', 'id')],
@@ -328,6 +338,8 @@ class FacturaController extends Controller
             'fecha_serv_desde' => ['nullable', 'date'],
             'fecha_serv_hasta' => ['nullable', 'date'],
             'fecha_vto_pago' => ['nullable', 'date'],
+            'condiciones_venta' => ['nullable', 'array'],
+            'condiciones_venta.*' => ['string', Rule::in($condicionesVenta)],
             'moneda_id' => ['required', 'string', 'max:10'],
             'moneda_cotiz' => ['required', 'numeric'],
             'imp_total' => ['required', 'numeric'],
@@ -444,6 +456,7 @@ class FacturaController extends Controller
             'fecha_serv_desde' => optional($factura->fecha_serv_desde)?->format('Y-m-d'),
             'fecha_serv_hasta' => optional($factura->fecha_serv_hasta)?->format('Y-m-d'),
             'fecha_vto_pago' => optional($factura->fecha_vto_pago)?->format('Y-m-d'),
+            'condiciones_venta' => $factura->condiciones_venta ?? [],
             'moneda_id' => $factura->moneda_id,
             'moneda_cotiz' => $factura->moneda_cotiz,
             'imp_total' => $factura->imp_total,

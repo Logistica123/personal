@@ -64,6 +64,7 @@ class FacturaDraftService
             'fecha_serv_desde' => $payload['fecha_serv_desde'] ?? $factura->fecha_serv_desde,
             'fecha_serv_hasta' => $payload['fecha_serv_hasta'] ?? $factura->fecha_serv_hasta,
             'fecha_vto_pago' => $payload['fecha_vto_pago'] ?? $factura->fecha_vto_pago,
+            'condiciones_venta' => $payload['condiciones_venta'] ?? $factura->condiciones_venta,
             'moneda_id' => $payload['moneda_id'] ?? $factura->moneda_id,
             'moneda_cotiz' => $payload['moneda_cotiz'] ?? $factura->moneda_cotiz,
             'imp_total' => $payload['imp_total'] ?? $factura->imp_total,

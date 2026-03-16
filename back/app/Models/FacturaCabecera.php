@@ -33,6 +33,7 @@ class FacturaCabecera extends Model
         'fecha_serv_desde',
         'fecha_serv_hasta',
         'fecha_vto_pago',
+        'condiciones_venta',
         'moneda_id',
         'moneda_cotiz',
         'imp_total',
@@ -86,6 +87,7 @@ class FacturaCabecera extends Model
             'monto_pagado_manual' => 'decimal:2',
             'observaciones_arca_json' => 'array',
             'errores_arca_json' => 'array',
+            'condiciones_venta' => 'array',
         ];
     }
 

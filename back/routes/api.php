@@ -3,6 +3,7 @@
 use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\ArcaCertificadoController;
 use App\Http\Controllers\Api\ArcaEmisorController;
+use App\Http\Controllers\Api\ArcaParametrosController;
 use App\Http\Controllers\Api\ArcaPuntoVentaController;
 use App\Http\Controllers\Api\ChatMessageController;
 use App\Http\Controllers\Api\ClienteController;
@@ -121,6 +122,7 @@ Route::middleware('auth.api')->group(function () {
     Route::post('/arca/emisores/{emisor}/puntos-venta/sincronizar', [ArcaPuntoVentaController::class, 'sync']);
     Route::post('/arca/emisores/{emisor}/puntos-venta/sync', [ArcaPuntoVentaController::class, 'sync']);
     Route::get('/arca/emisores/{emisor}/puntos-venta', [ArcaPuntoVentaController::class, 'index']);
+    Route::get('/arca/emisores/{emisor}/parametros/unidades', [ArcaParametrosController::class, 'unidades']);
 
     Route::get('/facturas', [FacturaController::class, 'index']);
     Route::post('/facturas', [FacturaController::class, 'store']);

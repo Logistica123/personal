@@ -75,6 +75,11 @@ class FacturaPdfService
         $y -= 12;
         $this->addText($elements, 50, $y, 'F1', 10, sprintf('Fecha vto pago: %s', $this->formatDate($factura->fecha_vto_pago)));
         $y -= 12;
+        $condicionesVenta = $this->formatCondicionesVenta($factura->condiciones_venta ?? []);
+        if ($condicionesVenta !== '') {
+            $this->addText($elements, 50, $y, 'F1', 10, sprintf('Condiciones de venta: %s', $condicionesVenta));
+            $y -= 12;
+        }
         $this->addText($elements, 50, $y, 'F1', 10, sprintf('Concepto: %s', $this->resolveConcepto((int) $factura->concepto)));
         $y -= 14;
 
@@ -332,5 +337,34 @@ class FacturaPdfService
             3 => 'Productos y servicios',
             default => (string) $concepto,
         };
+    }
+
+    /**
+     * @param array<int,string> $condiciones
+     */
+    private function formatCondicionesVenta(array $condiciones): string
+    {
+        if ($condiciones === []) {
+            return '';
+        }
+
+        $map = [
+            'CONTADO' => 'Contado',
+            'TARJETA_DEBITO' => 'Tarjeta de Débito',
+            'TARJETA_CREDITO' => 'Tarjeta de Crédito',
+            'CUENTA_CORRIENTE' => 'Cuenta corriente',
+            'CHEQUE' => 'Cheque',
+            'TRANSFERENCIA_BANCARIA' => 'Transferencia bancaria',
+            'OTRA' => 'Otra',
+            'OTROS_MEDIOS_PAGO_ELECTRONICO' => 'Otros medios de pago electrónico',
+        ];
+
+        $labels = [];
+        foreach ($condiciones as $condicion) {
+            $key = strtoupper(trim((string) $condicion));
+            $labels[] = $map[$key] ?? $condicion;
+        }
+
+        return implode(' / ', array_values(array_unique($labels)));
     }
 }

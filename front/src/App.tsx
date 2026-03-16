@@ -53324,6 +53324,7 @@ type FacturaDetalleDto = {
   fecha_serv_desde?: string | null;
   fecha_serv_hasta?: string | null;
   fecha_vto_pago?: string | null;
+  condiciones_venta?: string[] | null;
   moneda_id: string;
   moneda_cotiz: number;
   imp_total: number;
@@ -53431,6 +53432,50 @@ const FACTURACION_IVA_ALICUOTAS = [
   { id: 3, rate: 5 },
   { id: 2, rate: 2.5 },
   { id: 1, rate: 0 },
+];
+const FACTURACION_UNIDAD_MEDIDA_DEFAULT = 'Otras unidades';
+const FACTURACION_UNIDADES_MEDIDA_FALLBACK = [
+  FACTURACION_UNIDAD_MEDIDA_DEFAULT,
+  'Kilogramos',
+  'Metros',
+  'Metros cuadrados',
+  'Metros cúbicos',
+  'Litros',
+  '1000 kWh',
+  'Unidades',
+  'Pares',
+  'Docenas',
+  'Quilates',
+  'Millares',
+  'Gramos',
+  'Milímetros',
+  'Milímetros cúbicos',
+  'Kilómetros',
+  'Hectolitros',
+  'Centímetros',
+  'Centímetros cúbicos',
+  'Jgo. pqt. mazo naipes',
+];
+const FACTURACION_ALICUOTA_PCT_OPTIONS = [
+  { value: '', label: 'Seleccionar...' },
+  { value: '0', label: 'No gravado' },
+  { value: '0', label: 'Exento' },
+  { value: '0', label: '0%' },
+  { value: '2.5', label: '2,5%' },
+  { value: '5', label: '5%' },
+  { value: '10.5', label: '10,5%' },
+  { value: '21', label: '21%' },
+  { value: '27', label: '27%' },
+];
+const FACTURACION_CONDICIONES_VENTA = [
+  { value: 'CONTADO', label: 'Contado' },
+  { value: 'TARJETA_DEBITO', label: 'Tarjeta de Débito' },
+  { value: 'TARJETA_CREDITO', label: 'Tarjeta de Crédito' },
+  { value: 'CUENTA_CORRIENTE', label: 'Cuenta corriente' },
+  { value: 'CHEQUE', label: 'Cheque' },
+  { value: 'TRANSFERENCIA_BANCARIA', label: 'Transferencia bancaria' },
+  { value: 'OTRA', label: 'Otra' },
+  { value: 'OTROS_MEDIOS_PAGO_ELECTRONICO', label: 'Otros medios de pago electrónico' },
 ];
 
 const buildDownloadUrl = (apiBaseUrl: string, path: string | null | undefined): string | null => {
@@ -55056,6 +55101,7 @@ type FacturaDraftForm = {
   fecha_serv_desde: string;
   fecha_serv_hasta: string;
   fecha_vto_pago: string;
+  condiciones_venta: string[];
   moneda_id: string;
   moneda_cotiz: string;
   imp_total: string;
@@ -55098,6 +55144,7 @@ const buildInitialFacturaForm = (): FacturaDraftForm => {
     fecha_serv_desde: toIso(startOfMonth),
     fecha_serv_hasta: toIso(endOfMonth),
     fecha_vto_pago: toIso(plus30),
+    condiciones_venta: ['CUENTA_CORRIENTE'],
     moneda_id: 'PES',
     moneda_cotiz: '1',
     imp_total: '0',
@@ -55121,7 +55168,7 @@ const createFacturaDetalleRow = (orden: number): FacturaDraftRow => ({
   orden: orden.toString(),
   descripcion: '',
   cantidad: '1',
-  unidad_medida: '',
+  unidad_medida: FACTURACION_UNIDAD_MEDIDA_DEFAULT,
   precio_unitario: '0',
   bonificacion_pct: '0',
   subtotal: '0',
@@ -55177,6 +55224,7 @@ const FacturacionCreatePage: React.FC = () => {
   const [emisores, setEmisores] = useState<ArcaEmisorDto[]>([]);
   const [clientes, setClientes] = useState<ClienteSelectOption[]>([]);
   const [sucursales, setSucursales] = useState<SucursalSelectOption[]>([]);
+  const [unidadMedidaOptions, setUnidadMedidaOptions] = useState<string[]>(FACTURACION_UNIDADES_MEDIDA_FALLBACK);
   const [form, setForm] = useState<FacturaDraftForm>(() => buildInitialFacturaForm());
   const [detallePdf, setDetallePdf] = useState<FacturaDraftRow[]>(() => [createFacturaDetalleRow(1)]);
   const [ivaItems, setIvaItems] = useState<FacturaIvaDraft[]>([]);
@@ -55234,6 +55282,47 @@ const FacturacionCreatePage: React.FC = () => {
       }));
     }
   }, [emisores, form.emisor_id]);
+
+  useEffect(() => {
+    const emisorId = Number(form.emisor_id);
+    if (!emisorId) {
+      return;
+    }
+    let active = true;
+    const loadUnidades = async () => {
+      try {
+        const payload = (await requestJson(
+          `/api/arca/emisores/${emisorId}/parametros/unidades?ambiente=${form.ambiente}`
+        )) as { data?: Array<{ descripcion?: string | null; Desc?: string | null; desc?: string | null }> };
+        const list = Array.isArray(payload?.data) ? payload.data : [];
+        const labels = list
+          .map((item) => String(item.descripcion ?? item.Desc ?? item.desc ?? '').trim())
+          .filter((label) => label.length > 0);
+        if (!active || labels.length === 0) {
+          return;
+        }
+        const merged = labels.includes(FACTURACION_UNIDAD_MEDIDA_DEFAULT)
+          ? labels
+          : [FACTURACION_UNIDAD_MEDIDA_DEFAULT, ...labels];
+        setUnidadMedidaOptions(merged);
+      } catch {
+        if (!active) {
+          return;
+        }
+        setUnidadMedidaOptions((prev) => (prev.length > 0 ? prev : FACTURACION_UNIDADES_MEDIDA_FALLBACK));
+      }
+    };
+    void loadUnidades();
+    return () => {
+      active = false;
+    };
+  }, [form.emisor_id, form.ambiente, requestJson]);
+
+  useEffect(() => {
+    setDetallePdf((prev) =>
+      prev.map((row) => (row.unidad_medida ? row : { ...row, unidad_medida: FACTURACION_UNIDAD_MEDIDA_DEFAULT }))
+    );
+  }, [unidadMedidaOptions]);
 
   useEffect(() => {
     const clienteId = Number(form.cliente_id);
@@ -55348,6 +55437,15 @@ const FacturacionCreatePage: React.FC = () => {
     }
   }, [form.pto_vta]);
 
+  const toggleCondicionVenta = (value: string) => {
+    setForm((prev) => {
+      const current = Array.isArray(prev.condiciones_venta) ? prev.condiciones_venta : [];
+      const exists = current.includes(value);
+      const next = exists ? current.filter((item) => item !== value) : [...current, value];
+      return { ...prev, condiciones_venta: next };
+    });
+  };
+
   const handleDetalleChange = (index: number, field: keyof FacturaDraftRow, value: string) => {
     setDetallePdf((prev) => {
       const next = [...prev];
@@ -55381,6 +55479,7 @@ const FacturacionCreatePage: React.FC = () => {
     fecha_serv_desde: form.fecha_serv_desde || null,
     fecha_serv_hasta: form.fecha_serv_hasta || null,
     fecha_vto_pago: form.fecha_vto_pago || null,
+    condiciones_venta: form.condiciones_venta,
     moneda_id: form.moneda_id,
     moneda_cotiz: parseNumberOrZero(form.moneda_cotiz),
     imp_total: parseNumberOrZero(form.imp_total),
@@ -55793,6 +55892,22 @@ const FacturacionCreatePage: React.FC = () => {
           </div>
 
           <div className="facturacion-form-block">
+            <h3>Condiciones de venta</h3>
+            <div className="filters-grid facturacion-grid">
+              {FACTURACION_CONDICIONES_VENTA.map((option) => (
+                <label key={option.value} className="input-control facturacion-toggle">
+                  <span>{option.label}</span>
+                  <input
+                    type="checkbox"
+                    checked={form.condiciones_venta.includes(option.value)}
+                    onChange={() => toggleCondicionVenta(option.value)}
+                  />
+                </label>
+              ))}
+            </div>
+          </div>
+
+          <div className="facturacion-form-block">
             <h3>Detalle PDF</h3>
             <div className="table-wrapper facturacion-table">
               <table>
@@ -55832,10 +55947,16 @@ const FacturacionCreatePage: React.FC = () => {
                         />
                       </td>
                       <td>
-                        <input
+                        <select
                           value={row.unidad_medida}
                           onChange={(event) => handleDetalleChange(index, 'unidad_medida', event.target.value)}
-                        />
+                        >
+                          {unidadMedidaOptions.map((option) => (
+                            <option key={option} value={option}>
+                              {option}
+                            </option>
+                          ))}
+                        </select>
                       </td>
                       <td>
                         <input
@@ -55853,10 +55974,16 @@ const FacturacionCreatePage: React.FC = () => {
                         <input value={row.subtotal} disabled />
                       </td>
                       <td>
-                        <input
+                        <select
                           value={row.alicuota_iva_pct}
                           onChange={(event) => handleDetalleChange(index, 'alicuota_iva_pct', event.target.value)}
-                        />
+                        >
+                          {FACTURACION_ALICUOTA_PCT_OPTIONS.map((option, optIndex) => (
+                            <option key={`${option.value}-${option.label}-${optIndex}`} value={option.value}>
+                              {option.label}
+                            </option>
+                          ))}
+                        </select>
                       </td>
                       <td>
                         <input value={row.subtotal_con_iva} disabled />

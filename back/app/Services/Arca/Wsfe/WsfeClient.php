@@ -39,6 +39,27 @@ class WsfeClient
         ];
     }
 
+    /**
+     * @return array{units:array<int,array<string,mixed>>,request_xml:string,response_xml:string}
+     */
+    public function paramGetTiposUnidad(ArcaCertificado $certificado, ?WsaaToken $token = null): array
+    {
+        $auth = $this->authPayload($certificado, $token);
+        [$client, $response] = $this->call($certificado, 'FEParamGetTiposUnidad', [['Auth' => $auth]]);
+        $payload = $this->normalize($response);
+        $result = data_get($payload, 'FEParamGetTiposUnidadResult.ResultGet', []);
+        $units = data_get($result, 'Unidad', []);
+        if ($units !== [] && array_is_list($units) === false) {
+            $units = [$units];
+        }
+
+        return [
+            'units' => is_array($units) ? $units : [],
+            'request_xml' => (string) $client->__getLastRequest(),
+            'response_xml' => (string) $client->__getLastResponse(),
+        ];
+    }
+
     public function compUltimoAutorizado(ArcaCertificado $certificado, int $ptoVta, int $cbteTipo, ?WsaaToken $token = null): array
     {
         $auth = $this->authPayload($certificado, $token);
