@@ -80,7 +80,7 @@ class ArcaCertificadoController extends Controller
         $csrPem = $generated['csr_pem'];
         $privateKeyPem = $generated['private_key_pem'];
 
-        $certificado = DB::transaction(function () use ($emisor, $ambiente, $alias, $csrPem, $privateKeyPem, $generated) {
+        $certificado = DB::transaction(function () use ($emisor, $ambiente, $alias, $csrPem, $privateKeyPem, $generated, $subject) {
             $csrPath = $this->certificateStorage->storeCsrPem($emisor->id, $alias, $ambiente, $csrPem);
             $keyPath = $this->certificateStorage->storeEncryptedPrivateKey($emisor->id, $alias, $ambiente, $privateKeyPem);
 
