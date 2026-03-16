@@ -53423,6 +53423,15 @@ const FACTURACION_EMISOR_CONDICION_IVA = 'IVA Responsable Inscripto';
 const FACTURACION_DEFAULT_PTO_VTA = '11';
 const FACTURACION_DEFAULT_AMBIENTE: 'PROD' = 'PROD';
 const FACTURACION_DEFAULT_CERT_ALIAS = 'logarg-erp-wsfe-pv00011';
+const FACTURACION_CBTE_TIPO_FACTURA_A = '1';
+const FACTURACION_IVA_ALICUOTAS = [
+  { id: 5, rate: 21 },
+  { id: 4, rate: 10.5 },
+  { id: 6, rate: 27 },
+  { id: 3, rate: 5 },
+  { id: 2, rate: 2.5 },
+  { id: 1, rate: 0 },
+];
 
 const buildDownloadUrl = (apiBaseUrl: string, path: string | null | undefined): string | null => {
   if (!path) {
@@ -55019,6 +55028,7 @@ type FacturaIvaDraft = {
   iva_id: string;
   base_imp: string;
   importe: string;
+  auto?: boolean;
 };
 
 type FacturaTributoDraft = {
@@ -55119,11 +55129,37 @@ const createFacturaDetalleRow = (orden: number): FacturaDraftRow => ({
   subtotal_con_iva: '0',
 });
 
+const resolveFacturaIvaId = (baseImp: number, importe: number): number => {
+  if (baseImp <= 0 || importe <= 0) {
+    return 5;
+  }
+  const rate = (importe / baseImp) * 100;
+  let best = FACTURACION_IVA_ALICUOTAS[0];
+  let bestDiff = Math.abs(rate - best.rate);
+  for (const candidate of FACTURACION_IVA_ALICUOTAS) {
+    const diff = Math.abs(rate - candidate.rate);
+    if (diff < bestDiff) {
+      best = candidate;
+      bestDiff = diff;
+    }
+  }
+  return best.id;
+};
+
 const createFacturaIvaRow = (): FacturaIvaDraft => ({
   id: uniqueKey(),
   iva_id: '',
   base_imp: '0',
   importe: '0',
+  auto: false,
+});
+
+const buildAutoFacturaIvaRow = (baseImp: number, importe: number): FacturaIvaDraft => ({
+  id: uniqueKey(),
+  iva_id: String(resolveFacturaIvaId(baseImp, importe)),
+  base_imp: baseImp.toFixed(2),
+  importe: importe.toFixed(2),
+  auto: true,
 });
 
 const createFacturaTributoRow = (): FacturaTributoDraft => ({
@@ -55231,6 +55267,49 @@ const FacturacionCreatePage: React.FC = () => {
       setForm((prev) => ({ ...prev, imp_total: nextTotal }));
     }
   }, [autoTotal, form.imp_tot_conc, form.imp_neto, form.imp_op_ex, form.imp_iva, form.imp_trib, form.imp_total]);
+
+  useEffect(() => {
+    const isFacturaA = form.cbte_tipo === FACTURACION_CBTE_TIPO_FACTURA_A;
+    const impIva = parseNumberOrZero(form.imp_iva);
+    const impNeto = parseNumberOrZero(form.imp_neto);
+
+    if (!isFacturaA || impIva <= 0) {
+      setIvaItems((prev) => {
+        const autoIndex = prev.findIndex((item) => item.auto);
+        if (autoIndex === -1) {
+          return prev;
+        }
+        return prev.filter((_, index) => index !== autoIndex);
+      });
+      return;
+    }
+
+    setIvaItems((prev) => {
+      if (prev.length === 0) {
+        return [buildAutoFacturaIvaRow(impNeto, impIva)];
+      }
+      const autoIndex = prev.findIndex((item) => item.auto);
+      if (autoIndex === -1) {
+        return prev;
+      }
+      const next = [...prev];
+      const nextIvaId = String(resolveFacturaIvaId(impNeto, impIva));
+      const nextBase = impNeto.toFixed(2);
+      const nextImporte = impIva.toFixed(2);
+      const current = next[autoIndex];
+      if (current.iva_id === nextIvaId && current.base_imp === nextBase && current.importe === nextImporte) {
+        return prev;
+      }
+      next[autoIndex] = {
+        ...current,
+        iva_id: nextIvaId,
+        base_imp: nextBase,
+        importe: nextImporte,
+        auto: true,
+      };
+      return next;
+    });
+  }, [form.cbte_tipo, form.imp_iva, form.imp_neto]);
 
   const selectedEmisor = useMemo(
     () => emisores.find((item) => item.id === Number(form.emisor_id)) ?? null,
@@ -55831,7 +55910,7 @@ const FacturacionCreatePage: React.FC = () => {
                             onChange={(event) =>
                               setIvaItems((prev) => {
                                 const next = [...prev];
-                                next[index] = { ...row, iva_id: event.target.value };
+                                next[index] = { ...row, iva_id: event.target.value, auto: false };
                                 return next;
                               })
                             }
@@ -55843,7 +55922,7 @@ const FacturacionCreatePage: React.FC = () => {
                             onChange={(event) =>
                               setIvaItems((prev) => {
                                 const next = [...prev];
-                                next[index] = { ...row, base_imp: event.target.value };
+                                next[index] = { ...row, base_imp: event.target.value, auto: false };
                                 return next;
                               })
                             }
@@ -55855,7 +55934,7 @@ const FacturacionCreatePage: React.FC = () => {
                             onChange={(event) =>
                               setIvaItems((prev) => {
                                 const next = [...prev];
-                                next[index] = { ...row, importe: event.target.value };
+                                next[index] = { ...row, importe: event.target.value, auto: false };
                                 return next;
                               })
                             }

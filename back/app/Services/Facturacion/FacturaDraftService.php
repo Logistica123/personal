@@ -95,7 +95,7 @@ class FacturaDraftService
         $factura->tributos()->delete();
         $factura->detallePdf()->delete();
 
-        foreach (($payload['iva'] ?? []) as $item) {
+        foreach ($this->resolveIvaItems($factura, $payload) as $item) {
             $factura->ivaItems()->create([
                 'iva_id' => $item['iva_id'],
                 'base_imp' => $item['base_imp'],
@@ -126,5 +126,67 @@ class FacturaDraftService
                 'subtotal_con_iva' => $item['subtotal_con_iva'],
             ]);
         }
+    }
+
+    /**
+     * @return array<int,array{iva_id:int,base_imp:float,importe:float}>
+     */
+    private function resolveIvaItems(FacturaCabecera $factura, array $payload): array
+    {
+        $ivaItems = $payload['iva'] ?? [];
+        if (! is_array($ivaItems)) {
+            $ivaItems = [];
+        }
+
+        $cbteTipo = (int) ($payload['cbte_tipo'] ?? $factura->cbte_tipo ?? 0);
+        $impIva = (float) ($payload['imp_iva'] ?? $factura->imp_iva ?? 0);
+
+        if ($cbteTipo === 1 && $impIva > 0 && count($ivaItems) === 0) {
+            $impNeto = (float) ($payload['imp_neto'] ?? $factura->imp_neto ?? 0);
+            $ivaItems[] = [
+                'iva_id' => $this->resolveDefaultIvaId($impNeto, $impIva),
+                'base_imp' => round($impNeto, 2),
+                'importe' => round($impIva, 2),
+            ];
+        }
+
+        return array_map(
+            fn (array $item) => [
+                'iva_id' => (int) $item['iva_id'],
+                'base_imp' => (float) $item['base_imp'],
+                'importe' => (float) $item['importe'],
+            ],
+            $ivaItems
+        );
+    }
+
+    private function resolveDefaultIvaId(float $baseImp, float $importe): int
+    {
+        $candidates = [
+            ['id' => 5, 'rate' => 21.0],
+            ['id' => 4, 'rate' => 10.5],
+            ['id' => 6, 'rate' => 27.0],
+            ['id' => 3, 'rate' => 5.0],
+            ['id' => 2, 'rate' => 2.5],
+            ['id' => 1, 'rate' => 0.0],
+        ];
+
+        if ($baseImp <= 0 || $importe <= 0) {
+            return 5;
+        }
+
+        $rate = ($importe / $baseImp) * 100;
+        $closest = $candidates[0];
+        $bestDiff = abs($rate - $closest['rate']);
+
+        foreach ($candidates as $candidate) {
+            $diff = abs($rate - $candidate['rate']);
+            if ($diff < $bestDiff) {
+                $bestDiff = $diff;
+                $closest = $candidate;
+            }
+        }
+
+        return (int) $closest['id'];
     }
 }
