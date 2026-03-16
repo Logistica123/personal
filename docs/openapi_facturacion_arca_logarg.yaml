@@ -1,0 +1,333 @@
+openapi: 3.1.0
+info:
+  title: Facturacion ARCA LOGARG API
+  version: 1.0.0
+servers:
+  - url: https://erp.example.local
+paths:
+  /api/arca/emisores:
+    get:
+      summary: Listar emisores ARCA
+      responses:
+        '200':
+          description: OK
+    post:
+      summary: Crear o actualizar emisor ARCA
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ArcaEmisorInput'
+      responses:
+        '200':
+          description: OK
+  /api/arca/emisores/{emisorId}/certificados/import-crt-key:
+    post:
+      summary: Importar CRT + KEY
+      parameters:
+        - $ref: '#/components/parameters/EmisorId'
+      responses:
+        '200':
+          description: OK
+  /api/arca/emisores/{emisorId}/certificados/import-p12:
+    post:
+      summary: Importar P12/PFX
+      parameters:
+        - $ref: '#/components/parameters/EmisorId'
+      responses:
+        '200':
+          description: OK
+  /api/arca/emisores/{emisorId}/certificados/test-wsaa:
+    post:
+      summary: Probar login WSAA
+      parameters:
+        - $ref: '#/components/parameters/EmisorId'
+      responses:
+        '200':
+          description: OK
+  /api/arca/emisores/{emisorId}/puntos-venta/sync:
+    post:
+      summary: Sincronizar puntos de venta desde ARCA
+      parameters:
+        - $ref: '#/components/parameters/EmisorId'
+      responses:
+        '200':
+          description: OK
+  /api/facturas:
+    get:
+      summary: Listar facturas
+      parameters:
+        - in: query
+          name: cliente_id
+          schema: { type: integer }
+        - in: query
+          name: sucursal_id
+          schema: { type: integer }
+        - in: query
+          name: estado
+          schema: { type: string }
+        - in: query
+          name: estado_cobranza
+          schema: { type: string }
+        - in: query
+          name: anio
+          schema: { type: integer }
+        - in: query
+          name: mes
+          schema: { type: integer }
+        - in: query
+          name: periodo
+          schema: { type: string }
+      responses:
+        '200':
+          description: OK
+    post:
+      summary: Crear borrador de factura
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FacturaDraftInput'
+      responses:
+        '201':
+          description: Created
+  /api/facturas/{facturaId}:
+    get:
+      summary: Obtener detalle de factura
+      parameters:
+        - $ref: '#/components/parameters/FacturaId'
+      responses:
+        '200':
+          description: OK
+    patch:
+      summary: Editar borrador de factura
+      parameters:
+        - $ref: '#/components/parameters/FacturaId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FacturaDraftInput'
+      responses:
+        '200':
+          description: OK
+  /api/facturas/{facturaId}/validar:
+    post:
+      summary: Validar borrador
+      parameters:
+        - $ref: '#/components/parameters/FacturaId'
+      responses:
+        '200':
+          description: OK
+  /api/facturas/{facturaId}/emitir:
+    post:
+      summary: Emitir factura en ARCA
+      parameters:
+        - $ref: '#/components/parameters/FacturaId'
+      responses:
+        '200':
+          description: OK
+  /api/facturas/{facturaId}/pdf:
+    get:
+      summary: Descargar PDF
+      parameters:
+        - $ref: '#/components/parameters/FacturaId'
+      responses:
+        '200':
+          description: PDF
+  /api/facturas/{facturaId}/xml-request:
+    get:
+      summary: Descargar XML request
+      parameters:
+        - $ref: '#/components/parameters/FacturaId'
+      responses:
+        '200':
+          description: XML
+  /api/facturas/{facturaId}/xml-response:
+    get:
+      summary: Descargar XML response
+      parameters:
+        - $ref: '#/components/parameters/FacturaId'
+      responses:
+        '200':
+          description: XML
+  /api/facturas/{facturaId}/cobranza:
+    patch:
+      summary: Actualizar datos de cobranza
+      parameters:
+        - $ref: '#/components/parameters/FacturaId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CobranzaPatch'
+      responses:
+        '200':
+          description: OK
+  /api/clientes/select:
+    get:
+      summary: Buscar clientes para selector
+      responses:
+        '200':
+          description: OK
+  /api/clientes/{clienteId}/sucursales:
+    get:
+      summary: Listar sucursales del cliente
+      parameters:
+        - $ref: '#/components/parameters/ClienteId'
+      responses:
+        '200':
+          description: OK
+  /api/facturacion/clientes:
+    get:
+      summary: Listado consolidado de clientes de facturacion
+      parameters:
+        - in: query
+          name: cliente_id
+          schema: { type: integer }
+        - in: query
+          name: sucursal_id
+          schema: { type: integer }
+        - in: query
+          name: anio
+          schema: { type: integer }
+        - in: query
+          name: mes
+          schema: { type: integer }
+        - in: query
+          name: periodo
+          schema: { type: string }
+        - in: query
+          name: estado_cobranza
+          schema: { type: string }
+      responses:
+        '200':
+          description: OK
+  /api/facturacion/clientes/{clienteId}/facturas:
+    get:
+      summary: Detalle de facturas de un cliente
+      parameters:
+        - $ref: '#/components/parameters/ClienteId'
+      responses:
+        '200':
+          description: OK
+components:
+  parameters:
+    EmisorId:
+      in: path
+      name: emisorId
+      required: true
+      schema: { type: integer }
+    FacturaId:
+      in: path
+      name: facturaId
+      required: true
+      schema: { type: integer }
+    ClienteId:
+      in: path
+      name: clienteId
+      required: true
+      schema: { type: integer }
+  schemas:
+    ArcaEmisorInput:
+      type: object
+      required: [razon_social, cuit, condicion_iva, ambiente_default]
+      properties:
+        razon_social: { type: string }
+        cuit: { type: integer }
+        condicion_iva: { type: string }
+        ambiente_default: { type: string, enum: [HOMO, PROD] }
+    FacturaDetallePdfInput:
+      type: object
+      required: [orden, descripcion, cantidad, precio_unitario, subtotal, subtotal_con_iva]
+      properties:
+        orden: { type: integer }
+        descripcion: { type: string }
+        cantidad: { type: number }
+        unidad_medida: { type: string }
+        precio_unitario: { type: number }
+        bonificacion_pct: { type: number }
+        subtotal: { type: number }
+        alicuota_iva_pct: { type: number }
+        subtotal_con_iva: { type: number }
+    FacturaIvaInput:
+      type: object
+      required: [iva_id, base_imp, importe]
+      properties:
+        iva_id: { type: integer }
+        base_imp: { type: number }
+        importe: { type: number }
+    FacturaDraftInput:
+      type: object
+      required:
+        - emisor_id
+        - ambiente
+        - pto_vta
+        - cbte_tipo
+        - concepto
+        - doc_tipo
+        - doc_nro
+        - cliente_id
+        - sucursal_id
+        - fecha_cbte
+        - moneda_id
+        - moneda_cotiz
+        - imp_total
+        - imp_tot_conc
+        - imp_neto
+        - imp_op_ex
+        - imp_iva
+        - imp_trib
+        - anio_facturado
+        - mes_facturado
+        - periodo_facturado
+        - detalle_pdf
+      properties:
+        emisor_id: { type: integer }
+        ambiente: { type: string, enum: [HOMO, PROD] }
+        pto_vta: { type: integer, example: 11 }
+        cbte_tipo: { type: integer, example: 1 }
+        concepto: { type: integer, example: 2 }
+        doc_tipo: { type: integer, example: 80 }
+        doc_nro: { type: integer, example: 30708286431 }
+        cliente_id: { type: integer }
+        sucursal_id: { type: integer }
+        cliente_nombre: { type: string }
+        cliente_domicilio: { type: string }
+        fecha_cbte: { type: string, format: date }
+        fecha_serv_desde: { type: string, format: date }
+        fecha_serv_hasta: { type: string, format: date }
+        fecha_vto_pago: { type: string, format: date }
+        moneda_id: { type: string, example: PES }
+        moneda_cotiz: { type: number, example: 1 }
+        imp_total: { type: number }
+        imp_tot_conc: { type: number }
+        imp_neto: { type: number }
+        imp_op_ex: { type: number }
+        imp_iva: { type: number }
+        imp_trib: { type: number }
+        anio_facturado: { type: integer, example: 2026 }
+        mes_facturado: { type: integer, example: 2 }
+        periodo_facturado:
+          type: string
+          enum: [PRIMERA_QUINCENA, SEGUNDA_QUINCENA, MES_COMPLETO]
+        fecha_aprox_cobro: { type: string, format: date }
+        observaciones_cobranza: { type: string }
+        iva:
+          type: array
+          items:
+            $ref: '#/components/schemas/FacturaIvaInput'
+        detalle_pdf:
+          type: array
+          items:
+            $ref: '#/components/schemas/FacturaDetallePdfInput'
+    CobranzaPatch:
+      type: object
+      properties:
+        fecha_aprox_cobro: { type: string, format: date }
+        fecha_pago_manual: { type: string, format: date }
+        observaciones_cobranza: { type: string }

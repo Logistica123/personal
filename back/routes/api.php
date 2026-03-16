@@ -1,8 +1,14 @@
 <?php
 
 use App\Http\Controllers\Api\AuthController;
+use App\Http\Controllers\Api\ArcaCertificadoController;
+use App\Http\Controllers\Api\ArcaEmisorController;
+use App\Http\Controllers\Api\ArcaPuntoVentaController;
 use App\Http\Controllers\Api\ChatMessageController;
 use App\Http\Controllers\Api\ClienteController;
+use App\Http\Controllers\Api\ClientesFacturacionController;
+use App\Http\Controllers\Api\FacturaController;
+use App\Http\Controllers\Api\FacturaCobranzaController;
 use App\Http\Controllers\Api\UnidadController;
 use App\Http\Controllers\Api\UserController;
 use App\Http\Controllers\Api\PersonalController;
@@ -83,7 +89,9 @@ Route::middleware('auth.api')->group(function () {
     Route::put('/vacaciones-dias', [VacacionesDiasController::class, 'update']);
 
     Route::get('/clientes', [ClienteController::class, 'index']);
+    Route::get('/clientes/select', [ClienteController::class, 'select']);
     Route::get('/clientes/{cliente}', [ClienteController::class, 'show']);
+    Route::get('/clientes/{cliente}/sucursales', [ClienteController::class, 'sucursales']);
     Route::post('/clientes', [ClienteController::class, 'store']);
     Route::put('/clientes/{cliente}', [ClienteController::class, 'update']);
     Route::delete('/clientes/{cliente}', [ClienteController::class, 'destroy']);
@@ -94,6 +102,48 @@ Route::middleware('auth.api')->group(function () {
     Route::delete('/clientes/{cliente}/legajo-impositivo/documentos/{documento}', [TaxProfileController::class, 'destroyClienteDocument']);
     Route::get('/clientes/{cliente}/legajo-impositivo/documentos/{documento}/descargar', [TaxProfileController::class, 'downloadClienteDocument'])
         ->name('clientes.legajo.documentos.descargar');
+
+    Route::get('/arca/emisores', [ArcaEmisorController::class, 'index']);
+    Route::post('/arca/emisores', [ArcaEmisorController::class, 'store']);
+    Route::get('/arca/emisores/{emisor}', [ArcaEmisorController::class, 'show']);
+    Route::put('/arca/emisores/{emisor}', [ArcaEmisorController::class, 'update']);
+    Route::get('/arca/emisores/{emisor}/certificados', [ArcaCertificadoController::class, 'index']);
+    Route::post('/arca/emisores/{emisor}/certificados/importar', [ArcaCertificadoController::class, 'importar']);
+    Route::post('/arca/emisores/{emisor}/certificados/import-crt-key', [ArcaCertificadoController::class, 'importCrtKey']);
+    Route::post('/arca/emisores/{emisor}/certificados/import-p12', [ArcaCertificadoController::class, 'importP12']);
+    Route::post('/arca/emisores/{emisor}/certificados/test-wsaa', [ArcaCertificadoController::class, 'testWsaa']);
+    Route::post('/arca/certificados/generar-csr', [ArcaCertificadoController::class, 'generarCsr']);
+    Route::get('/arca/certificados/{certificado}/csr', [ArcaCertificadoController::class, 'downloadCsr']);
+    Route::post('/arca/certificados/{certificado}/importar', [ArcaCertificadoController::class, 'importarPorCertificado']);
+    Route::post('/arca/certificados/{certificado}/test-wsaa', [ArcaCertificadoController::class, 'testWsaaPorCertificado']);
+    Route::post('/arca/certificados/{certificado}/activar', [ArcaCertificadoController::class, 'activate']);
+    Route::post('/arca/certificados/{certificado}/desactivar', [ArcaCertificadoController::class, 'deactivate']);
+    Route::post('/arca/emisores/{emisor}/puntos-venta/sincronizar', [ArcaPuntoVentaController::class, 'sync']);
+    Route::post('/arca/emisores/{emisor}/puntos-venta/sync', [ArcaPuntoVentaController::class, 'sync']);
+    Route::get('/arca/emisores/{emisor}/puntos-venta', [ArcaPuntoVentaController::class, 'index']);
+
+    Route::get('/facturas', [FacturaController::class, 'index']);
+    Route::post('/facturas', [FacturaController::class, 'store']);
+    Route::get('/facturas/{factura}', [FacturaController::class, 'show']);
+    Route::patch('/facturas/{factura}', [FacturaController::class, 'updateDraft']);
+    Route::put('/facturas/{factura}/borrador', [FacturaController::class, 'updateDraft']);
+    Route::post('/facturas/{factura}/validar', [FacturaController::class, 'validar']);
+    Route::post('/facturas/{factura}/emitir', [FacturaController::class, 'emitir']);
+    Route::get('/facturas/{factura}/pdf', [FacturaController::class, 'downloadPdf']);
+    Route::get('/facturas/{factura}/xml-request', [FacturaController::class, 'downloadXmlRequest']);
+    Route::get('/facturas/{factura}/xml-response', [FacturaController::class, 'downloadXmlResponse']);
+    Route::get('/facturas/{factura}/auditoria', [FacturaController::class, 'auditoria']);
+    Route::patch('/facturas/{factura}/cobranza', [FacturaCobranzaController::class, 'actualizar']);
+    Route::post('/facturas/{factura}/actualizar-cobranza', [FacturaCobranzaController::class, 'actualizar']);
+    Route::post('/facturas/{factura}/registrar-pago', [FacturaCobranzaController::class, 'registrarPago']);
+    Route::get('/facturas/{factura}/historial-cobranza', [FacturaCobranzaController::class, 'historial']);
+
+    Route::get('/clientes-facturacion/resumen', [ClientesFacturacionController::class, 'resumen']);
+    Route::get('/clientes-facturacion/detalle', [ClientesFacturacionController::class, 'detalle']);
+    Route::get('/clientes-facturacion/{cliente}/sucursales', [ClientesFacturacionController::class, 'sucursales']);
+    Route::get('/clientes-facturacion/grupo/{grupoId}', [ClientesFacturacionController::class, 'grupo']);
+    Route::get('/facturacion/clientes', [ClientesFacturacionController::class, 'resumen']);
+    Route::get('/facturacion/clientes/{cliente}/facturas', [ClientesFacturacionController::class, 'facturasCliente']);
 
     Route::get('/bdd-activos-asesores', [ActivoAsesorComercialController::class, 'index']);
     Route::post('/bdd-activos-asesores', [ActivoAsesorComercialController::class, 'store']);

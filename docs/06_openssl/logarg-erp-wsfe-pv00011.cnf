@@ -1,0 +1,12 @@
+[ req ]
+default_bits       = 2048
+default_md         = sha256
+prompt             = no
+distinguished_name = req_distinguished_name
+string_mask        = utf8only
+
+[ req_distinguished_name ]
+C = AR
+O = LOGISTICA ARGENTINA S.R.L.
+CN = logarg-erp-wsfe-pv00011
+serialNumber = CUIT 30717060985

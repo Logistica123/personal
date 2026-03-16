@@ -273,6 +273,33 @@ class PersonalDocumentController extends Controller
 
     public function store(Request $request, Persona $persona): JsonResponse
     {
+        $uploadedFile = $request->file('archivo');
+        if ($uploadedFile instanceof UploadedFile && ! $uploadedFile->isValid()) {
+            Log::warning('Upload inválido de documento', [
+                'persona_id' => $persona->id,
+                'error_code' => $uploadedFile->getError(),
+                'original_name' => $uploadedFile->getClientOriginalName(),
+                'mime' => $uploadedFile->getClientMimeType(),
+                'size' => $uploadedFile->getSize(),
+                'content_length' => $request->header('Content-Length'),
+                'origin' => $request->header('User-Agent'),
+            ]);
+
+            $message = match ($uploadedFile->getError()) {
+                UPLOAD_ERR_INI_SIZE, UPLOAD_ERR_FORM_SIZE => 'No se pudo subir el archivo porque supera el límite permitido por el servidor.',
+                UPLOAD_ERR_PARTIAL => 'No se pudo subir el archivo porque la carga se interrumpió.',
+                UPLOAD_ERR_NO_FILE => 'No se recibió el archivo.',
+                UPLOAD_ERR_NO_TMP_DIR => 'No se pudo subir el archivo porque falta la carpeta temporal del servidor.',
+                UPLOAD_ERR_CANT_WRITE => 'No se pudo subir el archivo porque no se pudo escribir en el disco del servidor.',
+                UPLOAD_ERR_EXTENSION => 'No se pudo subir el archivo porque una extensión del servidor detuvo la carga.',
+                default => 'No se pudo subir el archivo. Intenta nuevamente.',
+            };
+
+            throw ValidationException::withMessages([
+                'archivo' => [$message],
+            ]);
+        }
+
         if ($request->boolean('esLiquidacion') && ! $request->filled('tipoArchivoId')) {
             $liquidacionType = FileType::query()->firstOrCreate(
                 ['nombre' => 'Liquidación'],
@@ -311,6 +338,7 @@ class PersonalDocumentController extends Controller
         ], [
             'tipoArchivoId.required' => 'Selecciona el tipo de documento.',
             'tipoArchivoId.exists' => 'El tipo de documento seleccionado no es válido.',
+            'archivo.uploaded' => 'No se pudo subir el archivo. Probablemente supera el límite permitido por el servidor o se interrumpió la carga.',
             'archivo.max' => 'El archivo es demasiado grande. Permitimos hasta 50 MB por liquidación.',
             'importeCombustible.numeric' => 'El importe de combustible debe ser numérico.',
             'importeCombustible.max' => 'El importe de combustible supera el máximo permitido.',

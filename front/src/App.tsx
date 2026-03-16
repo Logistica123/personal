@@ -1192,7 +1192,7 @@ const PERFIL_DISPLAY_LABELS: Record<number, string> = {
   2: 'Cobrador',
   3: 'Servicios',
 };
-const MAX_UPLOAD_SIZE_BYTES = 10 * 1024 * 1024; // 10 MB
+const MAX_UPLOAD_SIZE_BYTES = 50 * 1024 * 1024; // 50 MB
 
 const getPerfilDisplayLabel = (value?: number | null, fallback?: string | null): string => {
   if (value != null && PERFIL_DISPLAY_LABELS[value]) {
@@ -4351,6 +4351,7 @@ const DashboardLayout: React.FC<{
   const [personalSubmenuOpen, setPersonalSubmenuOpen] = useState(false);
   const [reclamosSubmenuOpen, setReclamosSubmenuOpen] = useState(false);
   const [liquidacionesSubmenuOpen, setLiquidacionesSubmenuOpen] = useState(false);
+  const [facturacionSubmenuOpen, setFacturacionSubmenuOpen] = useState(false);
   const isPersonalListRoute = location.pathname === '/personal';
   const isReclamosRoute = location.pathname.startsWith('/reclamos');
   const isReclamosListRoute = location.pathname === '/reclamos';
@@ -4387,6 +4388,11 @@ const DashboardLayout: React.FC<{
     !isLiquidacionesClienteRoute;
   const isCombustibleRoute = location.pathname.startsWith('/combustible');
   const isPagosRoute = location.pathname.startsWith('/pagos');
+  const isFacturacionRoute = location.pathname.startsWith('/facturacion');
+  const isFacturacionListRoute = location.pathname === '/facturacion/facturas';
+  const isFacturacionNuevaRoute = location.pathname === '/facturacion/nueva';
+  const isFacturacionClientesRoute = location.pathname.startsWith('/facturacion/clientes');
+  const isFacturacionConfigRoute = location.pathname === '/facturacion/configuracion-arca';
   const personalEstadoParam = useMemo(() => {
     if (!isPersonalListRoute) {
       return 'todos';
@@ -4442,6 +4448,11 @@ const DashboardLayout: React.FC<{
       setLiquidacionesSubmenuOpen(false);
     }
   }, [isLiquidacionesGroupRoute]);
+  useEffect(() => {
+    if (!isFacturacionRoute) {
+      setFacturacionSubmenuOpen(false);
+    }
+  }, [isFacturacionRoute]);
   useEffect(() => {
     setAuthUser(readAuthUserFromStorage());
   }, []);
@@ -5642,9 +5653,52 @@ const DashboardLayout: React.FC<{
             </>
           ) : null}
           {canAccessSection(userRole, 'facturacion', authUser?.permissions) ? (
-            <NavLink to="/facturacion" className={({ isActive }) => `sidebar-link${isActive ? ' is-active' : ''}`}>
-              Facturación
-            </NavLink>
+            <>
+              <button
+                type="button"
+                className={`sidebar-link${isFacturacionRoute ? ' is-active' : ''}`}
+                onClick={() => {
+                  setFacturacionSubmenuOpen((prev) => !prev);
+                  if (!isFacturacionRoute) {
+                    navigate('/facturacion/facturas');
+                  }
+                }}
+              >
+                Facturación
+              </button>
+              {facturacionSubmenuOpen ? (
+                <div className="sidebar-submenu">
+                  <button
+                    type="button"
+                    className={`sidebar-sublink${isFacturacionListRoute ? ' is-active' : ''}`}
+                    onClick={() => navigate('/facturacion/facturas')}
+                  >
+                    Listado
+                  </button>
+                  <button
+                    type="button"
+                    className={`sidebar-sublink${isFacturacionNuevaRoute ? ' is-active' : ''}`}
+                    onClick={() => navigate('/facturacion/nueva')}
+                  >
+                    Nueva factura
+                  </button>
+                  <button
+                    type="button"
+                    className={`sidebar-sublink${isFacturacionClientesRoute ? ' is-active' : ''}`}
+                    onClick={() => navigate('/facturacion/clientes')}
+                  >
+                    Clientes
+                  </button>
+                  <button
+                    type="button"
+                    className={`sidebar-sublink${isFacturacionConfigRoute ? ' is-active' : ''}`}
+                    onClick={() => navigate('/facturacion/configuracion-arca')}
+                  >
+                    Configuración ARCA
+                  </button>
+                </div>
+              ) : null}
+            </>
           ) : null}
           {canAccessSection(userRole, 'solicitud-personal', authUser?.permissions) ? (
             <NavLink
@@ -53114,6 +53168,340 @@ const parseFacturacionAmountValue = (value: string | number | null | undefined):
   return isNegative ? -Math.abs(numeric) : numeric;
 };
 
+type ArcaCertificadoDto = {
+  id: number;
+  emisor_id: number;
+  alias: string;
+  ambiente: 'HOMO' | 'PROD';
+  subject_dn?: string | null;
+  serial_number_subject?: string | null;
+  thumbprint_sha1?: string | null;
+  thumbprint_sha256?: string | null;
+  valid_from?: string | null;
+  valid_to?: string | null;
+  activo: boolean;
+  estado?: string | null;
+  ultimo_login_wsaa_ok_at?: string | null;
+  has_private_key?: boolean;
+  has_p12?: boolean;
+  has_csr?: boolean;
+};
+
+type ArcaPuntoVentaDto = {
+  id: number;
+  emisor_id: number;
+  ambiente: 'HOMO' | 'PROD';
+  nro: number;
+  sistema_arca?: string | null;
+  emision_tipo?: string | null;
+  bloqueado: boolean;
+  fch_baja?: string | null;
+  habilitado_para_erp: boolean;
+  default_para_cbte_tipo?: number | null;
+};
+
+type ArcaEmisorDto = {
+  id: number;
+  razon_social: string;
+  cuit: string;
+  condicion_iva: string;
+  ambiente_default: 'HOMO' | 'PROD';
+  activo: boolean;
+  created_at?: string | null;
+  updated_at?: string | null;
+  certificados?: ArcaCertificadoDto[];
+  puntos_venta?: ArcaPuntoVentaDto[];
+};
+
+type ClienteSelectOption = {
+  id: number;
+  codigo?: string | null;
+  nombre?: string | null;
+  documento_fiscal?: string | null;
+};
+
+type SucursalSelectOption = {
+  id: number;
+  cliente_id?: number;
+  nombre?: string | null;
+  direccion?: string | null;
+  encargado_deposito?: string | null;
+};
+
+type FacturaIvaInput = {
+  iva_id: number;
+  base_imp: number;
+  importe: number;
+};
+
+type FacturaTributoInput = {
+  tributo_id: number;
+  descr?: string | null;
+  base_imp?: number | null;
+  alic?: number | null;
+  importe: number;
+};
+
+type FacturaDetallePdfInput = {
+  orden: number;
+  descripcion: string;
+  cantidad: number;
+  unidad_medida?: string | null;
+  precio_unitario: number;
+  bonificacion_pct?: number | null;
+  subtotal: number;
+  alicuota_iva_pct?: number | null;
+  subtotal_con_iva: number;
+};
+
+type FacturaSummaryDto = {
+  id: number;
+  cliente_id: number;
+  sucursal_id: number;
+  cliente_nombre: string;
+  sucursal_nombre?: string | null;
+  pto_vta: number;
+  cbte_tipo: number;
+  cbte_numero?: number | null;
+  fecha_cbte?: string | null;
+  imp_neto?: number | null;
+  imp_iva?: number | null;
+  imp_tot_conc?: number | null;
+  imp_op_ex?: number | null;
+  imp_total?: number | null;
+  fecha_aprox_cobro?: string | null;
+  fecha_pago_manual?: string | null;
+  estado_cobranza?: string | null;
+  estado?: string | null;
+  cae?: string | null;
+  anio_facturado?: number | null;
+  mes_facturado?: number | null;
+  periodo_facturado?: string | null;
+  pdf_url?: string | null;
+};
+
+type FacturaHistorialCobranzaItem = {
+  id: number;
+  fecha_evento?: string | null;
+  estado_anterior?: string | null;
+  estado_nuevo?: string | null;
+  fecha_aprox_cobro_anterior?: string | null;
+  fecha_aprox_cobro_nueva?: string | null;
+  fecha_pago_anterior?: string | null;
+  fecha_pago_nueva?: string | null;
+  monto_pagado_anterior?: number | null;
+  monto_pagado_nuevo?: number | null;
+  observaciones?: string | null;
+  usuario?: { id: number; name?: string | null; email?: string | null } | null;
+};
+
+type FacturaAuditoriaItem = {
+  id: number;
+  evento: string;
+  created_at?: string | null;
+  ip?: string | null;
+  usuario?: { id: number; name?: string | null; email?: string | null } | null;
+  payload_before?: Record<string, unknown> | null;
+  payload_after?: Record<string, unknown> | null;
+};
+
+type FacturaDetalleDto = {
+  id: number;
+  emisor_id: number;
+  certificado_id?: number | null;
+  ambiente: 'HOMO' | 'PROD';
+  pto_vta: number;
+  cbte_tipo: number;
+  cbte_numero?: number | null;
+  concepto: number;
+  doc_tipo: number;
+  doc_nro: number;
+  cliente_id: number;
+  sucursal_id: number;
+  cliente_nombre: string;
+  cliente_domicilio?: string | null;
+  fecha_cbte: string;
+  fecha_serv_desde?: string | null;
+  fecha_serv_hasta?: string | null;
+  fecha_vto_pago?: string | null;
+  moneda_id: string;
+  moneda_cotiz: number;
+  imp_total: number;
+  imp_tot_conc: number;
+  imp_neto: number;
+  imp_op_ex: number;
+  imp_iva: number;
+  imp_trib: number;
+  resultado_arca?: string | null;
+  reproceso?: string | null;
+  cae?: string | null;
+  cae_vto?: string | null;
+  observaciones_arca?: unknown;
+  errores_arca?: unknown;
+  estado: string;
+  hash_idempotencia?: string | null;
+  anio_facturado: number;
+  mes_facturado: number;
+  periodo_facturado: string;
+  fecha_aprox_cobro?: string | null;
+  fecha_pago_manual?: string | null;
+  monto_pagado_manual?: number | null;
+  estado_cobranza?: string | null;
+  observaciones_cobranza?: string | null;
+  pdf_url?: string | null;
+  xml_request_url?: string | null;
+  xml_response_url?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+  iva?: FacturaIvaInput[];
+  tributos?: FacturaTributoInput[];
+  detalle_pdf?: FacturaDetallePdfInput[];
+  historial_cobranza?: FacturaHistorialCobranzaItem[];
+};
+
+type ClientesFacturacionResumenDto = {
+  group_id: string;
+  cliente_id: number;
+  cliente_nombre: string;
+  sucursal_id: number;
+  sucursal_nombre: string;
+  anio_facturado: number;
+  mes_facturado: number;
+  periodo_facturado: string;
+  cantidad_facturas: number;
+  total_neto_gravado: number;
+  total_no_gravado: number;
+  total_iva: number;
+  total_final: number;
+  facturas_cobradas: number;
+  facturas_pendientes: number;
+  facturas_vencidas: number;
+  primera_fecha_aprox_cobro?: string | null;
+  ultima_fecha_aprox_cobro?: string | null;
+  ultima_fecha_pago?: string | null;
+};
+
+const FACTURACION_PERIODOS = [
+  { value: 'PRIMERA_QUINCENA', label: 'Primera quincena' },
+  { value: 'SEGUNDA_QUINCENA', label: 'Segunda quincena' },
+  { value: 'MES_COMPLETO', label: 'Mes completo' },
+];
+
+const FACTURACION_ESTADOS_FISCALES = [
+  'BORRADOR',
+  'VALIDADA_LOCAL',
+  'LISTA_PARA_ENVIO',
+  'ENVIANDO_ARCA',
+  'AUTORIZADA',
+  'RECHAZADA_ARCA',
+  'ERROR_TECNICO',
+  'PDF_GENERADO',
+];
+
+const FACTURACION_ESTADOS_COBRANZA = ['PENDIENTE', 'A_VENCER', 'VENCIDA', 'COBRADA', 'PARCIAL'];
+
+const formatDateOnly = (value: string | null | undefined): string => {
+  if (!value) {
+    return '—';
+  }
+  const parsed = parseDateTimeValue(value);
+  if (!parsed) {
+    return value;
+  }
+  return parsed.toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', year: 'numeric' });
+};
+
+const parseNumberOrZero = (value: string | number | null | undefined): number => {
+  const parsed = parseFacturacionAmountValue(value);
+  return parsed === null ? 0 : parsed;
+};
+
+const FACTURACION_EMISOR_RAZON_SOCIAL = 'LOGISTICA ARGENTINA S.R.L.';
+const FACTURACION_EMISOR_CUIT = '30717060985';
+const FACTURACION_EMISOR_DOMICILIO = 'SAN CAYETANO 3470 - SAN CAYETANO';
+const FACTURACION_EMISOR_CONDICION_IVA = 'IVA Responsable Inscripto';
+const FACTURACION_DEFAULT_PTO_VTA = '11';
+const FACTURACION_DEFAULT_AMBIENTE: 'PROD' = 'PROD';
+const FACTURACION_DEFAULT_CERT_ALIAS = 'logarg-erp-wsfe-pv00011';
+
+const buildDownloadUrl = (apiBaseUrl: string, path: string | null | undefined): string | null => {
+  if (!path) {
+    return null;
+  }
+  const resolved = resolveApiUrl(apiBaseUrl, path);
+  return withAuthToken(resolved);
+};
+
+const useFacturacionApi = () => {
+  const apiBaseUrl = useMemo(() => resolveApiBaseUrl(), []);
+  const authUser = useStoredAuthUser();
+  const actorHeaders = useMemo(() => buildActorHeaders(authUser), [authUser]);
+
+  const requestJson = useCallback(
+    async (path: string, options: RequestInit = {}) => {
+      const url = resolveApiUrl(apiBaseUrl, path) ?? `${apiBaseUrl}${path}`;
+      const isFormData = options.body instanceof FormData;
+      const headers: HeadersInit = {
+        Accept: 'application/json',
+        ...actorHeaders,
+        ...(isFormData ? {} : { 'Content-Type': 'application/json' }),
+        ...(options.headers ?? {}),
+      };
+
+      const response = await fetch(url, {
+        credentials: 'include',
+        ...options,
+        headers,
+      });
+
+      const payload = (await parseJsonSafe(response)) as any;
+      if (!response.ok) {
+        const message = payload?.message ?? `Error ${response.status}: ${response.statusText}`;
+        const error = new Error(message);
+        (error as any).payload = payload;
+        throw error;
+      }
+      return payload;
+    },
+    [apiBaseUrl, actorHeaders]
+  );
+
+  const requestText = useCallback(
+    async (path: string, options: RequestInit = {}) => {
+      const url = resolveApiUrl(apiBaseUrl, path) ?? `${apiBaseUrl}${path}`;
+      const headers: HeadersInit = {
+        Accept: 'application/xml,text/plain,*/*',
+        ...actorHeaders,
+        ...(options.headers ?? {}),
+      };
+
+      const response = await fetch(url, {
+        credentials: 'include',
+        ...options,
+        headers,
+      });
+
+      const text = await response.text();
+      if (!response.ok) {
+        let message = `Error ${response.status}: ${response.statusText}`;
+        try {
+          const parsed = JSON.parse(text) as { message?: string };
+          if (parsed?.message) {
+            message = parsed.message;
+          }
+        } catch {
+          // ignore
+        }
+        throw new Error(message);
+      }
+      return text;
+    },
+    [apiBaseUrl, actorHeaders]
+  );
+
+  return { apiBaseUrl, actorHeaders, requestJson, requestText };
+};
+
 const splitFacturacionDelimitedLine = (line: string, delimiter: string): string[] => {
   const values: string[] = [];
   let current = '';
@@ -53219,7 +53607,7 @@ const buildFacturacionInvoiceNumber = () => {
   return `FA-MOCK-${stamp}-${random}`;
 };
 
-const FacturacionPage: React.FC = () => {
+const FacturacionMockPage: React.FC = () => {
   const apiBaseUrl = useMemo(() => resolveApiBaseUrl(), []);
   const authUser = useStoredAuthUser();
   const actorHeaders = useMemo(() => buildActorHeaders(authUser), [authUser]);
@@ -54201,6 +54589,2791 @@ const FacturacionPage: React.FC = () => {
   );
 };
 
+const FacturacionNav: React.FC = () => (
+  <div className="facturacion-nav">
+    <NavLink to="/facturacion/facturas" className={({ isActive }) => `facturacion-nav__link${isActive ? ' is-active' : ''}`}>
+      Listado
+    </NavLink>
+    <NavLink to="/facturacion/nueva" className={({ isActive }) => `facturacion-nav__link${isActive ? ' is-active' : ''}`}>
+      Nueva factura
+    </NavLink>
+    <NavLink to="/facturacion/clientes" className={({ isActive }) => `facturacion-nav__link${isActive ? ' is-active' : ''}`}>
+      Clientes
+    </NavLink>
+    <NavLink
+      to="/facturacion/configuracion-arca"
+      className={({ isActive }) => `facturacion-nav__link${isActive ? ' is-active' : ''}`}
+    >
+      Configuración ARCA
+    </NavLink>
+  </div>
+);
+
+const FacturacionShell: React.FC<{
+  title: string;
+  subtitle?: string;
+  headerActions?: React.ReactNode;
+  children: React.ReactNode;
+}> = ({ title, subtitle, headerActions, children }) => (
+  <DashboardLayout
+    title={title}
+    subtitle={subtitle}
+    headerContent={
+      <div className="facturacion-header">
+        <FacturacionNav />
+        {headerActions ? <div className="facturacion-header__actions">{headerActions}</div> : null}
+      </div>
+    }
+  >
+    {children}
+  </DashboardLayout>
+);
+
+const FacturacionListadoPage: React.FC = () => {
+  const { apiBaseUrl, requestJson } = useFacturacionApi();
+  const navigate = useNavigate();
+  const [clientes, setClientes] = useState<ClienteSelectOption[]>([]);
+  const [sucursales, setSucursales] = useState<SucursalSelectOption[]>([]);
+  const [facturas, setFacturas] = useState<FacturaSummaryDto[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [filters, setFilters] = useState({
+    cliente_id: '',
+    sucursal_id: '',
+    estado: '',
+    estado_cobranza: '',
+    anio: '',
+    mes: '',
+    periodo: '',
+    fecha_desde: '',
+    fecha_hasta: '',
+    fecha_aprox_desde: '',
+    fecha_aprox_hasta: '',
+    buscar: '',
+  });
+  const [queryFilters, setQueryFilters] = useState(filters);
+
+  useEffect(() => {
+    const loadClientes = async () => {
+      try {
+        const payload = (await requestJson('/api/clientes/select?limit=500')) as { data?: ClienteSelectOption[] };
+        setClientes(Array.isArray(payload?.data) ? payload.data : []);
+      } catch (err) {
+        setError((err as Error).message ?? 'No se pudieron cargar clientes.');
+      }
+    };
+    void loadClientes();
+  }, [requestJson]);
+
+  useEffect(() => {
+    const clienteId = Number(filters.cliente_id);
+    if (!clienteId) {
+      setSucursales([]);
+      return;
+    }
+
+    const loadSucursales = async () => {
+      try {
+        const payload = (await requestJson(`/api/clientes/${clienteId}/sucursales`)) as { data?: SucursalSelectOption[] };
+        setSucursales(Array.isArray(payload?.data) ? payload.data : []);
+      } catch {
+        setSucursales([]);
+      }
+    };
+
+    void loadSucursales();
+  }, [filters.cliente_id, requestJson]);
+
+  useEffect(() => {
+    const fetchFacturas = async () => {
+      try {
+        setLoading(true);
+        setError(null);
+        const params = new URLSearchParams();
+        Object.entries(queryFilters).forEach(([key, value]) => {
+          if (value) {
+            params.set(key, value);
+          }
+        });
+        const payload = (await requestJson(`/api/facturas?${params.toString()}`)) as { data?: FacturaSummaryDto[] };
+        setFacturas(Array.isArray(payload?.data) ? payload.data : []);
+      } catch (err) {
+        setError((err as Error).message ?? 'No se pudieron cargar las facturas.');
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    void fetchFacturas();
+  }, [queryFilters, requestJson]);
+
+  const kpis = useMemo(() => {
+    const totalFacturas = facturas.length;
+    let totalFacturado = 0;
+    let totalCobrado = 0;
+    let totalPendiente = 0;
+    let totalVencido = 0;
+
+    facturas.forEach((factura) => {
+      const total = parseNumberOrZero(factura.imp_total);
+      totalFacturado += total;
+      const estado = (factura.estado_cobranza ?? '').toUpperCase();
+      if (estado === 'COBRADA') {
+        totalCobrado += total;
+      } else if (estado === 'VENCIDA') {
+        totalVencido += total;
+      } else {
+        totalPendiente += total;
+      }
+    });
+
+    return { totalFacturas, totalFacturado, totalCobrado, totalPendiente, totalVencido };
+  }, [facturas]);
+
+  return (
+    <FacturacionShell
+      title="Facturación"
+      subtitle="Listado de facturas y estados"
+      headerActions={
+        <button type="button" className="primary-action" onClick={() => navigate('/facturacion/nueva')}>
+          Nueva factura
+        </button>
+      }
+    >
+      <section className="dashboard-card facturacion-section">
+        <div className="filters-grid facturacion-grid">
+          <label className="input-control">
+            <span>Cliente</span>
+            <select
+              value={filters.cliente_id}
+              onChange={(event) =>
+                setFilters((prev) => ({ ...prev, cliente_id: event.target.value, sucursal_id: '' }))
+              }
+            >
+              <option value="">Todos</option>
+              {clientes.map((cliente) => (
+                <option key={cliente.id} value={cliente.id}>
+                  {cliente.nombre ?? `Cliente #${cliente.id}`}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="input-control">
+            <span>Sucursal</span>
+            <select
+              value={filters.sucursal_id}
+              onChange={(event) => setFilters((prev) => ({ ...prev, sucursal_id: event.target.value }))}
+              disabled={!filters.cliente_id}
+            >
+              <option value="">Todas</option>
+              {sucursales.map((sucursal) => (
+                <option key={sucursal.id} value={sucursal.id}>
+                  {sucursal.nombre ?? `Sucursal #${sucursal.id}`}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="input-control">
+            <span>Estado fiscal</span>
+            <select value={filters.estado} onChange={(event) => setFilters((prev) => ({ ...prev, estado: event.target.value }))}>
+              <option value="">Todos</option>
+              {FACTURACION_ESTADOS_FISCALES.map((estado) => (
+                <option key={estado} value={estado}>
+                  {estado.replace(/_/g, ' ')}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="input-control">
+            <span>Estado cobranza</span>
+            <select
+              value={filters.estado_cobranza}
+              onChange={(event) => setFilters((prev) => ({ ...prev, estado_cobranza: event.target.value }))}
+            >
+              <option value="">Todos</option>
+              {FACTURACION_ESTADOS_COBRANZA.map((estado) => (
+                <option key={estado} value={estado}>
+                  {estado.replace(/_/g, ' ')}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="input-control">
+            <span>Año</span>
+            <input type="number" value={filters.anio} onChange={(event) => setFilters((prev) => ({ ...prev, anio: event.target.value }))} />
+          </label>
+          <label className="input-control">
+            <span>Mes</span>
+            <select value={filters.mes} onChange={(event) => setFilters((prev) => ({ ...prev, mes: event.target.value }))}>
+              <option value="">Todos</option>
+              {TARIFA_MONTH_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="input-control">
+            <span>Período</span>
+            <select
+              value={filters.periodo}
+              onChange={(event) => setFilters((prev) => ({ ...prev, periodo: event.target.value }))}
+            >
+              <option value="">Todos</option>
+              {FACTURACION_PERIODOS.map((periodo) => (
+                <option key={periodo.value} value={periodo.value}>
+                  {periodo.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="input-control">
+            <span>Emisión desde</span>
+            <input
+              type="date"
+              value={filters.fecha_desde}
+              onChange={(event) => setFilters((prev) => ({ ...prev, fecha_desde: event.target.value }))}
+            />
+          </label>
+          <label className="input-control">
+            <span>Emisión hasta</span>
+            <input
+              type="date"
+              value={filters.fecha_hasta}
+              onChange={(event) => setFilters((prev) => ({ ...prev, fecha_hasta: event.target.value }))}
+            />
+          </label>
+          <label className="input-control">
+            <span>Cobro desde</span>
+            <input
+              type="date"
+              value={filters.fecha_aprox_desde}
+              onChange={(event) => setFilters((prev) => ({ ...prev, fecha_aprox_desde: event.target.value }))}
+            />
+          </label>
+          <label className="input-control">
+            <span>Cobro hasta</span>
+            <input
+              type="date"
+              value={filters.fecha_aprox_hasta}
+              onChange={(event) => setFilters((prev) => ({ ...prev, fecha_aprox_hasta: event.target.value }))}
+            />
+          </label>
+          <label className="input-control facturacion-search">
+            <span>Buscar</span>
+            <input
+              type="text"
+              value={filters.buscar}
+              onChange={(event) => setFilters((prev) => ({ ...prev, buscar: event.target.value }))}
+              placeholder="Nro, CAE, CUIT o cliente"
+            />
+          </label>
+        </div>
+        <div className="form-actions">
+          <button type="button" className="primary-action" onClick={() => setQueryFilters(filters)}>
+            Actualizar
+          </button>
+          <button
+            type="button"
+            className="secondary-action"
+            onClick={() => {
+              const reset = {
+                cliente_id: '',
+                sucursal_id: '',
+                estado: '',
+                estado_cobranza: '',
+                anio: '',
+                mes: '',
+                periodo: '',
+                fecha_desde: '',
+                fecha_hasta: '',
+                fecha_aprox_desde: '',
+                fecha_aprox_hasta: '',
+                buscar: '',
+              };
+              setFilters(reset);
+              setQueryFilters(reset);
+            }}
+          >
+            Limpiar
+          </button>
+        </div>
+      </section>
+
+      <section className="summary-grid">
+        <div className="summary-card">
+          <span className="summary-card__label">Facturas</span>
+          <strong className="summary-card__value">{kpis.totalFacturas}</strong>
+        </div>
+        <div className="summary-card summary-card--info">
+          <span className="summary-card__label">Total facturado</span>
+          <strong className="summary-card__value">{formatCurrency(kpis.totalFacturado)}</strong>
+        </div>
+        <div className="summary-card summary-card--warning">
+          <span className="summary-card__label">Total pendiente</span>
+          <strong className="summary-card__value">{formatCurrency(kpis.totalPendiente)}</strong>
+        </div>
+        <div className="summary-card summary-card--danger">
+          <span className="summary-card__label">Total vencido</span>
+          <strong className="summary-card__value">{formatCurrency(kpis.totalVencido)}</strong>
+        </div>
+        <div className="summary-card summary-card--success">
+          <span className="summary-card__label">Total cobrado</span>
+          <strong className="summary-card__value">{formatCurrency(kpis.totalCobrado)}</strong>
+        </div>
+      </section>
+
+      <section className="dashboard-card facturacion-section">
+        {error ? <p className="form-info form-info--error">{error}</p> : null}
+        {loading ? <p className="form-info">Cargando facturas...</p> : null}
+        <div className="table-wrapper facturacion-table">
+          <table>
+            <thead>
+              <tr>
+                <th>Cliente</th>
+                <th>Sucursal</th>
+                <th>Comprobante</th>
+                <th>Emisión</th>
+                <th>Neto</th>
+                <th>IVA</th>
+                <th>No gravado</th>
+                <th>Total</th>
+                <th>Cobro aprox.</th>
+                <th>Pago</th>
+                <th>Cobranza</th>
+                <th>Fiscal</th>
+                <th>Acciones</th>
+              </tr>
+            </thead>
+            <tbody>
+              {facturas.length === 0 ? (
+                <tr>
+                  <td colSpan={13}>No hay facturas para los filtros seleccionados.</td>
+                </tr>
+              ) : (
+                facturas.map((factura) => (
+                  <tr key={factura.id}>
+                    <td>{factura.cliente_nombre}</td>
+                    <td>{factura.sucursal_nombre ?? '—'}</td>
+                    <td>
+                      {factura.cbte_tipo}-{String(factura.pto_vta).padStart(4, '0')}-{String(factura.cbte_numero ?? 0).padStart(8, '0')}
+                    </td>
+                    <td>{formatDateOnly(factura.fecha_cbte)}</td>
+                    <td>{formatCurrency(parseNumberOrZero(factura.imp_neto))}</td>
+                    <td>{formatCurrency(parseNumberOrZero(factura.imp_iva))}</td>
+                    <td>{formatCurrency(parseNumberOrZero(factura.imp_tot_conc) + parseNumberOrZero(factura.imp_op_ex))}</td>
+                    <td>{formatCurrency(parseNumberOrZero(factura.imp_total))}</td>
+                    <td>{formatDateOnly(factura.fecha_aprox_cobro)}</td>
+                    <td>{formatDateOnly(factura.fecha_pago_manual)}</td>
+                    <td>
+                      <span className={`facturacion-status facturacion-status--${(factura.estado_cobranza ?? '').toLowerCase().replace(/_/g, '-')}`}>
+                        {factura.estado_cobranza ?? '—'}
+                      </span>
+                    </td>
+                    <td>
+                      <span className={`facturacion-status facturacion-status--${(factura.estado ?? '').toLowerCase().replace(/_/g, '-')}`}>
+                        {factura.estado ?? '—'}
+                      </span>
+                    </td>
+                    <td className="facturacion-actions">
+                      <button type="button" className="secondary-action secondary-action--ghost" onClick={() => navigate(`/facturacion/facturas/${factura.id}`)}>
+                        Detalle
+                      </button>
+                      {factura.pdf_url ? (
+                        <a
+                          className="secondary-action secondary-action--ghost"
+                          href={buildDownloadUrl(apiBaseUrl, factura.pdf_url) ?? '#'}
+                          target="_blank"
+                          rel="noreferrer"
+                        >
+                          PDF
+                        </a>
+                      ) : null}
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </FacturacionShell>
+  );
+};
+
+type FacturaDraftRow = {
+  id: string;
+  orden: string;
+  descripcion: string;
+  cantidad: string;
+  unidad_medida: string;
+  precio_unitario: string;
+  bonificacion_pct: string;
+  subtotal: string;
+  alicuota_iva_pct: string;
+  subtotal_con_iva: string;
+};
+
+type FacturaIvaDraft = {
+  id: string;
+  iva_id: string;
+  base_imp: string;
+  importe: string;
+};
+
+type FacturaTributoDraft = {
+  id: string;
+  tributo_id: string;
+  descr: string;
+  base_imp: string;
+  alic: string;
+  importe: string;
+};
+
+type FacturaDraftForm = {
+  emisor_id: string;
+  ambiente: 'HOMO' | 'PROD';
+  pto_vta: string;
+  cbte_tipo: string;
+  concepto: string;
+  doc_tipo: string;
+  doc_nro: string;
+  cliente_id: string;
+  sucursal_id: string;
+  cliente_nombre: string;
+  cliente_domicilio: string;
+  fecha_cbte: string;
+  fecha_serv_desde: string;
+  fecha_serv_hasta: string;
+  fecha_vto_pago: string;
+  moneda_id: string;
+  moneda_cotiz: string;
+  imp_total: string;
+  imp_tot_conc: string;
+  imp_neto: string;
+  imp_op_ex: string;
+  imp_iva: string;
+  imp_trib: string;
+  anio_facturado: string;
+  mes_facturado: string;
+  periodo_facturado: string;
+  fecha_aprox_cobro: string;
+  fecha_pago_manual: string;
+  monto_pagado_manual: string;
+  observaciones_cobranza: string;
+};
+
+const buildInitialFacturaForm = (): FacturaDraftForm => {
+  const now = new Date();
+  const year = now.getFullYear().toString();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+  const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+  const plus30 = new Date(now);
+  plus30.setDate(plus30.getDate() + 30);
+  const toIso = (value: Date) => value.toISOString().slice(0, 10);
+  return {
+    emisor_id: '',
+    ambiente: FACTURACION_DEFAULT_AMBIENTE,
+    pto_vta: FACTURACION_DEFAULT_PTO_VTA,
+    cbte_tipo: '1',
+    concepto: '2',
+    doc_tipo: '80',
+    doc_nro: '',
+    cliente_id: '',
+    sucursal_id: '',
+    cliente_nombre: '',
+    cliente_domicilio: '',
+    fecha_cbte: now.toISOString().slice(0, 10),
+    fecha_serv_desde: toIso(startOfMonth),
+    fecha_serv_hasta: toIso(endOfMonth),
+    fecha_vto_pago: toIso(plus30),
+    moneda_id: 'PES',
+    moneda_cotiz: '1',
+    imp_total: '0',
+    imp_tot_conc: '0',
+    imp_neto: '0',
+    imp_op_ex: '0',
+    imp_iva: '0',
+    imp_trib: '0',
+    anio_facturado: year,
+    mes_facturado: month,
+    periodo_facturado: 'MES_COMPLETO',
+    fecha_aprox_cobro: toIso(plus30),
+    fecha_pago_manual: '',
+    monto_pagado_manual: '',
+    observaciones_cobranza: '',
+  };
+};
+
+const createFacturaDetalleRow = (orden: number): FacturaDraftRow => ({
+  id: uniqueKey(),
+  orden: orden.toString(),
+  descripcion: '',
+  cantidad: '1',
+  unidad_medida: '',
+  precio_unitario: '0',
+  bonificacion_pct: '0',
+  subtotal: '0',
+  alicuota_iva_pct: '0',
+  subtotal_con_iva: '0',
+});
+
+const createFacturaIvaRow = (): FacturaIvaDraft => ({
+  id: uniqueKey(),
+  iva_id: '',
+  base_imp: '0',
+  importe: '0',
+});
+
+const createFacturaTributoRow = (): FacturaTributoDraft => ({
+  id: uniqueKey(),
+  tributo_id: '',
+  descr: '',
+  base_imp: '0',
+  alic: '0',
+  importe: '0',
+});
+
+const FacturacionCreatePage: React.FC = () => {
+  const { apiBaseUrl, requestJson } = useFacturacionApi();
+  const navigate = useNavigate();
+  const [emisores, setEmisores] = useState<ArcaEmisorDto[]>([]);
+  const [clientes, setClientes] = useState<ClienteSelectOption[]>([]);
+  const [sucursales, setSucursales] = useState<SucursalSelectOption[]>([]);
+  const [form, setForm] = useState<FacturaDraftForm>(() => buildInitialFacturaForm());
+  const [detallePdf, setDetallePdf] = useState<FacturaDraftRow[]>(() => [createFacturaDetalleRow(1)]);
+  const [ivaItems, setIvaItems] = useState<FacturaIvaDraft[]>([]);
+  const [tributos, setTributos] = useState<FacturaTributoDraft[]>([]);
+  const [facturaId, setFacturaId] = useState<number | null>(null);
+  const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  const [validationErrors, setValidationErrors] = useState<Record<string, string[]>>({});
+  const [autoTotal, setAutoTotal] = useState(true);
+  const [loading, setLoading] = useState(false);
+  const [initialLoading, setInitialLoading] = useState(true);
+
+  useEffect(() => {
+    const loadInitial = async () => {
+      setInitialLoading(true);
+      try {
+        const [emisoresPayload, clientesPayload] = await Promise.all([
+          requestJson('/api/arca/emisores?with_relations=1') as Promise<{ data?: ArcaEmisorDto[] }>,
+          requestJson('/api/clientes/select?limit=500') as Promise<{ data?: ClienteSelectOption[] }>,
+        ]);
+        setEmisores(Array.isArray(emisoresPayload?.data) ? emisoresPayload.data : []);
+        setClientes(Array.isArray(clientesPayload?.data) ? clientesPayload.data : []);
+      } catch (err) {
+        setFeedback({ type: 'error', message: (err as Error).message ?? 'No se pudieron cargar datos iniciales.' });
+      } finally {
+        setInitialLoading(false);
+      }
+    };
+
+    void loadInitial();
+  }, [requestJson]);
+
+  useEffect(() => {
+    const emisor = emisores.find((item) => item.id === Number(form.emisor_id));
+    if (emisor) {
+      setForm((prev) => ({
+        ...prev,
+        ambiente: emisor.ambiente_default ?? prev.ambiente,
+      }));
+    }
+  }, [emisores, form.emisor_id]);
+
+  useEffect(() => {
+    if (form.ambiente !== FACTURACION_DEFAULT_AMBIENTE) {
+      setForm((prev) => ({ ...prev, ambiente: FACTURACION_DEFAULT_AMBIENTE }));
+    }
+  }, [form.ambiente]);
+
+  useEffect(() => {
+    if (!form.emisor_id && emisores.length === 1) {
+      const onlyEmisor = emisores[0];
+      setForm((prev) => ({
+        ...prev,
+        emisor_id: String(onlyEmisor.id),
+        ambiente: onlyEmisor.ambiente_default ?? prev.ambiente,
+      }));
+    }
+  }, [emisores, form.emisor_id]);
+
+  useEffect(() => {
+    const clienteId = Number(form.cliente_id);
+    if (!clienteId) {
+      setSucursales([]);
+      return;
+    }
+    const loadSucursales = async () => {
+      try {
+        const payload = (await requestJson(`/api/clientes/${clienteId}/sucursales`)) as { data?: SucursalSelectOption[] };
+        setSucursales(Array.isArray(payload?.data) ? payload.data : []);
+      } catch {
+        setSucursales([]);
+      }
+    };
+    void loadSucursales();
+  }, [form.cliente_id, requestJson]);
+
+  useEffect(() => {
+    if (!autoTotal) {
+      return;
+    }
+    const total =
+      parseNumberOrZero(form.imp_tot_conc) +
+      parseNumberOrZero(form.imp_neto) +
+      parseNumberOrZero(form.imp_op_ex) +
+      parseNumberOrZero(form.imp_iva) +
+      parseNumberOrZero(form.imp_trib);
+    const nextTotal = total.toFixed(2);
+    if (form.imp_total !== nextTotal) {
+      setForm((prev) => ({ ...prev, imp_total: nextTotal }));
+    }
+  }, [autoTotal, form.imp_tot_conc, form.imp_neto, form.imp_op_ex, form.imp_iva, form.imp_trib, form.imp_total]);
+
+  const selectedEmisor = useMemo(
+    () => emisores.find((item) => item.id === Number(form.emisor_id)) ?? null,
+    [emisores, form.emisor_id]
+  );
+
+  const activeCertificado = useMemo(() => {
+    if (!selectedEmisor?.certificados) {
+      return null;
+    }
+    return (
+      selectedEmisor.certificados.find(
+        (cert) => cert.activo && cert.ambiente === form.ambiente
+      ) ?? null
+    );
+  }, [selectedEmisor, form.ambiente]);
+
+  const puntosVenta = useMemo(() => {
+    if (!selectedEmisor?.puntos_venta) {
+      return [];
+    }
+    return selectedEmisor.puntos_venta.filter(
+      (punto) => punto.ambiente === form.ambiente && punto.habilitado_para_erp
+    );
+  }, [selectedEmisor, form.ambiente]);
+
+  const hasDefaultPtoVta = useMemo(
+    () => puntosVenta.some((punto) => punto.nro === Number(FACTURACION_DEFAULT_PTO_VTA)),
+    [puntosVenta]
+  );
+
+  useEffect(() => {
+    const desired = FACTURACION_DEFAULT_PTO_VTA;
+    if (form.pto_vta !== desired) {
+      setForm((prev) => ({ ...prev, pto_vta: desired }));
+    }
+  }, [form.pto_vta]);
+
+  const handleDetalleChange = (index: number, field: keyof FacturaDraftRow, value: string) => {
+    setDetallePdf((prev) => {
+      const next = [...prev];
+      const current = { ...next[index], [field]: value };
+      const cantidad = parseNumberOrZero(current.cantidad);
+      const precio = parseNumberOrZero(current.precio_unitario);
+      const bonif = parseNumberOrZero(current.bonificacion_pct);
+      const alic = parseNumberOrZero(current.alicuota_iva_pct);
+      const subtotal = cantidad * precio * (1 - bonif / 100);
+      const subtotalConIva = subtotal * (1 + alic / 100);
+      current.subtotal = subtotal.toFixed(2);
+      current.subtotal_con_iva = subtotalConIva.toFixed(2);
+      next[index] = current;
+      return next;
+    });
+  };
+
+  const buildPayload = (): Record<string, unknown> => ({
+    emisor_id: Number(form.emisor_id),
+    ambiente: form.ambiente,
+    pto_vta: Number(form.pto_vta),
+    cbte_tipo: Number(form.cbte_tipo),
+    concepto: Number(form.concepto),
+    doc_tipo: Number(form.doc_tipo),
+    doc_nro: Number(form.doc_nro),
+    cliente_id: Number(form.cliente_id),
+    sucursal_id: Number(form.sucursal_id),
+    cliente_nombre: form.cliente_nombre,
+    cliente_domicilio: form.cliente_domicilio,
+    fecha_cbte: form.fecha_cbte,
+    fecha_serv_desde: form.fecha_serv_desde || null,
+    fecha_serv_hasta: form.fecha_serv_hasta || null,
+    fecha_vto_pago: form.fecha_vto_pago || null,
+    moneda_id: form.moneda_id,
+    moneda_cotiz: parseNumberOrZero(form.moneda_cotiz),
+    imp_total: parseNumberOrZero(form.imp_total),
+    imp_tot_conc: parseNumberOrZero(form.imp_tot_conc),
+    imp_neto: parseNumberOrZero(form.imp_neto),
+    imp_op_ex: parseNumberOrZero(form.imp_op_ex),
+    imp_iva: parseNumberOrZero(form.imp_iva),
+    imp_trib: parseNumberOrZero(form.imp_trib),
+    anio_facturado: Number(form.anio_facturado),
+    mes_facturado: Number(form.mes_facturado),
+    periodo_facturado: form.periodo_facturado,
+    fecha_aprox_cobro: form.fecha_aprox_cobro || null,
+    fecha_pago_manual: form.fecha_pago_manual || null,
+    monto_pagado_manual: form.monto_pagado_manual ? parseNumberOrZero(form.monto_pagado_manual) : null,
+    observaciones_cobranza: form.observaciones_cobranza || null,
+    iva: ivaItems
+      .filter((item) => item.iva_id)
+      .map((item) => ({
+        iva_id: Number(item.iva_id),
+        base_imp: parseNumberOrZero(item.base_imp),
+        importe: parseNumberOrZero(item.importe),
+      })),
+    tributos: tributos
+      .filter((item) => item.tributo_id)
+      .map((item) => ({
+        tributo_id: Number(item.tributo_id),
+        descr: item.descr || null,
+        base_imp: item.base_imp ? parseNumberOrZero(item.base_imp) : null,
+        alic: item.alic ? parseNumberOrZero(item.alic) : null,
+        importe: parseNumberOrZero(item.importe),
+      })),
+    detalle_pdf: detallePdf.map((row, index) => ({
+      orden: row.orden ? Number(row.orden) : index + 1,
+      descripcion: row.descripcion,
+      cantidad: parseNumberOrZero(row.cantidad),
+      unidad_medida: row.unidad_medida || null,
+      precio_unitario: parseNumberOrZero(row.precio_unitario),
+      bonificacion_pct: parseNumberOrZero(row.bonificacion_pct),
+      subtotal: parseNumberOrZero(row.subtotal),
+      alicuota_iva_pct: parseNumberOrZero(row.alicuota_iva_pct),
+      subtotal_con_iva: parseNumberOrZero(row.subtotal_con_iva),
+    })),
+  });
+
+  const handleSaveDraft = async () => {
+    if (form.fecha_pago_manual && form.fecha_aprox_cobro) {
+      const pago = new Date(form.fecha_pago_manual);
+      const aprox = new Date(form.fecha_aprox_cobro);
+      if (pago.getTime() < aprox.getTime()) {
+        setFeedback({
+          type: 'error',
+          message: 'La fecha de pago manual debe ser posterior o igual a la fecha aproximada de cobro.',
+        });
+        return;
+      }
+    }
+    setLoading(true);
+    setFeedback(null);
+    setValidationErrors({});
+    try {
+      const payload = buildPayload();
+      const response = facturaId
+        ? await requestJson(`/api/facturas/${facturaId}/borrador`, {
+            method: 'PUT',
+            body: JSON.stringify(payload),
+          })
+        : await requestJson('/api/facturas', {
+            method: 'POST',
+            body: JSON.stringify(payload),
+          });
+      const factura = (response as { data?: FacturaDetalleDto }).data;
+      if (factura?.id) {
+        setFacturaId(factura.id);
+      }
+      setFeedback({ type: 'success', message: response?.message ?? 'Borrador guardado.' });
+    } catch (err) {
+      const error = err as Error & { payload?: any };
+      setFeedback({ type: 'error', message: error.message ?? 'No se pudo guardar el borrador.' });
+      if (error.payload?.errors) {
+        setValidationErrors(error.payload.errors);
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleValidate = async () => {
+    if (!facturaId) {
+      setFeedback({ type: 'error', message: 'Guardá el borrador antes de validar.' });
+      return;
+    }
+    setLoading(true);
+    setFeedback(null);
+    setValidationErrors({});
+    try {
+      const response = await requestJson(`/api/facturas/${facturaId}/validar`, { method: 'POST' });
+      setFeedback({ type: 'success', message: response?.message ?? 'Factura validada.' });
+    } catch (err) {
+      const error = err as Error & { payload?: any };
+      setFeedback({ type: 'error', message: error.message ?? 'La validación falló.' });
+      if (error.payload?.errors) {
+        setValidationErrors(error.payload.errors);
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleEmit = async () => {
+    if (!facturaId) {
+      setFeedback({ type: 'error', message: 'Guardá el borrador antes de emitir.' });
+      return;
+    }
+    if (!selectedEmisor) {
+      setFeedback({ type: 'error', message: 'Seleccioná un emisor.' });
+      return;
+    }
+    if (!form.pto_vta) {
+      setFeedback({ type: 'error', message: 'Seleccioná un punto de venta habilitado.' });
+      return;
+    }
+    if (!activeCertificado) {
+      setFeedback({ type: 'error', message: `No hay certificado activo para ambiente ${form.ambiente}.` });
+      return;
+    }
+    setLoading(true);
+    setFeedback(null);
+    setValidationErrors({});
+    try {
+      const response = await requestJson(`/api/facturas/${facturaId}/emitir`, { method: 'POST' });
+      const factura = (response as { data?: FacturaDetalleDto }).data;
+      setFeedback({ type: 'success', message: response?.message ?? 'Factura emitida.' });
+      if (factura?.id) {
+        navigate(`/facturacion/facturas/${factura.id}`);
+      }
+    } catch (err) {
+      const error = err as Error & { payload?: any };
+      setFeedback({ type: 'error', message: error.message ?? 'No se pudo emitir.' });
+      if (error.payload?.errors) {
+        setValidationErrors(error.payload.errors);
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleClienteChange = (value: string) => {
+    const cliente = clientes.find((item) => item.id === Number(value));
+    const docDigits = (cliente?.documento_fiscal ?? '').replace(/\D+/g, '');
+    setForm((prev) => ({
+      ...prev,
+      cliente_id: value,
+      sucursal_id: '',
+      cliente_nombre: cliente?.nombre ?? prev.cliente_nombre,
+      doc_nro: prev.doc_nro || docDigits,
+    }));
+  };
+
+  const handleSucursalChange = (value: string) => {
+    const sucursal = sucursales.find((item) => item.id === Number(value));
+    setForm((prev) => ({
+      ...prev,
+      sucursal_id: value,
+      cliente_domicilio: sucursal?.direccion ?? prev.cliente_domicilio,
+    }));
+  };
+
+  return (
+    <FacturacionShell title="Nueva factura" subtitle="Alta de comprobantes ARCA">
+      <section className="dashboard-card facturacion-section">
+        {initialLoading ? <p className="form-info">Cargando datos iniciales...</p> : null}
+        {!initialLoading && emisores.length === 0 ? (
+          <p className="form-info form-info--warning">
+            No hay emisores configurados. Creá uno en{' '}
+            <NavLink to="/facturacion/configuracion-arca">Configuración ARCA</NavLink>.
+          </p>
+        ) : null}
+        {selectedEmisor && !activeCertificado ? (
+          <p className="form-info form-info--warning">
+            El emisor seleccionado no tiene certificado activo para ambiente {form.ambiente}. Configuralo en{' '}
+            <NavLink to="/facturacion/configuracion-arca">Configuración ARCA</NavLink>.
+          </p>
+        ) : null}
+        {selectedEmisor && puntosVenta.length === 0 ? (
+          <p className="form-info form-info--warning">
+            No hay puntos de venta habilitados para ERP en ambiente {form.ambiente}. Sincronizá desde{' '}
+            <NavLink to="/facturacion/configuracion-arca">Configuración ARCA</NavLink>.
+          </p>
+        ) : null}
+        {selectedEmisor && puntosVenta.length > 0 && !hasDefaultPtoVta ? (
+          <p className="form-info form-info--warning">
+            El punto de venta 00011 no está disponible para este emisor. Verificá la sincronización en{' '}
+            <NavLink to="/facturacion/configuracion-arca">Configuración ARCA</NavLink>.
+          </p>
+        ) : null}
+        {form.cliente_id && sucursales.length === 0 ? (
+          <p className="form-info form-info--warning">El cliente seleccionado no tiene sucursales configuradas.</p>
+        ) : null}
+        <div className="facturacion-form-grid">
+          <div className="facturacion-form-block">
+            <h3>Emisor / ARCA</h3>
+            <div className="filters-grid facturacion-grid">
+              <label className="input-control">
+                <span>Emisor</span>
+                <select value={form.emisor_id} onChange={(event) => setForm((prev) => ({ ...prev, emisor_id: event.target.value }))}>
+                  <option value="">Seleccionar</option>
+                  {emisores.map((emisor) => (
+                    <option key={emisor.id} value={emisor.id}>
+                      {emisor.razon_social}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="input-control">
+                <span>Ambiente</span>
+                <select value={form.ambiente} disabled>
+                  <option value="PROD">PROD</option>
+                </select>
+              </label>
+              <label className="input-control">
+                <span>Punto de venta</span>
+                <select value={form.pto_vta} disabled>
+                  {puntosVenta.length === 0 ? (
+                    <option value={FACTURACION_DEFAULT_PTO_VTA}>{FACTURACION_DEFAULT_PTO_VTA.padStart(4, '0')}</option>
+                  ) : (
+                    puntosVenta.map((punto) => (
+                      <option key={punto.id} value={punto.nro}>
+                        {String(punto.nro).padStart(4, '0')} {punto.habilitado_para_erp ? '' : '(no ERP)'}
+                      </option>
+                    ))
+                  )}
+                </select>
+              </label>
+              <label className="input-control">
+                <span>Certificado activo</span>
+                <input type="text" value={activeCertificado ? activeCertificado.alias : 'Sin certificado activo'} disabled />
+              </label>
+            </div>
+          </div>
+
+          <div className="facturacion-form-block">
+            <h3>Cliente / Receptor</h3>
+            <div className="filters-grid facturacion-grid">
+              <label className="input-control">
+                <span>Cliente</span>
+                <select value={form.cliente_id} onChange={(event) => handleClienteChange(event.target.value)}>
+                  <option value="">Seleccionar</option>
+                  {clientes.map((cliente) => (
+                    <option key={cliente.id} value={cliente.id}>
+                      {cliente.nombre ?? `Cliente #${cliente.id}`}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="input-control">
+                <span>Sucursal</span>
+                <select value={form.sucursal_id} onChange={(event) => handleSucursalChange(event.target.value)} disabled={!form.cliente_id}>
+                  <option value="">Seleccionar</option>
+                  {sucursales.map((sucursal) => (
+                    <option key={sucursal.id} value={sucursal.id}>
+                      {sucursal.nombre ?? `Sucursal #${sucursal.id}`}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="input-control">
+                <span>CUIT receptor</span>
+                <input value={form.doc_nro} onChange={(event) => setForm((prev) => ({ ...prev, doc_nro: event.target.value }))} />
+              </label>
+              <label className="input-control">
+                <span>Tipo doc</span>
+                <select value={form.doc_tipo} onChange={(event) => setForm((prev) => ({ ...prev, doc_tipo: event.target.value }))}>
+                  <option value="80">CUIT (80)</option>
+                  <option value="96">DNI (96)</option>
+                  <option value="99">Consumidor final (99)</option>
+                </select>
+              </label>
+              <label className="input-control">
+                <span>Razón social</span>
+                <input value={form.cliente_nombre} onChange={(event) => setForm((prev) => ({ ...prev, cliente_nombre: event.target.value }))} />
+              </label>
+              <label className="input-control">
+                <span>Domicilio</span>
+                <input value={form.cliente_domicilio} onChange={(event) => setForm((prev) => ({ ...prev, cliente_domicilio: event.target.value }))} />
+              </label>
+            </div>
+          </div>
+
+          <div className="facturacion-form-block">
+            <h3>Comprobante</h3>
+            <div className="filters-grid facturacion-grid">
+              <label className="input-control">
+                <span>Tipo comprobante</span>
+                <select value={form.cbte_tipo} onChange={(event) => setForm((prev) => ({ ...prev, cbte_tipo: event.target.value }))}>
+                  {FACTURACION_COMPROBANTES_OPTIONS.map((option) => (
+                    <option key={option.code} value={Number(option.code)}>
+                      {option.code} - {option.description}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="input-control">
+                <span>Concepto</span>
+                <select value={form.concepto} onChange={(event) => setForm((prev) => ({ ...prev, concepto: event.target.value }))}>
+                  <option value="1">Productos</option>
+                  <option value="2">Servicios</option>
+                  <option value="3">Productos y servicios</option>
+                </select>
+              </label>
+              <label className="input-control">
+                <span>Fecha comprobante</span>
+                <input type="date" value={form.fecha_cbte} onChange={(event) => setForm((prev) => ({ ...prev, fecha_cbte: event.target.value }))} />
+              </label>
+              <label className="input-control">
+                <span>Fecha serv. desde</span>
+                <input type="date" value={form.fecha_serv_desde} onChange={(event) => setForm((prev) => ({ ...prev, fecha_serv_desde: event.target.value }))} />
+              </label>
+              <label className="input-control">
+                <span>Fecha serv. hasta</span>
+                <input type="date" value={form.fecha_serv_hasta} onChange={(event) => setForm((prev) => ({ ...prev, fecha_serv_hasta: event.target.value }))} />
+              </label>
+              <label className="input-control">
+                <span>Fecha vto. pago</span>
+                <input type="date" value={form.fecha_vto_pago} onChange={(event) => setForm((prev) => ({ ...prev, fecha_vto_pago: event.target.value }))} />
+              </label>
+            </div>
+          </div>
+
+          <div className="facturacion-form-block">
+            <h3>Período comercial</h3>
+            <div className="filters-grid facturacion-grid">
+              <label className="input-control">
+                <span>Año</span>
+                <input type="number" value={form.anio_facturado} onChange={(event) => setForm((prev) => ({ ...prev, anio_facturado: event.target.value }))} />
+              </label>
+              <label className="input-control">
+                <span>Mes</span>
+                <select value={form.mes_facturado} onChange={(event) => setForm((prev) => ({ ...prev, mes_facturado: event.target.value }))}>
+                  {TARIFA_MONTH_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="input-control">
+                <span>Período</span>
+                <select
+                  value={form.periodo_facturado}
+                  onChange={(event) => setForm((prev) => ({ ...prev, periodo_facturado: event.target.value }))}
+                >
+                  {FACTURACION_PERIODOS.map((periodo) => (
+                    <option key={periodo.value} value={periodo.value}>
+                      {periodo.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="input-control">
+                <span>Fecha aprox. cobro</span>
+                <input
+                  type="date"
+                  value={form.fecha_aprox_cobro}
+                  onChange={(event) => setForm((prev) => ({ ...prev, fecha_aprox_cobro: event.target.value }))}
+                />
+              </label>
+            </div>
+          </div>
+
+          <div className="facturacion-form-block">
+            <h3>Importes</h3>
+            <div className="filters-grid facturacion-grid">
+              <label className="input-control">
+                <span>Moneda</span>
+                <input value={form.moneda_id} onChange={(event) => setForm((prev) => ({ ...prev, moneda_id: event.target.value }))} />
+              </label>
+              <label className="input-control">
+                <span>Cotización</span>
+                <input value={form.moneda_cotiz} onChange={(event) => setForm((prev) => ({ ...prev, moneda_cotiz: event.target.value }))} />
+              </label>
+              <label className="input-control">
+                <span>No gravado</span>
+                <input value={form.imp_tot_conc} onChange={(event) => setForm((prev) => ({ ...prev, imp_tot_conc: event.target.value }))} />
+              </label>
+              <label className="input-control">
+                <span>Neto gravado</span>
+                <input value={form.imp_neto} onChange={(event) => setForm((prev) => ({ ...prev, imp_neto: event.target.value }))} />
+              </label>
+              <label className="input-control">
+                <span>Exento</span>
+                <input value={form.imp_op_ex} onChange={(event) => setForm((prev) => ({ ...prev, imp_op_ex: event.target.value }))} />
+              </label>
+              <label className="input-control">
+                <span>IVA</span>
+                <input value={form.imp_iva} onChange={(event) => setForm((prev) => ({ ...prev, imp_iva: event.target.value }))} />
+              </label>
+              <label className="input-control">
+                <span>Tributos</span>
+                <input value={form.imp_trib} onChange={(event) => setForm((prev) => ({ ...prev, imp_trib: event.target.value }))} />
+              </label>
+              <label className="input-control">
+                <span>Total</span>
+                <input value={form.imp_total} onChange={(event) => setForm((prev) => ({ ...prev, imp_total: event.target.value }))} />
+              </label>
+              <label className="input-control facturacion-toggle">
+                <span>Auto total</span>
+                <input type="checkbox" checked={autoTotal} onChange={(event) => setAutoTotal(event.target.checked)} />
+              </label>
+            </div>
+          </div>
+
+          <div className="facturacion-form-block">
+            <h3>Detalle PDF</h3>
+            <div className="table-wrapper facturacion-table">
+              <table>
+                <thead>
+                  <tr>
+                    <th>#</th>
+                    <th>Descripción</th>
+                    <th>Cantidad</th>
+                    <th>Unidad</th>
+                    <th>Precio</th>
+                    <th>Bonif %</th>
+                    <th>Subtotal</th>
+                    <th>IVA %</th>
+                    <th>Subtotal c/IVA</th>
+                    <th>Acciones</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {detallePdf.map((row, index) => (
+                    <tr key={row.id}>
+                      <td>
+                        <input
+                          value={row.orden}
+                          onChange={(event) => handleDetalleChange(index, 'orden', event.target.value)}
+                        />
+                      </td>
+                      <td>
+                        <input
+                          value={row.descripcion}
+                          onChange={(event) => handleDetalleChange(index, 'descripcion', event.target.value)}
+                        />
+                      </td>
+                      <td>
+                        <input
+                          value={row.cantidad}
+                          onChange={(event) => handleDetalleChange(index, 'cantidad', event.target.value)}
+                        />
+                      </td>
+                      <td>
+                        <input
+                          value={row.unidad_medida}
+                          onChange={(event) => handleDetalleChange(index, 'unidad_medida', event.target.value)}
+                        />
+                      </td>
+                      <td>
+                        <input
+                          value={row.precio_unitario}
+                          onChange={(event) => handleDetalleChange(index, 'precio_unitario', event.target.value)}
+                        />
+                      </td>
+                      <td>
+                        <input
+                          value={row.bonificacion_pct}
+                          onChange={(event) => handleDetalleChange(index, 'bonificacion_pct', event.target.value)}
+                        />
+                      </td>
+                      <td>
+                        <input value={row.subtotal} disabled />
+                      </td>
+                      <td>
+                        <input
+                          value={row.alicuota_iva_pct}
+                          onChange={(event) => handleDetalleChange(index, 'alicuota_iva_pct', event.target.value)}
+                        />
+                      </td>
+                      <td>
+                        <input value={row.subtotal_con_iva} disabled />
+                      </td>
+                      <td>
+                        <button
+                          type="button"
+                          className="secondary-action secondary-action--ghost"
+                          onClick={() => setDetallePdf((prev) => prev.filter((item) => item.id !== row.id))}
+                        >
+                          Quitar
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <button
+              type="button"
+              className="secondary-action"
+              onClick={() => setDetallePdf((prev) => [...prev, createFacturaDetalleRow(prev.length + 1)])}
+            >
+              Agregar ítem
+            </button>
+          </div>
+
+          <div className="facturacion-form-block">
+            <h3>IVA detalle</h3>
+            <div className="table-wrapper facturacion-table">
+              <table>
+                <thead>
+                  <tr>
+                    <th>IVA ID</th>
+                    <th>Base imponible</th>
+                    <th>Importe</th>
+                    <th>Acciones</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {ivaItems.length === 0 ? (
+                    <tr>
+                      <td colSpan={4}>No hay IVA cargado.</td>
+                    </tr>
+                  ) : (
+                    ivaItems.map((row, index) => (
+                      <tr key={row.id}>
+                        <td>
+                          <input
+                            value={row.iva_id}
+                            onChange={(event) =>
+                              setIvaItems((prev) => {
+                                const next = [...prev];
+                                next[index] = { ...row, iva_id: event.target.value };
+                                return next;
+                              })
+                            }
+                          />
+                        </td>
+                        <td>
+                          <input
+                            value={row.base_imp}
+                            onChange={(event) =>
+                              setIvaItems((prev) => {
+                                const next = [...prev];
+                                next[index] = { ...row, base_imp: event.target.value };
+                                return next;
+                              })
+                            }
+                          />
+                        </td>
+                        <td>
+                          <input
+                            value={row.importe}
+                            onChange={(event) =>
+                              setIvaItems((prev) => {
+                                const next = [...prev];
+                                next[index] = { ...row, importe: event.target.value };
+                                return next;
+                              })
+                            }
+                          />
+                        </td>
+                        <td>
+                          <button
+                            type="button"
+                            className="secondary-action secondary-action--ghost"
+                            onClick={() => setIvaItems((prev) => prev.filter((item) => item.id !== row.id))}
+                          >
+                            Quitar
+                          </button>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+            <button type="button" className="secondary-action" onClick={() => setIvaItems((prev) => [...prev, createFacturaIvaRow()])}>
+              Agregar IVA
+            </button>
+          </div>
+
+          <div className="facturacion-form-block">
+            <h3>Tributos</h3>
+            <div className="table-wrapper facturacion-table">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Tributo ID</th>
+                    <th>Descripción</th>
+                    <th>Base</th>
+                    <th>Alic %</th>
+                    <th>Importe</th>
+                    <th>Acciones</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {tributos.length === 0 ? (
+                    <tr>
+                      <td colSpan={6}>No hay tributos cargados.</td>
+                    </tr>
+                  ) : (
+                    tributos.map((row, index) => (
+                      <tr key={row.id}>
+                        <td>
+                          <input
+                            value={row.tributo_id}
+                            onChange={(event) =>
+                              setTributos((prev) => {
+                                const next = [...prev];
+                                next[index] = { ...row, tributo_id: event.target.value };
+                                return next;
+                              })
+                            }
+                          />
+                        </td>
+                        <td>
+                          <input
+                            value={row.descr}
+                            onChange={(event) =>
+                              setTributos((prev) => {
+                                const next = [...prev];
+                                next[index] = { ...row, descr: event.target.value };
+                                return next;
+                              })
+                            }
+                          />
+                        </td>
+                        <td>
+                          <input
+                            value={row.base_imp}
+                            onChange={(event) =>
+                              setTributos((prev) => {
+                                const next = [...prev];
+                                next[index] = { ...row, base_imp: event.target.value };
+                                return next;
+                              })
+                            }
+                          />
+                        </td>
+                        <td>
+                          <input
+                            value={row.alic}
+                            onChange={(event) =>
+                              setTributos((prev) => {
+                                const next = [...prev];
+                                next[index] = { ...row, alic: event.target.value };
+                                return next;
+                              })
+                            }
+                          />
+                        </td>
+                        <td>
+                          <input
+                            value={row.importe}
+                            onChange={(event) =>
+                              setTributos((prev) => {
+                                const next = [...prev];
+                                next[index] = { ...row, importe: event.target.value };
+                                return next;
+                              })
+                            }
+                          />
+                        </td>
+                        <td>
+                          <button
+                            type="button"
+                            className="secondary-action secondary-action--ghost"
+                            onClick={() => setTributos((prev) => prev.filter((item) => item.id !== row.id))}
+                          >
+                            Quitar
+                          </button>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+            <button type="button" className="secondary-action" onClick={() => setTributos((prev) => [...prev, createFacturaTributoRow()])}>
+              Agregar tributo
+            </button>
+          </div>
+
+          <div className="facturacion-form-block">
+            <h3>Cobranza</h3>
+            <div className="filters-grid facturacion-grid">
+              <label className="input-control">
+                <span>Fecha pago manual</span>
+                <input type="date" value={form.fecha_pago_manual} onChange={(event) => setForm((prev) => ({ ...prev, fecha_pago_manual: event.target.value }))} />
+              </label>
+              <label className="input-control">
+                <span>Monto pago manual</span>
+                <input value={form.monto_pagado_manual} onChange={(event) => setForm((prev) => ({ ...prev, monto_pagado_manual: event.target.value }))} />
+              </label>
+              <label className="input-control">
+                <span>Observaciones</span>
+                <input value={form.observaciones_cobranza} onChange={(event) => setForm((prev) => ({ ...prev, observaciones_cobranza: event.target.value }))} />
+              </label>
+            </div>
+          </div>
+        </div>
+
+        {feedback ? (
+          <p className={`form-info ${feedback.type === 'error' ? 'form-info--error' : 'form-info--success'}`}>
+            {feedback.message}
+          </p>
+        ) : null}
+        {Object.keys(validationErrors).length > 0 ? (
+          <div className="form-info form-info--error">
+            {Object.entries(validationErrors).map(([field, messages]) => (
+              <p key={field}>
+                {field}: {Array.isArray(messages) ? messages.join(', ') : String(messages)}
+              </p>
+            ))}
+          </div>
+        ) : null}
+
+        <div className="form-actions">
+          <button type="button" className="primary-action" onClick={handleSaveDraft} disabled={loading}>
+            Guardar borrador
+          </button>
+          <button type="button" className="secondary-action" onClick={handleValidate} disabled={loading || !facturaId}>
+            Validar
+          </button>
+          <button
+            type="button"
+            className="secondary-action"
+            onClick={handleEmit}
+            disabled={loading || !facturaId || !form.emisor_id || !form.pto_vta || !activeCertificado}
+          >
+            Emitir ARCA
+          </button>
+        </div>
+      </section>
+    </FacturacionShell>
+  );
+};
+
+const FacturacionDetailPage: React.FC = () => {
+  const { apiBaseUrl, requestJson, requestText } = useFacturacionApi();
+  const { facturaId } = useParams();
+  const [factura, setFactura] = useState<FacturaDetalleDto | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [cobranzaFeedback, setCobranzaFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  const [auditoria, setAuditoria] = useState<FacturaAuditoriaItem[]>([]);
+  const [auditLoading, setAuditLoading] = useState(false);
+  const [auditError, setAuditError] = useState<string | null>(null);
+  const [xmlRequestText, setXmlRequestText] = useState<string | null>(null);
+  const [xmlResponseText, setXmlResponseText] = useState<string | null>(null);
+  const [xmlError, setXmlError] = useState<string | null>(null);
+  const [xmlLoading, setXmlLoading] = useState({ request: false, response: false });
+  const [showXmlRequest, setShowXmlRequest] = useState(false);
+  const [showXmlResponse, setShowXmlResponse] = useState(false);
+  const [cobranzaForm, setCobranzaForm] = useState({
+    fecha_aprox_cobro: '',
+    fecha_pago_manual: '',
+    monto_pagado_manual: '',
+    observaciones_cobranza: '',
+  });
+
+  useEffect(() => {
+    const id = Number(facturaId);
+    if (!id) {
+      setError('Factura inválida.');
+      return;
+    }
+    const loadFactura = async () => {
+      try {
+        setLoading(true);
+        const payload = (await requestJson(`/api/facturas/${id}`)) as { data?: FacturaDetalleDto };
+        const data = payload?.data ?? null;
+        setFactura(data);
+        setCobranzaForm({
+          fecha_aprox_cobro: data?.fecha_aprox_cobro ?? '',
+          fecha_pago_manual: data?.fecha_pago_manual ?? '',
+          monto_pagado_manual: data?.monto_pagado_manual?.toString() ?? '',
+          observaciones_cobranza: data?.observaciones_cobranza ?? '',
+        });
+      } catch (err) {
+        setError((err as Error).message ?? 'No se pudo cargar la factura.');
+      } finally {
+        setLoading(false);
+      }
+    };
+    void loadFactura();
+  }, [facturaId, requestJson]);
+
+  useEffect(() => {
+    if (!factura?.id) {
+      return;
+    }
+    const loadAuditoria = async () => {
+      try {
+        setAuditLoading(true);
+        setAuditError(null);
+        const payload = (await requestJson(`/api/facturas/${factura.id}/auditoria`)) as { data?: FacturaAuditoriaItem[] };
+        setAuditoria(Array.isArray(payload?.data) ? payload.data : []);
+      } catch (err) {
+        setAuditError((err as Error).message ?? 'No se pudo cargar la auditoría.');
+      } finally {
+        setAuditLoading(false);
+      }
+    };
+    void loadAuditoria();
+  }, [factura?.id, requestJson]);
+
+  const loadXmlRequest = async () => {
+    if (!factura?.id || xmlLoading.request) {
+      return;
+    }
+    try {
+      setXmlLoading((prev) => ({ ...prev, request: true }));
+      setXmlError(null);
+      const text = await requestText(`/api/facturas/${factura.id}/xml-request`);
+      setXmlRequestText(text);
+    } catch (err) {
+      setXmlError((err as Error).message ?? 'No se pudo cargar el XML request.');
+    } finally {
+      setXmlLoading((prev) => ({ ...prev, request: false }));
+    }
+  };
+
+  const loadXmlResponse = async () => {
+    if (!factura?.id || xmlLoading.response) {
+      return;
+    }
+    try {
+      setXmlLoading((prev) => ({ ...prev, response: true }));
+      setXmlError(null);
+      const text = await requestText(`/api/facturas/${factura.id}/xml-response`);
+      setXmlResponseText(text);
+    } catch (err) {
+      setXmlError((err as Error).message ?? 'No se pudo cargar el XML response.');
+    } finally {
+      setXmlLoading((prev) => ({ ...prev, response: false }));
+    }
+  };
+
+  const handleUpdateCobranza = async () => {
+    if (!factura) {
+      return;
+    }
+    const hasInput =
+      Boolean(cobranzaForm.fecha_aprox_cobro) ||
+      Boolean(cobranzaForm.fecha_pago_manual) ||
+      Boolean(cobranzaForm.monto_pagado_manual) ||
+      Boolean(cobranzaForm.observaciones_cobranza);
+    if (!hasInput) {
+      setCobranzaFeedback({ type: 'error', message: 'Ingresá al menos un dato de cobranza.' });
+      return;
+    }
+    if (cobranzaForm.fecha_pago_manual && cobranzaForm.fecha_aprox_cobro) {
+      const pago = new Date(cobranzaForm.fecha_pago_manual);
+      const aprox = new Date(cobranzaForm.fecha_aprox_cobro);
+      if (pago.getTime() < aprox.getTime()) {
+        setCobranzaFeedback({
+          type: 'error',
+          message: 'La fecha de pago manual debe ser posterior o igual a la fecha aproximada de cobro.',
+        });
+        return;
+      }
+    }
+    try {
+      setLoading(true);
+      setCobranzaFeedback(null);
+      await requestJson(`/api/facturas/${factura.id}/actualizar-cobranza`, {
+        method: 'POST',
+        body: JSON.stringify({
+          fecha_aprox_cobro: cobranzaForm.fecha_aprox_cobro || null,
+          fecha_pago_manual: cobranzaForm.fecha_pago_manual || null,
+          monto_pagado_manual: cobranzaForm.monto_pagado_manual ? parseNumberOrZero(cobranzaForm.monto_pagado_manual) : null,
+          observaciones_cobranza: cobranzaForm.observaciones_cobranza || null,
+        }),
+      });
+      const refreshed = await requestJson(`/api/facturas/${factura.id}`) as { data?: FacturaDetalleDto };
+      setFactura(refreshed?.data ?? null);
+      setCobranzaFeedback({ type: 'success', message: 'Cobranza actualizada.' });
+    } catch (err) {
+      setCobranzaFeedback({ type: 'error', message: (err as Error).message ?? 'No se pudo actualizar la cobranza.' });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (error) {
+    return (
+      <FacturacionShell title="Detalle de factura">
+        <p className="form-info form-info--error">{error}</p>
+      </FacturacionShell>
+    );
+  }
+
+  if (loading || !factura) {
+    return (
+      <FacturacionShell title="Detalle de factura">
+        <p className="form-info">Cargando factura...</p>
+      </FacturacionShell>
+    );
+  }
+
+  const pdfUrl = buildDownloadUrl(apiBaseUrl, factura.pdf_url);
+  const xmlRequestUrl = buildDownloadUrl(apiBaseUrl, factura.xml_request_url);
+  const xmlResponseUrl = buildDownloadUrl(apiBaseUrl, factura.xml_response_url);
+
+  return (
+    <FacturacionShell title={`Factura ${factura.id}`} subtitle={`Estado fiscal: ${factura.estado}`}>
+      <section className="dashboard-card facturacion-section">
+        <div className="facturacion-detail-header">
+          <div>
+            <h3>Comprobante</h3>
+            <p>
+              {factura.cbte_tipo}-{String(factura.pto_vta).padStart(4, '0')}-
+              {String(factura.cbte_numero ?? 0).padStart(8, '0')}
+            </p>
+            <p>CAE: {factura.cae ?? '—'} · Vto CAE: {formatDateOnly(factura.cae_vto)}</p>
+          </div>
+          <div className="facturacion-detail-actions">
+            {pdfUrl ? (
+              <a className="primary-action" href={pdfUrl} target="_blank" rel="noreferrer">
+                Descargar PDF
+              </a>
+            ) : null}
+            {xmlRequestUrl ? (
+              <a className="secondary-action" href={xmlRequestUrl} target="_blank" rel="noreferrer">
+                XML request
+              </a>
+            ) : null}
+            {xmlResponseUrl ? (
+              <a className="secondary-action" href={xmlResponseUrl} target="_blank" rel="noreferrer">
+                XML response
+              </a>
+            ) : null}
+          </div>
+        </div>
+
+        <div className="facturacion-detail-grid">
+          <div>
+            <h4>Cliente</h4>
+            <p>{factura.cliente_nombre}</p>
+            <p>CUIT: {factura.doc_nro}</p>
+            <p>Domicilio: {factura.cliente_domicilio ?? '—'}</p>
+          </div>
+          <div>
+            <h4>Período</h4>
+            <p>{factura.anio_facturado}/{String(factura.mes_facturado).padStart(2, '0')} {factura.periodo_facturado}</p>
+            <p>Fecha emisión: {formatDateOnly(factura.fecha_cbte)}</p>
+            <p>Vto pago: {formatDateOnly(factura.fecha_vto_pago)}</p>
+          </div>
+          <div>
+            <h4>Importes</h4>
+            <p>Neto gravado: {formatCurrency(parseNumberOrZero(factura.imp_neto))}</p>
+            <p>No gravado: {formatCurrency(parseNumberOrZero(factura.imp_tot_conc) + parseNumberOrZero(factura.imp_op_ex))}</p>
+            <p>IVA: {formatCurrency(parseNumberOrZero(factura.imp_iva))}</p>
+            <p>Total: {formatCurrency(parseNumberOrZero(factura.imp_total))}</p>
+          </div>
+        </div>
+      </section>
+
+      <section className="dashboard-card facturacion-section">
+        <h3>Detalle PDF</h3>
+        <div className="table-wrapper facturacion-table">
+          <table>
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Descripción</th>
+                <th>Cantidad</th>
+                <th>Precio</th>
+                <th>Subtotal</th>
+                <th>IVA %</th>
+                <th>Subtotal c/IVA</th>
+              </tr>
+            </thead>
+            <tbody>
+              {(factura.detalle_pdf ?? []).map((row) => (
+                <tr key={row.orden}>
+                  <td>{row.orden}</td>
+                  <td>{row.descripcion}</td>
+                  <td>{row.cantidad}</td>
+                  <td>{formatCurrency(row.precio_unitario)}</td>
+                  <td>{formatCurrency(row.subtotal)}</td>
+                  <td>{row.alicuota_iva_pct ?? 0}%</td>
+                  <td>{formatCurrency(row.subtotal_con_iva)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section className="dashboard-card facturacion-section">
+        <h3>XML ARCA</h3>
+        {xmlError ? <p className="form-info form-info--error">{xmlError}</p> : null}
+        <div className="form-actions">
+          <button
+            type="button"
+            className="secondary-action"
+            onClick={() => {
+              const next = !showXmlRequest;
+              setShowXmlRequest(next);
+              if (next && !xmlRequestText) {
+                void loadXmlRequest();
+              }
+            }}
+            disabled={!xmlRequestUrl || xmlLoading.request}
+          >
+            {showXmlRequest ? 'Ocultar XML request' : 'Ver XML request'}
+          </button>
+          <button
+            type="button"
+            className="secondary-action"
+            onClick={() => {
+              const next = !showXmlResponse;
+              setShowXmlResponse(next);
+              if (next && !xmlResponseText) {
+                void loadXmlResponse();
+              }
+            }}
+            disabled={!xmlResponseUrl || xmlLoading.response}
+          >
+            {showXmlResponse ? 'Ocultar XML response' : 'Ver XML response'}
+          </button>
+        </div>
+        {showXmlRequest ? (
+          <pre className="facturacion-xml">
+            {xmlLoading.request ? 'Cargando XML request...' : xmlRequestText ?? 'Sin XML request.'}
+          </pre>
+        ) : null}
+        {showXmlResponse ? (
+          <pre className="facturacion-xml">
+            {xmlLoading.response ? 'Cargando XML response...' : xmlResponseText ?? 'Sin XML response.'}
+          </pre>
+        ) : null}
+      </section>
+
+      <section className="dashboard-card facturacion-section">
+        <h3>Cobranza</h3>
+        {cobranzaFeedback ? (
+          <p className={`form-info ${cobranzaFeedback.type === 'error' ? 'form-info--error' : 'form-info--success'}`}>
+            {cobranzaFeedback.message}
+          </p>
+        ) : null}
+        <div className="filters-grid facturacion-grid">
+          <label className="input-control">
+            <span>Fecha aprox. cobro</span>
+            <input
+              type="date"
+              value={cobranzaForm.fecha_aprox_cobro}
+              onChange={(event) => setCobranzaForm((prev) => ({ ...prev, fecha_aprox_cobro: event.target.value }))}
+            />
+          </label>
+          <label className="input-control">
+            <span>Fecha pago manual</span>
+            <input
+              type="date"
+              value={cobranzaForm.fecha_pago_manual}
+              onChange={(event) => setCobranzaForm((prev) => ({ ...prev, fecha_pago_manual: event.target.value }))}
+            />
+          </label>
+          <label className="input-control">
+            <span>Monto pago manual</span>
+            <input
+              value={cobranzaForm.monto_pagado_manual}
+              onChange={(event) => setCobranzaForm((prev) => ({ ...prev, monto_pagado_manual: event.target.value }))}
+            />
+          </label>
+          <label className="input-control">
+            <span>Observaciones</span>
+            <input
+              value={cobranzaForm.observaciones_cobranza}
+              onChange={(event) => setCobranzaForm((prev) => ({ ...prev, observaciones_cobranza: event.target.value }))}
+            />
+          </label>
+        </div>
+        <div className="form-actions">
+          <button type="button" className="primary-action" onClick={handleUpdateCobranza} disabled={loading}>
+            Guardar cobranza
+          </button>
+        </div>
+      </section>
+
+      <section className="dashboard-card facturacion-section">
+        <h3>Auditoría</h3>
+        {auditError ? <p className="form-info form-info--error">{auditError}</p> : null}
+        {auditLoading ? <p className="form-info">Cargando auditoría...</p> : null}
+        <div className="table-wrapper facturacion-table">
+          <table>
+            <thead>
+              <tr>
+                <th>Fecha</th>
+                <th>Evento</th>
+                <th>Usuario</th>
+                <th>IP</th>
+                <th>Detalle</th>
+              </tr>
+            </thead>
+            <tbody>
+              {auditoria.length === 0 ? (
+                <tr>
+                  <td colSpan={5}>Sin eventos de auditoría.</td>
+                </tr>
+              ) : (
+                auditoria.map((item) => (
+                  <tr key={item.id}>
+                    <td>{formatDateTime(item.created_at ?? '')}</td>
+                    <td>{item.evento}</td>
+                    <td>{item.usuario?.name ?? item.usuario?.email ?? '—'}</td>
+                    <td>{item.ip ?? '—'}</td>
+                    <td>
+                      {item.payload_before || item.payload_after ? (
+                        <details>
+                          <summary>Ver payload</summary>
+                          {item.payload_before ? (
+                            <pre className="facturacion-xml">{JSON.stringify(item.payload_before, null, 2)}</pre>
+                          ) : null}
+                          {item.payload_after ? (
+                            <pre className="facturacion-xml">{JSON.stringify(item.payload_after, null, 2)}</pre>
+                          ) : null}
+                        </details>
+                      ) : (
+                        '—'
+                      )}
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section className="dashboard-card facturacion-section">
+        <h3>Historial de cobranza</h3>
+        <div className="table-wrapper facturacion-table">
+          <table>
+            <thead>
+              <tr>
+                <th>Fecha</th>
+                <th>Estado anterior</th>
+                <th>Estado nuevo</th>
+                <th>Pago</th>
+                <th>Monto</th>
+                <th>Usuario</th>
+              </tr>
+            </thead>
+            <tbody>
+              {(factura.historial_cobranza ?? []).length === 0 ? (
+                <tr>
+                  <td colSpan={6}>Sin movimientos de cobranza.</td>
+                </tr>
+              ) : (
+                (factura.historial_cobranza ?? []).map((row) => (
+                  <tr key={row.id}>
+                    <td>{formatDateTime(row.fecha_evento ?? '')}</td>
+                    <td>{row.estado_anterior ?? '—'}</td>
+                    <td>{row.estado_nuevo ?? '—'}</td>
+                    <td>{formatDateOnly(row.fecha_pago_nueva)}</td>
+                    <td>{formatCurrency(row.monto_pagado_nuevo ?? 0)}</td>
+                    <td>{row.usuario?.name ?? row.usuario?.email ?? '—'}</td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </FacturacionShell>
+  );
+};
+
+const FacturacionConfigArcaPage: React.FC = () => {
+  const { requestJson, apiBaseUrl } = useFacturacionApi();
+  const [emisores, setEmisores] = useState<ArcaEmisorDto[]>([]);
+  const [selectedEmisorId, setSelectedEmisorId] = useState<string>('');
+  const [emisorForm, setEmisorForm] = useState({
+    razon_social: FACTURACION_EMISOR_RAZON_SOCIAL,
+    cuit: FACTURACION_EMISOR_CUIT,
+    condicion_iva: FACTURACION_EMISOR_CONDICION_IVA,
+    ambiente_default: FACTURACION_DEFAULT_AMBIENTE as 'HOMO' | 'PROD',
+    activo: true,
+  });
+  const [csrAlias, setCsrAlias] = useState(FACTURACION_DEFAULT_CERT_ALIAS);
+  const [csrCommonName, setCsrCommonName] = useState(FACTURACION_DEFAULT_CERT_ALIAS);
+  const [csrOrganization, setCsrOrganization] = useState(FACTURACION_EMISOR_RAZON_SOCIAL);
+  const [csrCountry, setCsrCountry] = useState('AR');
+  const [csrAmbiente, setCsrAmbiente] = useState<'HOMO' | 'PROD'>(FACTURACION_DEFAULT_AMBIENTE);
+  const [csrData, setCsrData] = useState<{
+    id: number;
+    alias: string;
+    csr_pem: string;
+    download_url: string;
+  } | null>(null);
+  const [importCertId, setImportCertId] = useState<string>('');
+  const [importType, setImportType] = useState<'crt' | 'crt_key' | 'p12'>('p12');
+  const [importPassword, setImportPassword] = useState('');
+  const [importActivo, setImportActivo] = useState(true);
+  const [importCrtFile, setImportCrtFile] = useState<File | null>(null);
+  const [importKeyFile, setImportKeyFile] = useState<File | null>(null);
+  const [importP12File, setImportP12File] = useState<File | null>(null);
+  const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+
+  const refreshEmisores = useCallback(async () => {
+    const payload = (await requestJson('/api/arca/emisores?with_relations=1')) as { data?: ArcaEmisorDto[] };
+    setEmisores(Array.isArray(payload?.data) ? payload.data : []);
+  }, [requestJson]);
+
+  useEffect(() => {
+    void refreshEmisores();
+  }, [refreshEmisores]);
+
+  useEffect(() => {
+    const emisor = emisores.find((item) => item.id === Number(selectedEmisorId));
+    if (emisor) {
+      setEmisorForm({
+        razon_social: emisor.razon_social ?? '',
+        cuit: emisor.cuit ?? '',
+        condicion_iva: emisor.condicion_iva ?? '',
+        ambiente_default: emisor.ambiente_default ?? 'PROD',
+        activo: emisor.activo,
+      });
+      setCsrOrganization(emisor.razon_social ?? '');
+    }
+  }, [emisores, selectedEmisorId]);
+
+  const csrAliasRef = useRef(csrAlias);
+
+  useEffect(() => {
+    setCsrCommonName((prev) => (prev.trim() === '' || prev === csrAliasRef.current ? csrAlias : prev));
+    csrAliasRef.current = csrAlias;
+  }, [csrAlias]);
+
+  const selectedEmisor = useMemo(
+    () => emisores.find((item) => item.id === Number(selectedEmisorId)) ?? null,
+    [emisores, selectedEmisorId]
+  );
+
+  useEffect(() => {
+    if (selectedEmisor?.certificados && selectedEmisor.certificados.length > 0 && !importCertId) {
+      setImportCertId(String(selectedEmisor.certificados[0].id));
+    }
+  }, [importCertId, selectedEmisor]);
+
+  const handleSaveEmisor = async () => {
+    try {
+      setFeedback(null);
+      const payload = {
+        razon_social: emisorForm.razon_social,
+        cuit: emisorForm.cuit,
+        condicion_iva: emisorForm.condicion_iva,
+        ambiente_default: emisorForm.ambiente_default,
+        activo: emisorForm.activo,
+      };
+      if (selectedEmisor) {
+        await requestJson(`/api/arca/emisores/${selectedEmisor.id}`, {
+          method: 'PUT',
+          body: JSON.stringify(payload),
+        });
+      } else {
+        await requestJson('/api/arca/emisores', {
+          method: 'POST',
+          body: JSON.stringify(payload),
+        });
+      }
+      await refreshEmisores();
+      setFeedback({ type: 'success', message: 'Emisor guardado correctamente.' });
+    } catch (err) {
+      setFeedback({ type: 'error', message: (err as Error).message ?? 'No se pudo guardar el emisor.' });
+    }
+  };
+
+  const handleGenerateCsr = async () => {
+    if (!selectedEmisor) {
+      setFeedback({ type: 'error', message: 'Seleccioná un emisor.' });
+      return;
+    }
+    try {
+      setFeedback(null);
+      const payload = {
+        emisor_id: selectedEmisor.id,
+        alias: csrAlias,
+        common_name: csrCommonName,
+        organization: csrOrganization,
+        country: csrCountry,
+        ambiente: csrAmbiente,
+      };
+      const response = (await requestJson('/api/arca/certificados/generar-csr', {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      })) as {
+        certificado_borrador_id: number;
+        alias: string;
+        csr_pem: string;
+        download_url: string;
+      };
+      setCsrData({
+        id: response.certificado_borrador_id,
+        alias: response.alias,
+        csr_pem: response.csr_pem,
+        download_url: response.download_url,
+      });
+      setImportCertId(String(response.certificado_borrador_id));
+      await refreshEmisores();
+      setFeedback({ type: 'success', message: 'CSR generado correctamente.' });
+    } catch (err) {
+      setFeedback({ type: 'error', message: (err as Error).message ?? 'No se pudo generar el CSR.' });
+    }
+  };
+
+  const handleDownloadCsr = (certId?: number, downloadUrl?: string | null) => {
+    const targetUrl = downloadUrl ?? (certId ? `/api/arca/certificados/${certId}/csr` : null);
+    if (!targetUrl) {
+      setFeedback({ type: 'error', message: 'No hay CSR disponible para descargar.' });
+      return;
+    }
+    const resolved = buildDownloadUrl(apiBaseUrl, targetUrl);
+    if (!resolved) {
+      setFeedback({ type: 'error', message: 'No se pudo construir la URL de descarga.' });
+      return;
+    }
+    window.open(resolved, '_blank', 'noopener');
+  };
+
+  const handleImportCert = async () => {
+    if (!selectedEmisor) {
+      setFeedback({ type: 'error', message: 'Seleccioná un emisor.' });
+      return;
+    }
+    if (!importCertId) {
+      setFeedback({ type: 'error', message: 'Seleccioná el certificado borrador a completar.' });
+      return;
+    }
+    const certificado = selectedEmisor.certificados?.find((item) => item.id === Number(importCertId));
+    if (!certificado) {
+      setFeedback({ type: 'error', message: 'Certificado inválido.' });
+      return;
+    }
+    try {
+      const formData = new FormData();
+      formData.append('alias', certificado.alias);
+      formData.append('ambiente', certificado.ambiente);
+      formData.append('activo', importActivo ? '1' : '0');
+      if (importType === 'p12') {
+        if (!importP12File) {
+          setFeedback({ type: 'error', message: 'Seleccioná un archivo P12.' });
+          return;
+        }
+        formData.append('p12', importP12File);
+        formData.append('password', importPassword);
+      } else {
+        if (!importCrtFile) {
+          setFeedback({ type: 'error', message: 'Seleccioná el archivo CRT.' });
+          return;
+        }
+        formData.append('crt', importCrtFile);
+        if (importType === 'crt_key') {
+          if (!importKeyFile) {
+            setFeedback({ type: 'error', message: 'Seleccioná el archivo KEY.' });
+            return;
+          }
+          formData.append('key', importKeyFile);
+        }
+        if (importPassword) {
+          formData.append('password', importPassword);
+        }
+      }
+      await requestJson(`/api/arca/certificados/${certificado.id}/importar`, {
+        method: 'POST',
+        body: formData,
+      });
+      await refreshEmisores();
+      setFeedback({ type: 'success', message: 'Certificado importado correctamente.' });
+    } catch (err) {
+      setFeedback({ type: 'error', message: (err as Error).message ?? 'No se pudo importar el certificado.' });
+    }
+  };
+
+  const handleTestWsaa = async () => {
+    if (!selectedEmisor || !importCertId) {
+      setFeedback({ type: 'error', message: 'Seleccioná un certificado para probar WSAA.' });
+      return;
+    }
+    try {
+      await requestJson(`/api/arca/certificados/${importCertId}/test-wsaa`, { method: 'POST' });
+      setFeedback({ type: 'success', message: 'WSAA OK.' });
+    } catch (err) {
+      setFeedback({ type: 'error', message: (err as Error).message ?? 'Error al testear WSAA.' });
+    }
+  };
+
+  const handleSyncPuntosVenta = async () => {
+    if (!selectedEmisor) {
+      return;
+    }
+    try {
+      const certAmbiente =
+        selectedEmisor.certificados?.find((item) => item.id === Number(importCertId))?.ambiente ?? csrAmbiente;
+      await requestJson(`/api/arca/emisores/${selectedEmisor.id}/puntos-venta/sincronizar`, {
+        method: 'POST',
+        body: JSON.stringify({ ambiente: certAmbiente }),
+      });
+      await refreshEmisores();
+      setFeedback({ type: 'success', message: 'Puntos de venta sincronizados.' });
+    } catch (err) {
+      setFeedback({ type: 'error', message: (err as Error).message ?? 'No se pudieron sincronizar puntos.' });
+    }
+  };
+
+  const handleToggleCert = async (certificado: ArcaCertificadoDto, activar: boolean) => {
+    try {
+      await requestJson(`/api/arca/certificados/${certificado.id}/${activar ? 'activar' : 'desactivar'}`, { method: 'POST' });
+      await refreshEmisores();
+      setFeedback({ type: 'success', message: activar ? 'Certificado activado.' : 'Certificado desactivado.' });
+    } catch (err) {
+      setFeedback({ type: 'error', message: (err as Error).message ?? 'No se pudo actualizar el certificado.' });
+    }
+  };
+
+  return (
+    <FacturacionShell title="Configuración ARCA" subtitle="Emisores, certificados y puntos de venta">
+      {feedback ? (
+        <p className={`form-info ${feedback.type === 'error' ? 'form-info--error' : 'form-info--success'}`}>
+          {feedback.message}
+        </p>
+      ) : null}
+      <section className="dashboard-card facturacion-section">
+        <h3>Emisores</h3>
+        <div className="filters-grid facturacion-grid">
+          <label className="input-control">
+            <span>Seleccionar emisor</span>
+            <select value={selectedEmisorId} onChange={(event) => setSelectedEmisorId(event.target.value)}>
+              <option value="">Nuevo emisor</option>
+              {emisores.map((emisor) => (
+                <option key={emisor.id} value={emisor.id}>
+                  {emisor.razon_social}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+        <div className="filters-grid facturacion-grid">
+          <label className="input-control">
+            <span>Razón social</span>
+            <input value={emisorForm.razon_social} disabled />
+          </label>
+          <label className="input-control">
+            <span>CUIT</span>
+            <input value={emisorForm.cuit} disabled />
+          </label>
+          <label className="input-control">
+            <span>Condición IVA</span>
+            <input value={emisorForm.condicion_iva} disabled />
+          </label>
+          <label className="input-control">
+            <span>Ambiente</span>
+            <select
+              value={emisorForm.ambiente_default}
+              disabled
+            >
+              <option value="PROD">PROD</option>
+            </select>
+          </label>
+          <label className="input-control facturacion-toggle">
+            <span>Activo</span>
+            <input
+              type="checkbox"
+              checked={emisorForm.activo}
+              onChange={(event) => setEmisorForm((prev) => ({ ...prev, activo: event.target.checked }))}
+            />
+          </label>
+        </div>
+        <div className="form-actions">
+          <button type="button" className="primary-action" onClick={handleSaveEmisor}>
+            Guardar emisor
+          </button>
+          <button
+            type="button"
+            className="secondary-action"
+            onClick={() => {
+              setSelectedEmisorId('');
+              setEmisorForm({
+                razon_social: FACTURACION_EMISOR_RAZON_SOCIAL,
+                cuit: FACTURACION_EMISOR_CUIT,
+                condicion_iva: FACTURACION_EMISOR_CONDICION_IVA,
+                ambiente_default: FACTURACION_DEFAULT_AMBIENTE,
+                activo: true,
+              });
+            }}
+          >
+            Nuevo emisor
+          </button>
+        </div>
+      </section>
+
+      <section className="dashboard-card facturacion-section">
+        <h3>Generar CSR</h3>
+        <p className="form-hint">
+          El CSR se genera en el ERP y se sube en ARCA. La clave privada queda resguardada en el servidor.
+        </p>
+        <div className="filters-grid facturacion-grid">
+          <label className="input-control">
+            <span>Emisor</span>
+            <input value={selectedEmisor?.razon_social ?? ''} disabled />
+          </label>
+          <label className="input-control">
+            <span>CUIT</span>
+            <input value={selectedEmisor?.cuit ?? ''} disabled />
+          </label>
+          <label className="input-control">
+            <span>Alias</span>
+            <input value={csrAlias} onChange={(event) => setCsrAlias(event.target.value)} />
+          </label>
+          <label className="input-control">
+            <span>Common Name (CN)</span>
+            <input value={csrCommonName} onChange={(event) => setCsrCommonName(event.target.value)} />
+          </label>
+          <label className="input-control">
+            <span>Organization (O)</span>
+            <input value={csrOrganization} onChange={(event) => setCsrOrganization(event.target.value)} />
+          </label>
+          <label className="input-control">
+            <span>Country (C)</span>
+            <input value={csrCountry} disabled />
+          </label>
+          <label className="input-control">
+            <span>Ambiente</span>
+            <select value={csrAmbiente} onChange={(event) => setCsrAmbiente(event.target.value as 'HOMO' | 'PROD')}>
+              <option value="PROD">PROD</option>
+              <option value="HOMO">HOMO</option>
+            </select>
+          </label>
+        </div>
+        <div className="form-actions">
+          <button type="button" className="primary-action" onClick={handleGenerateCsr} disabled={!selectedEmisor}>
+            Generar CSR
+          </button>
+          <button
+            type="button"
+            className="secondary-action"
+            onClick={() => handleDownloadCsr(csrData?.id, csrData?.download_url)}
+            disabled={!csrData?.download_url}
+          >
+            Descargar CSR
+          </button>
+        </div>
+        {csrData?.csr_pem ? (
+          <div className="input-control">
+            <span>CSR generado</span>
+            <textarea value={csrData.csr_pem} readOnly rows={6} />
+          </div>
+        ) : null}
+
+        <div className="facturacion-divider" />
+
+        <h3>Importar certificado emitido</h3>
+        <p className="form-hint">
+          Subí el CRT o P12 emitido por ARCA. El CSR no se carga acá.
+        </p>
+        <div className="filters-grid facturacion-grid">
+          <label className="input-control">
+            <span>Certificado</span>
+            <select value={importCertId} onChange={(event) => setImportCertId(event.target.value)}>
+              <option value="">Seleccionar</option>
+              {(selectedEmisor?.certificados ?? []).map((cert) => (
+                <option key={cert.id} value={cert.id}>
+                  {cert.alias} ({cert.ambiente}) {cert.estado ? `- ${cert.estado}` : ''}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="input-control">
+            <span>Tipo importación</span>
+            <select value={importType} onChange={(event) => setImportType(event.target.value as 'crt' | 'crt_key' | 'p12')}>
+              <option value="p12">P12/PFX</option>
+              <option value="crt">CRT (usa clave del servidor)</option>
+              <option value="crt_key">CRT + KEY</option>
+            </select>
+          </label>
+          <label className="input-control">
+            <span>Password</span>
+            <input value={importPassword} onChange={(event) => setImportPassword(event.target.value)} type="password" />
+          </label>
+          <label className="input-control facturacion-toggle">
+            <span>Activo</span>
+            <input type="checkbox" checked={importActivo} onChange={(event) => setImportActivo(event.target.checked)} />
+          </label>
+        </div>
+        <div className="filters-grid facturacion-grid">
+          {importType === 'p12' ? (
+            <label className="input-control">
+              <span>Archivo P12</span>
+              <input type="file" accept=".p12,.pfx" onChange={(event) => setImportP12File(event.target.files?.[0] ?? null)} />
+            </label>
+          ) : (
+            <>
+              <label className="input-control">
+                <span>Archivo CRT</span>
+                <input type="file" accept=".crt,.pem" onChange={(event) => setImportCrtFile(event.target.files?.[0] ?? null)} />
+              </label>
+              {importType === 'crt_key' ? (
+                <label className="input-control">
+                  <span>Archivo KEY</span>
+                  <input type="file" accept=".key,.pem" onChange={(event) => setImportKeyFile(event.target.files?.[0] ?? null)} />
+                </label>
+              ) : null}
+            </>
+          )}
+        </div>
+        <div className="form-actions">
+          <button type="button" className="primary-action" onClick={handleImportCert} disabled={!selectedEmisor}>
+            Importar certificado
+          </button>
+          <button type="button" className="secondary-action" onClick={handleTestWsaa} disabled={!selectedEmisor || !importCertId}>
+            Test WSAA
+          </button>
+        </div>
+
+        <div className="facturacion-divider" />
+
+        <h3>Guía rápida</h3>
+        <ol className="facturacion-steps">
+          <li>Generar CSR en el ERP.</li>
+          <li>Descargar el archivo .csr.</li>
+          <li>Subir el CSR en ARCA / Administración de Certificados Digitales.</li>
+          <li>Descargar el certificado .crt emitido por ARCA.</li>
+          <li>Asociar el certificado al WSN en Administrador de Relaciones de Clave Fiscal.</li>
+          <li>Importar el .crt o .p12 en el ERP.</li>
+          <li>Probar WSAA.</li>
+        </ol>
+
+        <div className="facturacion-divider" />
+
+        <h3>Certificados cargados</h3>
+        <div className="table-wrapper facturacion-table">
+          <table>
+            <thead>
+              <tr>
+                <th>Alias</th>
+                <th>Ambiente</th>
+                <th>Estado</th>
+                <th>Vigencia</th>
+                <th>Activo</th>
+                <th>Último login</th>
+                <th>Acciones</th>
+              </tr>
+            </thead>
+            <tbody>
+              {(selectedEmisor?.certificados ?? []).length === 0 ? (
+                <tr>
+                  <td colSpan={7}>Sin certificados cargados.</td>
+                </tr>
+              ) : (
+                (selectedEmisor?.certificados ?? []).map((cert) => (
+                  <tr key={cert.id}>
+                    <td>{cert.alias}</td>
+                    <td>{cert.ambiente}</td>
+                    <td>{cert.estado ?? '—'}</td>
+                    <td>
+                      {formatDateOnly(cert.valid_from)} → {formatDateOnly(cert.valid_to)}
+                    </td>
+                    <td>{cert.activo ? 'Sí' : 'No'}</td>
+                    <td>{formatDateTime(cert.ultimo_login_wsaa_ok_at ?? '')}</td>
+                    <td className="actions-cell">
+                      {cert.has_csr ? (
+                        <button
+                          type="button"
+                          className="secondary-action secondary-action--ghost"
+                          onClick={() => handleDownloadCsr(cert.id)}
+                        >
+                          Descargar CSR
+                        </button>
+                      ) : null}
+                      {cert.activo ? (
+                        <button
+                          type="button"
+                          className="secondary-action secondary-action--ghost"
+                          onClick={() => handleToggleCert(cert, false)}
+                        >
+                          Desactivar
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          className="secondary-action secondary-action--ghost"
+                          onClick={() => handleToggleCert(cert, true)}
+                        >
+                          Activar
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section className="dashboard-card facturacion-section">
+        <h3>Puntos de venta</h3>
+        <div className="form-actions">
+          <button type="button" className="primary-action" onClick={handleSyncPuntosVenta} disabled={!selectedEmisor}>
+            Sincronizar
+          </button>
+        </div>
+        <div className="table-wrapper facturacion-table">
+          <table>
+            <thead>
+              <tr>
+                <th>Nro</th>
+                <th>Ambiente</th>
+                <th>Sistema</th>
+                <th>Bloqueado</th>
+                <th>ERP</th>
+              </tr>
+            </thead>
+            <tbody>
+              {(selectedEmisor?.puntos_venta ?? []).length === 0 ? (
+                <tr>
+                  <td colSpan={5}>Sin puntos de venta sincronizados.</td>
+                </tr>
+              ) : (
+                (selectedEmisor?.puntos_venta ?? []).map((punto) => (
+                  <tr key={punto.id}>
+                    <td>{String(punto.nro).padStart(4, '0')}</td>
+                    <td>{punto.ambiente}</td>
+                    <td>{punto.sistema_arca ?? punto.emision_tipo ?? '—'}</td>
+                    <td>{punto.bloqueado ? 'Sí' : 'No'}</td>
+                    <td>{punto.habilitado_para_erp ? 'Sí' : 'No'}</td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </FacturacionShell>
+  );
+};
+
+const FacturacionClientesPage: React.FC = () => {
+  const { requestJson } = useFacturacionApi();
+  const navigate = useNavigate();
+  const [clientes, setClientes] = useState<ClienteSelectOption[]>([]);
+  const [sucursales, setSucursales] = useState<SucursalSelectOption[]>([]);
+  const [filters, setFilters] = useState({
+    cliente_id: '',
+    sucursal_id: '',
+    anio: '',
+    mes: '',
+    periodo: '',
+    estado_cobranza: '',
+  });
+  const [queryFilters, setQueryFilters] = useState(filters);
+  const [rows, setRows] = useState<ClientesFacturacionResumenDto[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const loadClientes = async () => {
+      try {
+        const payload = (await requestJson('/api/clientes/select?limit=500')) as { data?: ClienteSelectOption[] };
+        setClientes(Array.isArray(payload?.data) ? payload.data : []);
+      } catch {
+        setClientes([]);
+      }
+    };
+    void loadClientes();
+  }, [requestJson]);
+
+  useEffect(() => {
+    const clienteId = Number(filters.cliente_id);
+    if (!clienteId) {
+      setSucursales([]);
+      return;
+    }
+    const loadSucursales = async () => {
+      try {
+        const payload = (await requestJson(`/api/clientes/${clienteId}/sucursales`)) as { data?: SucursalSelectOption[] };
+        setSucursales(Array.isArray(payload?.data) ? payload.data : []);
+      } catch {
+        setSucursales([]);
+      }
+    };
+    void loadSucursales();
+  }, [filters.cliente_id, requestJson]);
+
+  useEffect(() => {
+    const fetchResumen = async () => {
+      try {
+        setLoading(true);
+        setError(null);
+        const params = new URLSearchParams();
+        Object.entries(queryFilters).forEach(([key, value]) => {
+          if (value) {
+            params.set(key, value);
+          }
+        });
+        const payload = (await requestJson(`/api/clientes-facturacion/resumen?${params.toString()}`)) as {
+          data?: ClientesFacturacionResumenDto[];
+        };
+        setRows(Array.isArray(payload?.data) ? payload.data : []);
+      } catch (err) {
+        setError((err as Error).message ?? 'No se pudo cargar el resumen.');
+      } finally {
+        setLoading(false);
+      }
+    };
+    void fetchResumen();
+  }, [queryFilters, requestJson]);
+
+  const kpis = useMemo(() => {
+    const totalGrupos = rows.length;
+    let totalNeto = 0;
+    let totalNoGravado = 0;
+    let totalIva = 0;
+    let totalFinal = 0;
+    let totalVencido = 0;
+    let totalPendiente = 0;
+
+    rows.forEach((row) => {
+      totalNeto += parseNumberOrZero(row.total_neto_gravado);
+      totalNoGravado += parseNumberOrZero(row.total_no_gravado);
+      totalIva += parseNumberOrZero(row.total_iva);
+      totalFinal += parseNumberOrZero(row.total_final);
+      totalVencido += parseNumberOrZero(row.facturas_vencidas);
+      totalPendiente += parseNumberOrZero(row.facturas_pendientes);
+    });
+
+    return { totalGrupos, totalNeto, totalNoGravado, totalIva, totalFinal, totalVencido, totalPendiente };
+  }, [rows]);
+
+  return (
+    <FacturacionShell title="Clientes de facturación" subtitle="Resumen por cliente, sucursal y período">
+      <section className="dashboard-card facturacion-section">
+        <div className="filters-grid facturacion-grid">
+          <label className="input-control">
+            <span>Cliente</span>
+            <select value={filters.cliente_id} onChange={(event) => setFilters((prev) => ({ ...prev, cliente_id: event.target.value, sucursal_id: '' }))}>
+              <option value="">Todos</option>
+              {clientes.map((cliente) => (
+                <option key={cliente.id} value={cliente.id}>
+                  {cliente.nombre ?? `Cliente #${cliente.id}`}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="input-control">
+            <span>Sucursal</span>
+            <select value={filters.sucursal_id} onChange={(event) => setFilters((prev) => ({ ...prev, sucursal_id: event.target.value }))} disabled={!filters.cliente_id}>
+              <option value="">Todas</option>
+              {sucursales.map((sucursal) => (
+                <option key={sucursal.id} value={sucursal.id}>
+                  {sucursal.nombre ?? `Sucursal #${sucursal.id}`}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="input-control">
+            <span>Año</span>
+            <input value={filters.anio} onChange={(event) => setFilters((prev) => ({ ...prev, anio: event.target.value }))} />
+          </label>
+          <label className="input-control">
+            <span>Mes</span>
+            <select value={filters.mes} onChange={(event) => setFilters((prev) => ({ ...prev, mes: event.target.value }))}>
+              <option value="">Todos</option>
+              {TARIFA_MONTH_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="input-control">
+            <span>Período</span>
+            <select value={filters.periodo} onChange={(event) => setFilters((prev) => ({ ...prev, periodo: event.target.value }))}>
+              <option value="">Todos</option>
+              {FACTURACION_PERIODOS.map((periodo) => (
+                <option key={periodo.value} value={periodo.value}>
+                  {periodo.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="input-control">
+            <span>Estado cobranza</span>
+            <select value={filters.estado_cobranza} onChange={(event) => setFilters((prev) => ({ ...prev, estado_cobranza: event.target.value }))}>
+              <option value="">Todos</option>
+              {FACTURACION_ESTADOS_COBRANZA.map((estado) => (
+                <option key={estado} value={estado}>
+                  {estado.replace(/_/g, ' ')}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+        <div className="form-actions">
+          <button type="button" className="primary-action" onClick={() => setQueryFilters(filters)}>
+            Actualizar
+          </button>
+        </div>
+      </section>
+
+      <section className="summary-grid">
+        <div className="summary-card">
+          <span className="summary-card__label">Grupos</span>
+          <strong className="summary-card__value">{kpis.totalGrupos}</strong>
+        </div>
+        <div className="summary-card summary-card--info">
+          <span className="summary-card__label">Total neto</span>
+          <strong className="summary-card__value">{formatCurrency(kpis.totalNeto)}</strong>
+        </div>
+        <div className="summary-card summary-card--neutral">
+          <span className="summary-card__label">Total no gravado</span>
+          <strong className="summary-card__value">{formatCurrency(kpis.totalNoGravado)}</strong>
+        </div>
+        <div className="summary-card summary-card--success">
+          <span className="summary-card__label">Total IVA</span>
+          <strong className="summary-card__value">{formatCurrency(kpis.totalIva)}</strong>
+        </div>
+        <div className="summary-card summary-card--warning">
+          <span className="summary-card__label">Total final</span>
+          <strong className="summary-card__value">{formatCurrency(kpis.totalFinal)}</strong>
+        </div>
+      </section>
+
+      <section className="dashboard-card facturacion-section">
+        {error ? <p className="form-info form-info--error">{error}</p> : null}
+        {loading ? <p className="form-info">Cargando resumen...</p> : null}
+        <div className="table-wrapper facturacion-table">
+          <table>
+            <thead>
+              <tr>
+                <th>Cliente</th>
+                <th>Sucursal</th>
+                <th>Período</th>
+                <th>Facturas</th>
+                <th>Neto</th>
+                <th>No gravado</th>
+                <th>IVA</th>
+                <th>Total</th>
+                <th>Cobradas</th>
+                <th>Pendientes</th>
+                <th>Vencidas</th>
+                <th>Acciones</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.length === 0 ? (
+                <tr>
+                  <td colSpan={12}>No hay datos para los filtros seleccionados.</td>
+                </tr>
+              ) : (
+                rows.map((row) => (
+                  <tr key={row.group_id}>
+                    <td>{row.cliente_nombre}</td>
+                    <td>{row.sucursal_nombre}</td>
+                    <td>
+                      {row.anio_facturado}/{String(row.mes_facturado).padStart(2, '0')} {row.periodo_facturado}
+                    </td>
+                    <td>{row.cantidad_facturas}</td>
+                    <td>{formatCurrency(row.total_neto_gravado)}</td>
+                    <td>{formatCurrency(row.total_no_gravado)}</td>
+                    <td>{formatCurrency(row.total_iva)}</td>
+                    <td>{formatCurrency(row.total_final)}</td>
+                    <td>{row.facturas_cobradas}</td>
+                    <td>{row.facturas_pendientes}</td>
+                    <td>{row.facturas_vencidas}</td>
+                    <td>
+                      <button type="button" className="secondary-action secondary-action--ghost" onClick={() => navigate(`/facturacion/clientes/grupo/${row.group_id}`)}>
+                        Ver detalle
+                      </button>
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </FacturacionShell>
+  );
+};
+
+const FacturacionClientesGrupoPage: React.FC = () => {
+  const { requestJson } = useFacturacionApi();
+  const { grupoId } = useParams();
+  const [facturas, setFacturas] = useState<FacturaSummaryDto[]>([]);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const loadGroup = async () => {
+      if (!grupoId) {
+        setError('Grupo inválido.');
+        return;
+      }
+      try {
+        const payload = (await requestJson(`/api/clientes-facturacion/grupo/${grupoId}`)) as { data?: FacturaSummaryDto[] };
+        setFacturas(Array.isArray(payload?.data) ? payload.data : []);
+      } catch (err) {
+        setError((err as Error).message ?? 'No se pudo cargar el grupo.');
+      }
+    };
+    void loadGroup();
+  }, [grupoId, requestJson]);
+
+  const totals = useMemo(() => {
+    return facturas.reduce(
+      (acc, factura) => {
+        const total = parseNumberOrZero(factura.imp_total);
+        acc.total += total;
+        return acc;
+      },
+      { total: 0 }
+    );
+  }, [facturas]);
+
+  return (
+    <FacturacionShell title="Detalle de grupo" subtitle="Facturas del grupo seleccionado">
+      {error ? <p className="form-info form-info--error">{error}</p> : null}
+      <section className="summary-grid">
+        <div className="summary-card summary-card--info">
+          <span className="summary-card__label">Total grupo</span>
+          <strong className="summary-card__value">{formatCurrency(totals.total)}</strong>
+        </div>
+      </section>
+      <section className="dashboard-card facturacion-section">
+        <div className="table-wrapper facturacion-table">
+          <table>
+            <thead>
+              <tr>
+                <th>Cliente</th>
+                <th>Sucursal</th>
+                <th>Comprobante</th>
+                <th>Emisión</th>
+                <th>Total</th>
+                <th>Estado</th>
+                <th>Acciones</th>
+              </tr>
+            </thead>
+            <tbody>
+              {facturas.length === 0 ? (
+                <tr>
+                  <td colSpan={7}>No hay facturas en este grupo.</td>
+                </tr>
+              ) : (
+                facturas.map((factura) => (
+                  <tr key={factura.id}>
+                    <td>{factura.cliente_nombre}</td>
+                    <td>{factura.sucursal_nombre ?? '—'}</td>
+                    <td>
+                      {factura.cbte_tipo}-{String(factura.pto_vta).padStart(4, '0')}-{String(factura.cbte_numero ?? 0).padStart(8, '0')}
+                    </td>
+                    <td>{formatDateOnly(factura.fecha_cbte)}</td>
+                    <td>{formatCurrency(parseNumberOrZero(factura.imp_total))}</td>
+                    <td>{factura.estado}</td>
+                    <td>
+                      <NavLink className="secondary-action secondary-action--ghost" to={`/facturacion/facturas/${factura.id}`}>
+                        Ver detalle
+                      </NavLink>
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </FacturacionShell>
+  );
+};
+
+const FacturacionPage: React.FC = () => <Navigate to="/facturacion/facturas" replace />;
+
 const RequireAccess: React.FC<{ section: AccessSection; children: React.ReactElement }> = ({
   section,
   children,
@@ -54486,6 +57659,54 @@ const AppRoutes: React.FC = () => (
         element={
           <RequireAccess section="facturacion">
             <FacturacionPage />
+          </RequireAccess>
+        }
+      />
+      <Route
+        path="/facturacion/facturas"
+        element={
+          <RequireAccess section="facturacion">
+            <FacturacionListadoPage />
+          </RequireAccess>
+        }
+      />
+      <Route
+        path="/facturacion/nueva"
+        element={
+          <RequireAccess section="facturacion">
+            <FacturacionCreatePage />
+          </RequireAccess>
+        }
+      />
+      <Route
+        path="/facturacion/facturas/:facturaId"
+        element={
+          <RequireAccess section="facturacion">
+            <FacturacionDetailPage />
+          </RequireAccess>
+        }
+      />
+      <Route
+        path="/facturacion/clientes"
+        element={
+          <RequireAccess section="facturacion">
+            <FacturacionClientesPage />
+          </RequireAccess>
+        }
+      />
+      <Route
+        path="/facturacion/clientes/grupo/:grupoId"
+        element={
+          <RequireAccess section="facturacion">
+            <FacturacionClientesGrupoPage />
+          </RequireAccess>
+        }
+      />
+      <Route
+        path="/facturacion/configuracion-arca"
+        element={
+          <RequireAccess section="facturacion">
+            <FacturacionConfigArcaPage />
           </RequireAccess>
         }
       />

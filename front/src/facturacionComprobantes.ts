@@ -104,3 +104,73 @@ export const FACTURACION_COMPROBANTES_OPTIONS: FacturacionComprobanteOption[] = 
   { code: '997', description: 'Remito Electrónico para Azúcar, Alcohol y Subproductos -Mercado Interno-' },
   { code: '998', description: 'Remito Electrónico para Azúcar, Alcohol y Subproductos -Exportación-' },
 ];
+
+export type Ambiente = 'HOMO' | 'PROD';
+export type PeriodoFacturado = 'PRIMERA_QUINCENA' | 'SEGUNDA_QUINCENA' | 'MES_COMPLETO';
+export type EstadoFactura =
+  | 'BORRADOR'
+  | 'VALIDADA_LOCAL'
+  | 'LISTA_PARA_ENVIO'
+  | 'ENVIANDO_ARCA'
+  | 'AUTORIZADA'
+  | 'RECHAZADA_ARCA'
+  | 'ERROR_TECNICO'
+  | 'PDF_GENERADO';
+export type EstadoCobranza = 'PENDIENTE' | 'A_VENCER' | 'VENCIDA' | 'COBRADA' | 'PARCIAL';
+
+export interface FacturaIvaInput {
+  iva_id: number;
+  base_imp: number;
+  importe: number;
+}
+
+export interface FacturaDetallePdfInput {
+  orden: number;
+  descripcion: string;
+  cantidad: number;
+  unidad_medida?: string;
+  precio_unitario: number;
+  bonificacion_pct?: number;
+  subtotal: number;
+  alicuota_iva_pct?: number;
+  subtotal_con_iva: number;
+}
+
+export interface FacturaDraftInput {
+  emisor_id: number;
+  ambiente: Ambiente;
+  pto_vta: number;
+  cbte_tipo: number;
+  concepto: number;
+  doc_tipo: number;
+  doc_nro: number;
+  cliente_id: number;
+  sucursal_id: number;
+  cliente_nombre: string;
+  cliente_domicilio?: string;
+  fecha_cbte: string;
+  fecha_serv_desde?: string;
+  fecha_serv_hasta?: string;
+  fecha_vto_pago?: string;
+  moneda_id: string;
+  moneda_cotiz: number;
+  imp_total: number;
+  imp_tot_conc: number;
+  imp_neto: number;
+  imp_op_ex: number;
+  imp_iva: number;
+  imp_trib: number;
+  anio_facturado: number;
+  mes_facturado: number;
+  periodo_facturado: PeriodoFacturado;
+  fecha_aprox_cobro?: string;
+  observaciones_cobranza?: string;
+  iva: FacturaIvaInput[];
+  detalle_pdf: FacturaDetallePdfInput[];
+}
+
+export interface CobranzaPatch {
+  fecha_aprox_cobro?: string;
+  fecha_pago_manual?: string;
+  observaciones_cobranza?: string;
+}

@@ -16,6 +16,10 @@ class DatabaseSeeder extends Seeder
      */
     public function run(): void
     {
+        $this->call([
+            ArcaFacturacionSeeder::class,
+        ]);
+
         User::query()->updateOrCreate(
             ['email' => 'morellfrancisco@gmail.com'],
             [

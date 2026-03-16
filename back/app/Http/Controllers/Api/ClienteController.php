@@ -23,11 +23,59 @@ class ClienteController extends Controller
         return $this->jsonResponse(['data' => $clientes]);
     }
 
+    public function select(Request $request): JsonResponse
+    {
+        $query = Cliente::query()->orderBy('nombre');
+
+        if ($request->filled('q')) {
+            $term = trim((string) $request->input('q'));
+            $query->where(function ($sub) use ($term) {
+                $sub->where('nombre', 'like', '%' . $term . '%')
+                    ->orWhere('codigo', 'like', '%' . $term . '%')
+                    ->orWhere('documento_fiscal', 'like', '%' . preg_replace('/\D+/', '', $term) . '%');
+            });
+        }
+
+        if ($request->filled('limit')) {
+            $query->limit((int) $request->input('limit'));
+        }
+
+        $clientes = $query->get()->map(function (Cliente $cliente) {
+            return [
+                'id' => $cliente->id,
+                'codigo' => $cliente->codigo,
+                'nombre' => $cliente->nombre,
+                'documento_fiscal' => $cliente->documento_fiscal,
+            ];
+        })->values();
+
+        return $this->jsonResponse(['data' => $clientes]);
+    }
+
     public function show(Cliente $cliente): JsonResponse
     {
         $cliente->load(['sucursales' => fn ($query) => $query->orderBy('nombre')]);
 
         return $this->jsonResponse(['data' => $this->formatCliente($cliente)]);
+    }
+
+    public function sucursales(Cliente $cliente): JsonResponse
+    {
+        $sucursales = $cliente->sucursales()
+            ->orderBy('nombre')
+            ->get()
+            ->map(function ($sucursal) {
+                return [
+                    'id' => $sucursal->id,
+                    'cliente_id' => $sucursal->cliente_id,
+                    'nombre' => $sucursal->nombre,
+                    'direccion' => $sucursal->direccion,
+                    'encargado_deposito' => $sucursal->encargado_deposito,
+                ];
+            })
+            ->values();
+
+        return $this->jsonResponse(['data' => $sucursales]);
     }
 
     public function store(Request $request): JsonResponse

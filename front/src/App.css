@@ -5084,6 +5084,26 @@ tbody tr:hover {
   font-weight: 600;
 }
 
+.form-info--warning {
+  color: #b45309;
+  font-weight: 600;
+}
+
+.facturacion-xml {
+  margin-top: 0.75rem;
+  padding: 0.75rem;
+  border-radius: 12px;
+  background: #0f172a;
+  color: #e2e8f0;
+  font-family: "SFMono-Regular", "Menlo", "Monaco", "Consolas", "Liberation Mono", "Courier New", monospace;
+  font-size: 0.78rem;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  max-height: 360px;
+  overflow: auto;
+  border: 1px solid rgba(148, 163, 184, 0.4);
+}
+
 .form-empty {
   color: #8ca3c2;
   font-size: 0.9rem;
@@ -7735,6 +7755,22 @@ tbody tr:hover {
   margin-bottom: 0.4rem;
 }
 
+.facturacion-divider {
+  height: 1px;
+  background: #e3e9f5;
+  margin: 1rem 0;
+}
+
+.facturacion-steps {
+  margin: 0.4rem 0 0.9rem 1.2rem;
+  color: #344256;
+  font-size: 0.92rem;
+}
+
+.facturacion-steps li + li {
+  margin-top: 0.35rem;
+}
+
 .facturacion-grid {
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
 }
@@ -7758,6 +7794,12 @@ tbody tr:hover {
 
 .facturacion-table {
   margin-top: 0.75rem;
+}
+
+.actions-cell {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
 }
 
 .facturacion-status {
@@ -7787,6 +7829,125 @@ tbody tr:hover {
   color: #047857;
 }
 
+.facturacion-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.facturacion-nav__link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.4rem 0.75rem;
+  border-radius: 999px;
+  font-weight: 600;
+  font-size: 0.85rem;
+  text-decoration: none;
+  color: var(--muted);
+  background: rgba(59, 130, 246, 0.08);
+}
+
+.facturacion-nav__link.is-active {
+  color: #1d4ed8;
+  background: rgba(59, 130, 246, 0.18);
+}
+
+.facturacion-header {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.facturacion-header__actions {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.facturacion-form-grid {
+  display: grid;
+  gap: 1rem;
+}
+
+.facturacion-form-block {
+  background: #f8fbff;
+  border: 1px solid #dbe4f5;
+  border-radius: 14px;
+  padding: 1rem;
+}
+
+.facturacion-detail-header {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.facturacion-detail-actions {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.facturacion-detail-grid {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+
+.facturacion-actions {
+  display: flex;
+  gap: 0.35rem;
+}
+
+.facturacion-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.facturacion-status--cobrada {
+  background: rgba(16, 185, 129, 0.16);
+  color: #047857;
+}
+
+.facturacion-status--pendiente,
+.facturacion-status--a-vencer,
+.facturacion-status--parcial {
+  background: rgba(245, 158, 11, 0.18);
+  color: #b45309;
+}
+
+.facturacion-status--vencida {
+  background: rgba(239, 68, 68, 0.18);
+  color: #b91c1c;
+}
+
+.facturacion-status--borrador,
+.facturacion-status--validada-local,
+.facturacion-status--lista-para-envio,
+.facturacion-status--enviando-arca {
+  background: rgba(59, 130, 246, 0.16);
+  color: #1d4ed8;
+}
+
+.facturacion-status--autorizada,
+.facturacion-status--pdf-generado {
+  background: rgba(16, 185, 129, 0.16);
+  color: #047857;
+}
+
+.facturacion-status--rechazada-arca,
+.facturacion-status--error-tecnico {
+  background: rgba(239, 68, 68, 0.18);
+  color: #b91c1c;
+}
+
 .facturacion-alert-list {
   margin: 0;
   padding-left: 1.1rem;
@@ -7798,6 +7959,21 @@ tbody tr:hover {
 [data-theme='dark'] .facturacion-box {
   background: #0b1120;
   border-color: #1c2740;
+}
+
+[data-theme='dark'] .facturacion-form-block {
+  background: #0b1120;
+  border-color: #1c2740;
+}
+
+[data-theme='dark'] .facturacion-nav__link {
+  background: rgba(147, 197, 253, 0.15);
+  color: #c6d2ea;
+}
+
+[data-theme='dark'] .facturacion-nav__link.is-active {
+  color: #93c5fd;
+  background: rgba(147, 197, 253, 0.22);
 }
 
 [data-theme='dark'] .facturacion-alert-list {
@@ -7817,6 +7993,18 @@ tbody tr:hover {
 [data-theme='dark'] .facturacion-status--conciliada {
   background: rgba(16, 185, 129, 0.2);
   color: #6ee7b7;
+}
+
+[data-theme='dark'] .facturacion-status--pendiente,
+[data-theme='dark'] .facturacion-status--a-vencer,
+[data-theme='dark'] .facturacion-status--parcial {
+  color: #fcd34d;
+}
+
+[data-theme='dark'] .facturacion-status--vencida,
+[data-theme='dark'] .facturacion-status--rechazada-arca,
+[data-theme='dark'] .facturacion-status--error-tecnico {
+  color: #fecaca;
 }
 
 @media (max-width: 680px) {
