@@ -2202,6 +2202,8 @@ class PersonalController extends Controller
             'aprobadoAt' => optional($persona->aprobado_at)->toIso8601String(),
             'aprobadoPorId' => $persona->aprobado_por,
             'aprobadoPorNombre' => $persona->aprobadoPor?->name,
+            'createdAt' => optional($persona->created_at)->toIso8601String(),
+            'createdAtLabel' => $this->formatDateTimeLabel($persona->created_at),
             'esSolicitud' => (bool) $persona->es_solicitud,
             'solicitudTipo' => $persona->es_solicitud ? 'alta' : null,
             'transportistaQrCode' => $transportistaQr['transportistaQrCode'],

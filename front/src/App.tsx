@@ -34736,14 +34736,11 @@ const ApprovalsRequestsPage: React.FC = () => {
     const numericId = Number(record.id);
     const resolveRawCreated = () => {
       const data = record.solicitudData as any;
-      const isSolicitudAlta = record.esSolicitud && (record.solicitudTipo === 'alta' || !record.solicitudTipo);
 
       const primaryCandidates: Array<string | null | undefined> = [
         record.createdAt,
         (record as any).created_at,
         (record as any).created,
-        (record as any).createdAtLabel,
-        (record as any).created_at_label,
         (record as any).fechaCreacion,
         (record as any).fecha_creacion,
         data?.createdAt,
@@ -34766,18 +34763,7 @@ const ApprovalsRequestsPage: React.FC = () => {
       if (cached) {
         return cached;
       }
-
-      const altaFallbacks = isSolicitudAlta
-        ? [
-            record.fechaAlta,
-            record.fechaAltaVinculacion,
-            data?.form?.fechaAlta,
-            data?.form?.fechaAltaVinculacion,
-          ]
-        : [];
-      const foundFallback = altaFallbacks.find((value) => typeof value === 'string' && value.trim().length > 0);
-
-      return foundFallback ?? null;
+      return null;
     };
 
     const rawCreated = resolveRawCreated();
@@ -34810,14 +34796,6 @@ const ApprovalsRequestsPage: React.FC = () => {
       if (cached) {
         resolvedCreated = cached;
       }
-    }
-
-    // Si aún no hay fecha (backend no la envió) guardamos la fecha de primera vista
-    // para tener consistencia en este equipo/navegador.
-    if (!resolvedCreated && Number.isFinite(numericId) && numericId > 0) {
-      const nowIso = new Date().toISOString();
-      resolvedCreated = nowIso;
-      cacheSolicitudCreated(numericId, nowIso);
     }
 
     // Si viene creada desde el backend, la guardamos en cache para próximos renders.
@@ -38930,16 +38908,12 @@ const sucursalOptions = useMemo(() => {
 
   const resolveSolicitudCreated = useCallback((registro: PersonalRecord): string | null => {
     const data = registro.solicitudData as any;
-    const isSolicitudAlta = registro.esSolicitud && (registro.solicitudTipo === 'alta' || !registro.solicitudTipo);
     const candidates: Array<string | null | undefined> = [
       registro.createdAt,
       (registro as any).created_at,
-      registro.createdAtLabel,
-      (registro as any).created_at_label,
       (registro as any).created,
       (registro as any).fechaCreacion,
       (registro as any).fecha_creacion,
-      ...(isSolicitudAlta ? [registro.fechaAlta, registro.fechaAltaVinculacion] : []),
       data?.createdAt,
       data?.created_at,
       data?.created,
@@ -38948,8 +38922,6 @@ const sucursalOptions = useMemo(() => {
       data?.form?.createdAt,
       data?.form?.created_at,
       data?.form?.fechaSolicitud,
-      data?.form?.fechaAlta,
-      data?.form?.fechaAltaVinculacion,
       data?.form?.fecha,
     ];
     const found = candidates.find((value) => typeof value === 'string' && value.trim().length > 0);
