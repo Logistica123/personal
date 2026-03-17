@@ -579,8 +579,15 @@ type ActivoAsesorComercialRecord = {
   lider: string | null;
   asesorComercial: string | null;
   rol: string | null;
+  modalidadTrabajo?: string | null;
   transportistaActivo: string | null;
   numero: string | null;
+  comentarios?: string | null;
+  cliente?: string | null;
+  asesorPostventa?: string | null;
+  sucursal?: string | null;
+  vehiculo?: string | null;
+  fechaUltimaAsignacion?: string | null;
   rowOrder?: number | null;
   updatedAt?: string | null;
 };
@@ -50444,6 +50451,24 @@ const BaseDistribucionDetailPage: React.FC = () => {
 
 const ActivosAsesoresPage: React.FC = () => {
   const apiBaseUrl = useMemo(() => resolveApiBaseUrl(), []);
+  const authUser = useStoredAuthUser();
+  const canEditComentarios = useMemo(() => {
+    const allowed = ['luis', 'david', 'joel', 'dario', 'luciano'];
+    const normalize = (value: string | null | undefined) =>
+      (value ?? '')
+        .trim()
+        .toLowerCase()
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '');
+
+    const firstName = normalize(authUser?.name).split(/\s+/).filter(Boolean)[0] ?? '';
+    if (firstName && allowed.includes(firstName)) {
+      return true;
+    }
+
+    const emailName = normalize(authUser?.email).split('@')[0] ?? '';
+    return emailName && allowed.includes(emailName);
+  }, [authUser?.email, authUser?.name]);
   const [records, setRecords] = useState<ActivoAsesorComercialRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -50461,16 +50486,28 @@ const ActivosAsesoresPage: React.FC = () => {
     lider: '',
     asesorComercial: '',
     rol: '',
+    modalidadTrabajo: 'Presencial',
     transportistaActivo: '',
     numero: '',
+    comentarios: '',
+    cliente: '',
+    asesorPostventa: '',
+    sucursal: '',
+    vehiculo: '',
   });
   const [filters, setFilters] = useState({
     encargado: '',
     lider: '',
     asesorComercial: '',
     rol: '',
+    modalidadTrabajo: '',
     transportistaActivo: '',
     numero: '',
+    comentarios: '',
+    cliente: '',
+    asesorPostventa: '',
+    sucursal: '',
+    vehiculo: '',
   });
 
   const filteredRecords = useMemo(() => {
@@ -50498,6 +50535,12 @@ const ActivosAsesoresPage: React.FC = () => {
         return false;
       }
       if (
+        filters.modalidadTrabajo &&
+        !normalize(record.modalidadTrabajo ?? null).includes(normalize(filters.modalidadTrabajo))
+      ) {
+        return false;
+      }
+      if (
         filters.transportistaActivo &&
         !normalize(record.transportistaActivo).includes(normalize(filters.transportistaActivo))
       ) {
@@ -50506,10 +50549,66 @@ const ActivosAsesoresPage: React.FC = () => {
       if (filters.numero && !normalize(record.numero).includes(normalize(filters.numero))) {
         return false;
       }
+      if (filters.comentarios && !normalize(record.comentarios ?? null).includes(normalize(filters.comentarios))) {
+        return false;
+      }
+      if (filters.cliente && !normalize(record.cliente ?? null).includes(normalize(filters.cliente))) {
+        return false;
+      }
+      if (
+        filters.asesorPostventa &&
+        !normalize(record.asesorPostventa ?? null).includes(normalize(filters.asesorPostventa))
+      ) {
+        return false;
+      }
+      if (filters.sucursal && !normalize(record.sucursal ?? null).includes(normalize(filters.sucursal))) {
+        return false;
+      }
+      if (filters.vehiculo && !normalize(record.vehiculo ?? null).includes(normalize(filters.vehiculo))) {
+        return false;
+      }
 
       return true;
     });
   }, [filters, records]);
+
+  const asesorSummary = useMemo(() => {
+    type BaseItem = { asesor: string; qActivo: number; fechaUltimaAsignacion: string | null };
+    type Item = BaseItem & { cuartil: 'Q1' | 'Q2' | 'Q3' | 'Q4' };
+
+    const byAsesor = new Map<string, BaseItem>();
+
+    filteredRecords.forEach((record) => {
+      const asesor = (record.asesorComercial ?? '').trim() || 'Sin asesor';
+      const current = byAsesor.get(asesor) ?? { asesor, qActivo: 0, fechaUltimaAsignacion: null };
+
+      const dateCandidate = record.fechaUltimaAsignacion ?? record.updatedAt ?? null;
+      const nextDate =
+        dateCandidate && (!current.fechaUltimaAsignacion || new Date(dateCandidate) > new Date(current.fechaUltimaAsignacion))
+          ? dateCandidate
+          : current.fechaUltimaAsignacion;
+
+      byAsesor.set(asesor, { ...current, qActivo: current.qActivo + 1, fechaUltimaAsignacion: nextDate });
+    });
+
+    const items = Array.from(byAsesor.values()).sort(
+      (a, b) => b.qActivo - a.qActivo || a.asesor.localeCompare(b.asesor, 'es', { sensitivity: 'base' })
+    );
+
+    const total = items.length;
+    const withCuartil: Item[] = items.map((item, index) => {
+      const quartile = total === 0 ? 4 : Math.floor((index * 4) / total) + 1;
+      const cuartil = `Q${Math.min(4, Math.max(1, quartile))}` as 'Q1' | 'Q2' | 'Q3' | 'Q4';
+      return { ...item, cuartil };
+    });
+
+    const totals = { Q1: 0, Q2: 0, Q3: 0, Q4: 0 };
+    withCuartil.forEach((item) => {
+      totals[item.cuartil] += item.qActivo;
+    });
+
+    return { items: withCuartil, totals };
+  }, [filteredRecords]);
 
   const loadRecords = useCallback(async () => {
     try {
@@ -50548,8 +50647,14 @@ const ActivosAsesoresPage: React.FC = () => {
       lider: '',
       asesorComercial: '',
       rol: '',
+      modalidadTrabajo: 'Presencial',
       transportistaActivo: '',
       numero: '',
+      comentarios: '',
+      cliente: '',
+      asesorPostventa: '',
+      sucursal: '',
+      vehiculo: '',
     });
   }, []);
 
@@ -50566,8 +50671,14 @@ const ActivosAsesoresPage: React.FC = () => {
       lider: record.lider ?? '',
       asesorComercial: record.asesorComercial ?? '',
       rol: record.rol ?? '',
+      modalidadTrabajo: record.modalidadTrabajo ?? 'Presencial',
       transportistaActivo: record.transportistaActivo ?? '',
       numero: record.numero ?? '',
+      comentarios: record.comentarios ?? '',
+      cliente: record.cliente ?? '',
+      asesorPostventa: record.asesorPostventa ?? '',
+      sucursal: record.sucursal ?? '',
+      vehiculo: record.vehiculo ?? '',
     });
     setModalOpen(true);
   };
@@ -50585,11 +50696,17 @@ const ActivosAsesoresPage: React.FC = () => {
       lider: formValues.lider.trim() || null,
       asesorComercial: formValues.asesorComercial.trim() || null,
       rol: formValues.rol.trim() || null,
+      modalidadTrabajo: formValues.modalidadTrabajo.trim() || null,
       transportistaActivo: formValues.transportistaActivo.trim() || null,
       numero: formValues.numero.trim() || null,
+      comentarios: canEditComentarios ? formValues.comentarios.trim() || null : null,
+      cliente: formValues.cliente.trim() || null,
+      asesorPostventa: formValues.asesorPostventa.trim() || null,
+      sucursal: formValues.sucursal.trim() || null,
+      vehiculo: formValues.vehiculo.trim() || null,
     };
 
-    const hasAnyValue = Object.values(payloadBody).some((value) => value !== null);
+    const hasAnyValue = Object.entries(payloadBody).some(([key, value]) => key !== 'modalidadTrabajo' && value !== null);
     if (!hasAnyValue) {
       setModalError('Ingresá al menos un campo para guardar el registro.');
       return;
@@ -50736,6 +50853,63 @@ const ActivosAsesoresPage: React.FC = () => {
       subtitle={`Mostrando ${filteredRecords.length} de ${records.length} registros`}
       headerContent={headerContent}
     >
+      <section className="personal-edit-section bdd-activos-summary">
+        <h2>Resumen (subtotales según filtros)</h2>
+        {asesorSummary.items.length === 0 ? (
+          <p className="form-info">No hay registros para calcular subtotales.</p>
+        ) : (
+          <div className="bdd-activos-summary__grid">
+            <div className="bdd-activos-summary__totals">
+              <h3>Totales por cuartil</h3>
+              <table className="bdd-activos-summary__totals-table">
+                <thead>
+                  <tr>
+                    <th>Q4</th>
+                    <th>Q3</th>
+                    <th>Q2</th>
+                    <th>Q1</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td>{asesorSummary.totals.Q4}</td>
+                    <td>{asesorSummary.totals.Q3}</td>
+                    <td>{asesorSummary.totals.Q2}</td>
+                    <td>{asesorSummary.totals.Q1}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <div className="bdd-activos-summary__table">
+              <table className="bdd-activos-summary__detail-table">
+                <thead>
+                  <tr>
+                    <th>Asesor comercial</th>
+                    <th>Q Activo</th>
+                    <th>Cuartil</th>
+                    <th>Fecha última asignación</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {asesorSummary.items.map((item) => (
+                    <tr key={item.asesor}>
+                      <td>{item.asesor}</td>
+                      <td>{item.qActivo}</td>
+                      <td>{item.cuartil}</td>
+                      <td>
+                        {item.fechaUltimaAsignacion
+                          ? new Date(item.fechaUltimaAsignacion).toLocaleDateString('es-AR')
+                          : '—'}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+      </section>
+
       <section className="personal-edit-section">
         <h2>Importar Excel</h2>
         <form className="edit-form" onSubmit={handleImport}>
@@ -50766,118 +50940,366 @@ const ActivosAsesoresPage: React.FC = () => {
         {loading ? <p className="form-info">Cargando registros...</p> : null}
         {loadError ? <p className="form-info form-info--error">{loadError}</p> : null}
         {!loading && !loadError ? (
-          <div className="table-wrapper bdd-activos-table-wrapper">
-            <table className="bdd-activos-table">
-              <thead>
-                <tr>
-                  <th>Encargado</th>
-                  <th>Líder</th>
-                  <th>Asesor comercial</th>
-                  <th>Rol</th>
-                  <th>Transportista (Activo)</th>
-                  <th>Número</th>
-                  <th>Acciones</th>
-                </tr>
-                <tr className="bdd-activos-table__filters">
-                  <th>
-                    <input
-                      className="bdd-activos-table__filter-input"
-                      type="search"
-                      value={filters.encargado}
-                      onChange={(event) => setFilters((prev) => ({ ...prev, encargado: event.target.value }))}
-                      placeholder="Filtrar"
+	          <div className="table-wrapper bdd-activos-table-wrapper">
+	            <table className="bdd-activos-table">
+	              <thead>
+	                <tr>
+	                  <th>
+	                    <span className="bdd-activos-table__header">
+	                      Encargado
+	                      <button
+	                        type="button"
+	                        className="bdd-activos-table__filter-button"
+	                        aria-label="Filtrar Encargado"
+	                        onClick={() =>
+	                          (document.getElementById('bdd-filter-encargado') as HTMLInputElement | null)?.focus()
+	                        }
+	                      >
+	                        ⏷
+	                      </button>
+	                    </span>
+	                  </th>
+	                  <th>
+	                    <span className="bdd-activos-table__header">
+	                      Líder
+	                      <button
+	                        type="button"
+	                        className="bdd-activos-table__filter-button"
+	                        aria-label="Filtrar Líder"
+	                        onClick={() => (document.getElementById('bdd-filter-lider') as HTMLInputElement | null)?.focus()}
+	                      >
+	                        ⏷
+	                      </button>
+	                    </span>
+	                  </th>
+	                  <th>
+	                    <span className="bdd-activos-table__header">
+	                      Asesor comercial
+	                      <button
+	                        type="button"
+	                        className="bdd-activos-table__filter-button"
+	                        aria-label="Filtrar Asesor comercial"
+	                        onClick={() =>
+	                          (document.getElementById('bdd-filter-asesorComercial') as HTMLInputElement | null)?.focus()
+	                        }
+	                      >
+	                        ⏷
+	                      </button>
+	                    </span>
+	                  </th>
+	                  <th>
+	                    <span className="bdd-activos-table__header">
+	                      Rol
+	                      <button
+	                        type="button"
+	                        className="bdd-activos-table__filter-button"
+	                        aria-label="Filtrar Rol"
+	                        onClick={() => (document.getElementById('bdd-filter-rol') as HTMLInputElement | null)?.focus()}
+	                      >
+	                        ⏷
+	                      </button>
+	                    </span>
+	                  </th>
+	                  <th>
+	                    <span className="bdd-activos-table__header">
+	                      Modalidad de trabajo
+	                      <button
+	                        type="button"
+	                        className="bdd-activos-table__filter-button"
+	                        aria-label="Filtrar Modalidad de trabajo"
+	                        onClick={() =>
+	                          (document.getElementById('bdd-filter-modalidadTrabajo') as HTMLInputElement | null)?.focus()
+	                        }
+	                      >
+	                        ⏷
+	                      </button>
+	                    </span>
+	                  </th>
+	                  <th>
+	                    <span className="bdd-activos-table__header">
+	                      Transportista (Activo)
+	                      <button
+	                        type="button"
+	                        className="bdd-activos-table__filter-button"
+	                        aria-label="Filtrar Transportista (Activo)"
+	                        onClick={() =>
+	                          (document.getElementById('bdd-filter-transportistaActivo') as HTMLInputElement | null)?.focus()
+	                        }
+	                      >
+	                        ⏷
+	                      </button>
+	                    </span>
+	                  </th>
+	                  <th>
+	                    <span className="bdd-activos-table__header">
+	                      Número
+	                      <button
+	                        type="button"
+	                        className="bdd-activos-table__filter-button"
+	                        aria-label="Filtrar Número"
+	                        onClick={() =>
+	                          (document.getElementById('bdd-filter-numero') as HTMLInputElement | null)?.focus()
+	                        }
+	                      >
+	                        ⏷
+	                      </button>
+	                    </span>
+	                  </th>
+	                  <th>
+	                    <span className="bdd-activos-table__header">
+	                      Comentarios
+	                      <button
+	                        type="button"
+	                        className="bdd-activos-table__filter-button"
+	                        aria-label="Filtrar Comentarios"
+	                        onClick={() =>
+	                          (document.getElementById('bdd-filter-comentarios') as HTMLInputElement | null)?.focus()
+	                        }
+	                      >
+	                        ⏷
+	                      </button>
+	                    </span>
+	                  </th>
+	                  <th>
+	                    <span className="bdd-activos-table__header">
+	                      Cliente
+	                      <button
+	                        type="button"
+	                        className="bdd-activos-table__filter-button"
+	                        aria-label="Filtrar Cliente"
+	                        onClick={() =>
+	                          (document.getElementById('bdd-filter-cliente') as HTMLInputElement | null)?.focus()
+	                        }
+	                      >
+	                        ⏷
+	                      </button>
+	                    </span>
+	                  </th>
+	                  <th>
+	                    <span className="bdd-activos-table__header">
+	                      Asesor de Postventa
+	                      <button
+	                        type="button"
+	                        className="bdd-activos-table__filter-button"
+	                        aria-label="Filtrar Asesor de Postventa"
+	                        onClick={() =>
+	                          (document.getElementById('bdd-filter-asesorPostventa') as HTMLInputElement | null)?.focus()
+	                        }
+	                      >
+	                        ⏷
+	                      </button>
+	                    </span>
+	                  </th>
+	                  <th>
+	                    <span className="bdd-activos-table__header">
+	                      Sucursal
+	                      <button
+	                        type="button"
+	                        className="bdd-activos-table__filter-button"
+	                        aria-label="Filtrar Sucursal"
+	                        onClick={() =>
+	                          (document.getElementById('bdd-filter-sucursal') as HTMLInputElement | null)?.focus()
+	                        }
+	                      >
+	                        ⏷
+	                      </button>
+	                    </span>
+	                  </th>
+	                  <th>
+	                    <span className="bdd-activos-table__header">
+	                      Vehículo
+	                      <button
+	                        type="button"
+	                        className="bdd-activos-table__filter-button"
+	                        aria-label="Filtrar Vehículo"
+	                        onClick={() =>
+	                          (document.getElementById('bdd-filter-vehiculo') as HTMLInputElement | null)?.focus()
+	                        }
+	                      >
+	                        ⏷
+	                      </button>
+	                    </span>
+	                  </th>
+	                  <th>Acciones</th>
+	                </tr>
+	                <tr className="bdd-activos-table__filters">
+	                  <th>
+	                    <input
+	                      id="bdd-filter-encargado"
+	                      className="bdd-activos-table__filter-input"
+	                      type="search"
+	                      value={filters.encargado}
+	                      onChange={(event) => setFilters((prev) => ({ ...prev, encargado: event.target.value }))}
+	                      placeholder="Filtrar"
                     />
                   </th>
-                  <th>
-                    <input
-                      className="bdd-activos-table__filter-input"
-                      type="search"
-                      value={filters.lider}
-                      onChange={(event) => setFilters((prev) => ({ ...prev, lider: event.target.value }))}
-                      placeholder="Filtrar"
+	                  <th>
+	                    <input
+	                      id="bdd-filter-lider"
+	                      className="bdd-activos-table__filter-input"
+	                      type="search"
+	                      value={filters.lider}
+	                      onChange={(event) => setFilters((prev) => ({ ...prev, lider: event.target.value }))}
+	                      placeholder="Filtrar"
                     />
                   </th>
-                  <th>
-                    <input
-                      className="bdd-activos-table__filter-input"
-                      type="search"
-                      value={filters.asesorComercial}
-                      onChange={(event) =>
-                        setFilters((prev) => ({ ...prev, asesorComercial: event.target.value }))
+	                  <th>
+	                    <input
+	                      id="bdd-filter-asesorComercial"
+	                      className="bdd-activos-table__filter-input"
+	                      type="search"
+	                      value={filters.asesorComercial}
+	                      onChange={(event) =>
+	                        setFilters((prev) => ({ ...prev, asesorComercial: event.target.value }))
                       }
                       placeholder="Filtrar"
                     />
                   </th>
-                  <th>
-                    <input
-                      className="bdd-activos-table__filter-input"
-                      type="search"
-                      value={filters.rol}
-                      onChange={(event) => setFilters((prev) => ({ ...prev, rol: event.target.value }))}
-                      placeholder="Filtrar"
-                    />
-                  </th>
-                  <th>
-                    <input
-                      className="bdd-activos-table__filter-input"
-                      type="search"
-                      value={filters.transportistaActivo}
-                      onChange={(event) =>
-                        setFilters((prev) => ({ ...prev, transportistaActivo: event.target.value }))
+	                  <th>
+	                    <input
+	                      id="bdd-filter-rol"
+	                      className="bdd-activos-table__filter-input"
+	                      type="search"
+	                      value={filters.rol}
+	                      onChange={(event) => setFilters((prev) => ({ ...prev, rol: event.target.value }))}
+	                      placeholder="Filtrar"
+	                    />
+	                  </th>
+	                  <th>
+	                    <input
+	                      id="bdd-filter-modalidadTrabajo"
+	                      className="bdd-activos-table__filter-input"
+	                      type="search"
+	                      value={filters.modalidadTrabajo}
+	                      onChange={(event) => setFilters((prev) => ({ ...prev, modalidadTrabajo: event.target.value }))}
+	                      placeholder="Filtrar"
+	                    />
+	                  </th>
+	                  <th>
+	                    <input
+	                      id="bdd-filter-transportistaActivo"
+	                      className="bdd-activos-table__filter-input"
+	                      type="search"
+	                      value={filters.transportistaActivo}
+	                      onChange={(event) =>
+	                        setFilters((prev) => ({ ...prev, transportistaActivo: event.target.value }))
                       }
                       placeholder="Filtrar"
                     />
                   </th>
-                  <th>
-                    <input
-                      className="bdd-activos-table__filter-input"
-                      type="search"
-                      value={filters.numero}
-                      onChange={(event) => setFilters((prev) => ({ ...prev, numero: event.target.value }))}
-                      placeholder="Filtrar"
-                    />
-                  </th>
-                  <th className="bdd-activos-table__filter-actions">
-                    <button
-                      type="button"
-                      className="secondary-action secondary-action--ghost bdd-activos-table__clear"
-                      onClick={() =>
-                        setFilters({
-                          encargado: '',
-                          lider: '',
-                          asesorComercial: '',
-                          rol: '',
-                          transportistaActivo: '',
-                          numero: '',
-                        })
-                      }
-                    >
-                      Limpiar
+	                  <th>
+	                    <input
+	                      id="bdd-filter-numero"
+	                      className="bdd-activos-table__filter-input"
+	                      type="search"
+	                      value={filters.numero}
+	                      onChange={(event) => setFilters((prev) => ({ ...prev, numero: event.target.value }))}
+	                      placeholder="Filtrar"
+	                    />
+	                  </th>
+	                  <th>
+	                    <input
+	                      id="bdd-filter-comentarios"
+	                      className="bdd-activos-table__filter-input"
+	                      type="search"
+	                      value={filters.comentarios}
+	                      onChange={(event) => setFilters((prev) => ({ ...prev, comentarios: event.target.value }))}
+	                      placeholder="Filtrar"
+	                    />
+	                  </th>
+	                  <th>
+	                    <input
+	                      id="bdd-filter-cliente"
+	                      className="bdd-activos-table__filter-input"
+	                      type="search"
+	                      value={filters.cliente}
+	                      onChange={(event) => setFilters((prev) => ({ ...prev, cliente: event.target.value }))}
+	                      placeholder="Filtrar"
+	                    />
+	                  </th>
+	                  <th>
+	                    <input
+	                      id="bdd-filter-asesorPostventa"
+	                      className="bdd-activos-table__filter-input"
+	                      type="search"
+	                      value={filters.asesorPostventa}
+	                      onChange={(event) => setFilters((prev) => ({ ...prev, asesorPostventa: event.target.value }))}
+	                      placeholder="Filtrar"
+	                    />
+	                  </th>
+	                  <th>
+	                    <input
+	                      id="bdd-filter-sucursal"
+	                      className="bdd-activos-table__filter-input"
+	                      type="search"
+	                      value={filters.sucursal}
+	                      onChange={(event) => setFilters((prev) => ({ ...prev, sucursal: event.target.value }))}
+	                      placeholder="Filtrar"
+	                    />
+	                  </th>
+	                  <th>
+	                    <input
+	                      id="bdd-filter-vehiculo"
+	                      className="bdd-activos-table__filter-input"
+	                      type="search"
+	                      value={filters.vehiculo}
+	                      onChange={(event) => setFilters((prev) => ({ ...prev, vehiculo: event.target.value }))}
+	                      placeholder="Filtrar"
+	                    />
+	                  </th>
+	                  <th className="bdd-activos-table__filter-actions">
+	                    <button
+	                      type="button"
+	                      className="secondary-action secondary-action--ghost bdd-activos-table__clear"
+	                      onClick={() =>
+	                        setFilters({
+	                          encargado: '',
+	                          lider: '',
+	                          asesorComercial: '',
+	                          rol: '',
+	                          modalidadTrabajo: '',
+	                          transportistaActivo: '',
+	                          numero: '',
+	                          comentarios: '',
+	                          cliente: '',
+	                          asesorPostventa: '',
+	                          sucursal: '',
+	                          vehiculo: '',
+	                        })
+	                      }
+	                    >
+	                      Limpiar
                     </button>
                   </th>
                 </tr>
               </thead>
-              <tbody>
-                {filteredRecords.length === 0 ? (
-                  <tr>
-                    <td colSpan={7}>
-                      {records.length === 0 ? 'No hay registros cargados.' : 'No hay resultados para los filtros actuales.'}
-                    </td>
-                  </tr>
-                ) : (
-                  filteredRecords.map((record) => (
-                    <tr key={record.id}>
-                      <td>{record.encargado ?? '—'}</td>
-                      <td>{record.lider ?? '—'}</td>
-                      <td>{record.asesorComercial ?? '—'}</td>
-                      <td>{record.rol ?? '—'}</td>
-                      <td>{record.transportistaActivo ?? '—'}</td>
-                      <td>{record.numero ?? '—'}</td>
-                      <td>
-                        <div className="action-buttons">
-                          <button type="button" aria-label="Editar registro" onClick={() => openEditModal(record)}>
-                            ✏️
-                          </button>
+	              <tbody>
+	                {filteredRecords.length === 0 ? (
+	                  <tr>
+	                    <td colSpan={13}>
+	                      {records.length === 0 ? 'No hay registros cargados.' : 'No hay resultados para los filtros actuales.'}
+	                    </td>
+	                  </tr>
+	                ) : (
+	                  filteredRecords.map((record) => (
+	                    <tr key={record.id}>
+	                      <td>{record.encargado ?? '—'}</td>
+	                      <td>{record.lider ?? '—'}</td>
+	                      <td>{record.asesorComercial ?? '—'}</td>
+	                      <td>{record.rol ?? '—'}</td>
+	                      <td>{record.modalidadTrabajo ?? '—'}</td>
+	                      <td>{record.transportistaActivo ?? '—'}</td>
+	                      <td>{record.numero ?? '—'}</td>
+	                      <td>{record.comentarios ?? '—'}</td>
+	                      <td>{record.cliente ?? '—'}</td>
+	                      <td>{record.asesorPostventa ?? '—'}</td>
+	                      <td>{record.sucursal ?? '—'}</td>
+	                      <td>{record.vehiculo ?? '—'}</td>
+	                      <td>
+	                        <div className="action-buttons">
+	                          <button type="button" aria-label="Editar registro" onClick={() => openEditModal(record)}>
+	                            ✏️
+	                          </button>
                           <button
                             type="button"
                             aria-label="Eliminar registro"
@@ -50939,36 +51361,92 @@ const ActivosAsesoresPage: React.FC = () => {
                     placeholder="Ingresar"
                   />
                 </label>
-                <label className="input-control">
-                  <span>Rol</span>
-                  <input
-                    type="text"
-                    value={formValues.rol}
-                    onChange={(event) => setFormValues((prev) => ({ ...prev, rol: event.target.value }))}
-                    placeholder="Ingresar"
-                  />
-                </label>
-                <label className="input-control">
-                  <span>Transportista (Activo)</span>
-                  <input
-                    type="text"
-                    value={formValues.transportistaActivo}
+	                <label className="input-control">
+	                  <span>Rol</span>
+	                  <input
+	                    type="text"
+	                    value={formValues.rol}
+	                    onChange={(event) => setFormValues((prev) => ({ ...prev, rol: event.target.value }))}
+	                    placeholder="Ingresar"
+	                  />
+	                </label>
+	                <label className="input-control">
+	                  <span>Modalidad de trabajo</span>
+	                  <select
+	                    value={formValues.modalidadTrabajo}
+	                    onChange={(event) => setFormValues((prev) => ({ ...prev, modalidadTrabajo: event.target.value }))}
+	                  >
+	                    <option value="Presencial">Presencial</option>
+	                    <option value="Remoto">Remoto</option>
+	                  </select>
+	                </label>
+	                <label className="input-control">
+	                  <span>Transportista (Activo)</span>
+	                  <input
+	                    type="text"
+	                    value={formValues.transportistaActivo}
                     onChange={(event) =>
                       setFormValues((prev) => ({ ...prev, transportistaActivo: event.target.value }))
                     }
                     placeholder="Ingresar"
                   />
                 </label>
-                <label className="input-control">
-                  <span>Número</span>
-                  <input
-                    type="text"
-                    value={formValues.numero}
-                    onChange={(event) => setFormValues((prev) => ({ ...prev, numero: event.target.value }))}
-                    placeholder="Ingresar"
-                  />
-                </label>
-              </div>
+	                <label className="input-control">
+	                  <span>Número</span>
+	                  <input
+	                    type="text"
+	                    value={formValues.numero}
+	                    onChange={(event) => setFormValues((prev) => ({ ...prev, numero: event.target.value }))}
+	                    placeholder="Ingresar"
+	                  />
+	                </label>
+	                <label className="input-control">
+	                  <span>Comentarios</span>
+	                  <textarea
+	                    value={formValues.comentarios}
+	                    onChange={(event) => setFormValues((prev) => ({ ...prev, comentarios: event.target.value }))}
+	                    placeholder={canEditComentarios ? 'Ingresar' : 'Solo Luis/David/Joel/Dario/Luciano pueden editar'}
+	                    disabled={!canEditComentarios}
+	                    rows={3}
+	                  />
+	                </label>
+	                <label className="input-control">
+	                  <span>Cliente</span>
+	                  <input
+	                    type="text"
+	                    value={formValues.cliente}
+	                    onChange={(event) => setFormValues((prev) => ({ ...prev, cliente: event.target.value }))}
+	                    placeholder="Ingresar"
+	                  />
+	                </label>
+	                <label className="input-control">
+	                  <span>Asesor de Postventa</span>
+	                  <input
+	                    type="text"
+	                    value={formValues.asesorPostventa}
+	                    onChange={(event) => setFormValues((prev) => ({ ...prev, asesorPostventa: event.target.value }))}
+	                    placeholder="Ingresar"
+	                  />
+	                </label>
+	                <label className="input-control">
+	                  <span>Sucursal</span>
+	                  <input
+	                    type="text"
+	                    value={formValues.sucursal}
+	                    onChange={(event) => setFormValues((prev) => ({ ...prev, sucursal: event.target.value }))}
+	                    placeholder="Ingresar"
+	                  />
+	                </label>
+	                <label className="input-control">
+	                  <span>Vehículo</span>
+	                  <input
+	                    type="text"
+	                    value={formValues.vehiculo}
+	                    onChange={(event) => setFormValues((prev) => ({ ...prev, vehiculo: event.target.value }))}
+	                    placeholder="Ingresar"
+	                  />
+	                </label>
+	              </div>
               {modalError ? <p className="form-info form-info--error">{modalError}</p> : null}
               <div className="form-actions">
                 <button type="button" className="secondary-action" onClick={closeModal}>

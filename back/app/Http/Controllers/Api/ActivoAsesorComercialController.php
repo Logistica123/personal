@@ -7,11 +7,14 @@ use App\Models\ActivoAsesorComercial;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Str;
 use ZipArchive;
 
 class ActivoAsesorComercialController extends Controller
 {
+    private const COMENTARIOS_EDITORS = ['luis', 'david', 'joel', 'dario', 'luciano'];
+
     public function index(Request $request): JsonResponse
     {
         $this->ensureAuthorized($request);
@@ -32,13 +35,26 @@ class ActivoAsesorComercialController extends Controller
 
         $validated = $this->validateRecord($request);
 
+        $asesorComercial = $this->sanitizeString($validated['asesorComercial'] ?? null);
         $record = ActivoAsesorComercial::query()->create([
             'encargado' => $this->sanitizeString($validated['encargado'] ?? null),
             'lider' => $this->sanitizeString($validated['lider'] ?? null),
-            'asesor_comercial' => $this->sanitizeString($validated['asesorComercial'] ?? null),
+            'asesor_comercial' => $asesorComercial,
             'rol' => $this->sanitizeString($validated['rol'] ?? null),
+            'modalidad_trabajo' => $this->resolveModalidadTrabajo(
+                $asesorComercial,
+                $this->sanitizeString($validated['modalidadTrabajo'] ?? null)
+            ),
             'transportista_activo' => $this->sanitizeString($validated['transportistaActivo'] ?? null),
             'numero' => $this->sanitizeString($validated['numero'] ?? null),
+            'comentarios' => $this->canEditComentarios($request)
+                ? $this->sanitizeLongText($validated['comentarios'] ?? null)
+                : null,
+            'cliente' => $this->sanitizeString($validated['cliente'] ?? null),
+            'asesor_postventa' => $this->sanitizeString($validated['asesorPostventa'] ?? null),
+            'sucursal' => $this->sanitizeString($validated['sucursal'] ?? null),
+            'vehiculo' => $this->sanitizeString($validated['vehiculo'] ?? null),
+            'fecha_ultima_asignacion' => $this->parseDateValue($validated['fechaUltimaAsignacion'] ?? null),
             'row_order' => ((int) ActivoAsesorComercial::query()->max('row_order')) + 1,
         ]);
 
@@ -54,14 +70,32 @@ class ActivoAsesorComercialController extends Controller
 
         $validated = $this->validateRecord($request);
 
-        $activoAsesorComercial->fill([
+        $attributes = [
             'encargado' => $this->sanitizeString($validated['encargado'] ?? null),
             'lider' => $this->sanitizeString($validated['lider'] ?? null),
             'asesor_comercial' => $this->sanitizeString($validated['asesorComercial'] ?? null),
             'rol' => $this->sanitizeString($validated['rol'] ?? null),
             'transportista_activo' => $this->sanitizeString($validated['transportistaActivo'] ?? null),
             'numero' => $this->sanitizeString($validated['numero'] ?? null),
-        ]);
+            'cliente' => $this->sanitizeString($validated['cliente'] ?? null),
+            'asesor_postventa' => $this->sanitizeString($validated['asesorPostventa'] ?? null),
+            'sucursal' => $this->sanitizeString($validated['sucursal'] ?? null),
+            'vehiculo' => $this->sanitizeString($validated['vehiculo'] ?? null),
+            'fecha_ultima_asignacion' => $this->parseDateValue($validated['fechaUltimaAsignacion'] ?? null),
+        ];
+
+        if (array_key_exists('modalidadTrabajo', $validated)) {
+            $attributes['modalidad_trabajo'] = $this->resolveModalidadTrabajo(
+                $attributes['asesor_comercial'] ?? null,
+                $this->sanitizeString($validated['modalidadTrabajo'] ?? null)
+            );
+        }
+
+        if ($this->canEditComentarios($request) && array_key_exists('comentarios', $validated)) {
+            $attributes['comentarios'] = $this->sanitizeLongText($validated['comentarios'] ?? null);
+        }
+
+        $activoAsesorComercial->fill($attributes);
         $activoAsesorComercial->save();
 
         return response()->json([
@@ -120,8 +154,15 @@ class ActivoAsesorComercialController extends Controller
                     'lider' => $record['lider'],
                     'asesor_comercial' => $record['asesor_comercial'],
                     'rol' => $record['rol'],
+                    'modalidad_trabajo' => $record['modalidad_trabajo'] ?? $this->resolveModalidadTrabajo($record['asesor_comercial'], null),
                     'transportista_activo' => $record['transportista_activo'],
                     'numero' => $record['numero'],
+                    'comentarios' => null,
+                    'cliente' => $record['cliente'] ?? null,
+                    'asesor_postventa' => $record['asesor_postventa'] ?? null,
+                    'sucursal' => $record['sucursal'] ?? null,
+                    'vehiculo' => $record['vehiculo'] ?? null,
+                    'fecha_ultima_asignacion' => $record['fecha_ultima_asignacion'] ?? null,
                     'row_order' => $index + 1,
                 ]);
             }
@@ -166,8 +207,15 @@ class ActivoAsesorComercialController extends Controller
             'lider' => ['nullable', 'string', 'max:255'],
             'asesorComercial' => ['nullable', 'string', 'max:255'],
             'rol' => ['nullable', 'string', 'max:255'],
+            'modalidadTrabajo' => ['nullable', 'string', 'max:255'],
             'transportistaActivo' => ['nullable', 'string', 'max:255'],
             'numero' => ['nullable', 'string', 'max:255'],
+            'comentarios' => ['nullable', 'string', 'max:2000'],
+            'cliente' => ['nullable', 'string', 'max:255'],
+            'asesorPostventa' => ['nullable', 'string', 'max:255'],
+            'sucursal' => ['nullable', 'string', 'max:255'],
+            'vehiculo' => ['nullable', 'string', 'max:255'],
+            'fechaUltimaAsignacion' => ['nullable', 'date'],
         ]);
     }
 
@@ -179,8 +227,15 @@ class ActivoAsesorComercialController extends Controller
             'lider' => $record->lider,
             'asesorComercial' => $record->asesor_comercial,
             'rol' => $record->rol,
+            'modalidadTrabajo' => $record->modalidad_trabajo,
             'transportistaActivo' => $record->transportista_activo,
             'numero' => $record->numero,
+            'comentarios' => $record->comentarios,
+            'cliente' => $record->cliente,
+            'asesorPostventa' => $record->asesor_postventa,
+            'sucursal' => $record->sucursal,
+            'vehiculo' => $record->vehiculo,
+            'fechaUltimaAsignacion' => optional($record->fecha_ultima_asignacion)->toIso8601String(),
             'rowOrder' => $record->row_order,
             'updatedAt' => optional($record->updated_at)->toIso8601String(),
         ];
@@ -195,6 +250,75 @@ class ActivoAsesorComercialController extends Controller
         $trimmed = trim($value);
 
         return $trimmed === '' ? null : $trimmed;
+    }
+
+    private function sanitizeLongText(?string $value): ?string
+    {
+        if ($value === null) {
+            return null;
+        }
+
+        $trimmed = trim($value);
+
+        return $trimmed === '' ? null : $trimmed;
+    }
+
+    private function parseDateValue(mixed $value): ?Carbon
+    {
+        if ($value === null || $value === '') {
+            return null;
+        }
+
+        try {
+            return Carbon::parse((string) $value);
+        } catch (\Throwable) {
+            return null;
+        }
+    }
+
+    private function resolveModalidadTrabajo(?string $asesorComercial, ?string $explicitValue): string
+    {
+        $value = $this->sanitizeString($explicitValue);
+        if ($value !== null) {
+            return $value;
+        }
+
+        $normalizedAsesor = Str::of((string) ($asesorComercial ?? ''))
+            ->lower()
+            ->ascii()
+            ->replaceMatches('/\s+/', ' ')
+            ->trim()
+            ->toString();
+
+        if (Str::contains($normalizedAsesor, ['sofia', 'cecilia'])) {
+            return 'Remoto';
+        }
+
+        return 'Presencial';
+    }
+
+    private function canEditComentarios(Request $request): bool
+    {
+        $user = $request->user();
+        $name = Str::of((string) ($user?->name ?? ''))
+            ->lower()
+            ->ascii()
+            ->replaceMatches('/\s+/', ' ')
+            ->trim()
+            ->toString();
+
+        $firstName = explode(' ', $name)[0] ?? '';
+        if ($firstName !== '' && in_array($firstName, self::COMENTARIOS_EDITORS, true)) {
+            return true;
+        }
+
+        $email = Str::of((string) ($user?->email ?? ''))
+            ->lower()
+            ->trim()
+            ->toString();
+        $emailName = $email !== '' ? explode('@', $email)[0] : '';
+
+        return $emailName !== '' && in_array($emailName, self::COMENTARIOS_EDITORS, true);
     }
 
     private function parseCsvRows(string $contents): array
@@ -418,13 +542,26 @@ class ActivoAsesorComercialController extends Controller
 
         $records = [];
         foreach (array_slice($rows, $headerRowIndex + 1) as $row) {
+            $asesorComercial = $this->cellValueOptional($row, $columnMap['asesor comercial'] ?? null);
             $record = [
                 'encargado' => $this->cellValue($row, $columnMap['encargado']),
                 'lider' => $this->cellValue($row, $columnMap['lider']),
-                'asesor_comercial' => $this->cellValue($row, $columnMap['asesor comercial']),
+                'asesor_comercial' => $asesorComercial,
                 'rol' => $this->cellValue($row, $columnMap['rol']),
+                'modalidad_trabajo' => $this->resolveModalidadTrabajo(
+                    $asesorComercial,
+                    $this->cellValueOptional($row, $columnMap['modalidad de trabajo'] ?? null)
+                ),
                 'transportista_activo' => $this->cellValue($row, $columnMap['transportista activo']),
                 'numero' => $this->cellValue($row, $columnMap['numero']),
+                'cliente' => $this->cellValueOptional($row, $columnMap['cliente'] ?? null),
+                'asesor_postventa' => $this->cellValueOptional($row, $columnMap['asesor de postventa'] ?? null)
+                    ?? $this->cellValueOptional($row, $columnMap['asesor postventa'] ?? null),
+                'sucursal' => $this->cellValueOptional($row, $columnMap['sucursal'] ?? null),
+                'vehiculo' => $this->cellValueOptional($row, $columnMap['vehiculo'] ?? null),
+                'fecha_ultima_asignacion' => $this->parseDateValue(
+                    $this->cellValueOptional($row, $columnMap['fecha ultima asignacion'] ?? null)
+                ),
             ];
 
             $hasAnyValue = collect($record)->contains(fn ($value) => $value !== null && $value !== '');
@@ -484,5 +621,14 @@ class ActivoAsesorComercialController extends Controller
         }
 
         return $this->sanitizeString((string) $value);
+    }
+
+    private function cellValueOptional(array $row, ?int $index): ?string
+    {
+        if ($index === null) {
+            return null;
+        }
+
+        return $this->cellValue($row, $index);
     }
 }
