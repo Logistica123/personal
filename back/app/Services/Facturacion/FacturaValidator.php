@@ -8,6 +8,12 @@ use App\Support\Facturacion\PeriodoFacturado;
 
 class FacturaValidator
 {
+    private const CBTE_TIPOS_REQUIEREN_ASOCIACION = [
+        2, 3, 7, 8, 12, 13, // ND/NC A/B/C
+        20, 21, // ND/NC exterior
+        202, 203, 207, 208, 212, 213, // ND/NC FCE A/B/C
+    ];
+
     public function validateOrFail(FacturaCabecera $factura): void
     {
         $errors = $this->validate($factura);
@@ -21,7 +27,7 @@ class FacturaValidator
      */
     public function validate(FacturaCabecera $factura): array
     {
-        $factura->loadMissing(['ivaItems', 'detallePdf', 'tributos']);
+        $factura->loadMissing(['ivaItems', 'detallePdf', 'tributos', 'cbtesAsoc']);
         $errors = [];
 
         $required = [
@@ -99,6 +105,11 @@ class FacturaValidator
 
         if ($factura->detallePdf->isEmpty()) {
             $errors['detalle_pdf'][] = 'La factura debe tener al menos un renglón para el PDF.';
+        }
+
+        $cbteTipo = (int) ($factura->cbte_tipo ?? 0);
+        if (in_array($cbteTipo, self::CBTE_TIPOS_REQUIEREN_ASOCIACION, true) && $factura->cbtesAsoc->isEmpty()) {
+            $errors['cbtes_asoc'][] = 'Debe asociar al menos un comprobante para emitir notas de crédito/débito.';
         }
 
         return $errors;

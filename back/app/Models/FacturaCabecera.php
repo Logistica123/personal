@@ -126,6 +126,11 @@ class FacturaCabecera extends Model
         return $this->hasMany(FacturaDetallePdf::class, 'factura_id')->orderBy('orden');
     }
 
+    public function cbtesAsoc()
+    {
+        return $this->hasMany(FacturaCbteAsociado::class, 'factura_id')->orderBy('id');
+    }
+
     public function historialCobranza()
     {
         return $this->hasMany(HistorialCobranzaFactura::class, 'factura_id')->orderByDesc('fecha_evento');

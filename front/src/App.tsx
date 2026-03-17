@@ -53254,6 +53254,13 @@ type FacturaDetallePdfInput = {
   subtotal_con_iva: number;
 };
 
+type FacturaCbteAsocInput = {
+  cbte_tipo: number;
+  pto_vta: number;
+  cbte_numero: number;
+  fecha_emision?: string | null;
+};
+
 type FacturaSummaryDto = {
   id: number;
   cliente_id: number;
@@ -53357,6 +53364,7 @@ type FacturaDetalleDto = {
   iva?: FacturaIvaInput[];
   tributos?: FacturaTributoInput[];
   detalle_pdf?: FacturaDetallePdfInput[];
+  cbtes_asoc?: FacturaCbteAsocInput[];
   historial_cobranza?: FacturaHistorialCobranzaItem[];
 };
 
@@ -53425,6 +53433,34 @@ const FACTURACION_DEFAULT_PTO_VTA = '11';
 const FACTURACION_DEFAULT_AMBIENTE: 'PROD' = 'PROD';
 const FACTURACION_DEFAULT_CERT_ALIAS = 'logarg-erp-wsfe-pv00011';
 const FACTURACION_CBTE_TIPO_FACTURA_A = '1';
+const FACTURACION_CBTE_TIPOS_REQUIEREN_ASOCIACION = new Set<number>([
+  2, 3, 7, 8, 12, 13, // ND/NC A/B/C
+  20, 21, // ND/NC exterior
+  202, 203, 207, 208, 212, 213, // ND/NC FCE A/B/C
+]);
+const FACTURACION_CBTE_ASOC_TIPOS = [
+  '01',
+  '02',
+  '03',
+  '06',
+  '07',
+  '08',
+  '11',
+  '12',
+  '13',
+  '201',
+  '202',
+  '203',
+  '206',
+  '207',
+  '208',
+  '211',
+  '212',
+  '213',
+];
+const FACTURACION_CBTE_ASOC_OPTIONS = FACTURACION_COMPROBANTES_OPTIONS.filter((opt) =>
+  FACTURACION_CBTE_ASOC_TIPOS.includes(opt.code)
+);
 const FACTURACION_IVA_ALICUOTAS = [
   { id: 5, rate: 21 },
   { id: 4, rate: 10.5 },
@@ -55085,6 +55121,14 @@ type FacturaTributoDraft = {
   importe: string;
 };
 
+type FacturaCbteAsocDraft = {
+  id: string;
+  cbte_tipo: string;
+  pto_vta: string;
+  cbte_numero: string;
+  fecha_emision: string;
+};
+
 type FacturaDraftForm = {
   emisor_id: string;
   ambiente: 'HOMO' | 'PROD';
@@ -55229,6 +55273,9 @@ const FacturacionCreatePage: React.FC = () => {
   const [detallePdf, setDetallePdf] = useState<FacturaDraftRow[]>(() => [createFacturaDetalleRow(1)]);
   const [ivaItems, setIvaItems] = useState<FacturaIvaDraft[]>([]);
   const [tributos, setTributos] = useState<FacturaTributoDraft[]>([]);
+  const [cbtesAsoc, setCbtesAsoc] = useState<FacturaCbteAsocDraft[]>([]);
+  const [facturasAsociables, setFacturasAsociables] = useState<FacturaSummaryDto[]>([]);
+  const [asociablesLoading, setAsociablesLoading] = useState(false);
   const [facturaId, setFacturaId] = useState<number | null>(null);
   const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
   const [validationErrors, setValidationErrors] = useState<Record<string, string[]>>({});
@@ -55437,6 +55484,81 @@ const FacturacionCreatePage: React.FC = () => {
     }
   }, [form.pto_vta]);
 
+  const requiereCbtesAsoc = useMemo(
+    () => FACTURACION_CBTE_TIPOS_REQUIEREN_ASOCIACION.has(Number(form.cbte_tipo)),
+    [form.cbte_tipo]
+  );
+
+  const resolveDefaultCbteAsocTipo = useCallback((cbteTipo: number): number => {
+    if ([7, 8, 207, 208].includes(cbteTipo)) {
+      return 6; // Factura B
+    }
+    if ([12, 13, 212, 213].includes(cbteTipo)) {
+      return 11; // Factura C
+    }
+    return 1; // Factura A
+  }, []);
+
+  const createCbteAsocRow = useCallback((): FacturaCbteAsocDraft => {
+    const cbteTipo = Number(form.cbte_tipo);
+    return {
+      id: uniqueKey(),
+      cbte_tipo: String(resolveDefaultCbteAsocTipo(cbteTipo)),
+      pto_vta: form.pto_vta || FACTURACION_DEFAULT_PTO_VTA,
+      cbte_numero: '',
+      fecha_emision: '',
+    };
+  }, [form.cbte_tipo, form.pto_vta, resolveDefaultCbteAsocTipo]);
+
+  useEffect(() => {
+    if (!requiereCbtesAsoc) {
+      if (cbtesAsoc.length > 0) {
+        setCbtesAsoc([]);
+      }
+      return;
+    }
+    setCbtesAsoc((prev) => (prev.length > 0 ? prev : [createCbteAsocRow()]));
+  }, [cbtesAsoc.length, createCbteAsocRow, requiereCbtesAsoc]);
+
+  useEffect(() => {
+    setFacturasAsociables([]);
+  }, [form.cliente_id, form.sucursal_id, form.cbte_tipo]);
+
+  const loadFacturasAsociables = async () => {
+    const clienteId = Number(form.cliente_id);
+    const sucursalId = Number(form.sucursal_id);
+    if (!clienteId || !sucursalId) {
+      setFeedback({ type: 'error', message: 'Seleccioná cliente y sucursal para buscar comprobantes asociados.' });
+      return;
+    }
+    if (asociablesLoading) {
+      return;
+    }
+    try {
+      setAsociablesLoading(true);
+      const desde = new Date();
+      desde.setMonth(desde.getMonth() - 6);
+      const fechaDesde = desde.toISOString().slice(0, 10);
+      const payload = (await requestJson(
+        `/api/facturas?cliente_id=${clienteId}&sucursal_id=${sucursalId}&fecha_desde=${fechaDesde}`
+      )) as { data?: FacturaSummaryDto[] };
+      const list = Array.isArray(payload?.data) ? payload.data : [];
+      const filtered = list.filter(
+        (item) =>
+          Boolean(item.cbte_numero) &&
+          (item.estado === 'PDF_GENERADO' || item.estado === 'AUTORIZADA')
+      );
+      setFacturasAsociables(filtered);
+      if (filtered.length === 0) {
+        setFeedback({ type: 'error', message: 'No se encontraron comprobantes emitidos para asociar en los últimos meses.' });
+      }
+    } catch (err) {
+      setFeedback({ type: 'error', message: (err as Error).message ?? 'No se pudieron cargar comprobantes emitidos.' });
+    } finally {
+      setAsociablesLoading(false);
+    }
+  };
+
   const toggleCondicionVenta = (value: string) => {
     setForm((prev) => {
       const current = Array.isArray(prev.condiciones_venta) ? prev.condiciones_venta : [];
@@ -55522,6 +55644,16 @@ const FacturacionCreatePage: React.FC = () => {
       alicuota_iva_pct: parseNumberOrZero(row.alicuota_iva_pct),
       subtotal_con_iva: parseNumberOrZero(row.subtotal_con_iva),
     })),
+    cbtes_asoc: requiereCbtesAsoc
+      ? cbtesAsoc
+          .filter((row) => row.cbte_numero.trim() !== '')
+          .map((row) => ({
+            cbte_tipo: Number(row.cbte_tipo),
+            pto_vta: Number(row.pto_vta),
+            cbte_numero: Number(row.cbte_numero),
+            fecha_emision: row.fecha_emision ? row.fecha_emision : null,
+          }))
+      : [],
   });
 
   const handleSaveDraft = async () => {
@@ -55553,6 +55685,21 @@ const FacturacionCreatePage: React.FC = () => {
       const factura = (response as { data?: FacturaDetalleDto }).data;
       if (factura?.id) {
         setFacturaId(factura.id);
+      }
+      if (requiereCbtesAsoc) {
+        const incoming = Array.isArray(factura?.cbtes_asoc) ? factura?.cbtes_asoc : [];
+        setCbtesAsoc((prev) => {
+          if (!incoming || incoming.length === 0) {
+            return prev;
+          }
+          return incoming.map((item) => ({
+            id: uniqueKey(),
+            cbte_tipo: String(item.cbte_tipo),
+            pto_vta: String(item.pto_vta),
+            cbte_numero: String(item.cbte_numero),
+            fecha_emision: item.fecha_emision ? String(item.fecha_emision).slice(0, 10) : '',
+          }));
+        });
       }
       setFeedback({ type: 'success', message: response?.message ?? 'Borrador guardado.' });
     } catch (err) {
@@ -55906,6 +56053,160 @@ const FacturacionCreatePage: React.FC = () => {
               ))}
             </div>
           </div>
+
+          {requiereCbtesAsoc ? (
+            <div className="facturacion-form-block">
+              <h3>Comprobantes asociados</h3>
+              <p className="form-info">
+                Para notas de crédito/débito es obligatorio asociar el comprobante original (Tipo, Punto de venta y Número).
+              </p>
+              <div className="form-actions">
+                <button type="button" className="secondary-action" onClick={loadFacturasAsociables} disabled={asociablesLoading}>
+                  {asociablesLoading ? 'Buscando...' : 'Buscar facturas emitidas'}
+                </button>
+              </div>
+              <div className="table-wrapper facturacion-table">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Factura emitida</th>
+                      <th>Tipo</th>
+                      <th>Pto Vta</th>
+                      <th>Comprobante</th>
+                      <th>Fecha emisión (opc.)</th>
+                      <th>Acciones</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {cbtesAsoc.length === 0 ? (
+                      <tr>
+                        <td colSpan={6}>Agregá al menos un comprobante asociado.</td>
+                      </tr>
+                    ) : (
+                      cbtesAsoc.map((row, index) => {
+                        const matched =
+                          facturasAsociables.find(
+                            (item) =>
+                              item.cbte_tipo === Number(row.cbte_tipo) &&
+                              item.pto_vta === Number(row.pto_vta) &&
+                              Number(item.cbte_numero ?? 0) === Number(row.cbte_numero || 0)
+                          ) ?? null;
+                        return (
+                          <tr key={row.id}>
+                            <td>
+                              <select
+                                value={matched ? String(matched.id) : ''}
+                                onChange={(event) => {
+                                  const selectedId = Number(event.target.value);
+                                  const picked = facturasAsociables.find((item) => item.id === selectedId);
+                                  if (!picked) {
+                                    return;
+                                  }
+                                  setCbtesAsoc((prev) => {
+                                    const next = [...prev];
+                                    next[index] = {
+                                      ...row,
+                                      cbte_tipo: String(picked.cbte_tipo),
+                                      pto_vta: String(picked.pto_vta),
+                                      cbte_numero: String(picked.cbte_numero ?? ''),
+                                      fecha_emision: picked.fecha_cbte ?? row.fecha_emision,
+                                    };
+                                    return next;
+                                  });
+                                }}
+                              >
+                                <option value="">Seleccionar...</option>
+                                {facturasAsociables.map((item) => {
+                                  const desc =
+                                    FACTURACION_COMPROBANTES_OPTIONS.find((opt) => Number(opt.code) === item.cbte_tipo)
+                                      ?.description ?? `Cbte ${item.cbte_tipo}`;
+                                  const nro = item.cbte_numero ? String(item.cbte_numero).padStart(8, '0') : '—';
+                                  const pv = String(item.pto_vta).padStart(4, '0');
+                                  const fecha = item.fecha_cbte ?? '';
+                                  return (
+                                    <option key={item.id} value={item.id}>
+                                      {desc} {pv}-{nro} {fecha}
+                                    </option>
+                                  );
+                                })}
+                              </select>
+                            </td>
+                            <td>
+                              <select
+                                value={row.cbte_tipo}
+                                onChange={(event) =>
+                                  setCbtesAsoc((prev) => {
+                                    const next = [...prev];
+                                    next[index] = { ...row, cbte_tipo: event.target.value };
+                                    return next;
+                                  })
+                                }
+                              >
+                                {FACTURACION_CBTE_ASOC_OPTIONS.map((option) => (
+                                  <option key={option.code} value={Number(option.code)}>
+                                    {option.code} - {option.description}
+                                  </option>
+                                ))}
+                              </select>
+                            </td>
+                            <td>
+                              <input
+                                value={row.pto_vta}
+                                onChange={(event) =>
+                                  setCbtesAsoc((prev) => {
+                                    const next = [...prev];
+                                    next[index] = { ...row, pto_vta: event.target.value };
+                                    return next;
+                                  })
+                                }
+                              />
+                            </td>
+                            <td>
+                              <input
+                                value={row.cbte_numero}
+                                onChange={(event) =>
+                                  setCbtesAsoc((prev) => {
+                                    const next = [...prev];
+                                    next[index] = { ...row, cbte_numero: event.target.value };
+                                    return next;
+                                  })
+                                }
+                              />
+                            </td>
+                            <td>
+                              <input
+                                type="date"
+                                value={row.fecha_emision}
+                                onChange={(event) =>
+                                  setCbtesAsoc((prev) => {
+                                    const next = [...prev];
+                                    next[index] = { ...row, fecha_emision: event.target.value };
+                                    return next;
+                                  })
+                                }
+                              />
+                            </td>
+                            <td>
+                              <button
+                                type="button"
+                                className="secondary-action secondary-action--ghost"
+                                onClick={() => setCbtesAsoc((prev) => prev.filter((item) => item.id !== row.id))}
+                              >
+                                Quitar
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      })
+                    )}
+                  </tbody>
+                </table>
+              </div>
+              <button type="button" className="secondary-action" onClick={() => setCbtesAsoc((prev) => [...prev, createCbteAsocRow()])}>
+                Agregar comprobante
+              </button>
+            </div>
+          ) : null}
 
           <div className="facturacion-form-block">
             <h3>Detalle PDF</h3>

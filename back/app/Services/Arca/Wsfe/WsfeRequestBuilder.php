@@ -11,7 +11,7 @@ class WsfeRequestBuilder
      */
     public function buildCaeRequest(FacturaCabecera $factura, int $cbteNumero): array
     {
-        $factura->loadMissing(['ivaItems', 'tributos']);
+        $factura->loadMissing(['ivaItems', 'tributos', 'cbtesAsoc']);
 
         return [
             'FeCAEReq' => [
@@ -39,6 +39,16 @@ class WsfeRequestBuilder
                         'FchServDesde' => $factura->fecha_serv_desde?->format('Ymd'),
                         'FchServHasta' => $factura->fecha_serv_hasta?->format('Ymd'),
                         'FchVtoPago' => $factura->fecha_vto_pago?->format('Ymd'),
+                        'CbtesAsoc' => $factura->cbtesAsoc->isEmpty() ? null : [
+                            'CbteAsoc' => $factura->cbtesAsoc
+                                ->map(fn ($item) => [
+                                    'Tipo' => (int) $item->cbte_tipo,
+                                    'PtoVta' => (int) $item->pto_vta,
+                                    'Nro' => (int) $item->cbte_numero,
+                                ])
+                                ->values()
+                                ->all(),
+                        ],
                         'Iva' => $factura->ivaItems->isEmpty() ? null : [
                             'AlicIva' => $factura->ivaItems
                                 ->map(fn ($item) => [

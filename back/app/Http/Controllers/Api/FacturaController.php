@@ -57,7 +57,7 @@ class FacturaController extends Controller
             return response()->json(['message' => 'No tenes permisos para acceder a facturacion.'], 403);
         }
 
-        $factura->load(['emisor', 'certificado', 'cliente', 'sucursal', 'ivaItems', 'tributos', 'detallePdf', 'historialCobranza.usuario']);
+        $factura->load(['emisor', 'certificado', 'cliente', 'sucursal', 'ivaItems', 'tributos', 'detallePdf', 'cbtesAsoc', 'historialCobranza.usuario']);
 
         return response()->json(['data' => $this->serializeFacturaDetail($factura)]);
     }
@@ -313,6 +313,12 @@ class FacturaController extends Controller
             'OTROS_MEDIOS_PAGO_ELECTRONICO',
         ];
 
+        $cbteTipo = (int) $request->input('cbte_tipo');
+        $requiereAsociacion = in_array($cbteTipo, [2, 3, 7, 8, 12, 13, 20, 21, 202, 203, 207, 208, 212, 213], true);
+        $cbtesAsocRules = $requiereAsociacion
+            ? ['required', 'array', 'min:1']
+            : ['nullable', 'array'];
+
         $validated = $request->validate([
             'emisor_id' => ['required', 'integer', Rule::exists('arca_emisor', 'id')],
             'ambiente' => ['required', Rule::in(['PROD'])],
@@ -375,6 +381,11 @@ class FacturaController extends Controller
             'detalle_pdf.*.subtotal' => ['required', 'numeric'],
             'detalle_pdf.*.alicuota_iva_pct' => ['nullable', 'numeric'],
             'detalle_pdf.*.subtotal_con_iva' => ['required', 'numeric'],
+            'cbtes_asoc' => $cbtesAsocRules,
+            'cbtes_asoc.*.cbte_tipo' => ['required_with:cbtes_asoc', 'integer'],
+            'cbtes_asoc.*.pto_vta' => ['required_with:cbtes_asoc', 'integer'],
+            'cbtes_asoc.*.cbte_numero' => ['required_with:cbtes_asoc', 'integer'],
+            'cbtes_asoc.*.fecha_emision' => ['nullable', 'date'],
         ]);
 
         $validated['doc_nro'] = (int) preg_replace('/\D+/', '', (string) $validated['doc_nro']);
@@ -511,6 +522,13 @@ class FacturaController extends Controller
                 'subtotal' => $item->subtotal,
                 'alicuota_iva_pct' => $item->alicuota_iva_pct,
                 'subtotal_con_iva' => $item->subtotal_con_iva,
+            ])->values(),
+            'cbtes_asoc' => $factura->cbtesAsoc->map(fn ($item) => [
+                'id' => $item->id,
+                'cbte_tipo' => $item->cbte_tipo,
+                'pto_vta' => $item->pto_vta,
+                'cbte_numero' => $item->cbte_numero,
+                'fecha_emision' => optional($item->fecha_emision)?->format('Y-m-d'),
             ])->values(),
             'historial_cobranza' => $factura->historialCobranza->map(fn ($item) => [
                 'id' => $item->id,

@@ -15,12 +15,29 @@ class FacturaDraftService
 
     public function createDraft(array $payload): FacturaCabecera
     {
+        // Algunos entornos tenían un unique sobre `hash_idempotencia` y el front
+        // podía reintentar "crear" un borrador con el mismo payload. En ese caso
+        // reutilizamos el borrador existente en lugar de fallar por constraint.
+        $hash = $this->idempotencyService->buildHashFromPayload($payload);
+        $existing = FacturaCabecera::query()
+            ->where('hash_idempotencia', $hash)
+            ->orderByDesc('id')
+            ->first();
+
+        if ($existing) {
+            if (! $existing->canEditFiscalFields()) {
+                throw new \RuntimeException('Ya existe un comprobante con el mismo contenido y no permite edición.');
+            }
+
+            return $this->updateDraft($existing, $payload);
+        }
+
         return DB::transaction(function () use ($payload) {
             $factura = new FacturaCabecera();
             $this->fillFactura($factura, $payload, true);
             $factura->save();
             $this->syncChildren($factura, $payload);
-            $factura->refresh()->load(['ivaItems', 'tributos', 'detallePdf']);
+            $factura->refresh()->load(['ivaItems', 'tributos', 'detallePdf', 'cbtesAsoc']);
 
             return $factura;
         });
@@ -40,7 +57,7 @@ class FacturaDraftService
             }
             $factura->save();
             $this->syncChildren($factura, $payload);
-            $factura->refresh()->load(['ivaItems', 'tributos', 'detallePdf']);
+            $factura->refresh()->load(['ivaItems', 'tributos', 'detallePdf', 'cbtesAsoc']);
 
             return $factura;
         });
@@ -82,7 +99,7 @@ class FacturaDraftService
             'observaciones_cobranza' => $payload['observaciones_cobranza'] ?? $factura->observaciones_cobranza,
         ]);
 
-        $factura->hash_idempotencia = $this->idempotencyService->buildHashFromPayload($factura->getAttributes());
+        $factura->hash_idempotencia = $this->idempotencyService->buildHashFromPayload($payload);
         $factura->estado_cobranza = $this->cobranzaStateResolver->resolve($factura);
 
         if ($isNew || ! $factura->estado) {
@@ -95,6 +112,7 @@ class FacturaDraftService
         $factura->ivaItems()->delete();
         $factura->tributos()->delete();
         $factura->detallePdf()->delete();
+        $factura->cbtesAsoc()->delete();
 
         foreach ($this->resolveIvaItems($factura, $payload) as $item) {
             $factura->ivaItems()->create([
@@ -125,6 +143,15 @@ class FacturaDraftService
                 'subtotal' => $item['subtotal'],
                 'alicuota_iva_pct' => $item['alicuota_iva_pct'] ?? 0,
                 'subtotal_con_iva' => $item['subtotal_con_iva'],
+            ]);
+        }
+
+        foreach (($payload['cbtes_asoc'] ?? []) as $item) {
+            $factura->cbtesAsoc()->create([
+                'cbte_tipo' => $item['cbte_tipo'],
+                'pto_vta' => $item['pto_vta'],
+                'cbte_numero' => $item['cbte_numero'],
+                'fecha_emision' => $item['fecha_emision'] ?? null,
             ]);
         }
     }
