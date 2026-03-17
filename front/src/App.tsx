@@ -55603,16 +55603,35 @@ const FacturacionListadoPage: React.FC = () => {
                           PDF
                         </a>
                       ) : null}
-                      {canDeleteFactura(factura.estado) ? (
-                        <button
-                          type="button"
-                          className="secondary-action secondary-action--danger"
-                          onClick={() => void handleDeleteFactura(factura)}
-                          disabled={loading}
-                        >
-                          Eliminar
-                        </button>
-                      ) : null}
+                      <button
+                        type="button"
+                        className="facturacion-icon-action"
+                        onClick={() => void handleDeleteFactura(factura)}
+                        disabled={loading || !canDeleteFactura(factura.estado)}
+                        aria-label="Eliminar factura"
+                        title={
+                          canDeleteFactura(factura.estado)
+                            ? 'Eliminar'
+                            : 'No se puede eliminar una factura autorizada/enviada.'
+                        }
+                      >
+                        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                          <path
+                            d="M9 3h6m-7 4h8m-1 0v14a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2V7h10Z"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="1.8"
+                            strokeLinejoin="round"
+                          />
+                          <path
+                            d="M10 11v7M14 11v7"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="1.8"
+                            strokeLinecap="round"
+                          />
+                        </svg>
+                      </button>
                     </td>
                   </tr>
                 ))

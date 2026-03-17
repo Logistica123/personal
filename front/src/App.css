@@ -8029,6 +8029,35 @@ tbody tr:hover {
   gap: 0.35rem;
 }
 
+.facturacion-icon-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border-radius: 12px;
+  border: 1px solid rgba(59, 130, 246, 0.24);
+  background: rgba(59, 130, 246, 0.08);
+  color: #1d4ed8;
+  cursor: pointer;
+}
+
+.facturacion-icon-action svg {
+  width: 18px;
+  height: 18px;
+}
+
+.facturacion-icon-action:hover:not(:disabled) {
+  background: rgba(59, 130, 246, 0.14);
+  border-color: rgba(59, 130, 246, 0.32);
+}
+
+.facturacion-icon-action:disabled {
+  opacity: 0.42;
+  cursor: not-allowed;
+}
+
 .facturacion-toggle {
   display: flex;
   align-items: center;
