@@ -80,7 +80,14 @@ class LiquidacionReciboController extends Controller
             'totalImputado' => ['nullable', 'numeric'],
         ]);
 
-        $draft = $this->sanitizeDraft($validated['draft']);
+        // Importante: `$validated['draft']` puede traer solo un subconjunto de keys (según reglas),
+        // así que tomamos el payload completo para persistir cliente/cobro/empresa/comprobantes.
+        $draftPayload = $request->input('draft');
+        if (! is_array($draftPayload)) {
+            return response()->json(['message' => 'Formato de borrador inválido.'], 422);
+        }
+
+        $draft = $this->sanitizeDraft($draftPayload);
         $puntoVenta = $draft['puntoVenta'];
         $numeroRecibo = $draft['numeroRecibo'];
 

@@ -1513,6 +1513,31 @@ const buildReciboClienteDraft = (cliente: Cliente, ivaCondition?: string | null)
   };
 };
 
+const applyReciboEmpresaDefaults = (draft: ReciboDraft): ReciboDraft => {
+  const fallback = createDefaultReciboDraft();
+  const next: ReciboDraft = { ...draft };
+
+  (
+    [
+      'puntoVenta',
+      'fecha',
+      'empresaNombre',
+      'empresaDireccion1',
+      'empresaDireccion2',
+      'empresaIva',
+      'empresaCuit',
+      'empresaInicioActividad',
+    ] as const
+  ).forEach((field) => {
+    const currentValue = normalizeTextValue(next[field]);
+    if (!currentValue) {
+      next[field] = fallback[field];
+    }
+  });
+
+  return next;
+};
+
 const normalizeReciboDraft = (raw?: Partial<ReciboDraft> | null): ReciboDraft => {
   const fallback = createDefaultReciboDraft();
   if (!raw || typeof raw !== 'object') {
@@ -1544,7 +1569,7 @@ const readStoredReciboDraft = (): ReciboDraft => {
     }
 
     const parsed = JSON.parse(raw) as Partial<ReciboDraft> | null;
-    return normalizeReciboDraft(parsed);
+    return applyReciboEmpresaDefaults(normalizeReciboDraft(parsed));
   } catch {
     return createDefaultReciboDraft();
   }
@@ -25237,7 +25262,7 @@ const RecibosPage: React.FC = () => {
   const apiBaseUrl = useMemo(() => resolveApiBaseUrl(), []);
   const authUser = useStoredAuthUser();
   const actorHeaders = useMemo(() => buildActorHeaders(authUser), [authUser]);
-  const [draft, setDraft] = useState<ReciboDraft>(() => readStoredReciboDraft());
+  const [draft, setDraft] = useState<ReciboDraft>(() => applyReciboEmpresaDefaults(readStoredReciboDraft()));
   const [clientes, setClientes] = useState<Cliente[]>([]);
   const [clientesLoading, setClientesLoading] = useState(false);
   const [clientesError, setClientesError] = useState<string | null>(null);
@@ -25537,7 +25562,7 @@ const RecibosPage: React.FC = () => {
 
   const handleSelectReceipt = useCallback((receipt: LiquidacionReciboRecord) => {
     setSelectedReceipt(receipt);
-    setDraft(normalizeReciboDraft(receipt.draft));
+    setDraft(applyReciboEmpresaDefaults(normalizeReciboDraft(receipt.draft)));
     setActionError(null);
     setActionInfo(`Recibo ${receipt.serial} cargado para reimpresión.`);
   }, []);
@@ -25575,6 +25600,7 @@ const RecibosPage: React.FC = () => {
 
     try {
       setSavingReceipt(true);
+      const draftToSave = applyReciboEmpresaDefaults(draft);
 
       const response = await fetch(`${apiBaseUrl}/api/liquidaciones/recibos`, {
         method: 'POST',
@@ -25584,7 +25610,7 @@ const RecibosPage: React.FC = () => {
           ...actorHeaders,
         },
         body: JSON.stringify({
-          draft,
+          draft: draftToSave,
           totalCobro,
           totalImputado,
         }),
@@ -25603,7 +25629,7 @@ const RecibosPage: React.FC = () => {
         throw new Error('No se recibió el recibo emitido desde el servidor.');
       }
 
-      const savedDraft = normalizeReciboDraft(savedReceipt.draft);
+      const savedDraft = applyReciboEmpresaDefaults(normalizeReciboDraft(savedReceipt.draft));
       const savedPointOfSaleLabel = formatReciboSerial(savedReceipt.puntoVenta || savedDraft.puntoVenta, 4);
       const savedReceiptNumberLabel = formatReciboSerial(savedReceipt.numeroRecibo || savedDraft.numeroRecibo, 8);
       const savedTotalCobro = parseLocalizedDecimal(savedReceipt.totalCobro) ?? totalCobro;
@@ -25617,7 +25643,7 @@ const RecibosPage: React.FC = () => {
         })
       );
 
-      setDraft((prev) => buildNextReciboDraft(prev));
+      setDraft((prev) => buildNextReciboDraft(applyReciboEmpresaDefaults(prev)));
       setActionInfo(payload?.message ?? `Recibo ${savedReceipt.serial} emitido correctamente.`);
       await loadReceipts(receiptSearch);
     } catch (err) {
