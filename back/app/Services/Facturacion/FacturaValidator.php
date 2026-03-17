@@ -89,6 +89,14 @@ class FacturaValidator
             $errors['imp_iva'][] = 'La sumatoria de IVA detalle no coincide con el importe IVA de cabecera.';
         }
 
+        $detalleSum = round((float) $factura->detallePdf->sum(fn ($item) => (float) $item->subtotal_con_iva), 2);
+        if ($factura->detallePdf->isNotEmpty()) {
+            $diff = abs(round((float) $factura->imp_total, 2) - $detalleSum);
+            if ($diff > 0.01) {
+                $errors['imp_total'][] = 'El total de cabecera no coincide con la sumatoria del detalle.';
+            }
+        }
+
         if ($factura->detallePdf->isEmpty()) {
             $errors['detalle_pdf'][] = 'La factura debe tener al menos un renglón para el PDF.';
         }

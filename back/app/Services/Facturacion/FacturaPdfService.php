@@ -11,6 +11,95 @@ class FacturaPdfService
     {
         $factura->loadMissing(['emisor', 'cliente', 'sucursal', 'detallePdf', 'ivaItems', 'tributos']);
 
+        $pages = [
+            $this->buildFacturaPageElements($factura, 'ORIGINAL', 1, 3),
+            $this->buildFacturaPageElements($factura, 'DUPLICADO', 2, 3),
+            $this->buildFacturaPageElements($factura, 'TRIPLICADO', 3, 3),
+        ];
+
+        $pdfContent = $this->buildPdf($pages);
+        $path = sprintf('facturacion/pdfs/factura-%d.pdf', $factura->id);
+
+        Storage::disk((string) config('services.arca.storage_disk', 'local'))->put($path, $pdfContent);
+
+        return $path;
+    }
+
+    /**
+     * @param list<list<string>> $pages
+     */
+    private function buildPdf(array $pages): string
+    {
+        $pageCount = count($pages);
+        if ($pageCount === 0) {
+            $pages = [[]];
+            $pageCount = 1;
+        }
+
+        $objects = [];
+        $objects[] = "1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj";
+
+        $kids = [];
+        for ($i = 0; $i < $pageCount; $i += 1) {
+            // Page objects start at 3 0 obj, one per page.
+            $kids[] = (3 + $i) . " 0 R";
+        }
+        $objects[] = "2 0 obj << /Type /Pages /Count {$pageCount} /Kids [" . implode(' ', $kids) . "] >> endobj";
+
+        $pageObjectsStart = 3;
+        $fontsStart = $pageObjectsStart + $pageCount;
+        $contentStart = $fontsStart + 3;
+
+        for ($i = 0; $i < $pageCount; $i += 1) {
+            $contentRef = ($contentStart + $i) . " 0 R";
+            $objects[] = sprintf(
+                "%d 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 %d 0 R /F2 %d 0 R /F3 %d 0 R >> >> /Contents %s >> endobj",
+                $pageObjectsStart + $i,
+                $fontsStart,
+                $fontsStart + 1,
+                $fontsStart + 2,
+                $contentRef
+            );
+        }
+
+        $objects[] = sprintf("%d 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> endobj", $fontsStart);
+        $objects[] = sprintf("%d 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >> endobj", $fontsStart + 1);
+        $objects[] = sprintf("%d 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Courier >> endobj", $fontsStart + 2);
+
+        for ($i = 0; $i < $pageCount; $i += 1) {
+            $content = implode("\n", $pages[$i]);
+            $objects[] = sprintf(
+                "%d 0 obj << /Length %d >> stream\n%s\nendstream endobj",
+                $contentStart + $i,
+                strlen($content),
+                $content
+            );
+        }
+
+        $pdf = "%PDF-1.4\n";
+        $offsets = [];
+        foreach ($objects as $object) {
+            $offsets[] = strlen($pdf);
+            $pdf .= $object . "\n";
+        }
+
+        $xrefOffset = strlen($pdf);
+        $pdf .= "xref\n0 " . (count($objects) + 1) . "\n";
+        $pdf .= "0000000000 65535 f \n";
+        foreach ($offsets as $offset) {
+            $pdf .= sprintf("%010d 00000 n \n", $offset);
+        }
+        $pdf .= "trailer << /Size " . (count($objects) + 1) . " /Root 1 0 R >>\n";
+        $pdf .= "startxref\n{$xrefOffset}\n%%EOF";
+
+        return $pdf;
+    }
+
+    /**
+     * @return list<string>
+     */
+    private function buildFacturaPageElements(FacturaCabecera $factura, string $copia, int $pageNumber, int $totalPages): array
+    {
         $comprobante = $this->resolveComprobanteLabel((int) $factura->cbte_tipo);
         $letra = $this->resolveComprobanteLetra((int) $factura->cbte_tipo);
         $numero = sprintf('%04d-%08d', (int) $factura->pto_vta, (int) ($factura->cbte_numero ?? 0));
@@ -22,14 +111,17 @@ class FacturaPdfService
         );
 
         $elements = [];
-        $leftY = 800;
-        $rightY = 800;
 
         $razonSocial = (string) (config('services.arca.emisor_razon_social', '') ?: ($factura->emisor?->razon_social ?? ''));
         $cuitEmisor = (string) (config('services.arca.cuit_emisor_default', '') ?: ($factura->emisor?->cuit ?? ''));
         $condicionIva = (string) (config('services.arca.emisor_condicion_iva', '') ?: ($factura->emisor?->condicion_iva ?? ''));
         $domicilioFiscal = (string) config('services.arca.emisor_domicilio', '');
 
+        $this->addText($elements, 255, 820, 'F2', 14, $copia);
+        $this->addLine($elements, 50, 806, 545, 806);
+
+        $leftY = 790;
+        $rightY = 790;
         $this->addText($elements, 50, $leftY, 'F2', 14, $razonSocial);
         $leftY -= 14;
         $this->addText($elements, 50, $leftY, 'F1', 10, sprintf('CUIT emisor: %s', $cuitEmisor));
@@ -42,15 +134,18 @@ class FacturaPdfService
         }
         $this->addText($elements, 50, $leftY, 'F1', 10, sprintf('Punto de venta: %04d', (int) $factura->pto_vta));
         $leftY -= 12;
-        $this->addText($elements, 50, $leftY, 'F1', 10, sprintf('Ambiente: %s', (string) ($factura->ambiente?->value ?? $factura->ambiente)));
 
-        $this->addText($elements, 330, $rightY, 'F2', 12, sprintf('Factura %s', $letra !== '' ? $letra : $comprobante));
+        $this->addText($elements, 330, $rightY, 'F2', 12, sprintf('FACTURA %s', $letra !== '' ? $letra : $comprobante));
         $rightY -= 14;
         $this->addText($elements, 330, $rightY, 'F1', 10, sprintf('Comprobante: %s', $comprobante));
         $rightY -= 12;
         $this->addText($elements, 330, $rightY, 'F1', 10, sprintf('Numero: %s', $numero));
         $rightY -= 12;
         $this->addText($elements, 330, $rightY, 'F1', 10, sprintf('Fecha emision: %s', $this->formatDate($factura->fecha_cbte)));
+        $rightY -= 12;
+        $this->addText($elements, 330, $rightY, 'F1', 10, sprintf('CAE: %s', (string) ($factura->cae ?? '')));
+        $rightY -= 12;
+        $this->addText($elements, 330, $rightY, 'F1', 10, sprintf('Vto CAE: %s', $this->formatDate($factura->cae_vto)));
 
         $separatorY = min($leftY, $rightY) - 10;
         $this->addLine($elements, 50, $separatorY, 545, $separatorY);
@@ -85,22 +180,26 @@ class FacturaPdfService
 
         $this->addText($elements, 50, $y, 'F2', 11, 'Detalle');
         $y -= 12;
-        $header = sprintf('%-3s %-42s %6s %10s %10s', '#', 'Descripcion', 'Cant', 'Precio', 'Subtotal');
-        $this->addText($elements, 50, $y, 'F3', 9, $header);
+        $header = sprintf('%-3s %-30s %6s %-10s %10s %7s %10s %7s %10s', '#', 'Descripcion', 'Cant', 'U.Medida', 'Precio', 'Bonif', 'Subtotal', 'IVA%', 'Sub c/IVA');
+        $this->addText($elements, 50, $y, 'F3', 8, $header);
         $y -= 10;
         $this->addLine($elements, 50, $y, 545, $y);
         $y -= 12;
 
         foreach ($factura->detallePdf as $item) {
             $line = sprintf(
-                '%-3s %-42s %6s %10s %10s',
+                '%-3s %-30s %6s %-10s %10s %7s %10s %7s %10s',
                 (string) (int) $item->orden,
-                $this->truncate((string) $item->descripcion, 42),
+                $this->truncate((string) $item->descripcion, 30),
                 $this->formatNumber($item->cantidad),
+                $this->truncate((string) ($item->unidad_medida ?? ''), 10),
                 $this->formatMoney($item->precio_unitario),
+                $this->formatNumber($item->bonificacion_pct ?? 0) . '%',
+                $this->formatMoney($item->subtotal),
+                $this->formatNumber($item->alicuota_iva_pct ?? 0) . '%',
                 $this->formatMoney($item->subtotal_con_iva)
             );
-            $this->addText($elements, 50, $y, 'F3', 9, $line);
+            $this->addText($elements, 50, $y, 'F3', 8, $line);
             $y -= 12;
         }
 
@@ -166,52 +265,10 @@ class FacturaPdfService
         $y -= 12;
         $this->addText($elements, 330, $y, 'F2', 12, sprintf('Total: %s', $this->formatMoney($factura->imp_total)));
 
-        $y -= 20;
-        $this->addText($elements, 50, $y, 'F1', 10, sprintf('CAE: %s', (string) ($factura->cae ?? '')));
-        $y -= 12;
-        $this->addText($elements, 50, $y, 'F1', 10, sprintf('Vto CAE: %s', $this->formatDate($factura->cae_vto)));
+        $this->addText($elements, 50, 40, 'F1', 9, 'Comprobante autorizado (ARCA/WSFEv1)');
+        $this->addText($elements, 450, 40, 'F1', 9, sprintf('Pag. %d/%d', $pageNumber, $totalPages));
 
-        $pdfContent = $this->buildPdf($elements);
-        $path = sprintf('facturacion/pdfs/factura-%d.pdf', $factura->id);
-
-        Storage::disk((string) config('services.arca.storage_disk', 'local'))->put($path, $pdfContent);
-
-        return $path;
-    }
-
-    /**
-     * @param list<string> $elements
-     */
-    private function buildPdf(array $elements): string
-    {
-        $content = implode("\n", $elements);
-
-        $objects = [];
-        $objects[] = "1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj";
-        $objects[] = "2 0 obj << /Type /Pages /Count 1 /Kids [3 0 R] >> endobj";
-        $objects[] = "3 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 4 0 R /F2 5 0 R /F3 6 0 R >> >> /Contents 7 0 R >> endobj";
-        $objects[] = "4 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> endobj";
-        $objects[] = "5 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >> endobj";
-        $objects[] = "6 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Courier >> endobj";
-        $objects[] = sprintf("7 0 obj << /Length %d >> stream\n%s\nendstream endobj", strlen($content), $content);
-
-        $pdf = "%PDF-1.4\n";
-        $offsets = [];
-        foreach ($objects as $object) {
-            $offsets[] = strlen($pdf);
-            $pdf .= $object . "\n";
-        }
-
-        $xrefOffset = strlen($pdf);
-        $pdf .= "xref\n0 " . (count($objects) + 1) . "\n";
-        $pdf .= "0000000000 65535 f \n";
-        foreach ($offsets as $offset) {
-            $pdf .= sprintf("%010d 00000 n \n", $offset);
-        }
-        $pdf .= "trailer << /Size " . (count($objects) + 1) . " /Root 1 0 R >>\n";
-        $pdf .= "startxref\n{$xrefOffset}\n%%EOF";
-
-        return $pdf;
+        return $elements;
     }
 
     /**
