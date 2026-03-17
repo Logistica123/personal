@@ -207,12 +207,11 @@ class FacturaPdfService
         $this->addLine($elements, 50, $y, 545, $y);
         $y -= 14;
 
+        $detalleTotals = $this->computeDetalleTotals($factura);
+
         $this->addText($elements, 50, $y, 'F2', 10, 'IVA discriminado');
         $y -= 12;
-        if ($factura->ivaItems->isEmpty()) {
-            $this->addText($elements, 50, $y, 'F1', 10, 'Sin IVA detallado.');
-            $y -= 12;
-        } else {
+        if ($factura->ivaItems->isNotEmpty()) {
             foreach ($factura->ivaItems as $iva) {
                 $this->addText(
                     $elements,
@@ -224,6 +223,21 @@ class FacturaPdfService
                 );
                 $y -= 12;
             }
+        } elseif (! empty($detalleTotals['iva_groups'])) {
+            foreach ($detalleTotals['iva_groups'] as $group) {
+                $this->addText(
+                    $elements,
+                    50,
+                    $y,
+                    'F1',
+                    10,
+                    sprintf('IVA %s%% Base %s Importe %s', $this->formatNumber($group['rate']), $this->formatMoney($group['base']), $this->formatMoney($group['iva']))
+                );
+                $y -= 12;
+            }
+        } else {
+            $this->addText($elements, 50, $y, 'F1', 10, 'Sin IVA detallado.');
+            $y -= 12;
         }
 
         if ($factura->tributos->isNotEmpty()) {
@@ -248,7 +262,27 @@ class FacturaPdfService
         }
 
         $y -= 4;
-        $this->addText($elements, 330, $y, 'F2', 10, sprintf('Neto gravado: %s', $this->formatMoney($factura->imp_neto)));
+        $netoGravado = (float) $factura->imp_neto;
+        if ($netoGravado === 0.0 && (float) ($detalleTotals['neto'] ?? 0) > 0.0) {
+            $netoGravado = (float) $detalleTotals['neto'];
+        }
+
+        $noGravado = (float) ($factura->imp_tot_conc + $factura->imp_op_ex);
+        if ($noGravado === 0.0 && (float) ($detalleTotals['no_gravado'] ?? 0) > 0.0) {
+            $noGravado = (float) $detalleTotals['no_gravado'];
+        }
+
+        $ivaTotal = (float) $factura->imp_iva;
+        if ($ivaTotal === 0.0 && (float) ($detalleTotals['iva'] ?? 0) > 0.0) {
+            $ivaTotal = (float) $detalleTotals['iva'];
+        }
+
+        $total = (float) $factura->imp_total;
+        if ($total === 0.0 && (float) ($detalleTotals['total'] ?? 0) > 0.0) {
+            $total = (float) $detalleTotals['total'] + (float) ($factura->imp_tot_conc + $factura->imp_op_ex + $factura->imp_trib);
+        }
+
+        $this->addText($elements, 330, $y, 'F2', 10, sprintf('Neto gravado: %s', $this->formatMoney($netoGravado)));
         $y -= 12;
         $this->addText(
             $elements,
@@ -256,19 +290,69 @@ class FacturaPdfService
             $y,
             'F2',
             10,
-            sprintf('No gravado: %s', $this->formatMoney((float) ($factura->imp_tot_conc + $factura->imp_op_ex)))
+            sprintf('No gravado: %s', $this->formatMoney($noGravado))
         );
         $y -= 12;
-        $this->addText($elements, 330, $y, 'F2', 10, sprintf('IVA: %s', $this->formatMoney($factura->imp_iva)));
+        $this->addText($elements, 330, $y, 'F2', 10, sprintf('IVA: %s', $this->formatMoney($ivaTotal)));
         $y -= 12;
         $this->addText($elements, 330, $y, 'F2', 10, sprintf('Tributos: %s', $this->formatMoney($factura->imp_trib)));
         $y -= 12;
-        $this->addText($elements, 330, $y, 'F2', 12, sprintf('Total: %s', $this->formatMoney($factura->imp_total)));
+        $this->addText($elements, 330, $y, 'F2', 12, sprintf('Total: %s', $this->formatMoney($total)));
 
         $this->addText($elements, 50, 40, 'F1', 9, 'Comprobante autorizado (ARCA/WSFEv1)');
         $this->addText($elements, 450, 40, 'F1', 9, sprintf('Pag. %d/%d', $pageNumber, $totalPages));
 
         return $elements;
+    }
+
+    /**
+     * @return array{neto:float,iva:float,total:float,no_gravado:float,iva_groups:list<array{rate:float,base:float,iva:float}>}
+     */
+    private function computeDetalleTotals(FacturaCabecera $factura): array
+    {
+        $neto = 0.0;
+        $total = 0.0;
+        $noGravado = 0.0;
+        $groups = [];
+
+        foreach ($factura->detallePdf as $item) {
+            $base = (float) $item->subtotal;
+            $conIva = (float) $item->subtotal_con_iva;
+            $alic = (float) ($item->alicuota_iva_pct ?? 0);
+
+            $neto += $base;
+            $total += $conIva;
+
+            if ($alic <= 0) {
+                $noGravado += $base;
+                continue;
+            }
+
+            $iva = $conIva - $base;
+            $key = (string) round($alic, 2);
+            if (! isset($groups[$key])) {
+                $groups[$key] = ['rate' => round($alic, 2), 'base' => 0.0, 'iva' => 0.0];
+            }
+            $groups[$key]['base'] += $base;
+            $groups[$key]['iva'] += $iva;
+        }
+
+        $ivaGroups = array_values(array_map(
+            fn ($row) => [
+                'rate' => (float) $row['rate'],
+                'base' => round((float) $row['base'], 2),
+                'iva' => round((float) $row['iva'], 2),
+            ],
+            $groups
+        ));
+
+        return [
+            'neto' => round($neto, 2),
+            'iva' => round(max(0.0, $total - $neto), 2),
+            'total' => round($total, 2),
+            'no_gravado' => round($noGravado, 2),
+            'iva_groups' => $ivaGroups,
+        ];
     }
 
     /**

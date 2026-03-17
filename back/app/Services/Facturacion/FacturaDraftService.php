@@ -15,6 +15,8 @@ class FacturaDraftService
 
     public function createDraft(array $payload): FacturaCabecera
     {
+        $payload = $this->normalizePayload($payload);
+
         // Algunos entornos tenían un unique sobre `hash_idempotencia` y el front
         // podía reintentar "crear" un borrador con el mismo payload. En ese caso
         // reutilizamos el borrador existente en lugar de fallar por constraint.
@@ -49,6 +51,8 @@ class FacturaDraftService
             throw new \RuntimeException('La factura autorizada no permite edición fiscal.');
         }
 
+        $payload = $this->normalizePayload($payload);
+
         return DB::transaction(function () use ($factura, $payload) {
             $beforeCbteNumero = $factura->cbte_numero;
             $this->fillFactura($factura, $payload, false);
@@ -61,6 +65,54 @@ class FacturaDraftService
 
             return $factura;
         });
+    }
+
+    private function normalizePayload(array $payload): array
+    {
+        return $this->maybeFillImportesFromDetalle($payload);
+    }
+
+    private function maybeFillImportesFromDetalle(array $payload): array
+    {
+        $detalle = $payload['detalle_pdf'] ?? null;
+        if (! is_array($detalle) || $detalle === []) {
+            return $payload;
+        }
+
+        $detalleNeto = 0.0;
+        $detalleTotal = 0.0;
+        foreach ($detalle as $row) {
+            if (! is_array($row)) {
+                continue;
+            }
+            $detalleNeto += (float) ($row['subtotal'] ?? 0);
+            $detalleTotal += (float) ($row['subtotal_con_iva'] ?? 0);
+        }
+
+        $detalleNeto = round($detalleNeto, 2);
+        $detalleTotal = round($detalleTotal, 2);
+        if ($detalleTotal <= 0.0) {
+            return $payload;
+        }
+
+        $impNeto = round((float) ($payload['imp_neto'] ?? 0), 2);
+        $impIva = round((float) ($payload['imp_iva'] ?? 0), 2);
+        $impTotal = round((float) ($payload['imp_total'] ?? 0), 2);
+
+        // Si el front no envía importes (o los envía en 0) pero sí hay detalle, los completamos
+        // para que el PDF/WSFE no quede inconsistente.
+        if ($impNeto === 0.0 && $impIva === 0.0 && $impTotal === 0.0) {
+            $payload['imp_neto'] = $detalleNeto;
+            $payload['imp_iva'] = round(max(0.0, $detalleTotal - $detalleNeto), 2);
+
+            $impTotConc = round((float) ($payload['imp_tot_conc'] ?? 0), 2);
+            $impOpEx = round((float) ($payload['imp_op_ex'] ?? 0), 2);
+            $impTrib = round((float) ($payload['imp_trib'] ?? 0), 2);
+
+            $payload['imp_total'] = round($impTotConc + $impOpEx + $impTrib + (float) $payload['imp_neto'] + (float) $payload['imp_iva'], 2);
+        }
+
+        return $payload;
     }
 
     private function fillFactura(FacturaCabecera $factura, array $payload, bool $isNew): void
@@ -169,13 +221,19 @@ class FacturaDraftService
         $cbteTipo = (int) ($payload['cbte_tipo'] ?? $factura->cbte_tipo ?? 0);
         $impIva = (float) ($payload['imp_iva'] ?? $factura->imp_iva ?? 0);
 
-        if ($cbteTipo === 1 && $impIva > 0 && count($ivaItems) === 0) {
-            $impNeto = (float) ($payload['imp_neto'] ?? $factura->imp_neto ?? 0);
-            $ivaItems[] = [
-                'iva_id' => $this->resolveDefaultIvaId($impNeto, $impIva),
-                'base_imp' => round($impNeto, 2),
-                'importe' => round($impIva, 2),
-            ];
+        if ($impIva > 0 && count($ivaItems) === 0) {
+            // Intentamos derivar IVA desde el detalle (si el front no envió iva.*)
+            $fromDetalle = $this->buildIvaItemsFromDetalle($payload);
+            if ($fromDetalle !== []) {
+                $ivaItems = $fromDetalle;
+            } else {
+                $impNeto = (float) ($payload['imp_neto'] ?? $factura->imp_neto ?? 0);
+                $ivaItems[] = [
+                    'iva_id' => $this->resolveDefaultIvaId($impNeto, $impIva),
+                    'base_imp' => round($impNeto, 2),
+                    'importe' => round($impIva, 2),
+                ];
+            }
         }
 
         return array_map(
@@ -186,6 +244,78 @@ class FacturaDraftService
             ],
             $ivaItems
         );
+    }
+
+    /**
+     * @return array<int,array{iva_id:int,base_imp:float,importe:float}>
+     */
+    private function buildIvaItemsFromDetalle(array $payload): array
+    {
+        $detalle = $payload['detalle_pdf'] ?? null;
+        if (! is_array($detalle) || $detalle === []) {
+            return [];
+        }
+
+        $groups = [];
+        foreach ($detalle as $row) {
+            if (! is_array($row)) {
+                continue;
+            }
+            $alic = (float) ($row['alicuota_iva_pct'] ?? 0);
+            if ($alic <= 0) {
+                continue;
+            }
+
+            $base = (float) ($row['subtotal'] ?? 0);
+            $total = (float) ($row['subtotal_con_iva'] ?? 0);
+            $iva = $total - $base;
+
+            $key = (string) round($alic, 2);
+            if (! isset($groups[$key])) {
+                $groups[$key] = ['alic' => round($alic, 2), 'base' => 0.0, 'iva' => 0.0];
+            }
+            $groups[$key]['base'] += $base;
+            $groups[$key]['iva'] += $iva;
+        }
+
+        $items = [];
+        foreach ($groups as $group) {
+            $base = round((float) $group['base'], 2);
+            $iva = round((float) $group['iva'], 2);
+            if ($base <= 0 || $iva <= 0) {
+                continue;
+            }
+            $ivaId = $this->resolveIvaIdByRate((float) $group['alic']);
+            $items[] = [
+                'iva_id' => $ivaId,
+                'base_imp' => $base,
+                'importe' => $iva,
+            ];
+        }
+
+        return $items;
+    }
+
+    private function resolveIvaIdByRate(float $ratePct): int
+    {
+        // IDs AFIP/ARCA típicos: 2.5=2, 5=3, 10.5=4, 21=5, 27=6.
+        $map = [
+            2.5 => 2,
+            5.0 => 3,
+            10.5 => 4,
+            21.0 => 5,
+            27.0 => 6,
+        ];
+
+        $ratePct = round($ratePct, 2);
+        foreach ($map as $pct => $id) {
+            if (abs($ratePct - $pct) < 0.2) {
+                return $id;
+            }
+        }
+
+        // Fallback: aproxima por ratio al ID más cercano.
+        return $this->resolveDefaultIvaId(100.0, $ratePct);
     }
 
     private function resolveDefaultIvaId(float $baseImp, float $importe): int
