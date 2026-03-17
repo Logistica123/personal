@@ -14,6 +14,7 @@ use App\Services\Facturacion\FacturaEmissionService;
 use App\Services\Facturacion\FacturaValidator;
 use App\Support\Facturacion\FacturaEstado;
 use App\Support\Facturacion\PeriodoFacturado;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -163,6 +164,44 @@ class FacturaController extends Controller
             'message' => $message,
             'data' => $this->serializeFacturaDetail($result['factura']),
         ]);
+    }
+
+    public function destroy(Request $request, FacturaCabecera $factura): JsonResponse
+    {
+        if (! $this->canAccessFacturacion($request->user())) {
+            return response()->json(['message' => 'No tenes permisos para eliminar facturas.'], 403);
+        }
+
+        $estado = $factura->estado instanceof FacturaEstado
+            ? $factura->estado->value
+            : (string) ($factura->estado ?? '');
+
+        if (in_array($estado, [FacturaEstado::AUTORIZADA->value, FacturaEstado::PDF_GENERADO->value, FacturaEstado::ENVIANDO_ARCA->value], true)) {
+            return response()->json([
+                'message' => 'No se puede eliminar una factura autorizada/enviada. Solo se permite borrar borradores o facturas rechazadas.',
+            ], 409);
+        }
+
+        $disk = (string) config('services.arca.storage_disk', 'local');
+
+        DB::transaction(function () use ($factura, $disk) {
+            foreach (['pdf_path', 'request_xml_path', 'response_xml_path'] as $field) {
+                $path = (string) ($factura->{$field} ?? '');
+                if ($path !== '' && Storage::disk($disk)->exists($path)) {
+                    Storage::disk($disk)->delete($path);
+                }
+            }
+
+            $factura->ivaItems()->delete();
+            $factura->tributos()->delete();
+            $factura->detallePdf()->delete();
+            $factura->cbtesAsoc()->delete();
+            $factura->historialCobranza()->delete();
+
+            $factura->delete();
+        });
+
+        return response()->json(['message' => 'Factura eliminada correctamente.']);
     }
 
     public function downloadPdf(Request $request, FacturaCabecera $factura)

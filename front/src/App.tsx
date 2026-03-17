@@ -25437,44 +25437,46 @@ const RecibosPage: React.FC = () => {
     []
   );
 
-  const handleClienteChange = useCallback(
-    async (event: React.ChangeEvent<HTMLSelectElement>) => {
-      const nextClienteId = event.target.value;
-      setActionError(null);
+  const handleClienteNombreChange = useCallback(
+    async (event: React.ChangeEvent<HTMLInputElement>) => {
+      const nextNombre = event.target.value;
+      const normalizedNombre = normalizeTextValue(nextNombre).toLowerCase();
+      const matchedClient =
+        normalizedNombre.length > 0
+          ? clientes.find((cliente) => normalizeTextValue(cliente.nombre).toLowerCase() === normalizedNombre) ?? null
+          : null;
 
-      if (!nextClienteId) {
-        setDraft((prev) => ({
+      setDraft((prev) => {
+        if (!matchedClient) {
+          return {
+            ...prev,
+            clienteNombre: nextNombre,
+            clienteId: normalizedNombre ? '' : prev.clienteId,
+          };
+        }
+
+        return {
           ...prev,
-          clienteId: '',
-          clienteNombre: '',
-          clienteDireccion1: '',
-          clienteDireccion2: '',
-          clienteCuit: '',
-          clienteIva: '',
-        }));
+          ...buildReciboClienteDraft(matchedClient),
+        };
+      });
+
+      if (!matchedClient) {
         return;
       }
-
-      const selectedClient = clientes.find((cliente) => String(cliente.id) === nextClienteId);
-      if (!selectedClient) {
-        return;
-      }
-
-      setDraft((prev) => ({
-        ...prev,
-        ...buildReciboClienteDraft(selectedClient),
-      }));
 
       try {
-        const ivaCondition = await fetchClienteIvaCondition(selectedClient.id);
-        setDraft((prev) =>
-          prev.clienteId === String(selectedClient.id)
-            ? {
-                ...prev,
-                clienteIva: ivaCondition,
-              }
-            : prev
-        );
+        setActionError(null);
+        const ivaCondition = await fetchClienteIvaCondition(matchedClient.id);
+        setDraft((prev) => {
+          if (prev.clienteId !== String(matchedClient.id)) {
+            return prev;
+          }
+          if (normalizeTextValue(prev.clienteIva)) {
+            return prev;
+          }
+          return { ...prev, clienteIva: ivaCondition };
+        });
       } catch (err) {
         setActionError((err as Error).message ?? 'No se pudo completar la condición impositiva del cliente.');
       }
@@ -25778,7 +25780,11 @@ const RecibosPage: React.FC = () => {
               <div className="recibos-editor__grid">
                 <label className="input-control">
                   <span>Punto de venta</span>
-                  <input value={draft.puntoVenta} placeholder="0001" disabled readOnly />
+                  <input
+                    value={draft.puntoVenta}
+                    onChange={handleFieldChange('puntoVenta')}
+                    placeholder="0001"
+                  />
                 </label>
                 <label className="input-control">
                   <span>Número de recibo</span>
@@ -25789,25 +25795,28 @@ const RecibosPage: React.FC = () => {
                     type="checkbox"
                     checked={draft.autoNumeroRecibo}
                     onChange={handleToggleChange('autoNumeroRecibo')}
-                    disabled
                   />
                   <span>Auto incrementar recibo al imprimir</span>
                 </label>
                 <label className="input-control">
                   <span>Fecha recibo</span>
-                  <input type="date" value={draft.fecha} disabled readOnly />
+                  <input type="date" value={draft.fecha} onChange={handleFieldChange('fecha')} />
                 </label>
                 <label className="input-control">
                   <span>CUIT empresa</span>
-                  <input value={draft.empresaCuit} disabled readOnly />
+                  <input value={draft.empresaCuit} onChange={handleFieldChange('empresaCuit')} />
                 </label>
                 <label className="input-control">
                   <span>Inicio de actividad</span>
-                  <input type="date" value={draft.empresaInicioActividad} disabled readOnly />
+                  <input
+                    type="date"
+                    value={draft.empresaInicioActividad}
+                    onChange={handleFieldChange('empresaInicioActividad')}
+                  />
                 </label>
                 <label className="input-control">
                   <span>Condición IVA empresa</span>
-                  <input value={draft.empresaIva} disabled readOnly />
+                  <input value={draft.empresaIva} onChange={handleFieldChange('empresaIva')} />
                 </label>
               </div>
 
@@ -25816,15 +25825,15 @@ const RecibosPage: React.FC = () => {
                 <div className="recibos-editor__grid">
                   <label className="input-control recibos-editor__field--wide">
                     <span>Razón social</span>
-                    <input value={draft.empresaNombre} disabled readOnly />
+                    <input value={draft.empresaNombre} onChange={handleFieldChange('empresaNombre')} />
                   </label>
                   <label className="input-control">
                     <span>Dirección línea 1</span>
-                    <input value={draft.empresaDireccion1} disabled readOnly />
+                    <input value={draft.empresaDireccion1} onChange={handleFieldChange('empresaDireccion1')} />
                   </label>
                   <label className="input-control">
                     <span>Dirección línea 2</span>
-                    <input value={draft.empresaDireccion2} disabled readOnly />
+                    <input value={draft.empresaDireccion2} onChange={handleFieldChange('empresaDireccion2')} />
                   </label>
                 </div>
               </div>
@@ -25836,30 +25845,35 @@ const RecibosPage: React.FC = () => {
                 <div className="recibos-editor__grid">
                   <label className="input-control recibos-editor__field--wide">
                     <span>Cliente</span>
-                    <select value={draft.clienteId} onChange={handleClienteChange}>
-                      <option value="">Seleccionar cliente</option>
-                      {clientes.map((cliente) => (
-                        <option key={cliente.id} value={cliente.id}>
-                          {normalizeTextValue(cliente.nombre) || `Cliente #${cliente.id}`}
-                        </option>
-                      ))}
-                    </select>
+                    <input
+                      type="text"
+                      list="recibo-clientes-list"
+                      value={draft.clienteNombre}
+                      onChange={handleClienteNombreChange}
+                      placeholder="Escribe un cliente o selecciona de la lista"
+                    />
+                    <datalist id="recibo-clientes-list">
+                      {clientes.map((cliente) => {
+                        const label = normalizeTextValue(cliente.nombre) || `Cliente #${cliente.id}`;
+                        return <option key={`recibo-cliente-${cliente.id}`} value={label} />;
+                      })}
+                    </datalist>
                   </label>
                   <label className="input-control">
                     <span>CUIT cliente</span>
-                    <input value={draft.clienteCuit} disabled readOnly />
+                    <input value={draft.clienteCuit} onChange={handleFieldChange('clienteCuit')} />
                   </label>
                   <label className="input-control">
                     <span>Condición IVA cliente</span>
-                    <input value={draft.clienteIva} disabled readOnly />
+                    <input value={draft.clienteIva} onChange={handleFieldChange('clienteIva')} />
                   </label>
                   <label className="input-control">
                     <span>Dirección línea 1</span>
-                    <input value={draft.clienteDireccion1} disabled readOnly />
+                    <input value={draft.clienteDireccion1} onChange={handleFieldChange('clienteDireccion1')} />
                   </label>
                   <label className="input-control">
                     <span>Dirección línea 2</span>
-                    <input value={draft.clienteDireccion2} disabled readOnly />
+                    <input value={draft.clienteDireccion2} onChange={handleFieldChange('clienteDireccion2')} />
                   </label>
                 </div>
               </div>
@@ -55275,6 +55289,38 @@ const FacturacionListadoPage: React.FC = () => {
     void fetchFacturas();
   }, [queryFilters, requestJson]);
 
+  const canDeleteFactura = useCallback((estado: string | null | undefined) => {
+    const value = (estado ?? '').toUpperCase();
+    return ['BORRADOR', 'VALIDADA_LOCAL', 'LISTA_PARA_ENVIO', 'RECHAZADA_ARCA', 'ERROR_TECNICO'].includes(value);
+  }, []);
+
+  const handleDeleteFactura = useCallback(
+    async (factura: FacturaSummaryDto) => {
+      if (!canDeleteFactura(factura.estado)) {
+        setError('Solo se pueden eliminar borradores o facturas rechazadas/errores.');
+        return;
+      }
+
+      const comprobante = `${factura.cbte_tipo}-${String(factura.pto_vta).padStart(4, '0')}-${String(factura.cbte_numero ?? 0).padStart(8, '0')}`;
+      const ok = window.confirm(`¿Eliminar la factura ${comprobante} del cliente "${factura.cliente_nombre}"? Esta acción no se puede deshacer.`);
+      if (!ok) {
+        return;
+      }
+
+      try {
+        setLoading(true);
+        setError(null);
+        await requestJson(`/api/facturas/${factura.id}`, { method: 'DELETE' });
+        setFacturas((prev) => prev.filter((item) => item.id !== factura.id));
+      } catch (err) {
+        setError((err as Error).message ?? 'No se pudo eliminar la factura.');
+      } finally {
+        setLoading(false);
+      }
+    },
+    [canDeleteFactura, requestJson]
+  );
+
   const kpis = useMemo(() => {
     const totalFacturas = facturas.length;
     let totalFacturado = 0;
@@ -55556,6 +55602,16 @@ const FacturacionListadoPage: React.FC = () => {
                         >
                           PDF
                         </a>
+                      ) : null}
+                      {canDeleteFactura(factura.estado) ? (
+                        <button
+                          type="button"
+                          className="secondary-action secondary-action--danger"
+                          onClick={() => void handleDeleteFactura(factura)}
+                          disabled={loading}
+                        >
+                          Eliminar
+                        </button>
                       ) : null}
                     </td>
                   </tr>

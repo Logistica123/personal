@@ -127,6 +127,7 @@ Route::middleware('auth.api')->group(function () {
     Route::get('/facturas', [FacturaController::class, 'index']);
     Route::post('/facturas', [FacturaController::class, 'store']);
     Route::get('/facturas/{factura}', [FacturaController::class, 'show']);
+    Route::delete('/facturas/{factura}', [FacturaController::class, 'destroy']);
     Route::patch('/facturas/{factura}', [FacturaController::class, 'updateDraft']);
     Route::put('/facturas/{factura}/borrador', [FacturaController::class, 'updateDraft']);
     Route::post('/facturas/{factura}/validar', [FacturaController::class, 'validar']);
