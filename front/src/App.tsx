@@ -55280,6 +55280,7 @@ const FacturacionCreatePage: React.FC = () => {
   const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
   const [validationErrors, setValidationErrors] = useState<Record<string, string[]>>({});
   const [autoTotal, setAutoTotal] = useState(true);
+  const [autoImportesDesdeDetalle, setAutoImportesDesdeDetalle] = useState(true);
   const [loading, setLoading] = useState(false);
   const [initialLoading, setInitialLoading] = useState(true);
 
@@ -55403,6 +55404,50 @@ const FacturacionCreatePage: React.FC = () => {
       setForm((prev) => ({ ...prev, imp_total: nextTotal }));
     }
   }, [autoTotal, form.imp_tot_conc, form.imp_neto, form.imp_op_ex, form.imp_iva, form.imp_trib, form.imp_total]);
+
+  useEffect(() => {
+    if (!autoImportesDesdeDetalle) {
+      return;
+    }
+
+    const neto = detallePdf.reduce((acc, row) => acc + parseNumberOrZero(row.subtotal), 0);
+    const totalDetalle = detallePdf.reduce((acc, row) => acc + parseNumberOrZero(row.subtotal_con_iva), 0);
+    const iva = Math.max(0, totalDetalle - neto);
+
+    const nextNeto = neto.toFixed(2);
+    const nextIva = iva.toFixed(2);
+
+    // Para evitar inconsistencias con el validador, asumimos que el detalle PDF representa
+    // el total sin tributos. Tributos se suman en cabecera vía `imp_trib`.
+    const trib = parseNumberOrZero(form.imp_trib);
+    const nextTotal = (totalDetalle + trib).toFixed(2);
+
+    setForm((prev) => {
+      const next = { ...prev };
+      let changed = false;
+      if (next.imp_tot_conc !== '0.00') {
+        next.imp_tot_conc = '0.00';
+        changed = true;
+      }
+      if (next.imp_op_ex !== '0.00') {
+        next.imp_op_ex = '0.00';
+        changed = true;
+      }
+      if (next.imp_neto !== nextNeto) {
+        next.imp_neto = nextNeto;
+        changed = true;
+      }
+      if (next.imp_iva !== nextIva) {
+        next.imp_iva = nextIva;
+        changed = true;
+      }
+      if (next.imp_total !== nextTotal) {
+        next.imp_total = nextTotal;
+        changed = true;
+      }
+      return changed ? next : prev;
+    });
+  }, [autoImportesDesdeDetalle, detallePdf, form.imp_trib]);
 
   useEffect(() => {
     const isFacturaA = form.cbte_tipo === FACTURACION_CBTE_TIPO_FACTURA_A;
@@ -56009,19 +56054,35 @@ const FacturacionCreatePage: React.FC = () => {
               </label>
               <label className="input-control">
                 <span>No gravado</span>
-                <input value={form.imp_tot_conc} onChange={(event) => setForm((prev) => ({ ...prev, imp_tot_conc: event.target.value }))} />
+                <input
+                  value={form.imp_tot_conc}
+                  onChange={(event) => setForm((prev) => ({ ...prev, imp_tot_conc: event.target.value }))}
+                  disabled={autoImportesDesdeDetalle}
+                />
               </label>
               <label className="input-control">
                 <span>Neto gravado</span>
-                <input value={form.imp_neto} onChange={(event) => setForm((prev) => ({ ...prev, imp_neto: event.target.value }))} />
+                <input
+                  value={form.imp_neto}
+                  onChange={(event) => setForm((prev) => ({ ...prev, imp_neto: event.target.value }))}
+                  disabled={autoImportesDesdeDetalle}
+                />
               </label>
               <label className="input-control">
                 <span>Exento</span>
-                <input value={form.imp_op_ex} onChange={(event) => setForm((prev) => ({ ...prev, imp_op_ex: event.target.value }))} />
+                <input
+                  value={form.imp_op_ex}
+                  onChange={(event) => setForm((prev) => ({ ...prev, imp_op_ex: event.target.value }))}
+                  disabled={autoImportesDesdeDetalle}
+                />
               </label>
               <label className="input-control">
                 <span>IVA</span>
-                <input value={form.imp_iva} onChange={(event) => setForm((prev) => ({ ...prev, imp_iva: event.target.value }))} />
+                <input
+                  value={form.imp_iva}
+                  onChange={(event) => setForm((prev) => ({ ...prev, imp_iva: event.target.value }))}
+                  disabled={autoImportesDesdeDetalle}
+                />
               </label>
               <label className="input-control">
                 <span>Tributos</span>
@@ -56029,11 +56090,23 @@ const FacturacionCreatePage: React.FC = () => {
               </label>
               <label className="input-control">
                 <span>Total</span>
-                <input value={form.imp_total} onChange={(event) => setForm((prev) => ({ ...prev, imp_total: event.target.value }))} />
+                <input
+                  value={form.imp_total}
+                  onChange={(event) => setForm((prev) => ({ ...prev, imp_total: event.target.value }))}
+                  disabled={autoImportesDesdeDetalle}
+                />
               </label>
               <label className="input-control facturacion-toggle">
                 <span>Auto total</span>
                 <input type="checkbox" checked={autoTotal} onChange={(event) => setAutoTotal(event.target.checked)} />
+              </label>
+              <label className="input-control facturacion-toggle">
+                <span>Auto importes (detalle)</span>
+                <input
+                  type="checkbox"
+                  checked={autoImportesDesdeDetalle}
+                  onChange={(event) => setAutoImportesDesdeDetalle(event.target.checked)}
+                />
               </label>
             </div>
           </div>

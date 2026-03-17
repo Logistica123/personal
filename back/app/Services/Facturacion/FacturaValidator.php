@@ -97,9 +97,10 @@ class FacturaValidator
 
         $detalleSum = round((float) $factura->detallePdf->sum(fn ($item) => (float) $item->subtotal_con_iva), 2);
         if ($factura->detallePdf->isNotEmpty()) {
-            $diff = abs(round((float) $factura->imp_total, 2) - $detalleSum);
+            $totalSinTributos = round((float) $factura->imp_total - (float) $factura->imp_trib, 2);
+            $diff = abs($totalSinTributos - $detalleSum);
             if ($diff > 0.01) {
-                $errors['imp_total'][] = 'El total de cabecera no coincide con la sumatoria del detalle.';
+                $errors['imp_total'][] = 'El total de cabecera (sin tributos) no coincide con la sumatoria del detalle.';
             }
         }
 
