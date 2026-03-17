@@ -100,6 +100,12 @@ class FacturaPdfService
      */
     private function buildFacturaPageElements(FacturaCabecera $factura, string $copia, int $pageNumber, int $totalPages): array
     {
+        $left = 50.0;
+        $right = 545.0;
+        $bottom = 60.0;
+        $top = 820.0;
+        $width = $right - $left;
+
         $comprobante = $this->resolveComprobanteLabel((int) $factura->cbte_tipo);
         $letra = $this->resolveComprobanteLetra((int) $factura->cbte_tipo);
         $numero = sprintf('%04d-%08d', (int) $factura->pto_vta, (int) ($factura->cbte_numero ?? 0));
@@ -110,197 +116,215 @@ class FacturaPdfService
             (string) ($factura->periodo_facturado?->value ?? $factura->periodo_facturado)
         );
 
-        $elements = [];
-
         $razonSocial = (string) (config('services.arca.emisor_razon_social', '') ?: ($factura->emisor?->razon_social ?? ''));
         $cuitEmisor = (string) (config('services.arca.cuit_emisor_default', '') ?: ($factura->emisor?->cuit ?? ''));
         $condicionIva = (string) (config('services.arca.emisor_condicion_iva', '') ?: ($factura->emisor?->condicion_iva ?? ''));
         $domicilioFiscal = (string) config('services.arca.emisor_domicilio', '');
 
-        $this->addText($elements, 255, 820, 'F2', 14, $copia);
-        $this->addLine($elements, 50, 806, 545, 806);
-
-        $leftY = 790;
-        $rightY = 790;
-        $this->addText($elements, 50, $leftY, 'F2', 14, $razonSocial);
-        $leftY -= 14;
-        $this->addText($elements, 50, $leftY, 'F1', 10, sprintf('CUIT emisor: %s', $cuitEmisor));
-        $leftY -= 12;
-        $this->addText($elements, 50, $leftY, 'F1', 10, sprintf('Condicion IVA: %s', $condicionIva));
-        $leftY -= 12;
-        if ($domicilioFiscal !== '') {
-            $this->addText($elements, 50, $leftY, 'F1', 10, sprintf('Domicilio fiscal: %s', $domicilioFiscal));
-            $leftY -= 12;
-        }
-        $this->addText($elements, 50, $leftY, 'F1', 10, sprintf('Punto de venta: %04d', (int) $factura->pto_vta));
-        $leftY -= 12;
-
-        $this->addText($elements, 330, $rightY, 'F2', 12, sprintf('FACTURA %s', $letra !== '' ? $letra : $comprobante));
-        $rightY -= 14;
-        $this->addText($elements, 330, $rightY, 'F1', 10, sprintf('Comprobante: %s', $comprobante));
-        $rightY -= 12;
-        $this->addText($elements, 330, $rightY, 'F1', 10, sprintf('Numero: %s', $numero));
-        $rightY -= 12;
-        $this->addText($elements, 330, $rightY, 'F1', 10, sprintf('Fecha emision: %s', $this->formatDate($factura->fecha_cbte)));
-        $rightY -= 12;
-        $this->addText($elements, 330, $rightY, 'F1', 10, sprintf('CAE: %s', (string) ($factura->cae ?? '')));
-        $rightY -= 12;
-        $this->addText($elements, 330, $rightY, 'F1', 10, sprintf('Vto CAE: %s', $this->formatDate($factura->cae_vto)));
-
-        $separatorY = min($leftY, $rightY) - 10;
-        $this->addLine($elements, 50, $separatorY, 545, $separatorY);
-
-        $y = $separatorY - 18;
-        $this->addText($elements, 50, $y, 'F2', 11, 'Receptor');
-        $y -= 12;
-        $this->addText($elements, 50, $y, 'F1', 10, sprintf('Cliente: %s', $factura->cliente_nombre));
-        $y -= 12;
-        $this->addText($elements, 50, $y, 'F1', 10, sprintf('CUIT receptor: %s', $factura->doc_nro));
-        $y -= 12;
-        $domicilioLines = $this->wrapText(sprintf('Domicilio: %s', (string) ($factura->cliente_domicilio ?? '')), 70);
-        foreach ($domicilioLines as $line) {
-            $this->addText($elements, 50, $y, 'F1', 10, $line);
-            $y -= 12;
-        }
-        if ($factura->sucursal) {
-            $this->addText($elements, 50, $y, 'F1', 10, sprintf('Sucursal: %s', $factura->sucursal->nombre ?? ''));
-            $y -= 12;
-        }
-        $this->addText($elements, 50, $y, 'F1', 10, sprintf('Periodo facturado: %s', $periodo));
-        $y -= 12;
-        $this->addText($elements, 50, $y, 'F1', 10, sprintf('Fecha vto pago: %s', $this->formatDate($factura->fecha_vto_pago)));
-        $y -= 12;
-        $condicionesVenta = $this->formatCondicionesVenta($factura->condiciones_venta ?? []);
-        if ($condicionesVenta !== '') {
-            $this->addText($elements, 50, $y, 'F1', 10, sprintf('Condiciones de venta: %s', $condicionesVenta));
-            $y -= 12;
-        }
-        $this->addText($elements, 50, $y, 'F1', 10, sprintf('Concepto: %s', $this->resolveConcepto((int) $factura->concepto)));
-        $y -= 14;
-
-        $this->addText($elements, 50, $y, 'F2', 11, 'Detalle');
-        $y -= 12;
-        $header = sprintf('%-3s %-30s %6s %-10s %10s %7s %10s %7s %10s', '#', 'Descripcion', 'Cant', 'U.Medida', 'Precio', 'Bonif', 'Subtotal', 'IVA%', 'Sub c/IVA');
-        $this->addText($elements, 50, $y, 'F3', 8, $header);
-        $y -= 10;
-        $this->addLine($elements, 50, $y, 545, $y);
-        $y -= 12;
-
-        foreach ($factura->detallePdf as $item) {
-            $line = sprintf(
-                '%-3s %-30s %6s %-10s %10s %7s %10s %7s %10s',
-                (string) (int) $item->orden,
-                $this->truncate((string) $item->descripcion, 30),
-                $this->formatNumber($item->cantidad),
-                $this->truncate((string) ($item->unidad_medida ?? ''), 10),
-                $this->formatMoney($item->precio_unitario),
-                $this->formatNumber($item->bonificacion_pct ?? 0) . '%',
-                $this->formatMoney($item->subtotal),
-                $this->formatNumber($item->alicuota_iva_pct ?? 0) . '%',
-                $this->formatMoney($item->subtotal_con_iva)
-            );
-            $this->addText($elements, 50, $y, 'F3', 8, $line);
-            $y -= 12;
-        }
-
-        $y -= 6;
-        $this->addLine($elements, 50, $y, 545, $y);
-        $y -= 14;
-
         $detalleTotals = $this->computeDetalleTotals($factura);
+        $ivaBreakdown = $this->computeIvaBreakdown($factura, $detalleTotals);
 
-        $this->addText($elements, 50, $y, 'F2', 10, 'IVA discriminado');
-        $y -= 12;
-        if ($factura->ivaItems->isNotEmpty()) {
-            foreach ($factura->ivaItems as $iva) {
-                $this->addText(
-                    $elements,
-                    50,
-                    $y,
-                    'F1',
-                    10,
-                    sprintf('IVA %s Base %s Importe %s', (string) $iva->iva_id, $this->formatMoney($iva->base_imp), $this->formatMoney($iva->importe))
-                );
-                $y -= 12;
-            }
-        } elseif (! empty($detalleTotals['iva_groups'])) {
-            foreach ($detalleTotals['iva_groups'] as $group) {
-                $this->addText(
-                    $elements,
-                    50,
-                    $y,
-                    'F1',
-                    10,
-                    sprintf('IVA %s%% Base %s Importe %s', $this->formatNumber($group['rate']), $this->formatMoney($group['base']), $this->formatMoney($group['iva']))
-                );
-                $y -= 12;
-            }
-        } else {
-            $this->addText($elements, 50, $y, 'F1', 10, 'Sin IVA detallado.');
-            $y -= 12;
-        }
-
-        if ($factura->tributos->isNotEmpty()) {
-            $this->addText($elements, 50, $y, 'F2', 10, 'Otros tributos');
-            $y -= 12;
-            foreach ($factura->tributos as $tributo) {
-                $this->addText(
-                    $elements,
-                    50,
-                    $y,
-                    'F1',
-                    10,
-                    sprintf(
-                        '%s %s Importe %s',
-                        (string) $tributo->tributo_id,
-                        (string) ($tributo->descr ?? ''),
-                        $this->formatMoney($tributo->importe)
-                    )
-                );
-                $y -= 12;
-            }
-        }
-
-        $y -= 4;
         $netoGravado = (float) $factura->imp_neto;
-        if ($netoGravado === 0.0 && (float) ($detalleTotals['neto'] ?? 0) > 0.0) {
+        if ($netoGravado <= 0.0 && (float) ($detalleTotals['neto'] ?? 0) > 0.0) {
             $netoGravado = (float) $detalleTotals['neto'];
         }
 
-        $noGravado = (float) ($factura->imp_tot_conc + $factura->imp_op_ex);
-        if ($noGravado === 0.0 && (float) ($detalleTotals['no_gravado'] ?? 0) > 0.0) {
-            $noGravado = (float) $detalleTotals['no_gravado'];
-        }
+        $noGravado = (float) $factura->imp_tot_conc;
+        $exento = (float) $factura->imp_op_ex;
 
         $ivaTotal = (float) $factura->imp_iva;
-        if ($ivaTotal === 0.0 && (float) ($detalleTotals['iva'] ?? 0) > 0.0) {
+        if ($ivaTotal <= 0.0 && (float) ($detalleTotals['iva'] ?? 0) > 0.0) {
             $ivaTotal = (float) $detalleTotals['iva'];
         }
 
+        $otrosTributos = (float) $factura->imp_trib;
         $total = (float) $factura->imp_total;
-        if ($total === 0.0 && (float) ($detalleTotals['total'] ?? 0) > 0.0) {
-            $total = (float) $detalleTotals['total'] + (float) ($factura->imp_tot_conc + $factura->imp_op_ex + $factura->imp_trib);
+        if ($total <= 0.0 && (float) ($detalleTotals['total'] ?? 0) > 0.0) {
+            $total = (float) $detalleTotals['total'] + $noGravado + $exento + $otrosTributos;
         }
 
-        $this->addText($elements, 330, $y, 'F2', 10, sprintf('Neto gravado: %s', $this->formatMoney($netoGravado)));
-        $y -= 12;
-        $this->addText(
-            $elements,
-            330,
-            $y,
-            'F2',
-            10,
-            sprintf('No gravado: %s', $this->formatMoney($noGravado))
-        );
-        $y -= 12;
-        $this->addText($elements, 330, $y, 'F2', 10, sprintf('IVA: %s', $this->formatMoney($ivaTotal)));
-        $y -= 12;
-        $this->addText($elements, 330, $y, 'F2', 10, sprintf('Tributos: %s', $this->formatMoney($factura->imp_trib)));
-        $y -= 12;
-        $this->addText($elements, 330, $y, 'F2', 12, sprintf('Total: %s', $this->formatMoney($total)));
+        $elements = [];
 
-        $this->addText($elements, 50, 40, 'F1', 9, 'Comprobante autorizado (ARCA/WSFEv1)');
-        $this->addText($elements, 450, 40, 'F1', 9, sprintf('Pag. %d/%d', $pageNumber, $totalPages));
+        // Outer border.
+        $this->addRect($elements, $left, $bottom, $width, $top - $bottom);
+
+        // Copy label.
+        $this->addText($elements, $left + ($width / 2) - 30, $top - 10, 'F2', 12, $copia);
+
+        // Header block like ARCA: left info, middle letter box, right info.
+        $headerTop = $top - 20;
+        $headerBottom = 705;
+        $this->addLine($elements, $left, $headerBottom, $right, $headerBottom);
+
+        $midBoxLeft = 260;
+        $midBoxRight = 315;
+        $this->addLine($elements, $midBoxLeft, $headerBottom, $midBoxLeft, $headerTop);
+        $this->addLine($elements, $midBoxRight, $headerBottom, $midBoxRight, $headerTop);
+        $this->addRect($elements, $midBoxLeft, $headerBottom, $midBoxRight - $midBoxLeft, $headerTop - $headerBottom);
+
+        // Emisor (left column).
+        $y = $headerTop - 16;
+        $this->addText($elements, $left + 6, $y, 'F2', 10, $this->truncate($razonSocial, 26));
+        $y -= 12;
+        $this->addText($elements, $left + 6, $y, 'F1', 9, sprintf('Razon social: %s', $this->truncate($razonSocial, 34)));
+        $y -= 11;
+        if ($domicilioFiscal !== '') {
+            $this->addText($elements, $left + 6, $y, 'F1', 9, sprintf('Domicilio: %s', $this->truncate($domicilioFiscal, 40)));
+            $y -= 11;
+        }
+        $this->addText($elements, $left + 6, $y, 'F1', 9, sprintf('Condicion IVA: %s', $this->truncate($condicionIva, 34)));
+        $y -= 11;
+
+        // Letter box.
+        $letter = $letra !== '' ? $letra : $this->truncate($comprobante, 1);
+        $this->addText($elements, $midBoxLeft + 18, $headerTop - 45, 'F2', 30, $letter);
+        $this->addText($elements, $midBoxLeft + 12, $headerBottom + 10, 'F2', 7, 'COD. 01');
+
+        // Comprobante info (right column).
+        $ry = $headerTop - 22;
+        $this->addText($elements, $midBoxRight + 10, $ry, 'F2', 14, 'FACTURA');
+        $ry -= 14;
+        $this->addText($elements, $midBoxRight + 10, $ry, 'F1', 9, sprintf('Punto de Venta: %04d', (int) $factura->pto_vta));
+        $ry -= 11;
+        $this->addText($elements, $midBoxRight + 10, $ry, 'F1', 9, sprintf('Comp. Nro: %s', $this->truncate($numero, 20)));
+        $ry -= 11;
+        $this->addText($elements, $midBoxRight + 10, $ry, 'F1', 9, sprintf('Fecha emision: %s', $this->formatDate($factura->fecha_cbte)));
+        $ry -= 11;
+        $this->addText($elements, $midBoxRight + 10, $ry, 'F1', 9, sprintf('CUIT: %s', $cuitEmisor));
+        $ry -= 11;
+
+        // Receptor block.
+        $receptorTop = $headerBottom;
+        $receptorBottom = 625;
+        $this->addLine($elements, $left, $receptorBottom, $right, $receptorBottom);
+
+        $ry = $receptorTop - 18;
+        $this->addText($elements, $left + 6, $ry, 'F2', 10, 'Receptor');
+        $ry -= 12;
+        $this->addText($elements, $left + 6, $ry, 'F1', 9, sprintf('Cliente: %s', $this->truncate((string) $factura->cliente_nombre, 45)));
+        $ry -= 11;
+        $this->addText($elements, $left + 6, $ry, 'F1', 9, sprintf('CUIT receptor: %s', (string) $factura->doc_nro));
+        $ry -= 11;
+        $domicilio = (string) ($factura->cliente_domicilio ?? '');
+        if ($domicilio !== '') {
+            $this->addText($elements, $left + 6, $ry, 'F1', 9, sprintf('Domicilio: %s', $this->truncate($domicilio, 55)));
+            $ry -= 11;
+        }
+        if ($factura->sucursal) {
+            $this->addText($elements, $left + 6, $ry, 'F1', 9, sprintf('Sucursal: %s', $this->truncate((string) ($factura->sucursal->nombre ?? ''), 45)));
+            $ry -= 11;
+        }
+        $this->addText($elements, $left + 6, $ry, 'F1', 9, sprintf('Periodo facturado: %s', $this->truncate($periodo, 40)));
+        $ry -= 11;
+        $this->addText($elements, $left + 6, $ry, 'F1', 9, sprintf('Fecha vto pago: %s', $this->formatDate($factura->fecha_vto_pago)));
+        $ry -= 11;
+        $condicionesVenta = $this->formatCondicionesVenta($factura->condiciones_venta ?? []);
+        if ($condicionesVenta !== '') {
+            $this->addText($elements, $left + 6, $ry, 'F1', 9, sprintf('Condicion de venta: %s', $this->truncate($condicionesVenta, 40)));
+            $ry -= 11;
+        }
+
+        // Detalle table header with separators.
+        $tableHeaderTop = $receptorBottom;
+        $tableHeaderBottom = $tableHeaderTop - 18;
+        $this->addLine($elements, $left, $tableHeaderBottom, $right, $tableHeaderBottom);
+
+        $this->addText($elements, $left + 4, $tableHeaderTop - 13, 'F2', 8, 'Detalle');
+
+        $colDesc = 315.0;
+        $colCant = 365.0;
+        $colPrecio = 435.0;
+        $colIva = 475.0;
+        $this->addRect($elements, $left, $tableHeaderBottom, $width, 18);
+        $this->addLine($elements, $colDesc, $tableHeaderBottom, $colDesc, $tableHeaderTop);
+        $this->addLine($elements, $colCant, $tableHeaderBottom, $colCant, $tableHeaderTop);
+        $this->addLine($elements, $colPrecio, $tableHeaderBottom, $colPrecio, $tableHeaderTop);
+        $this->addLine($elements, $colIva, $tableHeaderBottom, $colIva, $tableHeaderTop);
+
+        $ty = $tableHeaderTop - 13;
+        $this->addText($elements, $left + 6, $ty, 'F2', 8, 'Producto/Servicio');
+        $this->addText($elements, $colDesc + 6, $ty, 'F2', 8, 'Cant');
+        $this->addText($elements, $colCant + 6, $ty, 'F2', 8, 'Precio Unit');
+        $this->addText($elements, $colPrecio + 6, $ty, 'F2', 8, 'IVA%');
+        $this->addText($elements, $colIva + 6, $ty, 'F2', 8, 'Subtotal');
+
+        // Rows.
+        $rowY = $tableHeaderBottom - 14;
+        $minY = 320;
+        foreach ($factura->detallePdf as $index => $item) {
+            if ($rowY < $minY) {
+                $this->addText($elements, $left + 6, $rowY, 'F1', 9, '... (detalle truncado)');
+                $rowY -= 12;
+                break;
+            }
+
+            $desc = $this->truncate((string) $item->descripcion, 40);
+            $this->addText($elements, $left + 6, $rowY, 'F1', 9, $desc);
+            $this->addText($elements, $colDesc + 6, $rowY, 'F1', 9, $this->formatNumber($item->cantidad));
+            $this->addText($elements, $colCant + 6, $rowY, 'F1', 9, $this->formatMoney($item->precio_unitario));
+            $this->addText($elements, $colPrecio + 6, $rowY, 'F1', 9, $this->formatNumber($item->alicuota_iva_pct ?? 0) . '%');
+            $this->addText($elements, $colIva + 6, $rowY, 'F1', 9, $this->formatMoney($item->subtotal_con_iva));
+            $rowY -= 14;
+        }
+
+        // Totals block (boxed) similar to ARCA.
+        $totalsBoxY = 120.0;
+        $totalsBoxH = 170.0;
+        $this->addRect($elements, $left, $totalsBoxY, $width, $totalsBoxH);
+
+        // Left: Otros tributos.
+        $lx = $left + 10;
+        $ly = $totalsBoxY + $totalsBoxH - 18;
+        $this->addText($elements, $lx, $ly, 'F1', 9, sprintf('Importe Otros Tributos: %s', $this->formatMoney($otrosTributos)));
+        $ly -= 12;
+        if ($factura->tributos->isNotEmpty()) {
+            foreach ($factura->tributos as $tributo) {
+                if ($ly < $totalsBoxY + 24) {
+                    break;
+                }
+                $this->addText(
+                    $elements,
+                    $lx,
+                    $ly,
+                    'F1',
+                    9,
+                    sprintf('%s %s: %s', (string) $tributo->tributo_id, $this->truncate((string) ($tributo->descr ?? ''), 18), $this->formatMoney($tributo->importe))
+                );
+                $ly -= 12;
+            }
+        }
+
+        // Right: Totals breakdown.
+        $rx = 330;
+        $ry = $totalsBoxY + $totalsBoxH - 18;
+        $this->addText($elements, $rx, $ry, 'F2', 9, sprintf('Importe Neto Gravado: %s', $this->formatMoney($netoGravado)));
+        $ry -= 12;
+        $this->addText($elements, $rx, $ry, 'F1', 9, sprintf('Importe Neto No Gravado: %s', $this->formatMoney($noGravado)));
+        $ry -= 12;
+        $this->addText($elements, $rx, $ry, 'F1', 9, sprintf('Importe Exento: %s', $this->formatMoney($exento)));
+        $ry -= 14;
+
+        // IVA lines (show common rates like ARCA).
+        $ivaRates = [27.0, 21.0, 10.5, 5.0, 2.5, 0.0];
+        foreach ($ivaRates as $rate) {
+            if ($ry < $totalsBoxY + 34) {
+                break;
+            }
+            $importe = $ivaBreakdown[(string) $rate] ?? 0.0;
+            $this->addText($elements, $rx, $ry, 'F1', 9, sprintf('IVA %s%%: %s', $this->formatNumber($rate), $this->formatMoney($importe)));
+            $ry -= 12;
+        }
+
+        $this->addText($elements, $rx, $totalsBoxY + 20, 'F2', 10, sprintf('Importe Total: %s', $this->formatMoney($total)));
+
+        // Footer.
+        $this->addText($elements, $left + 6, 90, 'F2', 12, 'ARCA');
+        $this->addText($elements, $left + 6, 78, 'F1', 8, 'Comprobante Autorizado');
+        $this->addText($elements, $left + 150, 78, 'F1', 8, 'Esta Agencia no se responsabiliza por los datos ingresados en el detalle de la operacion.');
+
+        $this->addText($elements, $left + 250, 40, 'F1', 9, sprintf('Pag. %d/%d', $pageNumber, $totalPages));
+        $this->addText($elements, $right - 230, 40, 'F1', 9, sprintf('CAE N: %s', (string) ($factura->cae ?? '')));
+        $this->addText($elements, $right - 230, 28, 'F1', 9, sprintf('Fecha de Vto. de CAE: %s', $this->formatDate($factura->cae_vto)));
 
         return $elements;
     }
@@ -378,6 +402,14 @@ class FacturaPdfService
         $elements[] = sprintf("0.7 w %.2f %.2f m %.2f %.2f l S", $x1, $y1, $x2, $y2);
     }
 
+    /**
+     * @param list<string> $elements
+     */
+    private function addRect(array &$elements, float $x, float $y, float $w, float $h): void
+    {
+        $elements[] = sprintf("0.7 w %.2f %.2f %.2f %.2f re S", $x, $y, $w, $h);
+    }
+
     private function escapePdfText(string $text): string
     {
         $text = str_replace(['\\', '(', ')'], ['\\\\', '\\(', '\\)'], $text);
@@ -437,6 +469,50 @@ class FacturaPdfService
     {
         $float = (float) $value;
         return number_format($float, $float === floor($float) ? 0 : 2, '.', '');
+    }
+
+    /**
+     * @param array{iva_groups:list<array{rate:float,base:float,iva:float}>,iva:float} $detalleTotals
+     * @return array<string,float> key rate string (e.g. "21") => importe
+     */
+    private function computeIvaBreakdown(FacturaCabecera $factura, array $detalleTotals): array
+    {
+        $breakdown = [];
+
+        if ($factura->ivaItems->isNotEmpty()) {
+            foreach ($factura->ivaItems as $item) {
+                $rate = $this->resolveIvaRateById((int) $item->iva_id);
+                if ($rate === null) {
+                    continue;
+                }
+                $key = (string) $rate;
+                $breakdown[$key] = ($breakdown[$key] ?? 0.0) + (float) $item->importe;
+            }
+        } elseif (! empty($detalleTotals['iva_groups'])) {
+            foreach ($detalleTotals['iva_groups'] as $group) {
+                $key = (string) (float) $group['rate'];
+                $breakdown[$key] = ($breakdown[$key] ?? 0.0) + (float) $group['iva'];
+            }
+        }
+
+        foreach ($breakdown as $key => $importe) {
+            $breakdown[$key] = round((float) $importe, 2);
+        }
+
+        return $breakdown;
+    }
+
+    private function resolveIvaRateById(int $ivaId): ?float
+    {
+        return match ($ivaId) {
+            6 => 27.0,
+            5 => 21.0,
+            4 => 10.5,
+            3 => 5.0,
+            2 => 2.5,
+            1 => 0.0,
+            default => null,
+        };
     }
 
     private function resolveComprobanteLabel(int $cbteTipo): string
