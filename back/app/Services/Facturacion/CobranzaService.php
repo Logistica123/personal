@@ -27,6 +27,12 @@ class CobranzaService
             if (array_key_exists('op_cobro_recibo_manual', $data)) {
                 $factura->op_cobro_recibo_manual = $data['op_cobro_recibo_manual'];
             }
+            if (array_key_exists('op_cobro_archivo_path', $data)) {
+                $factura->op_cobro_archivo_path = $data['op_cobro_archivo_path'];
+            }
+            if (array_key_exists('op_cobro_archivo_nombre', $data)) {
+                $factura->op_cobro_archivo_nombre = $data['op_cobro_archivo_nombre'];
+            }
             if (array_key_exists('forma_cobro_manual', $data)) {
                 $factura->forma_cobro_manual = $data['forma_cobro_manual'];
             }

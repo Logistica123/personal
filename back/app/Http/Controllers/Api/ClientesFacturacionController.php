@@ -11,6 +11,9 @@ use App\Models\LiquidacionRecibo;
 use App\Services\Facturacion\ClientesFacturacionQueryService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Str;
 use InvalidArgumentException;
 
 class ClientesFacturacionController extends Controller
@@ -151,6 +154,7 @@ class ClientesFacturacionController extends Controller
 
             $noGravado = (float) ($factura->imp_tot_conc ?? 0) + (float) ($factura->imp_op_ex ?? 0);
             $diferencia = round(((float) ($factura->imp_total ?? 0)) - (float) ($importeCobrado ?? 0), 2);
+            $opArchivoUrl = $factura->op_cobro_archivo_path ? Storage::disk('public')->url($factura->op_cobro_archivo_path) : null;
 
             return [
                 'row_type' => 'factura',
@@ -176,6 +180,8 @@ class ClientesFacturacionController extends Controller
                 'retenciones_gcias' => $retGcias,
                 'otras_retenciones' => $otrasRet,
                 'op_cobro_recibo' => $opCobro,
+                'op_cobro_archivo_nombre' => $factura->op_cobro_archivo_nombre,
+                'op_cobro_archivo_url' => $opArchivoUrl,
                 'forma_cobro' => $formaCobro,
                 'diferencia' => $diferencia,
                 'observaciones_cobranza' => $factura->observaciones_cobranza,
@@ -232,6 +238,15 @@ class ClientesFacturacionController extends Controller
         $validated = $this->validateManualRowPayload($request, requireClienteId: true);
 
         $row = ClienteEstadoCuentaManualRow::query()->create($validated);
+
+        $file = $this->validateOpCobroArchivo($request);
+        if ($file) {
+            $stored = $this->storeManualOpCobroArchivo($file, (int) $row->id, $row->op_cobro_archivo_path);
+            $row->op_cobro_archivo_path = $stored['path'];
+            $row->op_cobro_archivo_nombre = $stored['original'];
+            $row->save();
+        }
+
         $row->load(['sucursal']);
 
         return response()->json([
@@ -256,6 +271,15 @@ class ClientesFacturacionController extends Controller
 
         $manualRow->fill($validated);
         $manualRow->save();
+
+        $file = $this->validateOpCobroArchivo($request);
+        if ($file) {
+            $stored = $this->storeManualOpCobroArchivo($file, (int) $manualRow->id, $manualRow->op_cobro_archivo_path);
+            $manualRow->op_cobro_archivo_path = $stored['path'];
+            $manualRow->op_cobro_archivo_nombre = $stored['original'];
+            $manualRow->save();
+        }
+
         $manualRow->load(['sucursal']);
 
         return response()->json([
@@ -270,6 +294,9 @@ class ClientesFacturacionController extends Controller
             return response()->json(['message' => 'No tenes permisos para acceder a facturacion.'], 403);
         }
 
+        if ($manualRow->op_cobro_archivo_path) {
+            Storage::disk('public')->delete($manualRow->op_cobro_archivo_path);
+        }
         $manualRow->delete();
 
         return response()->json(['message' => 'Fila manual eliminada.']);
@@ -497,6 +524,7 @@ class ClientesFacturacionController extends Controller
     {
         $importeCobrado = $row->importe_cobrado !== null ? (float) $row->importe_cobrado : 0.0;
         $diferencia = round(((float) ($row->importe_a_cobrar ?? 0)) - $importeCobrado, 2);
+        $opArchivoUrl = $row->op_cobro_archivo_path ? Storage::disk('public')->url($row->op_cobro_archivo_path) : null;
 
         return [
             'row_type' => 'manual',
@@ -523,11 +551,46 @@ class ClientesFacturacionController extends Controller
             'retenciones_gcias' => $row->retenciones_gcias !== null ? (float) $row->retenciones_gcias : null,
             'otras_retenciones' => $row->otras_retenciones !== null ? (float) $row->otras_retenciones : null,
             'op_cobro_recibo' => $row->op_cobro_recibo,
+            'op_cobro_archivo_nombre' => $row->op_cobro_archivo_nombre,
+            'op_cobro_archivo_url' => $opArchivoUrl,
             'forma_cobro' => $row->forma_cobro,
             'diferencia' => $diferencia,
             'estado_cobranza' => $row->estado_cobranza,
             'estado' => 'MANUAL',
         ];
+    }
+
+    private function validateOpCobroArchivo(Request $request): ?UploadedFile
+    {
+        $validated = $request->validate([
+            'op_cobro_archivo' => ['nullable', 'file', 'max:20480', 'mimes:pdf,jpg,jpeg,png,webp'],
+        ]);
+
+        return ($validated['op_cobro_archivo'] ?? null) instanceof UploadedFile ? $validated['op_cobro_archivo'] : null;
+    }
+
+    /**
+     * @return array{path: string, original: string}
+     */
+    private function storeManualOpCobroArchivo(UploadedFile $file, int $rowId, ?string $previousPath = null): array
+    {
+        $original = trim((string) $file->getClientOriginalName());
+        if ($original === '') {
+            $original = 'adjunto';
+        }
+        $original = Str::limit($original, 255, '');
+
+        $extension = trim((string) ($file->getClientOriginalExtension() ?: $file->guessExtension() ?: ''));
+        $extension = $extension !== '' ? '.' . strtolower($extension) : '';
+        $filename = (string) Str::uuid() . $extension;
+
+        $path = $file->storeAs("cobranzas/manual/{$rowId}", $filename, 'public');
+
+        if ($previousPath) {
+            Storage::disk('public')->delete($previousPath);
+        }
+
+        return ['path' => $path, 'original' => $original];
     }
 
     /**

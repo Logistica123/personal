@@ -26,6 +26,8 @@ class ClienteEstadoCuentaManualRow extends Model
         'retenciones_gcias',
         'otras_retenciones',
         'op_cobro_recibo',
+        'op_cobro_archivo_path',
+        'op_cobro_archivo_nombre',
         'forma_cobro',
         'estado_cobranza',
     ];
@@ -55,4 +57,3 @@ class ClienteEstadoCuentaManualRow extends Model
         return $this->belongsTo(Sucursal::class, 'sucursal_id');
     }
 }
-

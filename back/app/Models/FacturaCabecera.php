@@ -62,6 +62,8 @@ class FacturaCabecera extends Model
         'estado_cobranza',
         'observaciones_cobranza',
         'op_cobro_recibo_manual',
+        'op_cobro_archivo_path',
+        'op_cobro_archivo_nombre',
         'forma_cobro_manual',
         'retenciones_gcias_manual',
         'otras_retenciones_manual',

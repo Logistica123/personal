@@ -26198,6 +26198,8 @@ type EstadoCuentaRow = {
   retenciones_gcias?: number | null;
   otras_retenciones?: number | null;
   op_cobro_recibo?: string | null;
+  op_cobro_archivo_nombre?: string | null;
+  op_cobro_archivo_url?: string | null;
   forma_cobro?: string | null;
   op_cobro_recibo_manual?: string | null;
   forma_cobro_manual?: string | null;
@@ -26215,6 +26217,13 @@ const LIQ_CLIENTE_PERIODOS = [
   { value: 'MES_COMPLETO', label: 'MC' },
 ];
 
+const COBRO_FORMA_OPTIONS = [
+  { value: 'Echeq', label: 'Echeq' },
+  { value: 'Transferencia', label: 'Transferencia' },
+  { value: 'Efectivo', label: 'Efectivo' },
+  { value: 'Echeq/Transferencia', label: 'Echeq/Transferencia' },
+];
+
 const toPeriodoLabel = (anio: number, mes: number): string => {
   const formatter = new Intl.DateTimeFormat('es-AR', { month: 'short' });
   const monthShort = formatter.format(new Date(anio, Math.max(0, mes - 1), 1)).replace('.', '');
@@ -26226,6 +26235,7 @@ const LiquidacionesClientePage: React.FC = () => {
   const apiBaseUrl = useMemo(() => resolveApiBaseUrl(), []);
   const authUser = useStoredAuthUser();
   const actorHeaders = useMemo(() => buildActorHeaders(authUser), [authUser]);
+  const location = useLocation();
   const [clientes, setClientes] = useState<Cliente[]>([]);
   const [clientesLoading, setClientesLoading] = useState(true);
   const [clientesError, setClientesError] = useState<string | null>(null);
@@ -26243,6 +26253,7 @@ const LiquidacionesClientePage: React.FC = () => {
     forma_cobro: '',
     observaciones: '',
   });
+  const [editCobranzaArchivo, setEditCobranzaArchivo] = useState<File | null>(null);
   const [editCobranzaSaving, setEditCobranzaSaving] = useState(false);
   const [editCobranzaError, setEditCobranzaError] = useState<string | null>(null);
   const [manualRowEditor, setManualRowEditor] = useState<EstadoCuentaRow | null>(null);
@@ -26266,6 +26277,7 @@ const LiquidacionesClientePage: React.FC = () => {
     op_cobro_recibo: '',
     forma_cobro: '',
   });
+  const [manualRowArchivo, setManualRowArchivo] = useState<File | null>(null);
   const [manualRowSaving, setManualRowSaving] = useState(false);
   const [manualRowError, setManualRowError] = useState<string | null>(null);
   const [filters, setFilters] = useState({
@@ -26277,6 +26289,26 @@ const LiquidacionesClientePage: React.FC = () => {
     estado_cobranza: '',
   });
   const [queryFilters, setQueryFilters] = useState(filters);
+  const hydratedFromUrlRef = useRef(false);
+
+  useEffect(() => {
+    if (hydratedFromUrlRef.current) return;
+    const params = new URLSearchParams(location.search);
+    const clienteId = (params.get('cliente_id') ?? '').trim();
+    if (!clienteId) return;
+
+    hydratedFromUrlRef.current = true;
+    const next = {
+      cliente_id: clienteId,
+      sucursal_id: (params.get('sucursal_id') ?? '').trim(),
+      anio: (params.get('anio') ?? '').trim(),
+      mes: (params.get('mes') ?? '').trim(),
+      periodo: (params.get('periodo') ?? '').trim(),
+      estado_cobranza: (params.get('estado_cobranza') ?? '').trim(),
+    };
+    setFilters(next);
+    setQueryFilters(next);
+  }, [location.search]);
 
   const requestJson = useCallback(
     async (path: string, options: RequestInit = {}) => {
@@ -26291,6 +26323,32 @@ const LiquidacionesClientePage: React.FC = () => {
         credentials: 'include',
         ...options,
         headers,
+      });
+
+      const payload = (await parseJsonSafe(response).catch(() => null)) as any;
+      if (!response.ok) {
+        const message =
+          typeof payload?.message === 'string' ? payload.message : `Error ${response.status}: ${response.statusText}`;
+        throw new Error(message);
+      }
+      return payload;
+    },
+    [actorHeaders, apiBaseUrl]
+  );
+
+  const requestFormData = useCallback(
+    async (path: string, form: FormData, method: string) => {
+      const url = resolveApiUrl(apiBaseUrl, path) ?? `${apiBaseUrl}${path}`;
+      const headers: HeadersInit = {
+        Accept: 'application/json',
+        ...(actorHeaders ?? {}),
+      };
+
+      const response = await fetch(url, {
+        credentials: 'include',
+        method,
+        headers,
+        body: form,
       });
 
       const payload = (await parseJsonSafe(response).catch(() => null)) as any;
@@ -26384,6 +26442,7 @@ const LiquidacionesClientePage: React.FC = () => {
       return;
     }
     setEditCobranzaError(null);
+    setEditCobranzaArchivo(null);
     setEditCobranzaRow(row);
     setEditCobranzaDraft({
       fecha_cobro: row.fecha_cobro ?? '',
@@ -26400,6 +26459,7 @@ const LiquidacionesClientePage: React.FC = () => {
     if (editCobranzaSaving) return;
     setEditCobranzaRow(null);
     setEditCobranzaError(null);
+    setEditCobranzaArchivo(null);
   }, [editCobranzaSaving]);
 
   const normalizeNumberInput = useCallback((value: string): number | null => {
@@ -26425,20 +26485,25 @@ const LiquidacionesClientePage: React.FC = () => {
         forma_cobro_manual: editCobranzaDraft.forma_cobro.trim() || null,
       };
 
-      await requestJson(`/api/facturas/${editCobranzaRow.factura_id}/actualizar-cobranza`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
+      const form = new FormData();
+      Object.entries(payload).forEach(([key, value]) => {
+        form.append(key, value === null ? '' : String(value));
       });
+      if (editCobranzaArchivo) {
+        form.append('op_cobro_archivo', editCobranzaArchivo);
+      }
+
+      await requestFormData(`/api/facturas/${editCobranzaRow.factura_id}/actualizar-cobranza`, form, 'POST');
 
       setEditCobranzaRow(null);
+      setEditCobranzaArchivo(null);
       await loadEstadoCuenta();
     } catch (err) {
       setEditCobranzaError((err as Error).message ?? 'No se pudo guardar la cobranza.');
     } finally {
       setEditCobranzaSaving(false);
     }
-  }, [editCobranzaDraft, editCobranzaRow, editCobranzaSaving, loadEstadoCuenta, normalizeNumberInput, requestJson]);
+  }, [editCobranzaArchivo, editCobranzaDraft, editCobranzaRow, editCobranzaSaving, loadEstadoCuenta, normalizeNumberInput, requestFormData]);
 
   const handleExportCsv = useCallback(() => {
     const today = new Date().toISOString().slice(0, 10);
@@ -26525,6 +26590,7 @@ const LiquidacionesClientePage: React.FC = () => {
       return;
     }
     setManualRowError(null);
+    setManualRowArchivo(null);
     setManualRowEditor({ row_type: 'manual', manual_id: null, factura_id: null } as EstadoCuentaRow);
     setManualRowDraft((prev) => ({
       ...prev,
@@ -26541,6 +26607,7 @@ const LiquidacionesClientePage: React.FC = () => {
       return;
     }
     setManualRowError(null);
+    setManualRowArchivo(null);
     setManualRowEditor(row);
     setManualRowDraft({
       sucursal_id: row.sucursal_id ? String(row.sucursal_id) : '',
@@ -26568,6 +26635,7 @@ const LiquidacionesClientePage: React.FC = () => {
     if (manualRowSaving) return;
     setManualRowEditor(null);
     setManualRowError(null);
+    setManualRowArchivo(null);
   }, [manualRowSaving]);
 
   const handleSaveManualRow = useCallback(async () => {
@@ -26611,21 +26679,23 @@ const LiquidacionesClientePage: React.FC = () => {
         forma_cobro: manualRowDraft.forma_cobro.trim() || null,
       };
 
+      const form = new FormData();
+      Object.entries(payload).forEach(([key, value]) => {
+        form.append(key, value === null ? '' : String(value));
+      });
+      if (manualRowArchivo) {
+        form.append('op_cobro_archivo', manualRowArchivo);
+      }
+
       if (manualRowEditor.manual_id) {
-        await requestJson(`/api/clientes-facturacion/estado-cuenta/manual/${manualRowEditor.manual_id}`, {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload),
-        });
+        form.append('_method', 'PUT');
+        await requestFormData(`/api/clientes-facturacion/estado-cuenta/manual/${manualRowEditor.manual_id}`, form, 'POST');
       } else {
-        await requestJson('/api/clientes-facturacion/estado-cuenta/manual', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload),
-        });
+        await requestFormData('/api/clientes-facturacion/estado-cuenta/manual', form, 'POST');
       }
 
       setManualRowEditor(null);
+      setManualRowArchivo(null);
       if (!queryFilters.cliente_id) {
         const appliedFilters = {
           ...filters,
@@ -26647,7 +26717,7 @@ const LiquidacionesClientePage: React.FC = () => {
     } finally {
       setManualRowSaving(false);
     }
-  }, [filters, loadEstadoCuenta, manualRowDraft, manualRowEditor, manualRowSaving, normalizeNumberInput, queryFilters, requestJson]);
+  }, [filters, loadEstadoCuenta, manualRowArchivo, manualRowDraft, manualRowEditor, manualRowSaving, normalizeNumberInput, queryFilters, requestFormData]);
 
   const handleDeleteManualRow = useCallback(async () => {
     if (!manualRowEditor?.manual_id || manualRowSaving) return;
@@ -26732,13 +26802,15 @@ const LiquidacionesClientePage: React.FC = () => {
                     type="button"
                     className={`cliente-logo-btn${isActive ? ' is-active' : ''}`}
                     title={buttonTitle}
-                    onClick={() =>
-                      setFilters((prev) => ({
-                        ...prev,
+                    onClick={() => {
+                      const next = {
+                        ...filters,
                         cliente_id: String(cliente.id),
                         sucursal_id: '',
-                      }))
-                    }
+                      };
+                      setFilters(next);
+                      setQueryFilters(next);
+                    }}
                   >
                     {!logoAvailable || logoStatus !== 'loaded' ? (
                       <span className="cliente-logo-fallback">{initials || 'CL'}</span>
@@ -26774,11 +26846,15 @@ const LiquidacionesClientePage: React.FC = () => {
               <select
                 value={filters.cliente_id}
                 onChange={(event) =>
-                  setFilters((prev) => ({
-                    ...prev,
-                    cliente_id: event.target.value,
-                    sucursal_id: '',
-                  }))
+                  (() => {
+                    const next = {
+                      ...filters,
+                      cliente_id: event.target.value,
+                      sucursal_id: '',
+                    };
+                    setFilters(next);
+                    setQueryFilters(next);
+                  })()
                 }
               >
                 <option value="">Seleccionar...</option>
@@ -26899,7 +26975,16 @@ const LiquidacionesClientePage: React.FC = () => {
                       <td className="value-right">{formatCurrency(row.importe_cobrado ?? null)}</td>
                       <td className="value-right">{formatCurrency(row.retenciones_gcias ?? null)}</td>
                       <td className="value-right">{formatCurrency(row.otras_retenciones ?? null)}</td>
-                      <td>{row.op_cobro_recibo ?? '—'}</td>
+                      <td>
+                        {row.op_cobro_recibo ? <div>{row.op_cobro_recibo}</div> : <div>—</div>}
+                        {row.op_cobro_archivo_url ? (
+                          <div style={{ marginTop: 4 }}>
+                            <a href={row.op_cobro_archivo_url} target="_blank" rel="noreferrer">
+                              {row.op_cobro_archivo_nombre ?? 'Adjunto'}
+                            </a>
+                          </div>
+                        ) : null}
+                      </td>
                       <td>{row.forma_cobro ?? '—'}</td>
                       <td className="value-right">{formatCurrency(row.diferencia ?? null)}</td>
                       <td>
@@ -26988,13 +27073,44 @@ const LiquidacionesClientePage: React.FC = () => {
                   />
                 </label>
                 <label className="input-control">
-                  <span>Forma cobro</span>
+                  <span>Adjunto OP</span>
                   <input
+                    type="file"
+                    accept="application/pdf,image/*"
+                    disabled={editCobranzaSaving}
+                    onChange={(event) => setEditCobranzaArchivo(event.target.files?.[0] ?? null)}
+                  />
+                  {editCobranzaArchivo ? (
+                    <small className="helper-text">Seleccionado: {editCobranzaArchivo.name}</small>
+                  ) : editCobranzaRow.op_cobro_archivo_url ? (
+                    <small className="helper-text">
+                      Actual:{' '}
+                      <a href={editCobranzaRow.op_cobro_archivo_url} target="_blank" rel="noreferrer">
+                        {editCobranzaRow.op_cobro_archivo_nombre ?? 'Adjunto'}
+                      </a>
+                    </small>
+                  ) : (
+                    <small className="helper-text">Sin archivo</small>
+                  )}
+                </label>
+                <label className="input-control">
+                  <span>Forma cobro</span>
+                  <select
                     value={editCobranzaDraft.forma_cobro}
                     onChange={(event) => setEditCobranzaDraft((prev) => ({ ...prev, forma_cobro: event.target.value }))}
                     disabled={editCobranzaSaving}
-                    placeholder="Transferencia / Efectivo / ..."
-                  />
+                  >
+                    <option value="">(Sin definir)</option>
+                    {editCobranzaDraft.forma_cobro &&
+                    !COBRO_FORMA_OPTIONS.some((option) => option.value === editCobranzaDraft.forma_cobro) ? (
+                      <option value={editCobranzaDraft.forma_cobro}>{editCobranzaDraft.forma_cobro} (actual)</option>
+                    ) : null}
+                    {COBRO_FORMA_OPTIONS.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
                 </label>
                 <label className="input-control" style={{ gridColumn: 'span 2' }}>
                   <span>Observaciones</span>
@@ -27213,12 +27329,44 @@ const LiquidacionesClientePage: React.FC = () => {
                   />
                 </label>
                 <label className="input-control">
-                  <span>Forma cobro</span>
+                  <span>Adjunto OP</span>
                   <input
+                    type="file"
+                    accept="application/pdf,image/*"
+                    disabled={manualRowSaving}
+                    onChange={(event) => setManualRowArchivo(event.target.files?.[0] ?? null)}
+                  />
+                  {manualRowArchivo ? (
+                    <small className="helper-text">Seleccionado: {manualRowArchivo.name}</small>
+                  ) : manualRowEditor?.op_cobro_archivo_url ? (
+                    <small className="helper-text">
+                      Actual:{' '}
+                      <a href={manualRowEditor.op_cobro_archivo_url} target="_blank" rel="noreferrer">
+                        {manualRowEditor.op_cobro_archivo_nombre ?? 'Adjunto'}
+                      </a>
+                    </small>
+                  ) : (
+                    <small className="helper-text">Sin archivo</small>
+                  )}
+                </label>
+                <label className="input-control">
+                  <span>Forma cobro</span>
+                  <select
                     value={manualRowDraft.forma_cobro}
                     onChange={(event) => setManualRowDraft((prev) => ({ ...prev, forma_cobro: event.target.value }))}
                     disabled={manualRowSaving}
-                  />
+                  >
+                    <option value="">(Sin definir)</option>
+                    {manualRowDraft.forma_cobro &&
+                    !COBRO_FORMA_OPTIONS.some((option) => option.value === manualRowDraft.forma_cobro) ? (
+                      <option value={manualRowDraft.forma_cobro}>{manualRowDraft.forma_cobro} (actual)</option>
+                    ) : null}
+                    {COBRO_FORMA_OPTIONS.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
                 </label>
                 <label className="input-control" style={{ gridColumn: 'span 2' }}>
                   <span>Observaciones</span>
@@ -58287,6 +58435,22 @@ const FacturacionCreatePage: React.FC = () => {
         <div className="form-actions">
           <button type="button" className="primary-action" onClick={handleSaveDraft} disabled={loading}>
             Guardar borrador
+          </button>
+          <button
+            type="button"
+            className="secondary-action"
+            onClick={() => {
+              const params = new URLSearchParams();
+              if (form.cliente_id) params.set('cliente_id', form.cliente_id);
+              if (form.sucursal_id) params.set('sucursal_id', form.sucursal_id);
+              if (form.anio_facturado) params.set('anio', form.anio_facturado);
+              if (form.mes_facturado) params.set('mes', form.mes_facturado);
+              if (form.periodo_facturado) params.set('periodo', form.periodo_facturado);
+              navigate(`/liquidaciones/cliente?${params.toString()}`);
+            }}
+            disabled={!form.cliente_id}
+          >
+            Ver estado de cuenta
           </button>
           <button type="button" className="secondary-action" onClick={handleValidate} disabled={loading || !facturaId}>
             Validar

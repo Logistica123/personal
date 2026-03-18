@@ -7,6 +7,9 @@ use App\Models\FacturaCabecera;
 use App\Services\Facturacion\CobranzaService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Str;
 
 class FacturaCobranzaController extends Controller
 {
@@ -26,10 +29,22 @@ class FacturaCobranzaController extends Controller
             'monto_pagado_manual' => ['nullable', 'numeric'],
             'observaciones_cobranza' => ['nullable', 'string', 'max:5000'],
             'op_cobro_recibo_manual' => ['nullable', 'string', 'max:40'],
+            'op_cobro_archivo' => ['nullable', 'file', 'max:20480', 'mimes:pdf,jpg,jpeg,png,webp'],
             'forma_cobro_manual' => ['nullable', 'string', 'max:255'],
             'retenciones_gcias_manual' => ['nullable', 'numeric'],
             'otras_retenciones_manual' => ['nullable', 'numeric'],
         ]);
+
+        if (array_key_exists('op_cobro_archivo', $validated) && $validated['op_cobro_archivo'] instanceof UploadedFile) {
+            $stored = $this->storeOpCobroArchivo(
+                $validated['op_cobro_archivo'],
+                (int) $factura->id,
+                $factura->op_cobro_archivo_path
+            );
+            $validated['op_cobro_archivo_path'] = $stored['path'];
+            $validated['op_cobro_archivo_nombre'] = $stored['original'];
+        }
+        unset($validated['op_cobro_archivo']);
 
         if (! empty($validated['fecha_pago_manual'])) {
             $fechaAprox = $validated['fecha_aprox_cobro'] ?? optional($factura->fecha_aprox_cobro)->format('Y-m-d');
@@ -60,6 +75,8 @@ class FacturaCobranzaController extends Controller
                 'monto_pagado_manual' => $factura->monto_pagado_manual,
                 'observaciones_cobranza' => $factura->observaciones_cobranza,
                 'op_cobro_recibo_manual' => $factura->op_cobro_recibo_manual,
+                'op_cobro_archivo_nombre' => $factura->op_cobro_archivo_nombre,
+                'op_cobro_archivo_url' => $factura->op_cobro_archivo_path ? Storage::disk('public')->url($factura->op_cobro_archivo_path) : null,
                 'forma_cobro_manual' => $factura->forma_cobro_manual,
                 'retenciones_gcias_manual' => $factura->retenciones_gcias_manual,
                 'otras_retenciones_manual' => $factura->otras_retenciones_manual,
@@ -175,5 +192,29 @@ class FacturaCobranzaController extends Controller
         return in_array('facturacion', $permissions, true)
             || in_array('pagos', $permissions, true)
             || in_array('liquidaciones', $permissions, true);
+    }
+
+    /**
+     * @return array{path: string, original: string}
+     */
+    private function storeOpCobroArchivo(UploadedFile $file, int $facturaId, ?string $previousPath = null): array
+    {
+        $original = trim((string) $file->getClientOriginalName());
+        if ($original === '') {
+            $original = 'adjunto';
+        }
+        $original = Str::limit($original, 255, '');
+
+        $extension = trim((string) ($file->getClientOriginalExtension() ?: $file->guessExtension() ?: ''));
+        $extension = $extension !== '' ? '.' . strtolower($extension) : '';
+        $filename = (string) Str::uuid() . $extension;
+
+        $path = $file->storeAs("cobranzas/facturas/{$facturaId}", $filename, 'public');
+
+        if ($previousPath) {
+            Storage::disk('public')->delete($previousPath);
+        }
+
+        return ['path' => $path, 'original' => $original];
     }
 }
