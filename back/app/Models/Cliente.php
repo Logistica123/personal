@@ -18,6 +18,7 @@ class Cliente extends Model
         'nombre',
         'direccion',
         'documento_fiscal',
+        'logo_url',
     ];
 
     public function sucursales()

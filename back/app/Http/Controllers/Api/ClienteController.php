@@ -46,6 +46,7 @@ class ClienteController extends Controller
                 'codigo' => $cliente->codigo,
                 'nombre' => $cliente->nombre,
                 'documento_fiscal' => $cliente->documento_fiscal,
+                'logo_url' => $cliente->logo_url,
             ];
         })->values();
 
@@ -85,6 +86,7 @@ class ClienteController extends Controller
             'nombre' => ['nullable', 'string'],
             'direccion' => ['nullable', 'string'],
             'documento_fiscal' => ['nullable', 'string'],
+            'logo_url' => ['nullable', 'string', 'max:4096'],
             'sucursales' => ['sometimes', 'array'],
             'sucursales.*.nombre' => ['nullable', 'string'],
             'sucursales.*.direccion' => ['nullable', 'string'],
@@ -104,6 +106,7 @@ class ClienteController extends Controller
                 'nombre' => $this->sanitizeString($validated['nombre'] ?? null),
                 'direccion' => $this->sanitizeString($validated['direccion'] ?? null),
                 'documento_fiscal' => $this->sanitizeDocument($validated['documento_fiscal'] ?? null),
+                'logo_url' => $this->sanitizeString($validated['logo_url'] ?? null),
             ]);
 
             foreach ($validated['sucursales'] ?? [] as $sucursalData) {
@@ -138,6 +141,7 @@ class ClienteController extends Controller
             'nombre' => ['nullable', 'string'],
             'direccion' => ['nullable', 'string'],
             'documento_fiscal' => ['nullable', 'string'],
+            'logo_url' => ['nullable', 'string', 'max:4096'],
             'sucursales' => ['sometimes', 'array'],
             'sucursales.*.id' => [
                 'nullable',
@@ -157,12 +161,17 @@ class ClienteController extends Controller
         }
 
         $cliente = DB::transaction(function () use ($cliente, $validated) {
-            $cliente->fill([
+            $payload = [
                 'codigo' => $this->sanitizeString($validated['codigo'] ?? null),
                 'nombre' => $this->sanitizeString($validated['nombre'] ?? null),
                 'direccion' => $this->sanitizeString($validated['direccion'] ?? null),
                 'documento_fiscal' => $this->sanitizeDocument($validated['documento_fiscal'] ?? null),
-            ]);
+            ];
+            if (array_key_exists('logo_url', $validated)) {
+                $payload['logo_url'] = $this->sanitizeString($validated['logo_url'] ?? null);
+            }
+
+            $cliente->fill($payload);
 
             $cliente->save();
 
@@ -249,6 +258,7 @@ class ClienteController extends Controller
             'nombre' => $cliente->nombre,
             'direccion' => $cliente->direccion,
             'documento_fiscal' => $cliente->documento_fiscal,
+            'logo_url' => $cliente->logo_url,
             'sucursales' => $cliente->sucursales->map(fn ($sucursal) => [
                 'id' => $sucursal->id,
                 'nombre' => $sucursal->nombre,

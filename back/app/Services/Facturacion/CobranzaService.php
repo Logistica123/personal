@@ -24,6 +24,18 @@ class CobranzaService
             $factura->fecha_pago_manual = $data['fecha_pago_manual'] ?? $factura->fecha_pago_manual;
             $factura->monto_pagado_manual = $data['monto_pagado_manual'] ?? $factura->monto_pagado_manual;
             $factura->observaciones_cobranza = $data['observaciones_cobranza'] ?? $factura->observaciones_cobranza;
+            if (array_key_exists('op_cobro_recibo_manual', $data)) {
+                $factura->op_cobro_recibo_manual = $data['op_cobro_recibo_manual'];
+            }
+            if (array_key_exists('forma_cobro_manual', $data)) {
+                $factura->forma_cobro_manual = $data['forma_cobro_manual'];
+            }
+            if (array_key_exists('retenciones_gcias_manual', $data)) {
+                $factura->retenciones_gcias_manual = $data['retenciones_gcias_manual'];
+            }
+            if (array_key_exists('otras_retenciones_manual', $data)) {
+                $factura->otras_retenciones_manual = $data['otras_retenciones_manual'];
+            }
             $factura->estado_cobranza = $this->stateResolver->resolve($factura);
             $factura->save();
 

@@ -1802,6 +1802,53 @@ body {
   flex-wrap: wrap;
 }
 
+.cliente-logo-strip {
+  display: flex;
+  gap: 0.6rem;
+  overflow-x: auto;
+  padding: 0.35rem 0.2rem;
+  margin: -0.2rem;
+  scroll-snap-type: x mandatory;
+}
+
+.cliente-logo-btn {
+  width: 56px;
+  height: 56px;
+  border-radius: 16px;
+  border: 1px solid rgba(15, 31, 58, 0.14);
+  background: #ffffff;
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  position: relative;
+  overflow: hidden;
+  cursor: pointer;
+  scroll-snap-align: start;
+}
+
+.cliente-logo-btn.is-active {
+  border-color: rgba(35, 118, 255, 0.65);
+  box-shadow: 0 10px 24px rgba(35, 118, 255, 0.18);
+}
+
+.cliente-logo-btn img {
+  position: absolute;
+  inset: 6px;
+  width: calc(100% - 12px);
+  height: calc(100% - 12px);
+  object-fit: contain;
+  z-index: 1;
+}
+
+.cliente-logo-fallback {
+  font-weight: 800;
+  color: rgba(15, 31, 58, 0.72);
+  font-size: 0.9rem;
+  letter-spacing: 0.02em;
+  user-select: none;
+  z-index: 0;
+}
+
 .search-wrapper {
   flex: 1;
   min-width: 240px;
@@ -1861,6 +1908,11 @@ td {
   padding: 0.85rem 1rem;
   text-align: left;
   vertical-align: top;
+}
+
+.value-right {
+  text-align: right;
+  white-space: nowrap;
 }
 
 thead th {

@@ -143,6 +143,10 @@ Route::middleware('auth.api')->group(function () {
 
     Route::get('/clientes-facturacion/resumen', [ClientesFacturacionController::class, 'resumen']);
     Route::get('/clientes-facturacion/detalle', [ClientesFacturacionController::class, 'detalle']);
+    Route::get('/clientes-facturacion/estado-cuenta', [ClientesFacturacionController::class, 'estadoCuenta']);
+    Route::post('/clientes-facturacion/estado-cuenta/manual', [ClientesFacturacionController::class, 'storeManualRow']);
+    Route::put('/clientes-facturacion/estado-cuenta/manual/{manualRow}', [ClientesFacturacionController::class, 'updateManualRow']);
+    Route::delete('/clientes-facturacion/estado-cuenta/manual/{manualRow}', [ClientesFacturacionController::class, 'destroyManualRow']);
     Route::get('/clientes-facturacion/{cliente}/sucursales', [ClientesFacturacionController::class, 'sucursales']);
     Route::get('/clientes-facturacion/grupo/{grupoId}', [ClientesFacturacionController::class, 'grupo']);
     Route::get('/facturacion/clientes', [ClientesFacturacionController::class, 'resumen']);

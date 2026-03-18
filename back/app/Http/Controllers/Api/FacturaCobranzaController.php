@@ -25,6 +25,10 @@ class FacturaCobranzaController extends Controller
             'fecha_pago_manual' => ['nullable', 'date'],
             'monto_pagado_manual' => ['nullable', 'numeric'],
             'observaciones_cobranza' => ['nullable', 'string', 'max:5000'],
+            'op_cobro_recibo_manual' => ['nullable', 'string', 'max:40'],
+            'forma_cobro_manual' => ['nullable', 'string', 'max:255'],
+            'retenciones_gcias_manual' => ['nullable', 'numeric'],
+            'otras_retenciones_manual' => ['nullable', 'numeric'],
         ]);
 
         if (! empty($validated['fecha_pago_manual'])) {
@@ -55,6 +59,10 @@ class FacturaCobranzaController extends Controller
                 'fecha_pago_manual' => optional($factura->fecha_pago_manual)?->format('Y-m-d'),
                 'monto_pagado_manual' => $factura->monto_pagado_manual,
                 'observaciones_cobranza' => $factura->observaciones_cobranza,
+                'op_cobro_recibo_manual' => $factura->op_cobro_recibo_manual,
+                'forma_cobro_manual' => $factura->forma_cobro_manual,
+                'retenciones_gcias_manual' => $factura->retenciones_gcias_manual,
+                'otras_retenciones_manual' => $factura->otras_retenciones_manual,
                 'historial_cobranza' => $factura->historialCobranza->map(fn ($item) => [
                     'id' => $item->id,
                     'fecha_evento' => optional($item->fecha_evento)?->toIso8601String(),

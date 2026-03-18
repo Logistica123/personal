@@ -61,6 +61,10 @@ class FacturaCabecera extends Model
         'monto_pagado_manual',
         'estado_cobranza',
         'observaciones_cobranza',
+        'op_cobro_recibo_manual',
+        'forma_cobro_manual',
+        'retenciones_gcias_manual',
+        'otras_retenciones_manual',
     ];
 
     protected function casts(): array
@@ -85,6 +89,8 @@ class FacturaCabecera extends Model
             'imp_iva' => 'decimal:2',
             'imp_trib' => 'decimal:2',
             'monto_pagado_manual' => 'decimal:2',
+            'retenciones_gcias_manual' => 'decimal:2',
+            'otras_retenciones_manual' => 'decimal:2',
             'observaciones_arca_json' => 'array',
             'errores_arca_json' => 'array',
             'condiciones_venta' => 'array',
