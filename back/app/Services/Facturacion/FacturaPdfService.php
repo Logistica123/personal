@@ -195,7 +195,8 @@ class FacturaPdfService
 
         // Receptor block.
         $receptorTop = $headerBottom;
-        $receptorBottom = 625;
+        // Dejar espacio suficiente para domicilio/sucursal/condición de venta sin pisar el encabezado del detalle.
+        $receptorBottom = 595;
         $this->addLine($elements, $left, $receptorBottom, $right, $receptorBottom);
 
         $ry = $receptorTop - 18;
