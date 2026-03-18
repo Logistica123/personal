@@ -112,6 +112,8 @@ class ClientesFacturacionController extends Controller
         $query = FacturaCabecera::query()
             ->with(['cliente', 'sucursal'])
             ->where('cliente_id', (int) $validated['cliente_id'])
+            ->whereNotNull('cae')
+            ->where('cae', '!=', '')
             ->orderByDesc('fecha_cbte')
             ->orderByDesc('id');
 
