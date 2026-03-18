@@ -1937,6 +1937,96 @@ tbody tr:hover {
   transform: translateY(-1px);
 }
 
+.bdd-activos-table__selected-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.bdd-activos-filter-placeholder {
+  width: 100%;
+  min-width: 120px;
+  padding: 0.6rem 0.75rem;
+  border-radius: 12px;
+  border: 1px dashed rgba(180, 198, 226, 0.9);
+  background: rgba(29, 116, 245, 0.05);
+  color: #5c759c;
+  font-weight: 600;
+  cursor: pointer;
+  text-align: center;
+}
+
+.bdd-activos-filter-placeholder:hover {
+  background: rgba(29, 116, 245, 0.1);
+  border-color: rgba(151, 179, 225, 0.95);
+}
+
+.bdd-activos-filter-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.45rem 0.65rem;
+  border-radius: 999px;
+  border: 1px solid rgba(205, 221, 248, 0.95);
+  background: rgba(29, 116, 245, 0.08);
+  color: #1d74f5;
+  font-weight: 700;
+  font-size: 0.78rem;
+  cursor: pointer;
+}
+
+.bdd-activos-filter-chip:hover {
+  background: rgba(29, 116, 245, 0.12);
+}
+
+.bdd-activos-filter-add {
+  width: 28px;
+  height: 28px;
+  border-radius: 10px;
+  border: 1px solid rgba(205, 221, 248, 0.95);
+  background: rgba(29, 116, 245, 0.06);
+  color: #4f6fa5;
+  cursor: pointer;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.bdd-activos-filter-add:hover {
+  background: rgba(29, 116, 245, 0.12);
+}
+
+.bdd-activos-filter-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  margin-top: 0.75rem;
+  padding: 0.25rem;
+  max-height: 340px;
+  overflow: auto;
+}
+
+.bdd-activos-filter-option {
+  border: 1px solid rgba(205, 221, 248, 0.95);
+  background: rgba(29, 116, 245, 0.06);
+  color: #385a90;
+  border-radius: 999px;
+  padding: 0.45rem 0.7rem;
+  font-weight: 700;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.bdd-activos-filter-option:hover {
+  background: rgba(29, 116, 245, 0.12);
+}
+
+.bdd-activos-filter-option.is-selected {
+  background: rgba(29, 116, 245, 0.18);
+  border-color: rgba(181, 205, 249, 0.95);
+  color: #1d74f5;
+}
+
 .bdd-activos-summary__grid {
   display: grid;
   grid-template-columns: minmax(240px, 320px) 1fr;
@@ -7293,6 +7383,53 @@ tbody tr:hover {
 [data-theme='dark'] .bdd-activos-table__filter-button:hover {
   background: rgba(29, 116, 245, 0.2);
   border-color: #3b63a2;
+}
+
+[data-theme='dark'] .bdd-activos-filter-placeholder {
+  border-color: rgba(59, 99, 162, 0.8);
+  background: rgba(29, 116, 245, 0.08);
+  color: #9bb3d8;
+}
+
+[data-theme='dark'] .bdd-activos-filter-placeholder:hover {
+  background: rgba(29, 116, 245, 0.14);
+  border-color: rgba(91, 155, 255, 0.45);
+}
+
+[data-theme='dark'] .bdd-activos-filter-chip {
+  border-color: #27406b;
+  background: rgba(29, 116, 245, 0.14);
+  color: #a7c4ff;
+}
+
+[data-theme='dark'] .bdd-activos-filter-chip:hover {
+  background: rgba(29, 116, 245, 0.22);
+}
+
+[data-theme='dark'] .bdd-activos-filter-add {
+  border-color: #27406b;
+  background: rgba(29, 116, 245, 0.12);
+  color: #9bb3d8;
+}
+
+[data-theme='dark'] .bdd-activos-filter-add:hover {
+  background: rgba(29, 116, 245, 0.2);
+}
+
+[data-theme='dark'] .bdd-activos-filter-option {
+  border-color: #27406b;
+  background: rgba(29, 116, 245, 0.1);
+  color: #9bb3d8;
+}
+
+[data-theme='dark'] .bdd-activos-filter-option:hover {
+  background: rgba(29, 116, 245, 0.18);
+}
+
+[data-theme='dark'] .bdd-activos-filter-option.is-selected {
+  background: rgba(29, 116, 245, 0.25);
+  border-color: #3b63a2;
+  color: #c7dcff;
 }
 
 [data-theme='dark'] .bdd-activos-table tbody tr:nth-child(odd) td {
