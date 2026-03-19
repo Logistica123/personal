@@ -7594,6 +7594,22 @@ tbody tr:hover {
   margin-bottom: 0.75rem;
 }
 
+.client-card--personal header {
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+.client-card--personal h4 {
+  width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.client-card--personal header span {
+  width: 100%;
+}
+
 .client-card--base header {
   align-items: flex-start;
 }

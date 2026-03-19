@@ -9738,13 +9738,11 @@ const DashboardPage: React.FC<{
                   return Object.entries(grouped).map(([clienteNombre, registros]) => {
                     const counts = computePersonalStats(registros);
                     return (
-                      <div key={clienteNombre} className="client-card">
+                      <div key={clienteNombre} className="client-card client-card--personal">
                         <header>
-                          <h4>{clienteNombre}</h4>
+                          <h4 title={clienteNombre}>{clienteNombre}</h4>
                           <span>
-                            {counts.total} en total
-                            {counts.preActivo > 0 ? ` · ${counts.preActivo} pre activo` : ''}
-                            {counts.noCitado > 0 ? ` · ${counts.noCitado} no citado` : ''}
+                            {counts.activo} activos · {counts.preActivo} pre activo · {counts.noCitado} no citado
                             {counts.otros > 0 ? ` · ${counts.otros} sin estado` : ''}
                           </span>
                         </header>
@@ -10061,13 +10059,11 @@ const DashboardPage: React.FC<{
 
                   <div className="client-cards fidelizacion-cards">
                     {memberStats.map(({ member, stats, clients }) => (
-                      <div key={`${team.id}-${member.id ?? member.name}`} className="client-card">
+                      <div key={`${team.id}-${member.id ?? member.name}`} className="client-card client-card--personal">
                         <header>
-                          <h4>{member.name}</h4>
+                          <h4 title={member.name}>{member.name}</h4>
                           <span>
-                            {stats.total} en total
-                            {stats.preActivo > 0 ? ` · ${stats.preActivo} pre activo` : ''}
-                            {stats.noCitado > 0 ? ` · ${stats.noCitado} no citado` : ''}
+                            {stats.activo} activos · {stats.preActivo} pre activo · {stats.noCitado} no citado
                             {stats.otros > 0 ? ` · ${stats.otros} sin estado` : ''}
                           </span>
                         </header>
@@ -10103,13 +10099,11 @@ const DashboardPage: React.FC<{
 
                   <div className="client-cards fidelizacion-cards fidelizacion-clients-block">
                     {clientGroups.map(({ clienteNombre, stats }) => (
-                      <div key={clienteNombre} className="client-card">
+                      <div key={clienteNombre} className="client-card client-card--personal">
                         <header>
-                          <h4>{clienteNombre}</h4>
+                          <h4 title={clienteNombre}>{clienteNombre}</h4>
                           <span>
-                            {stats.total} en total
-                            {stats.preActivo > 0 ? ` · ${stats.preActivo} pre activo` : ''}
-                            {stats.noCitado > 0 ? ` · ${stats.noCitado} no citado` : ''}
+                            {stats.activo} activos · {stats.preActivo} pre activo · {stats.noCitado} no citado
                             {stats.otros > 0 ? ` · ${stats.otros} sin estado` : ''}
                           </span>
                         </header>
