@@ -11,6 +11,8 @@ import {
 } from 'react-router-dom';
 import './App.css';
 import { FACTURACION_COMPROBANTES_OPTIONS, FACTURACION_FORMATOS_DESTACADOS } from './facturacionComprobantes';
+import { PersonalRadarPanel } from './features/personal/PersonalRadarPanel';
+import type { PersonalRecord } from './features/personal/types';
 
 const AUTH_STORAGE_KEY = 'authUser';
 
@@ -878,115 +880,6 @@ type PersonalHistoryEntry = {
   createdAt: string | null;
   createdAtLabel: string | null;
   changes: PersonalHistoryChange[];
-};
-
-type LiquidacionSummary = {
-  id: number;
-  fecha: string | null;
-  monthKey: string | null;
-  fortnightKey: string | null;
-  enviada: boolean | null;
-  recibido: boolean | null;
-  pagado: boolean | null;
-  importeFacturar: number | null;
-};
-
-type PersonalRecord = {
-  id: number;
-  rowId?: string;
-  nombre: string | null;
-  nombres?: string | null;
-  apellidos?: string | null;
-  legajo?: string | null;
-  cuil: string | null;
-  telefono: string | null;
-  email: string | null;
-  cliente: string | null;
-  clienteId?: number | null;
-  unidad: string | null;
-  unidadDetalle: string | null;
-  unidadId?: number | null;
-  fechaAltaVinculacion?: string | null;
-  fechaBaja?: string | null;
-  sucursal: string | null;
-  sucursalId?: number | null;
-  fechaAlta: string | null;
-  perfil: string | null;
-  perfilValue: number | null;
-  agente: string | null;
-  agenteId?: number | null;
-  agenteResponsable?: string | null;
-  agenteResponsableId?: number | null;
-  agentesResponsables?: string[] | null;
-  agentesResponsablesIds?: number[] | null;
-  estado: string | null;
-  estadoId?: number | null;
-  combustible: string | null;
-  combustibleValue: boolean;
-  combustibleEstado?: string | null;
-  tarifaEspecial: string | null;
-  tarifaEspecialValue: boolean;
-  pago?: string | null;
-  cbuAlias?: string | null;
-  patente?: string | null;
-  observacionTarifa?: string | null;
-  observaciones?: string | null;
-  esCobrador?: boolean;
-  cobradorNombre?: string | null;
-  cobradorEmail?: string | null;
-  cobradorCuil?: string | null;
-  cobradorCbuAlias?: string | null;
-  aprobado: boolean;
-  aprobadoAt: string | null;
-  aprobadoPor: string | null;
-  aprobadoPorId?: number | null;
-  aprobadoPorNombre?: string | null;
-  createdAt?: string | null;
-  createdAtLabel?: string | null;
-  esSolicitud: boolean;
-  solicitudTipo?:
-    | 'alta'
-    | 'combustible'
-    | 'aumento_combustible'
-    | 'adelanto'
-    | 'poliza'
-    | 'prestamo'
-    | 'vacaciones'
-    | 'cambio_asignacion';
-  solicitudData?: unknown;
-  transportistaQrCode?: string | null;
-  transportistaQrRedirectUrl?: string | null;
-  transportistaQrLandingUrl?: string | null;
-  transportistaQrImageUrl?: string | null;
-  transportistaQrScansCount?: number | null;
-  transportistaQrLastScanAt?: string | null;
-  transportistaQrLastScanAtLabel?: string | null;
-  duenoNombre?: string | null;
-  duenoFechaNacimiento?: string | null;
-  duenoEmail?: string | null;
-  duenoTelefono?: string | null;
-  duenoCuil?: string | null;
-  duenoCuilCobrador?: string | null;
-  duenoCbuAlias?: string | null;
-  duenoObservaciones?: string | null;
-  liquidacionPeriods?: Array<{ monthKey: string; fortnightKey: string }>;
-  liquidacionEnviada?: boolean | null;
-  liquidacionRecibido?: boolean | null;
-  liquidacionPagado?: boolean | null;
-  liquidacionIdLatest?: number | null;
-  liquidacionImporteFacturar?: number | null;
-  liquidaciones?: LiquidacionSummary[] | null;
-  combustibleResumen?: {
-    reportId: number;
-    status: string;
-    totalAmount: number;
-    adjustmentsTotal: number;
-    totalToBill: number;
-  } | null;
-  documentacionStatus?: 'sin_documentos' | 'vigente' | 'por_vencer' | 'vencido' | null;
-  documentacionVencidos?: number | null;
-  documentacionPorVencer?: number | null;
-  documentacionTotal?: number | null;
 };
 
 type PersonalDetail = {
@@ -2973,22 +2866,6 @@ const isReclamoAdelantoTypeName = (tipoNombre?: string | null): boolean => {
 
   return normalizedName === 'reclamos y adelantos';
 };
-
-const RECLAMOS_ADELANTOS_APPROVER_EMAILS = (process.env.REACT_APP_RECLAMOS_ADELANTOS_APPROVER_EMAILS ?? '')
-  .split(',')
-  .map((value) => value.trim().toLowerCase())
-  .filter((value) => value.length > 0);
-
-const canEditReclamosAdelantosApproval = (authUser: AuthUser | null | undefined): boolean => {
-  const email = (authUser?.email ?? '').trim().toLowerCase();
-  if (email && RECLAMOS_ADELANTOS_APPROVER_EMAILS.includes(email)) {
-    return true;
-  }
-
-  const name = (authUser?.name ?? '').trim().toLowerCase();
-  return name.includes('seba');
-};
-
 
 const uniqueKey = () => Math.random().toString(36).slice(2);
 
@@ -9630,155 +9507,24 @@ const DashboardPage: React.FC<{
             </div>
           ) : null}
 
-          {!monitorMode || monitorSummaryActive ? (
-            <div className={`summary-panel${monitorMode ? ' monitor-summary' : ''}`}>
-              <div className="summary-panel__header summary-panel__header--radar">
-                <div>
-                  <h3>Radar de personal</h3>
-                  <p>Filtrá por cliente, estado o agente para ver los totales y cortes por cliente.</p>
-                </div>
-                <div className="summary-filters">
-                  <label className="filter-field">
-                    <span>Cliente</span>
-                    <select value={statsClienteFilter} onChange={(event) => setStatsClienteFilter(event.target.value)}>
-                      <option value="">Todos</option>
-                      {clienteStatsOptions.map((option) => (
-                        <option key={option} value={option}>
-                          {option}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <label className="filter-field">
-                    <span>Estado</span>
-                    <select value={statsEstadoFilter} onChange={(event) => setStatsEstadoFilter(event.target.value)}>
-                      <option value="">Todos</option>
-                      {estadoStatsOptions.map((option) => (
-                        <option key={option} value={option}>
-                          {option}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <label className="filter-field">
-                    <span>Agente</span>
-                    <select value={statsAgenteFilter} onChange={(event) => setStatsAgenteFilter(event.target.value)}>
-                      <option value="">Todos</option>
-                      {agenteStatsOptions.map((option) => (
-                        <option key={option} value={option}>
-                          {option}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                </div>
-              </div>
-
-              <div className="summary-cards">
-                <div className="summary-card summary-card--accent">
-                  <span className="summary-card__label">Activos</span>
-                  <strong className="summary-card__value">
-                    {statsLoading ? '—' : personalStats.activo}
-                  </strong>
-                </div>
-                <div className="summary-card summary-card--info">
-                  <span className="summary-card__label">Pre activo</span>
-                  <strong className="summary-card__value">
-                    {statsLoading ? '—' : personalStats.preActivo}
-                  </strong>
-                </div>
-                <div className="summary-card summary-card--warning">
-                  <span className="summary-card__label">Baja</span>
-                  <strong className="summary-card__value">
-                    {statsLoading ? '—' : personalStats.baja}
-                  </strong>
-                </div>
-                <div className="summary-card summary-card--danger">
-                  <span className="summary-card__label">Suspendido</span>
-                  <strong className="summary-card__value">
-                    {statsLoading ? '—' : personalStats.suspendido}
-                  </strong>
-                </div>
-                <div className="summary-card summary-card--neutral">
-                  <span className="summary-card__label">No citado</span>
-                  <strong className="summary-card__value">
-                    {statsLoading ? '—' : personalStats.noCitado}
-                  </strong>
-                </div>
-                <div className="summary-card summary-card--muted">
-                  <span className="summary-card__label">Sin estado</span>
-                  <strong className="summary-card__value">
-                    {statsLoading ? '—' : personalStats.otros}
-                  </strong>
-                </div>
-                <div className="summary-card summary-card--muted">
-                  <span className="summary-card__label">Total personal</span>
-                  <strong className="summary-card__value">
-                    {statsLoading ? '—' : personalStats.total}
-                  </strong>
-                </div>
-                {statsError ? (
-                  <p className="form-info form-info--error" style={{ gridColumn: '1 / -1' }}>
-                    {statsError}
-                  </p>
-                ) : null}
-              </div>
-
-              <div className="client-cards">
-                {(() => {
-                  const grouped = baseFilteredPersonal.reduce((acc, registro) => {
-                    const key = registro.cliente ?? 'Sin cliente';
-                    if (!acc[key]) {
-                      acc[key] = [];
-                    }
-                    acc[key].push(registro);
-                    return acc;
-                  }, {} as Record<string, PersonalRecord[]>);
-
-                  return Object.entries(grouped).map(([clienteNombre, registros]) => {
-                    const counts = computePersonalStats(registros);
-                    return (
-                      <div key={clienteNombre} className="client-card client-card--personal">
-                        <header>
-                          <h4 title={clienteNombre}>{clienteNombre}</h4>
-                          <span>
-                            {counts.activo} activos · {counts.preActivo} pre activo · {counts.noCitado} no citado
-                            {counts.otros > 0 ? ` · ${counts.otros} sin estado` : ''}
-                          </span>
-                        </header>
-                        <div className="client-card__stats">
-                          <div>
-                            <small>Activos</small>
-                            <strong>{counts.activo}</strong>
-                          </div>
-                          <div>
-                            <small>Baja</small>
-                            <strong>{counts.baja}</strong>
-                          </div>
-                          <div>
-                            <small>Pre activo</small>
-                            <strong>{counts.preActivo}</strong>
-                          </div>
-                          <div>
-                            <small title="Suspendido">Susp.</small>
-                            <strong>{counts.suspendido}</strong>
-                          </div>
-                          <div>
-                            <small>No citado</small>
-                            <strong>{counts.noCitado}</strong>
-                          </div>
-                          <div>
-                            <small>Sin estado</small>
-                            <strong>{counts.otros}</strong>
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  });
-                })()}
-              </div>
-            </div>
-          ) : null}
+          <PersonalRadarPanel
+            monitorMode={monitorMode}
+            monitorSummaryActive={monitorSummaryActive}
+            statsLoading={statsLoading}
+            statsError={statsError}
+            personalStats={personalStats}
+            statsClienteFilter={statsClienteFilter}
+            statsEstadoFilter={statsEstadoFilter}
+            statsAgenteFilter={statsAgenteFilter}
+            setStatsClienteFilter={setStatsClienteFilter}
+            setStatsEstadoFilter={setStatsEstadoFilter}
+            setStatsAgenteFilter={setStatsAgenteFilter}
+            clienteStatsOptions={clienteStatsOptions}
+            estadoStatsOptions={estadoStatsOptions}
+            agenteStatsOptions={agenteStatsOptions}
+            baseFilteredPersonal={baseFilteredPersonal}
+            computePersonalStats={computePersonalStats}
+          />
 
           {!monitorMode ? (
             <div className="summary-panel secondary-panels team-config-panel">
@@ -14487,16 +14233,8 @@ const ReclamoDetailPage: React.FC = () => {
     | undefined;
   const apiBaseUrl = useMemo(() => resolveApiBaseUrl(), []);
   const authUser = useStoredAuthUser();
-  const userRole = useMemo(() => getUserRole(authUser), [authUser]);
   const actorHeaders = useMemo(() => buildActorHeaders(authUser), [authUser]);
-  const canViewReclamoImportes = useMemo(
-    () => isElevatedRole(userRole) && userRole !== 'asesor',
-    [userRole]
-  );
-  const canEditAdelantosApproval = useMemo(
-    () => canEditReclamosAdelantosApproval(authUser),
-    [authUser]
-  );
+  const canViewReclamoImportes = true;
   const [detail, setDetail] = useState<ReclamoDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -15589,7 +15327,6 @@ const ReclamoDetailPage: React.FC = () => {
                 <select
                   value={formValues.aprobacionEstado}
                   onChange={(event) => setFormValues((prev) => ({ ...prev, aprobacionEstado: event.target.value }))}
-                  disabled={!canEditAdelantosApproval}
                 >
                   <option value="">Sin definir</option>
                   <option value="aprobado">Aprobado</option>
@@ -15605,13 +15342,8 @@ const ReclamoDetailPage: React.FC = () => {
                   rows={3}
                   value={formValues.aprobacionMotivo}
                   onChange={(event) => setFormValues((prev) => ({ ...prev, aprobacionMotivo: event.target.value }))}
-                  disabled={!canEditAdelantosApproval}
                 />
               </label>
-            ) : null}
-
-            {isReclamoAdelanto && !canEditAdelantosApproval ? (
-              <p className="section-helper">Solo Seba puede editar aprobación y motivo.</p>
             ) : null}
 
             <div className="form-actions">
