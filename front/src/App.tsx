@@ -9705,14 +9705,12 @@ const DashboardPage: React.FC<{
                     {statsLoading ? '—' : personalStats.noCitado}
                   </strong>
                 </div>
-                {personalStats.otros > 0 ? (
-                  <div className="summary-card summary-card--muted">
-                    <span className="summary-card__label">Sin estado</span>
-                    <strong className="summary-card__value">
-                      {statsLoading ? '—' : personalStats.otros}
-                    </strong>
-                  </div>
-                ) : null}
+                <div className="summary-card summary-card--muted">
+                  <span className="summary-card__label">Sin estado</span>
+                  <strong className="summary-card__value">
+                    {statsLoading ? '—' : personalStats.otros}
+                  </strong>
+                </div>
                 <div className="summary-card summary-card--muted">
                   <span className="summary-card__label">Total personal</span>
                   <strong className="summary-card__value">
@@ -9770,6 +9768,10 @@ const DashboardPage: React.FC<{
                           <div>
                             <small>No citado</small>
                             <strong>{counts.noCitado}</strong>
+                          </div>
+                          <div>
+                            <small>Sin estado</small>
+                            <strong>{counts.otros}</strong>
                           </div>
                         </div>
                       </div>
@@ -10090,6 +10092,10 @@ const DashboardPage: React.FC<{
                             <small>No citado</small>
                             <strong>{stats.noCitado}</strong>
                           </div>
+                          <div>
+                            <small>Sin estado</small>
+                            <strong>{stats.otros}</strong>
+                          </div>
                         </div>
                       </div>
                     ))}
@@ -10127,6 +10133,10 @@ const DashboardPage: React.FC<{
                           <div>
                             <small>No citado</small>
                             <strong>{stats.noCitado}</strong>
+                          </div>
+                          <div>
+                            <small>Sin estado</small>
+                            <strong>{stats.otros}</strong>
                           </div>
                         </div>
                       </div>
