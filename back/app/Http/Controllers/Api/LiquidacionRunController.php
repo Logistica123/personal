@@ -19,7 +19,7 @@ use App\Models\LiquidacionValidationResult;
 use App\Models\Cliente;
 use App\Models\Persona;
 use App\Services\Erp\ErpClient;
-use App\Services\Pdf\TextPdfService;
+use App\Services\Pdf\LiquidacionExtractoPdfService;
 use App\Services\AuditLogger;
 use App\Services\Liquidaciones\LiquidacionPublishProcessor;
 use Carbon\Carbon;
@@ -6605,15 +6605,89 @@ class LiquidacionRunController extends Controller
             $legacyTxtPath = $directory . '/run_' . $run->id . '_persona_' . $personaId . '.txt';
             $path = $directory . '/run_' . $run->id . '_persona_' . $personaId . '.pdf';
 
-            $textContent = $this->buildRunPersonalLiquidacionText(
-                $run,
-                $persona,
-                $personaDistribuidores,
-                $totalFacturar,
-                $syncDate,
-                $fortnightKey
-            );
-            $fileContent = (new TextPdfService())->fromText($textContent);
+            $distribuidores = array_values(array_filter($personaDistribuidores, fn ($value) => $value instanceof LiquidacionDistribuidor));
+            $distribuidorById = [];
+            $subtotal = 0.0;
+            $gastosAdmin = 0.0;
+            $ajuste = 0.0;
+
+            foreach ($distribuidores as $dist) {
+                $distribuidorById[(int) $dist->id] = $dist;
+                $subtotal += (float) ($dist->subtotal_final ?? 0);
+                $gastosAdmin += (float) ($dist->gastos_admin_final ?? ($dist->gastos_admin_default ?? 0));
+                $ajuste += (float) ($dist->ajuste_manual ?? 0);
+            }
+
+            $lineRows = [];
+            $sucursal = null;
+            if (!empty($distribuidorById)) {
+                $lineas = LiquidacionDistribuidorLinea::query()
+                    ->whereIn('distributor_id', array_keys($distribuidorById))
+                    ->with('stagingRow')
+                    ->orderBy('fecha')
+                    ->orderBy('row_number')
+                    ->orderBy('id')
+                    ->get();
+
+                foreach ($lineas as $linea) {
+                    $stagingRow = $linea->stagingRow;
+                    if ($sucursal === null && $stagingRow) {
+                        $zoneKey = $this->resolveLineZoneKey($stagingRow, $linea->svc);
+                        if (is_string($zoneKey) && trim($zoneKey) !== '') {
+                            $sucursal = strtoupper(substr(trim($zoneKey), 0, 3));
+                        }
+                    }
+
+                    $rawPayload = $stagingRow && is_array($stagingRow->raw_payload_json) ? $stagingRow->raw_payload_json : [];
+                    $mapped = is_array($rawPayload['mapped'] ?? null) ? $rawPayload['mapped'] : [];
+                    $kmsRaw = $this->mappedPayloadString($mapped, ['KMS', 'KM', 'Kilometros', 'Kilómetros', 'Kilometraje']);
+                    $kmsValue = $this->parseFloatOrNull($kmsRaw);
+                    if ($kmsValue === null && $stagingRow) {
+                        $kmsValue = $this->parseFloatOrNull($stagingRow->liters);
+                    }
+                    $kmsLabel = $kmsValue !== null ? (number_format($kmsValue, 0, ',', '.') . ' kms') : '—';
+
+                    $categoria = $this->normalizeNullableString((string) ($linea->svc ?? ''))
+                        ?? $this->normalizeNullableString((string) (($distribuidorById[(int) $linea->distributor_id]->categoria_vehiculo ?? '') ?: ''))
+                        ?? '';
+
+                    $jornada = (float) ($linea->tarifa_dist_calculada ?? 0);
+                    $importe = (float) ($linea->importe_final ?? 0);
+
+                    $lineRows[] = [
+                        'fecha' => $linea->fecha ? $linea->fecha->format('d/m/Y') : '',
+                        'id_viaje' => (string) ($linea->id_ruta ?? ''),
+                        'categoria' => $categoria,
+                        'km' => $kmsLabel,
+                        'jornada' => '$ ' . number_format($jornada, 2, ',', '.'),
+                        'importe' => '$ ' . number_format($importe, 2, ',', '.'),
+                    ];
+                }
+            }
+
+            $personaNombre = trim((string) (($persona->nombres ?? '') . ' ' . ($persona->apellidos ?? '')));
+            $clienteCode = strtoupper((string) ($run->client_code ?? ''));
+            $periodo = (string) ($run->period_from?->format('Y-m-d') ?? '') . ' / ' . (string) ($run->period_to?->format('Y-m-d') ?? '');
+
+            $pdfPayload = [
+                'company_name' => 'Logistica Argentina',
+                'titulo' => 'Liquidación sincronizada desde Extractos BI/ERP',
+                'persona_nombre' => $personaNombre,
+                'dominio' => (string) ($persona->patente ?? ''),
+                'cliente' => $clienteCode,
+                'sucursal' => $sucursal,
+                'periodo' => $periodo,
+                'quincena' => $fortnightKey,
+                'rows' => $lineRows,
+                'totals' => [
+                    'subtotal' => '$ ' . number_format($subtotal, 2, ',', '.'),
+                    'gastos_admin' => '$ ' . number_format($gastosAdmin, 2, ',', '.'),
+                    'ajuste' => '$ ' . number_format($ajuste, 2, ',', '.'),
+                    'total' => '$ ' . number_format($totalFacturar, 2, ',', '.'),
+                ],
+            ];
+
+            $fileContent = (new LiquidacionExtractoPdfService())->generate($pdfPayload);
             $sizeBytes = strlen($fileContent);
 
             try {
