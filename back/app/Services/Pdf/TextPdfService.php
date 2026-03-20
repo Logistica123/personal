@@ -6,16 +6,30 @@ class TextPdfService
 {
     public function fromText(string $text): string
     {
-        $lines = $this->splitLines($text);
-        $pages = $this->paginateLines($lines, 52);
+        $rawLines = $this->splitLines($text);
+        $title = '';
+        $bodyLines = $rawLines;
+        if (!empty($rawLines)) {
+            $title = (string) array_shift($bodyLines);
+        }
 
-        $contentPages = array_map(function (array $pageLines): array {
+        $pages = $this->paginateLines($bodyLines, 54);
+
+        $contentPages = array_map(function (array $pageLines, int $pageIndex) use ($title): array {
             $content = [];
             $content[] = 'BT';
-            $content[] = '/F1 10 Tf';
-            $content[] = '14 TL';
-            $content[] = '1 0 0 1 50 800 Tm';
+            $content[] = '1 0 0 1 50 805 Tm';
 
+            if ($pageIndex === 0 && $title !== '') {
+                $content[] = '/F2 14 Tf';
+                $content[] = '18 TL';
+                $content[] = '(' . $this->escapePdfText($title) . ') Tj';
+                $content[] = 'T*';
+                $content[] = 'T*';
+            }
+
+            $content[] = '/F1 10 Tf';
+            $content[] = '13 TL';
             foreach ($pageLines as $line) {
                 $content[] = '(' . $this->escapePdfText($line) . ') Tj';
                 $content[] = 'T*';
@@ -23,7 +37,7 @@ class TextPdfService
 
             $content[] = 'ET';
             return $content;
-        }, $pages);
+        }, $pages, array_keys($pages));
 
         return $this->buildPdf($contentPages);
     }
@@ -38,12 +52,12 @@ class TextPdfService
 
         $lines = [];
         foreach ($rawLines as $line) {
-            $line = trim($line);
+            $line = rtrim($line, "\t ");
             if ($line === '') {
                 $lines[] = '';
                 continue;
             }
-            foreach ($this->wrapLine($line, 110) as $wrapped) {
+            foreach ($this->wrapLine($line, 120) as $wrapped) {
                 $lines[] = $wrapped;
             }
         }
@@ -175,19 +189,21 @@ class TextPdfService
 
         $pageObjectsStart = 3;
         $fontsStart = $pageObjectsStart + $pageCount;
-        $contentStart = $fontsStart + 1;
+        $contentStart = $fontsStart + 2;
 
         for ($i = 0; $i < $pageCount; $i += 1) {
             $contentRef = ($contentStart + $i) . ' 0 R';
             $objects[] = sprintf(
-                '%d 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 %d 0 R >> >> /Contents %s >> endobj',
+                '%d 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 %d 0 R /F2 %d 0 R >> >> /Contents %s >> endobj',
                 $pageObjectsStart + $i,
                 $fontsStart,
+                $fontsStart + 1,
                 $contentRef
             );
         }
 
-        $objects[] = sprintf('%d 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> endobj', $fontsStart);
+        $objects[] = sprintf('%d 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Courier >> endobj', $fontsStart);
+        $objects[] = sprintf('%d 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >> endobj', $fontsStart + 1);
 
         for ($i = 0; $i < $pageCount; $i += 1) {
             $content = implode("\n", $pages[$i]);
@@ -218,4 +234,3 @@ class TextPdfService
         return $pdf;
     }
 }
-
