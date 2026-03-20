@@ -19,6 +19,7 @@ use App\Models\LiquidacionValidationResult;
 use App\Models\Cliente;
 use App\Models\Persona;
 use App\Services\Erp\ErpClient;
+use App\Services\Pdf\TextPdfService;
 use App\Services\AuditLogger;
 use App\Services\Liquidaciones\LiquidacionPublishProcessor;
 use Carbon\Carbon;
@@ -6601,8 +6602,10 @@ class LiquidacionRunController extends Controller
             $totalFacturar = round((float) ($item['total'] ?? 0), 2);
 
             $directory = 'personal/' . $personaId . '/liquidaciones_extracto';
-            $path = $directory . '/run_' . $run->id . '_persona_' . $personaId . '.txt';
-            $fileContent = $this->buildRunPersonalLiquidacionText(
+            $legacyTxtPath = $directory . '/run_' . $run->id . '_persona_' . $personaId . '.txt';
+            $path = $directory . '/run_' . $run->id . '_persona_' . $personaId . '.pdf';
+
+            $textContent = $this->buildRunPersonalLiquidacionText(
                 $run,
                 $persona,
                 $personaDistribuidores,
@@ -6610,6 +6613,7 @@ class LiquidacionRunController extends Controller
                 $syncDate,
                 $fortnightKey
             );
+            $fileContent = (new TextPdfService())->fromText($textContent);
             $sizeBytes = strlen($fileContent);
 
             try {
@@ -6627,13 +6631,13 @@ class LiquidacionRunController extends Controller
             $displayPatente = $this->normalizeNullableString((string) ($persona->patente ?? ''))
                 ?? ($personaDistribuidores[0]->patente_norm ?? null)
                 ?? ('PERS-' . $personaId);
-            $nombreDocumento = sprintf('Liquidación extracto Run #%d - %s.txt', $run->id, $displayPatente);
+            $nombreDocumento = sprintf('Liquidación extracto Run #%d - %s.pdf', $run->id, $displayPatente);
 
             try {
                 $documento = Archivo::query()
                     ->where('persona_id', $personaId)
                     ->whereNull('parent_document_id')
-                    ->where('ruta', $path)
+                    ->whereIn('ruta', [$path, $legacyTxtPath])
                     ->first();
 
                 if ($documento) {
@@ -6641,7 +6645,7 @@ class LiquidacionRunController extends Controller
                     $documento->ruta = $path;
                     $documento->disk = 'public';
                     $documento->nombre_original = $nombreDocumento;
-                    $documento->mime = 'text/plain';
+                    $documento->mime = 'application/pdf';
                     $documento->size = $sizeBytes;
                     $documento->tipo_archivo_id = $liquidacionType->id;
                     $documento->fecha_vencimiento = $syncDate;
@@ -6674,7 +6678,7 @@ class LiquidacionRunController extends Controller
                     'download_url' => null,
                     'disk' => 'public',
                     'nombre_original' => $nombreDocumento,
-                    'mime' => 'text/plain',
+                    'mime' => 'application/pdf',
                     'size' => $sizeBytes,
                     'fecha_vencimiento' => $syncDate,
                     'fortnight_key' => $fortnightKey,
