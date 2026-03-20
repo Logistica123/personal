@@ -6645,7 +6645,12 @@ class LiquidacionRunController extends Controller
                     if ($kmsValue === null && $stagingRow) {
                         $kmsValue = $this->parseFloatOrNull($stagingRow->liters);
                     }
-                    $kmsLabel = $kmsValue !== null ? (number_format($kmsValue, 0, ',', '.') . ' kms') : '—';
+                    $kmsLabel = '—';
+                    if ($kmsValue !== null && $kmsValue >= 0) {
+                        $bucket = (int) floor($kmsValue / 50) * 50;
+                        $upper = $bucket + 50;
+                        $kmsLabel = sprintf('Rango %d-%dkms', $bucket, $upper);
+                    }
 
                     $categoria = $this->normalizeNullableString((string) ($linea->svc ?? ''))
                         ?? $this->normalizeNullableString((string) (($distribuidorById[(int) $linea->distributor_id]->categoria_vehiculo ?? '') ?: ''))
@@ -6671,7 +6676,7 @@ class LiquidacionRunController extends Controller
 
             $pdfPayload = [
                 'company_name' => 'Logistica Argentina',
-                'titulo' => 'Liquidación sincronizada desde Extractos BI/ERP',
+                'titulo' => '',
                 'persona_nombre' => $personaNombre,
                 'dominio' => (string) ($persona->patente ?? ''),
                 'cliente' => $clienteCode,

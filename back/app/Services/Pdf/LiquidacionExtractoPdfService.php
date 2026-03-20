@@ -81,7 +81,7 @@ class LiquidacionExtractoPdfService
         }
         $y -= 16;
 
-        $this->drawKeyValueRow($content, 50, $y, 'Período:', (string) ($data['periodo'] ?? ''), $labelFont, $labelSize, $valueFont, $valueSize);
+        $this->drawKeyValueRow($content, 50, $y, 'Periodo:', (string) ($data['periodo'] ?? ''), $labelFont, $labelSize, $valueFont, $valueSize);
         $this->drawKeyValueRow($content, 320, $y, 'Quincena:', (string) ($data['quincena'] ?? ''), $labelFont, $labelSize, $valueFont, $valueSize);
         $y -= 18;
 
@@ -99,7 +99,7 @@ class LiquidacionExtractoPdfService
         $headerY = $y + 5;
         $this->drawText($content, 55, $headerY, 'Fecha', 'F2', 9);
         $this->drawText($content, 120, $headerY, 'IDVIAJE', 'F2', 9);
-        $this->drawText($content, 190, $headerY, 'Categoría', 'F2', 9);
+        $this->drawText($content, 190, $headerY, 'Categoria', 'F2', 9);
         $this->drawText($content, 340, $headerY, 'KM', 'F2', 9);
         $this->drawTextRight($content, 470, $headerY, '$/Jornada', 'F2', 9);
         $this->drawTextRight($content, 560, $headerY, 'Importe', 'F2', 9);
