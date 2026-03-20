@@ -689,7 +689,6 @@ class ReclamoController extends Controller
             $lockedViolations = [];
 
             $lockedChecks = [
-                ['field' => 'clienteNombre', 'label' => 'Cliente', 'current' => $reclamo->cliente_nombre, 'incoming' => $incomingClienteNombre],
                 ['field' => 'sucursalNombre', 'label' => 'Sucursal', 'current' => $reclamo->sucursal_nombre, 'incoming' => $incomingSucursalNombre],
                 ['field' => 'distribuidorNombre', 'label' => 'Nombre distribuidor', 'current' => $reclamo->distribuidor_nombre, 'incoming' => $incomingDistribuidorNombre],
                 ['field' => 'emisorFactura', 'label' => 'Dueño / emisor factura', 'current' => $reclamo->emisor_factura, 'incoming' => $incomingEmisorFactura],
@@ -717,12 +716,6 @@ class ReclamoController extends Controller
                     'message' => 'Algunos campos de Reclamos y Adelantos son inmutables.',
                     'errors' => $lockedViolations,
                 ], 422);
-            }
-
-            if ($approvalChanged && ! $this->canEditReclamosAdelantosApproval($request)) {
-                return response()->json([
-                    'message' => 'Solo Seba puede editar "Aprobado / No aprobado" y "Motivo".',
-                ], 403);
             }
         }
 
