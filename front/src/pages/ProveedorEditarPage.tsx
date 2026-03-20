@@ -59,6 +59,34 @@ type AltaRequestForm = any;
 
 const DOCUMENT_ALERT_DAYS = 30;
 
+const stripDiacritics = (value: string) =>
+  value
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase();
+
+const isLiquidacionDocumento = (doc: any): boolean => {
+  if (!doc || typeof doc !== 'object') {
+    return false;
+  }
+
+  if (doc.liquidacionId !== null && doc.liquidacionId !== undefined && String(doc.liquidacionId) !== '') {
+    return true;
+  }
+
+  const tipoNombre = typeof doc.tipoNombre === 'string' ? stripDiacritics(doc.tipoNombre) : '';
+  if (tipoNombre && tipoNombre.includes('liquid')) {
+    return true;
+  }
+
+  const nombre = typeof doc.nombre === 'string' ? stripDiacritics(doc.nombre) : '';
+  if (nombre && nombre.includes('liquid')) {
+    return true;
+  }
+
+  return false;
+};
+
 const AUTH_STORAGE_KEY = 'authUser';
 const readAuthTokenFromStorage = (): string | null => {
   if (typeof window === 'undefined') {
@@ -305,7 +333,8 @@ export const ProveedorEditarPage: React.FC<ProveedorEditarPageProps> = ({
       return null;
     }
 
-    return detail.documents.find((doc: any) => doc.id === selectedDocumentId) ?? null;
+    const docs = Array.isArray(detail.documents) ? detail.documents.filter((doc: any) => !isLiquidacionDocumento(doc)) : [];
+    return docs.find((doc: any) => doc.id === selectedDocumentId) ?? null;
   }, [detail, selectedDocumentId]);
   const splitRazonSocial = useCallback((razonSocial: string | null | undefined) => {
     if (!razonSocial) {
@@ -353,6 +382,29 @@ export const ProveedorEditarPage: React.FC<ProveedorEditarPageProps> = ({
     }
   }, []);
 
+  const visibleDocuments = useMemo(() => {
+    if (!detail) {
+      return [] as any[];
+    }
+
+    const base = Array.isArray(detail.documents) ? detail.documents : [];
+    return base.filter((doc: any) => !isLiquidacionDocumento(doc));
+  }, [detail]);
+
+  useEffect(() => {
+    if (selectedDocumentId === null) {
+      return;
+    }
+    if (visibleDocuments.length === 0) {
+      setSelectedDocumentId(null);
+      return;
+    }
+    const exists = visibleDocuments.some((doc: any) => doc.id === selectedDocumentId);
+    if (!exists) {
+      setSelectedDocumentId(visibleDocuments[0].id ?? null);
+    }
+  }, [selectedDocumentId, visibleDocuments]);
+
   const documentsWithStatus = useMemo(() => {
     if (!detail) {
       return [] as Array<PersonalDetail['documents'][number] & { status: string; daysLeft: number | null }>;
@@ -361,7 +413,7 @@ export const ProveedorEditarPage: React.FC<ProveedorEditarPageProps> = ({
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
-    return detail.documents.map((doc: any) => {
+    return visibleDocuments.map((doc: any) => {
       const rawDate = doc.fechaVencimiento;
       if (!rawDate) {
         return { ...doc, status: 'sin_vencimiento', daysLeft: null };
@@ -380,7 +432,7 @@ export const ProveedorEditarPage: React.FC<ProveedorEditarPageProps> = ({
       }
       return { ...doc, status: 'vigente', daysLeft: diffDays };
     });
-  }, [detail]);
+  }, [detail, visibleDocuments]);
 
   const documentStatusCounts = useMemo(() => {
     const counts = {
@@ -1638,7 +1690,7 @@ export const ProveedorEditarPage: React.FC<ProveedorEditarPageProps> = ({
       return;
     }
 
-    const documento = detail.documents.find((doc: any) => doc.id === selectedDocumentId);
+    const documento = visibleDocuments.find((doc: any) => doc.id === selectedDocumentId);
     if (!documento) {
       window.alert('Seleccioná un documento para descargar.');
       return;
@@ -2503,7 +2555,7 @@ export const ProveedorEditarPage: React.FC<ProveedorEditarPageProps> = ({
 
       <section className="personal-edit-section">
         <h2>Documentos</h2>
-        {detail.documents.length > 0
+        {visibleDocuments.length > 0
           ? (() => {
               const downloadAllUrl = resolveApiUrl(
                 apiBaseUrl,
@@ -2674,10 +2726,10 @@ export const ProveedorEditarPage: React.FC<ProveedorEditarPageProps> = ({
             <select
               value={selectedDocumentId ?? ''}
               onChange={(event) => setSelectedDocumentId(event.target.value ? Number(event.target.value) : null)}
-              disabled={detail.documents.length === 0}
+              disabled={visibleDocuments.length === 0}
             >
               <option value="">Seleccionar documento</option>
-              {detail.documents.map((doc: any) => (
+              {visibleDocuments.map((doc: any) => (
                 <option key={doc.id} value={doc.id}>
                   {doc.tipoNombre
                     ? `${doc.tipoNombre}${doc.nombre ? ` – ${doc.nombre}` : ''}`
@@ -2697,7 +2749,7 @@ export const ProveedorEditarPage: React.FC<ProveedorEditarPageProps> = ({
             ) : null}
           </div>
         ) : null}
-        {detail.documents.length === 0 ? (
+        {visibleDocuments.length === 0 ? (
           <p className="form-info">No hay documentos disponibles para este personal.</p>
         ) : null}
         <button

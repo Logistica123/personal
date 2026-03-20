@@ -2464,19 +2464,29 @@ class PersonalController extends Controller
 
     protected function resolveLiquidacionTypeIds(): \Illuminate\Support\Collection
     {
-        return FileType::query()
+        static $cached = null;
+
+        if ($cached !== null) {
+            return $cached;
+        }
+
+        $cached = FileType::query()
             ->select('id', 'nombre')
             ->get()
             ->filter(function (FileType $tipo) {
                 $nombre = Str::lower($tipo->nombre ?? '');
                 return $nombre !== '' && Str::contains($nombre, 'liquid');
             })
-            ->pluck('id');
+            ->pluck('id')
+            ->values();
+
+        return $cached;
     }
 
     protected function resolveDocumentacionStatus(Persona $persona): array
     {
         $documents = $persona->documentosVencimientos ?? collect();
+        $liquidacionTypeIds = $this->resolveLiquidacionTypeIds();
         $total = 0;
         $expired = 0;
         $expiring = 0;
@@ -2484,6 +2494,9 @@ class PersonalController extends Controller
         $warningDate = $today->copy()->addDays(30);
 
         foreach ($documents as $documento) {
+            if ($liquidacionTypeIds->isNotEmpty() && $liquidacionTypeIds->contains((int) ($documento->tipo_archivo_id ?? 0))) {
+                continue;
+            }
             $expiry = $documento->fecha_vencimiento ?? null;
             if (! $expiry) {
                 continue;
