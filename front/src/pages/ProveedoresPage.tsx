@@ -128,6 +128,7 @@ export const ProveedoresPage: React.FC<ProveedoresPageProps> = ({
   const [patenteFilter, setPatenteFilter] = useState('');
   const [legajoFilter, setLegajoFilter] = useState(() => resolveStoredFilters().legajo ?? '');
   const [docStatusFilter, setDocStatusFilter] = useState<'vencido' | 'por_vencer' | 'vigente' | ''>('');
+  const [membresiaFilter, setMembresiaFilter] = useState(false);
   const [docsSortActive, setDocsSortActive] = useState(false);
   const sinEstadoFilterValue = 'sin_estado';
   const noCitadoFilterValue = 'no_citado';
@@ -191,6 +192,16 @@ export const ProveedoresPage: React.FC<ProveedoresPageProps> = ({
       // ignore storage failures (private mode, quota, etc)
     }
   }, [personalColumnsStorageKey, visibleColumns]);
+
+  const resolveProveedorEmail = useCallback((registro: PersonalRecord): string | null => {
+    const cobradorEmail = (registro.cobradorEmail ?? '').trim();
+    if (cobradorEmail) {
+      return cobradorEmail;
+    }
+
+    const email = (registro.email ?? '').trim();
+    return email || null;
+  }, []);
   const mapEstadoParamToFilter = useCallback(
     (value: string | null): string => {
       if (!value) {
@@ -560,7 +571,7 @@ export const ProveedoresPage: React.FC<ProveedoresPageProps> = ({
         registro.nombre,
         registro.cuil,
         registro.telefono,
-        registro.email,
+        resolveProveedorEmail(registro),
         registro.cliente,
         registro.unidad,
         registro.unidadDetalle,
@@ -609,6 +620,7 @@ export const ProveedoresPage: React.FC<ProveedoresPageProps> = ({
     noCitadoFilterValue,
     sinEstadoFilterValue,
     isNoCitadoEstado,
+    resolveProveedorEmail,
   ]);
 
   const filteredPersonal = useMemo(() => {
@@ -616,6 +628,10 @@ export const ProveedoresPage: React.FC<ProveedoresPageProps> = ({
 
     if (docStatusFilter) {
       list = list.filter((registro) => (registro.documentacionStatus ?? null) === docStatusFilter);
+    }
+
+    if (membresiaFilter) {
+      list = list.filter((registro) => Boolean(registro.membresiaDesde));
     }
 
     if (!docsSortActive) {
@@ -660,7 +676,7 @@ export const ProveedoresPage: React.FC<ProveedoresPageProps> = ({
 
       return (a.nombre ?? '').localeCompare(b.nombre ?? '');
     });
-  }, [baseFilteredPersonal, docStatusFilter, docsSortActive]);
+  }, [baseFilteredPersonal, docStatusFilter, membresiaFilter, docsSortActive]);
 
   useEffect(() => {
     setCurrentPage(1);
@@ -779,6 +795,7 @@ export const ProveedoresPage: React.FC<ProveedoresPageProps> = ({
     setTarifaFilter('');
     setPagoFilter('');
     setDocStatusFilter('');
+    setMembresiaFilter(false);
     setAltaDatePreset('');
     setAltaDateFrom('');
     setAltaDateTo('');
@@ -892,7 +909,7 @@ export const ProveedoresPage: React.FC<ProveedoresPageProps> = ({
             { header: 'Legajo', resolve: (registro) => registro.legajo ?? '' },
             { header: PERSON_TAX_ID_LABEL, resolve: (registro) => registro.cuil ?? '' },
             { header: 'Teléfono', resolve: (registro) => registro.telefono ?? '' },
-            { header: 'Email', resolve: (registro) => registro.email ?? '' },
+            { header: 'Email', resolve: (registro) => resolveProveedorEmail(registro) ?? '' },
             { header: 'Perfil', resolve: (registro) => getPerfilDisplayLabel(registro.perfilValue ?? null, registro.perfil ?? '') },
             { header: 'Perfil ID', resolve: (registro) => registro.perfilValue ?? '' },
             { header: 'Agente', resolve: (registro) => registro.agente ?? '' },
@@ -1376,6 +1393,18 @@ export const ProveedoresPage: React.FC<ProveedoresPageProps> = ({
             <strong className="summary-card__value">{documentSummary.sinDocs}</strong>
           </div>
         ) : null}
+        <button
+          type="button"
+          className={`summary-card summary-card--button${membresiaFilter ? ' is-active' : ''}`}
+          style={{ borderColor: membresiaFilter ? '#f5c518' : undefined, background: membresiaFilter ? '#fffbea' : undefined }}
+          onClick={() => setMembresiaFilter((prev) => !prev)}
+          title="Filtrar solo miembros"
+        >
+          <span className="summary-card__label">★ Miembros</span>
+          <strong className="summary-card__value">
+            {personal.filter((r) => !r.esSolicitud && Boolean(r.membresiaDesde)).length}
+          </strong>
+        </button>
       </div>
     </div>
   );
@@ -1454,14 +1483,43 @@ export const ProveedoresPage: React.FC<ProveedoresPageProps> = ({
               pageRecords.map((registro) => (
                 <tr key={registro.rowId ?? registro.id}>
                   {isColumnVisible('id') ? <td>{registro.id}</td> : null}
-                  {isColumnVisible('nombre') ? <td>{registro.nombre ?? '—'}</td> : null}
+                  {isColumnVisible('nombre') ? (
+                    <td>
+                      {registro.nombre ?? '—'}
+                      {registro.membresiaDesde ? (
+                        <span
+                          title={`Miembro desde ${registro.membresiaDesde}`}
+                          style={{ marginLeft: '0.35rem', color: '#f5c518', fontSize: '0.9rem' }}
+                        >
+                          ★
+                        </span>
+                      ) : null}
+                      {registro.membresiaDesde ? (
+                        <span
+                          style={{ marginLeft: '0.35rem', fontSize: '0.75rem', color: '#888', whiteSpace: 'nowrap' }}
+                        >
+                          {(() => {
+                            const desde = new Date(registro.membresiaDesde);
+                            const hoy = new Date();
+                            let meses = (hoy.getFullYear() - desde.getFullYear()) * 12 + (hoy.getMonth() - desde.getMonth());
+                            if (meses < 0) meses = 0;
+                            const anios = Math.floor(meses / 12);
+                            const mesesRest = meses % 12;
+                            if (anios > 0 && mesesRest > 0) return `${anios}a ${mesesRest}m`;
+                            if (anios > 0) return `${anios}a`;
+                            return `${meses}m`;
+                          })()}
+                        </span>
+                      ) : null}
+                    </td>
+                  ) : null}
                   {isColumnVisible('legajo') ? <td>{registro.legajo ?? '—'}</td> : null}
                   {isColumnVisible('cuil') ? <td>{registro.cuil ?? '—'}</td> : null}
                   {isColumnVisible('telefono') ? (
                     <td>{renderProtectedValue(registro.id, 'phone', registro.telefono)}</td>
                   ) : null}
                   {isColumnVisible('email') ? (
-                    <td>{renderProtectedValue(registro.id, 'email', registro.email)}</td>
+                    <td>{renderProtectedValue(registro.id, 'email', resolveProveedorEmail(registro))}</td>
                   ) : null}
                   {isColumnVisible('perfil') ? (
                     <td>{getPerfilDisplayLabel(registro.perfilValue ?? null, registro.perfil ?? '—') || '—'}</td>

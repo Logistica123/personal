@@ -261,6 +261,7 @@ export const ProveedorEditarPage: React.FC<ProveedorEditarPageProps> = ({
     combustible: false,
     combustibleEstado: '',
     fechaBaja: '',
+    membresiaDesde: '',
     tarifaEspecial: false,
     esCobrador: true,
     cobradorNombre: '',
@@ -970,7 +971,7 @@ export const ProveedorEditarPage: React.FC<ProveedorEditarPageProps> = ({
         legajo: payload.data.legajo ?? '',
         cuil: payload.data.cuil ?? solicitudAltaForm?.cuil ?? '',
         telefono: payload.data.telefono ?? solicitudAltaForm?.telefono ?? '',
-        email: payload.data.email ?? solicitudAltaForm?.email ?? '',
+        email: fallbackEmail || (payload.data.email ?? solicitudAltaForm?.email ?? ''),
         perfilValue: payload.data.perfilValue ?? 0,
         agenteId: payload.data.agenteId ? String(payload.data.agenteId) : '',
         agenteResponsableId: payload.data.agenteResponsableId ? String(payload.data.agenteResponsableId) : '',
@@ -1000,6 +1001,7 @@ export const ProveedorEditarPage: React.FC<ProveedorEditarPageProps> = ({
         combustible: Boolean(payload.data.combustibleValue),
         combustibleEstado: payload.data.combustibleEstado ?? '',
         fechaBaja: payload.data.fechaBaja ?? '',
+        membresiaDesde: payload.data.membresiaDesde ?? '',
         tarifaEspecial: Boolean(payload.data.tarifaEspecialValue),
       });
       const documents = payload.data.documents ?? [];
@@ -1165,6 +1167,8 @@ export const ProveedorEditarPage: React.FC<ProveedorEditarPageProps> = ({
     return perfil?.label ?? (detail?.perfil ?? '');
   }, [meta, formValues.perfilValue, detail?.perfil]);
 
+  const cobradorLocked = formValues.perfilValue === 2;
+
   const isEstadoBaja = useMemo(() => {
     const estadoNombre = (() => {
       if (meta && formValues.estadoId) {
@@ -1246,12 +1250,20 @@ export const ProveedorEditarPage: React.FC<ProveedorEditarPageProps> = ({
   ]);
 
   const handleDownloadFicha = useCallback((record: PersonalDetail) => {
+    const emailPreferido = (record.cobradorEmail ?? '').trim() || (record.email ?? '') || '';
+    const hasCobradorData = Boolean(
+      record.esCobrador
+      || record.cobradorNombre
+      || record.cobradorEmail
+      || record.cobradorCuil
+      || record.cobradorCbuAlias
+    );
     const lines = [
       ['Nombre', [record.nombres, record.apellidos].filter(Boolean).join(' ').trim()],
       ['Legajo', record.legajo ?? ''],
       [PERSON_TAX_ID_LABEL, record.cuil ?? ''],
       ['Teléfono', record.telefono ?? ''],
-      ['Email', record.email ?? ''],
+      ['Email', emailPreferido],
       ['Perfil', record.perfil ?? ''],
       ['Agente', record.agente ?? ''],
       ['Estado', record.estado ?? ''],
@@ -1267,6 +1279,15 @@ export const ProveedorEditarPage: React.FC<ProveedorEditarPageProps> = ({
       ['Observación tarifa', formValues.observacionTarifa],
       ['Observaciones', formValues.observaciones],
     ];
+
+    if (hasCobradorData) {
+      lines.push(
+        ['Cobrador nombre', record.cobradorNombre ?? ''],
+        ['Cobrador correo', record.cobradorEmail ?? ''],
+        [COLLECTOR_TAX_ID_LABEL, record.cobradorCuil ?? ''],
+        ['Cobrador CBU/Alias', record.cobradorCbuAlias ?? '']
+      );
+    }
 
     const content = lines
       .map(([label, value]) => `${label}: ${value ? String(value) : ''}`)
@@ -1287,6 +1308,13 @@ export const ProveedorEditarPage: React.FC<ProveedorEditarPageProps> = ({
     <div className="card-header card-header--compact">
       <button type="button" className="secondary-action" onClick={() => navigate('/personal')}>
         ← Volver a personal
+      </button>
+      <button
+        type="button"
+        className="secondary-action"
+        onClick={() => navigate(`/personal/${personaId}/membresia`)}
+      >
+        ★ Membresía
       </button>
       <button
         type="button"
@@ -1447,7 +1475,6 @@ export const ProveedorEditarPage: React.FC<ProveedorEditarPageProps> = ({
     try {
       setSaveError(null);
       setSaveSuccess(null);
-      setSaving(true);
 
       const cobradorNombre = formValues.cobradorNombre.trim() || null;
       const cobradorEmail = formValues.cobradorEmail.trim() || null;
@@ -1455,8 +1482,33 @@ export const ProveedorEditarPage: React.FC<ProveedorEditarPageProps> = ({
       const cobradorCbuAlias = canEditCbu
         ? (formValues.cobradorCbuAlias.trim() || null)
         : (detail?.cobradorCbuAlias ?? null);
-      const hasCobradorFields = Boolean(cobradorNombre || cobradorEmail || cobradorCuil || cobradorCbuAlias);
+      const hasCobradorFields = Boolean(
+        cobradorNombre || cobradorEmail || cobradorCuil || cobradorCbuAlias
+      );
       const esCobradorFlag = formValues.esCobrador || hasCobradorFields || formValues.perfilValue === 2;
+
+      if (esCobradorFlag) {
+        const missing: string[] = [];
+        if (!cobradorNombre) {
+          missing.push('nombre del cobrador');
+        }
+        if (!cobradorEmail) {
+          missing.push('correo del cobrador');
+        }
+        if (!cobradorCuil) {
+          missing.push('CUIT/CUIL del cobrador');
+        }
+        if (!cobradorCbuAlias) {
+          missing.push('CBU/Alias del cobrador');
+        }
+
+        if (missing.length > 0) {
+          setSaveError(`Completá los datos del cobrador para guardar: ${missing.join(', ')}.`);
+          return;
+        }
+      }
+
+      setSaving(true);
       const combustibleEstado = formValues.combustible ? formValues.combustibleEstado || null : null;
       const fechaBaja = formValues.fechaBaja || null;
       const duenoNombre = esCobradorFlag ? cobradorNombre : formValues.duenoNombre.trim() || null;
@@ -1498,6 +1550,7 @@ export const ProveedorEditarPage: React.FC<ProveedorEditarPageProps> = ({
           combustible: formValues.combustible,
           combustibleEstado,
           tarifaEspecial: formValues.tarifaEspecial,
+          membresiaDesde: formValues.membresiaDesde || null,
           esCobrador: esCobradorFlag,
           cobradorNombre,
           cobradorEmail,
@@ -1645,7 +1698,7 @@ export const ProveedorEditarPage: React.FC<ProveedorEditarPageProps> = ({
           legajo: payload.data.legajo ?? '',
           cuil: payload.data.cuil ?? '',
           telefono: payload.data.telefono ?? '',
-          email: payload.data.email ?? '',
+          email: fallbackEmail || (payload.data.email ?? ''),
           perfilValue: payload.data.perfilValue ?? 0,
           agenteId: payload.data.agenteId ? String(payload.data.agenteId) : '',
           agenteResponsableId: payload.data.agenteResponsableId ? String(payload.data.agenteResponsableId) : '',
@@ -1662,6 +1715,7 @@ export const ProveedorEditarPage: React.FC<ProveedorEditarPageProps> = ({
           esCobrador,
           combustibleEstado: payload.data.combustibleEstado ?? '',
           fechaBaja: payload.data.fechaBaja ?? '',
+          membresiaDesde: payload.data.membresiaDesde ?? '',
           cobradorNombre: fallbackNombre,
           cobradorEmail: fallbackEmail,
           cobradorCuil: fallbackCuil,
@@ -2121,14 +2175,14 @@ export const ProveedorEditarPage: React.FC<ProveedorEditarPageProps> = ({
             <div className="checkbox-control">
               <input
                 type="checkbox"
-                checked={formValues.esCobrador}
-                onChange={handleCobradorToggle}
-                disabled={isReadOnly}
+                checked={cobradorLocked || formValues.esCobrador}
+                onChange={cobradorLocked ? undefined : handleCobradorToggle}
+                disabled={isReadOnly || cobradorLocked}
               />
               Marcar si los datos pertenecen a un cobrador
             </div>
           </label>
-          {formValues.esCobrador ? (
+          {cobradorLocked || formValues.esCobrador ? (
             <>
               <label className="input-control">
                 <span>Nombre completo del cobrador</span>
@@ -2285,6 +2339,15 @@ export const ProveedorEditarPage: React.FC<ProveedorEditarPageProps> = ({
               />
             </label>
           ) : null}
+          <label className="input-control">
+            <span>Membresía desde</span>
+            <input
+              type="date"
+              value={formValues.membresiaDesde}
+              onChange={(event) => setFormValues((prev) => ({ ...prev, membresiaDesde: event.target.value }))}
+              disabled={isReadOnly}
+            />
+          </label>
         </div>
       </section>
 

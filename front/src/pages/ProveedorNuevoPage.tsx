@@ -330,7 +330,12 @@ export const ProveedorNuevoPage: React.FC<ProveedorNuevoPageProps> = ({
       esCobrador: checked,
       ...(checked
         ? {}
-        : { cobradorNombre: '', cobradorEmail: '', cobradorCuil: '', cobradorCbuAlias: '' }),
+        : {
+          cobradorNombre: '',
+          cobradorEmail: '',
+          cobradorCuil: '',
+          cobradorCbuAlias: '',
+        }),
     }));
   };
 
@@ -449,13 +454,37 @@ export const ProveedorNuevoPage: React.FC<ProveedorNuevoPageProps> = ({
       const cobradorEmail = formValues.cobradorEmail.trim() || null;
       const cobradorCuil = formValues.cobradorCuil.trim() || null;
       const cobradorCbuAlias = formValues.cobradorCbuAlias.trim() || null;
-      const hasCobradorFields = Boolean(cobradorNombre || cobradorEmail || cobradorCuil || cobradorCbuAlias);
+      const hasCobradorFields = Boolean(
+        cobradorNombre || cobradorEmail || cobradorCuil || cobradorCbuAlias
+      );
       const esCobradorFlag = formValues.esCobrador || hasCobradorFields || formValues.perfilValue === 2;
       const combustibleEstado = formValues.combustible ? formValues.combustibleEstado || null : null;
       const duenoNombre = esCobradorFlag ? cobradorNombre : formValues.duenoNombre.trim() || null;
       const duenoEmail = esCobradorFlag ? cobradorEmail : formValues.duenoEmail.trim() || null;
       const duenoCuilCobrador = esCobradorFlag ? cobradorCuil : formValues.duenoCuilCobrador.trim() || null;
       const duenoCbuAlias = esCobradorFlag ? cobradorCbuAlias : formValues.duenoCbuAlias.trim() || null;
+
+      if (esCobradorFlag) {
+        const missing: string[] = [];
+        if (!cobradorNombre) {
+          missing.push('nombre del cobrador');
+        }
+        if (!cobradorEmail) {
+          missing.push('correo del cobrador');
+        }
+        if (!cobradorCuil) {
+          missing.push('CUIT/CUIL del cobrador');
+        }
+        if (!cobradorCbuAlias) {
+          missing.push('CBU/Alias del cobrador');
+        }
+
+        if (missing.length > 0) {
+          setSaveError(`Completá los datos del cobrador para guardar: ${missing.join(', ')}.`);
+          setSaving(false);
+          return;
+        }
+      }
 
       const response = await fetch(`${apiBaseUrl}/api/personal`, {
         method: 'POST',

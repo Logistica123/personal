@@ -1,0 +1,27 @@
+<?php
+
+use Illuminate\Database\Migrations\Migration;
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\Schema;
+
+return new class extends Migration
+{
+    public function up(): void
+    {
+        Schema::table('personas', function (Blueprint $table) {
+            if (! Schema::hasColumn('personas', 'cobrador_telefono_emergencia')) {
+                $table->string('cobrador_telefono_emergencia')->nullable()->after('cobrador_cbu_alias');
+            }
+        });
+    }
+
+    public function down(): void
+    {
+        Schema::table('personas', function (Blueprint $table) {
+            if (Schema::hasColumn('personas', 'cobrador_telefono_emergencia')) {
+                $table->dropColumn('cobrador_telefono_emergencia');
+            }
+        });
+    }
+};
+

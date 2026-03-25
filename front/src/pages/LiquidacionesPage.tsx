@@ -4771,7 +4771,19 @@ export const LiquidacionesPage: React.FC<LiquidacionesPageProps> = ({
                     </td>
                   ) : null}
                   {isListColumnVisible('id') ? <td>{registro.id}</td> : null}
-                  {isListColumnVisible('nombre') ? <td>{registro.nombre ?? '—'}</td> : null}
+                  {isListColumnVisible('nombre') ? (
+                    <td>
+                      {registro.nombre ?? '—'}
+                      {registro.membresiaDesde ? (
+                        <span
+                          title={`Miembro desde ${registro.membresiaDesde}`}
+                          style={{ marginLeft: '0.35rem', color: '#f5c518', fontSize: '0.9rem' }}
+                        >
+                          ★
+                        </span>
+                      ) : null}
+                    </td>
+                  ) : null}
                   {isListColumnVisible('cuil') ? <td>{registro.cuil ?? '—'}</td> : null}
                   {isListColumnVisible('telefono') ? <td>{registro.telefono ?? '—'}</td> : null}
                   {isListColumnVisible('email') ? <td>{registro.email ?? '—'}</td> : null}

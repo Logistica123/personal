@@ -1126,6 +1126,7 @@ class PersonalController extends Controller
             'fechaBaja' => ['nullable', 'date'],
             'observacionTarifa' => ['nullable', 'string'],
             'observaciones' => ['nullable', 'string'],
+            'membresiaDesde' => ['nullable', 'date'],
             'combustible' => ['nullable', 'boolean'],
             'combustibleEstado' => ['nullable', 'string', 'in:activo,suspendido'],
             'tarifaEspecial' => ['nullable', 'boolean'],
@@ -1150,6 +1151,38 @@ class PersonalController extends Controller
             'duenoCuil' => 'CUIT/CUIL (Dueño)',
             'duenoCuilCobrador' => 'CUIT/CUIL cobrador del dueño',
         ]);
+
+        $targetEsCobrador = array_key_exists('esCobrador', $validated)
+            ? (bool) $validated['esCobrador']
+            : (bool) ($persona->es_cobrador ?? false);
+        if ($targetEsCobrador) {
+            $missing = [];
+            $cobradorNombre = (string) ($validated['cobradorNombre'] ?? $persona->cobrador_nombre ?? '');
+            $cobradorEmail = (string) ($validated['cobradorEmail'] ?? $persona->cobrador_email ?? '');
+            $cobradorCuil = (string) ($validated['cobradorCuil'] ?? $persona->cobrador_cuil ?? '');
+            $cobradorCbuAlias = $canEditCbu
+                ? (string) ($validated['cobradorCbuAlias'] ?? $persona->cobrador_cbu_alias ?? '')
+                : (string) ($persona->cobrador_cbu_alias ?? '');
+
+            if (trim($cobradorNombre) === '') {
+                $missing['cobradorNombre'] = 'El nombre del cobrador es obligatorio.';
+            }
+            if (trim($cobradorEmail) === '') {
+                $missing['cobradorEmail'] = 'El correo del cobrador es obligatorio.';
+            }
+            if (trim($cobradorCuil) === '') {
+                $missing['cobradorCuil'] = 'El CUIT/CUIL del cobrador es obligatorio.';
+            }
+            if (trim($cobradorCbuAlias) === '') {
+                $missing['cobradorCbuAlias'] = $canEditCbu
+                    ? 'El CBU/Alias del cobrador es obligatorio.'
+                    : 'El CBU/Alias del cobrador es obligatorio. Pedí a un administrador que lo cargue.';
+            }
+
+            if (! empty($missing)) {
+                throw ValidationException::withMessages($missing);
+            }
+        }
 
         $targetEstadoId = array_key_exists('estadoId', $validated) ? $validated['estadoId'] : $persona->estado_id;
         $currentEstadoNombre = $persona->estado?->nombre ?? $this->resolveEstadoName($persona->estado_id);
@@ -1294,6 +1327,10 @@ class PersonalController extends Controller
             $persona->tarifaespecial = $validated['tarifaEspecial'] ? 1 : 0;
         }
 
+        if (array_key_exists('membresiaDesde', $validated)) {
+            $persona->membresia_desde = $validated['membresiaDesde'] ?: null;
+        }
+
         if (array_key_exists('esCobrador', $validated)) {
             $persona->es_cobrador = $validated['esCobrador'] ? 1 : 0;
             $persona->cobrador_nombre = $validated['esCobrador'] ? ($validated['cobradorNombre'] ?? null) : null;
@@ -1400,6 +1437,7 @@ class PersonalController extends Controller
             'cobrador_email',
             'cobrador_cuil',
             'cobrador_cbu_alias',
+            'membresia_desde',
             'observaciontarifa',
             'observaciones',
             'fecha_alta',
@@ -1560,6 +1598,27 @@ class PersonalController extends Controller
             'duenoCuil' => 'CUIT/CUIL (Dueño)',
             'duenoCuilCobrador' => 'CUIT/CUIL cobrador del dueño',
         ]);
+
+        $targetEsCobrador = (bool) ($validated['esCobrador'] ?? false);
+        if ($targetEsCobrador) {
+            $missing = [];
+            if (trim((string) ($validated['cobradorNombre'] ?? '')) === '') {
+                $missing['cobradorNombre'] = 'El nombre del cobrador es obligatorio.';
+            }
+            if (trim((string) ($validated['cobradorEmail'] ?? '')) === '') {
+                $missing['cobradorEmail'] = 'El correo del cobrador es obligatorio.';
+            }
+            if (trim((string) ($validated['cobradorCuil'] ?? '')) === '') {
+                $missing['cobradorCuil'] = 'El CUIT/CUIL del cobrador es obligatorio.';
+            }
+            if (trim((string) ($validated['cobradorCbuAlias'] ?? '')) === '') {
+                $missing['cobradorCbuAlias'] = 'El CBU/Alias del cobrador es obligatorio.';
+            }
+
+            if (! empty($missing)) {
+                throw ValidationException::withMessages($missing);
+            }
+        }
 
         $autoApprove = array_key_exists('autoApprove', $validated) ? (bool) $validated['autoApprove'] : false;
         $autoApproveUserId = $validated['autoApproveUserId'] ?? null;
@@ -2195,6 +2254,7 @@ class PersonalController extends Controller
             'cobradorEmail' => $cobradorEmail,
             'cobradorCuil' => $cobradorCuil,
             'cobradorCbuAlias' => $cobradorCbuAlias,
+            'membresiaDesde' => $persona->membresia_desde ? substr((string) $persona->membresia_desde, 0, 10) : null,
             'fechaAlta' => $this->formatFechaAlta($persona->fecha_alta),
             'fechaAltaVinculacion' => $this->formatFechaAlta($persona->fecha_alta),
             'fechaBaja' => $fechaBaja,
@@ -2427,6 +2487,7 @@ class PersonalController extends Controller
             'cobradorEmail' => $cobradorEmail,
             'cobradorCuil' => $cobradorCuil,
             'cobradorCbuAlias' => $cobradorCbuAlias,
+            'membresiaDesde' => $persona->membresia_desde ? substr((string) $persona->membresia_desde, 0, 10) : null,
             'aprobado' => $aprobado,
             'aprobadoAt' => optional($persona->aprobado_at)->format('Y-m-d H:i:s'),
             'aprobadoPor' => $persona->aprobadoPor?->name,

@@ -2306,9 +2306,12 @@ const sucursalOptions = useMemo(() => {
   };
 
   const buildAltaRequestPayload = (form: AltaRequestForm) => {
-    const hasCobradorFields = [form.cobradorNombre, form.cobradorEmail, form.cobradorCuil, form.cobradorCbuAlias].some(
-      (value) => (value ?? '').trim().length > 0
-    );
+    const hasCobradorFields = [
+      form.cobradorNombre,
+      form.cobradorEmail,
+      form.cobradorCuil,
+      form.cobradorCbuAlias,
+    ].some((value) => (value ?? '').trim().length > 0);
     const esCobrador = form.esCobrador || form.perfilValue === 2 || hasCobradorFields;
     const cobradorNombre = form.cobradorNombre.trim() || null;
     const cobradorEmail = form.cobradorEmail.trim() || null;
@@ -2405,6 +2408,40 @@ const sucursalOptions = useMemo(() => {
         message: `Completá ${PERSON_TAX_ID_LABEL}, Patente, Cliente y Sucursal antes de enviar la solicitud.`,
       });
       return false;
+    }
+
+    const shouldRequireCobrador =
+      form.esCobrador
+      || form.perfilValue === 2
+      || [
+        form.cobradorNombre,
+        form.cobradorEmail,
+        form.cobradorCuil,
+        form.cobradorCbuAlias,
+      ].some((value) => (value ?? '').trim().length > 0);
+
+    if (shouldRequireCobrador) {
+      const missing: string[] = [];
+      if (!form.cobradorNombre.trim()) {
+        missing.push('nombre del cobrador');
+      }
+      if (!form.cobradorEmail.trim()) {
+        missing.push('correo del cobrador');
+      }
+      if (!form.cobradorCuil.trim()) {
+        missing.push('CUIT/CUIL del cobrador');
+      }
+      if (!form.cobradorCbuAlias.trim()) {
+        missing.push('CBU/Alias del cobrador');
+      }
+
+      if (missing.length > 0) {
+        setFlash({
+          type: 'error',
+          message: `Completá los datos del cobrador para enviar la solicitud: ${missing.join(', ')}.`,
+        });
+        return false;
+      }
     }
 
     return true;

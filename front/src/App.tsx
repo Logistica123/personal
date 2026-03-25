@@ -42,6 +42,7 @@ import { UsuariosPage } from './pages/UsuariosPage';
 import { RrhhPage } from './pages/RrhhPage';
 import { ProveedoresPage } from './pages/ProveedoresPage';
 import { ProveedorEditarPage } from './pages/ProveedorEditarPage';
+import { MembresiaPanelPage } from './pages/MembresiaPanelPage';
 import { ProveedorNuevoPage } from './pages/ProveedorNuevoPage';
 import { WebRtcCallsPage } from './pages/WebRtcCallsPage';
 import { AttendanceLogPage } from './pages/AttendanceLogPage';
@@ -19507,6 +19508,19 @@ const AppRoutes: React.FC = () => {
               PAGO_SELECT_OPTIONS={PAGO_SELECT_OPTIONS}
               formatPagoLabel={formatPagoLabel}
               TaxProfileSection={TaxProfileSection}
+            />
+          </RequireAccess>
+        }
+      />
+      <Route
+        path="/personal/:personaId/membresia"
+        element={
+          <RequireAccess section="personal">
+            <MembresiaPanelPage
+              DashboardLayout={DashboardLayout}
+              resolveApiBaseUrl={resolveApiBaseUrl}
+              useStoredAuthUser={useStoredAuthUser}
+              buildActorHeaders={buildActorHeaders}
             />
           </RequireAccess>
         }

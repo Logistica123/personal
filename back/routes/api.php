@@ -34,6 +34,7 @@ use App\Http\Controllers\Api\LiquidacionRunController;
 use App\Http\Controllers\Api\LiquidacionReciboController;
 use App\Http\Controllers\Api\UserDocumentController;
 use App\Http\Controllers\Api\CallController;
+use App\Http\Controllers\Api\MembresiaController;
 use Illuminate\Support\Facades\Route;
 
 Route::post('/login', [AuthController::class, 'login']);
@@ -78,6 +79,11 @@ Route::middleware('auth.api')->group(function () {
     Route::post('/personal/{persona}/legajo-impositivo/nosis-refresh', [TaxProfileController::class, 'refreshPersonaNosis']);
     Route::post('/personal/{persona}/contact-reveal', [PersonalController::class, 'logContactReveal']);
     Route::delete('/personal/{persona}', [PersonalController::class, 'destroy']);
+
+    Route::get('/personal/{persona}/membresia', [MembresiaController::class, 'show']);
+    Route::post('/personal/{persona}/membresia/cuotas', [MembresiaController::class, 'storeCuota']);
+    Route::post('/personal/{persona}/membresia/beneficios', [MembresiaController::class, 'storeBeneficioUso']);
+    Route::delete('/personal/{persona}/membresia/beneficios/{uso}', [MembresiaController::class, 'destroyBeneficioUso']);
 
     Route::get('/solicitud-personal', [SolicitudPersonalController::class, 'index']);
     Route::post('/solicitud-personal', [SolicitudPersonalController::class, 'store']);

@@ -54,6 +54,7 @@ export type PersonalRecord = {
   cobradorEmail?: string | null;
   cobradorCuil?: string | null;
   cobradorCbuAlias?: string | null;
+  membresiaDesde?: string | null;
   aprobado: boolean;
   aprobadoAt: string | null;
   aprobadoPor: string | null;
@@ -106,4 +107,3 @@ export type PersonalRecord = {
   documentacionPorVencer?: number | null;
   documentacionTotal?: number | null;
 };
-
