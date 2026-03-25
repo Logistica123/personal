@@ -156,6 +156,36 @@ const serializePagoValue = (value: string | number | boolean | null | undefined)
   return numeric;
 };
 
+const normalizePagoValue = (value: unknown): string => {
+  if (value === null || value === undefined) {
+    return '';
+  }
+
+  if (typeof value === 'boolean') {
+    return value ? '1' : '0';
+  }
+
+  const raw = String(value).trim();
+  if (!raw) {
+    return '';
+  }
+
+  const normalized = raw.toLowerCase();
+  if (['1', 'true', 'si', 'sí', 'con', 'factura', 'con factura'].includes(normalized)) {
+    return '1';
+  }
+  if (['0', 'false', 'no', 'sin', 'sin factura', 'sn', 's/n'].includes(normalized)) {
+    return '0';
+  }
+
+  const numeric = Number(normalized);
+  if (!Number.isNaN(numeric)) {
+    return numeric !== 0 ? '1' : '0';
+  }
+
+  return '';
+};
+
 const revokeImagePreviewUrl = (url?: string | null) => {
   if (!url) {
     return;
@@ -230,7 +260,7 @@ export const ProveedorEditarPage: React.FC<ProveedorEditarPageProps> = ({
   const canManagePersonal = useMemo(() => isPersonalEditor(authUser), [authUser]);
   const actorHeaders = useMemo(() => buildActorHeaders(authUser), [authUser]);
   const isReadOnly = userRole === 'operator' || !canManagePersonal;
-  const canEditCbu = userRole === 'admin' || userRole === 'admin2';
+  const canEditCbu = userRole === 'admin' || userRole === 'admin2' || userRole === 'encargado';
   const [nosisLookupLoading, setNosisLookupLoading] = useState(false);
   const [nosisLookupError, setNosisLookupError] = useState<string | null>(null);
   const [nosisLookupInfo, setNosisLookupInfo] = useState<string | null>(null);
@@ -980,7 +1010,7 @@ export const ProveedorEditarPage: React.FC<ProveedorEditarPageProps> = ({
         unidadId: payload.data.unidadId ? String(payload.data.unidadId) : '',
         estadoId: payload.data.estadoId ? String(payload.data.estadoId) : '',
         fechaAlta: payload.data.fechaAlta ?? '',
-        pago: payload.data.pago ?? '',
+        pago: normalizePagoValue(payload.data.pago ?? solicitudAltaForm?.pago ?? ''),
         cbuAlias: payload.data.cbuAlias ?? solicitudAltaForm?.cbuAlias ?? '',
         patente: payload.data.patente ?? '',
         observacionTarifa: payload.data.observacionTarifa ?? '',
@@ -1707,7 +1737,7 @@ export const ProveedorEditarPage: React.FC<ProveedorEditarPageProps> = ({
           unidadId: payload.data.unidadId ? String(payload.data.unidadId) : '',
           estadoId: payload.data.estadoId ? String(payload.data.estadoId) : '',
           fechaAlta: payload.data.fechaAlta ?? '',
-          pago: payload.data.pago ?? '',
+          pago: normalizePagoValue(payload.data.pago ?? ''),
           cbuAlias: payload.data.cbuAlias ?? '',
           patente: payload.data.patente ?? '',
           observacionTarifa: payload.data.observacionTarifa ?? '',

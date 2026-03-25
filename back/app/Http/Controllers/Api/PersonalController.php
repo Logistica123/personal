@@ -1100,7 +1100,7 @@ class PersonalController extends Controller
     {
         $this->ensureCanManagePersonal($request, $persona);
         $role = strtolower(trim((string) ($request->user()?->role ?? '')));
-        $canEditCbu = in_array($role, ['admin', 'admin2'], true);
+        $canEditCbu = in_array($role, ['admin', 'admin2', 'encargado'], true);
 
         $validated = $request->validate([
             'nombres' => ['nullable', 'string', 'max:255'],
