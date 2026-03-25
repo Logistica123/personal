@@ -81,17 +81,21 @@ const BENEFICIOS_POR_TRAMO: Record<string, Array<{ key: string; label: string }>
     { key: 'cashback_repuestos_10', label: '-10% de cashback en repuestos y cubiertas' },
   ],
   mes_3: [
+    { key: 'descuento_combustible_3', label: '-3% en cuenta corriente de combustible' },
+    { key: 'descuento_poliza_20', label: '-20% en póliza de seguro' },
     { key: 'service_basico', label: '1 service básico gratuito (1/2 usos)' },
     { key: 'botella_agua', label: '1 botella de agua metálica de la empresa' },
   ],
   mes_6: [
     { key: 'descuento_combustible_5', label: '-5% en cuenta corriente de combustible' },
+    { key: 'descuento_poliza_20', label: '-20% en póliza de seguro' },
     { key: 'service_adicional_6', label: '1 service adicional gratuito (1/2 usos)' },
-    { key: 'set_termo_mate', label: 'Set de termo y mate corporativo' },
+    { key: 'set_termo_mate', label: 'Set de termo y mate corporativo (cortesía de la empresa)' },
     { key: 'cubierta_2x1', label: '1 cubierta o promo 2x1 en cubiertas' },
   ],
   mes_12: [
     { key: 'descuento_combustible_8', label: '-8% en cuenta corriente de combustible' },
+    { key: 'descuento_poliza_20', label: '-20% en póliza de seguro' },
     { key: 'service_adicional_12', label: '1 service adicional gratuito' },
     { key: 'eleccion_regalo', label: 'Elección: termo / vaso térmico / herramientas para vehículo' },
     { key: 'cubiertas_3x4', label: '2 cubiertas o promo 3x4 en cubiertas' },
