@@ -13978,6 +13978,7 @@ const CombustibleRunsPage: React.FC = () => {
   const [publishLiquidacionId, setPublishLiquidacionId] = useState('');
   const [publishLoading, setPublishLoading] = useState(false);
   const [syncPersonalLoading, setSyncPersonalLoading] = useState(false);
+  const [exportZipLoading, setExportZipLoading] = useState(false);
 
   const [createClientCode, setCreateClientCode] = useState('');
   const [createPeriodMonth, setCreatePeriodMonth] = useState(() => {
@@ -14070,6 +14071,10 @@ const CombustibleRunsPage: React.FC = () => {
     }
     return rulesClientContextText.includes('EPSA');
   }, [rulesClientContextText]);
+  const isLoginterSelectedRun = useMemo(() => {
+    const code = String(selectedRun?.clientCode ?? '').trim().toUpperCase();
+    return code.includes('LOGINTER') || code.includes('MERCADOLIBRE');
+  }, [selectedRun]);
   const intermedioRulesZone = (() => {
     const normalized = (rulesEditor.intermedioSelectedZone || 'AMBA').trim().toUpperCase() || 'AMBA';
     return INTERMEDIO_ZONES.includes(normalized as (typeof INTERMEDIO_ZONES)[number]) ? normalized : 'AMBA';
@@ -15087,6 +15092,51 @@ const CombustibleRunsPage: React.FC = () => {
       setActionError(err instanceof Error ? err.message : 'No se pudo sincronizar a liquidaciones del personal.');
     } finally {
       setSyncPersonalLoading(false);
+    }
+  };
+
+  const handleExportRunZip = async () => {
+    if (!selectedRunId) {
+      setActionError('Seleccioná un run para exportar.');
+      return;
+    }
+
+    setExportZipLoading(true);
+    setActionMessage(null);
+    setActionError(null);
+
+    try {
+      const response = await fetch(`${apiBaseUrl}/api/liquidaciones/runs/${selectedRunId}/export-pdfs-zip`, {
+        method: 'GET',
+        credentials: 'include',
+      });
+
+      const contentType = response.headers.get('content-type') ?? '';
+      if (!response.ok) {
+        if (contentType.includes('application/json')) {
+          const payload = (await parseJsonSafe(response)) as { message?: string };
+          throw new Error(payload?.message ?? 'No se pudo exportar el ZIP.');
+        }
+        throw new Error('No se pudo exportar el ZIP.');
+      }
+
+      const blob = await response.blob();
+      const disposition = response.headers.get('content-disposition') ?? '';
+      const match = /filename=\"?([^\";]+)\"?/i.exec(disposition);
+      const filename = match?.[1] ?? `liquidaciones_run_${selectedRunId}.zip`;
+
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : 'No se pudo exportar el ZIP.');
+    } finally {
+      setExportZipLoading(false);
     }
   };
 
@@ -17058,6 +17108,16 @@ const CombustibleRunsPage: React.FC = () => {
                 >
                   {syncPersonalLoading ? 'Sincronizando...' : 'Sincronizar a Liquidaciones'}
                 </button>
+                {isLoginterSelectedRun ? (
+                  <button
+                    type="button"
+                    className="secondary-action secondary-action--ghost"
+                    onClick={handleExportRunZip}
+                    disabled={exportZipLoading}
+                  >
+                    {exportZipLoading ? 'Generando ZIP...' : 'Descargar ZIP PDFs'}
+                  </button>
+                ) : null}
               </div>
 
               <div className="helper-text">

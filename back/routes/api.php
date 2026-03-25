@@ -255,6 +255,7 @@ Route::middleware('auth.api')->group(function () {
     Route::post('/liquidaciones/runs/{run}/upsert', [LiquidacionRunController::class, 'upsert']);
     Route::post('/liquidaciones/runs/{run}/approve', [LiquidacionRunController::class, 'approve']);
     Route::post('/liquidaciones/runs/{run}/sync-personal', [LiquidacionRunController::class, 'syncToPersonal']);
+    Route::get('/liquidaciones/runs/{run}/export-pdfs-zip', [LiquidacionRunController::class, 'exportPdfsZip']);
     Route::post('/liquidaciones/runs/{run}/publicar-erp', [LiquidacionRunController::class, 'publishToErp']);
     Route::get('/liquidaciones/reglas-template', [LiquidacionRunController::class, 'rulesTemplate']);
     Route::get('/liquidaciones/reglas-cliente/{clientCode}', [LiquidacionRunController::class, 'showClientRules']);

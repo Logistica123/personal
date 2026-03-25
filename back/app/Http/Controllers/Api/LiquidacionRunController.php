@@ -33,12 +33,17 @@ use ZipArchive;
 
 class LiquidacionRunController extends Controller
 {
-    private const PROVIDER_MATCH_PENDING = 'PENDIENTE_ASIGNACION';
-    private const PROVIDER_MATCH_NONE = 'SIN_MATCH';
-    private const PROVIDER_MATCH_PATENTE = 'PATENTE_OK';
-    private const PROVIDER_MATCH_ALIAS = 'PATENTE_ALIAS_OK';
-    private const PROVIDER_MATCH_MANUAL = 'MANUAL_CONFIRMED';
-    private const PROVIDER_MATCH_RULE_CODES = ['PROVIDER_MATCH_PENDING', 'PROVIDER_MATCH_REQUIRED'];
+	private const PROVIDER_MATCH_PENDING = 'PENDIENTE_ASIGNACION';
+	private const PROVIDER_MATCH_NONE = 'SIN_MATCH';
+	private const PROVIDER_MATCH_PATENTE = 'PATENTE_OK';
+	private const PROVIDER_MATCH_ALIAS = 'PATENTE_ALIAS_OK';
+	private const PROVIDER_MATCH_MANUAL = 'MANUAL_CONFIRMED';
+	private const PROVIDER_MATCH_RULE_CODES = [
+	    'PROVIDER_MATCH_PENDING',
+	    'PROVIDER_MATCH_REQUIRED',
+	    'LOGINTER_PROVIDER_MATCH_PENDING',
+	    'LOGINTER_PROVIDER_MATCH_REQUIRED',
+	];
 
     public function index(Request $request)
     {
@@ -520,6 +525,158 @@ class LiquidacionRunController extends Controller
         ]);
     }
 
+    public function exportPdfsZip(Request $request, LiquidacionImportRun $run)
+    {
+        $clientCode = strtoupper((string) ($run->client_code ?? ''));
+        if (!$this->isLoginterClientCode($clientCode)) {
+            return response()->json([
+                'message' => 'La exportación ZIP de PDFs está disponible solo para LOGINTER/MercadoLibre.',
+            ], Response::HTTP_UNPROCESSABLE_ENTITY);
+        }
+
+        $this->refreshRunCounters($run);
+        $this->syncRunDistributorSnapshots($run);
+
+        $distribuidores = LiquidacionDistribuidor::query()
+            ->where('run_id', $run->id)
+            ->orderBy('id')
+            ->get();
+
+        if ($distribuidores->isEmpty()) {
+            return response()->json([
+                'message' => 'El run no tiene distribuidores para exportar.',
+            ], Response::HTTP_UNPROCESSABLE_ENTITY);
+        }
+
+        $periodToken = $this->resolveLoginterPeriodoToken($run);
+        $zipFileName = sprintf('LOGINTER_%s_run_%d.zip', $periodToken, (int) $run->id);
+        $tmpZipPath = tempnam(sys_get_temp_dir(), 'liq_zip_');
+        if (!$tmpZipPath) {
+            return response()->json([
+                'message' => 'No se pudo crear archivo temporal para el ZIP.',
+            ], Response::HTTP_INTERNAL_SERVER_ERROR);
+        }
+        @unlink($tmpZipPath);
+        $tmpZipPath .= '.zip';
+
+        $zip = new ZipArchive();
+        if ($zip->open($tmpZipPath, ZipArchive::CREATE) !== true) {
+            return response()->json([
+                'message' => 'No se pudo inicializar el ZIP.',
+            ], Response::HTTP_INTERNAL_SERVER_ERROR);
+        }
+
+        $usedNames = [];
+        $skipped = [];
+
+        foreach ($distribuidores as $distribuidor) {
+            $persona = $this->resolvePersonaForDistributorSync($distribuidor);
+            if (!$persona) {
+                $skipped[] = [
+                    'distributor_id' => (int) $distribuidor->id,
+                    'patente' => $distribuidor->patente_norm,
+                    'reason' => 'No se encontró persona asociada por proveedor/patente.',
+                ];
+                continue;
+            }
+
+            $lineas = LiquidacionDistribuidorLinea::query()
+                ->where('distributor_id', $distribuidor->id)
+                ->with('stagingRow')
+                ->orderBy('fecha')
+                ->orderBy('row_number')
+                ->orderBy('id')
+                ->get();
+
+            $lineRows = [];
+            $sucursal = null;
+            foreach ($lineas as $linea) {
+                $stagingRow = $linea->stagingRow;
+                $rawPayload = $stagingRow && is_array($stagingRow->raw_payload_json) ? $stagingRow->raw_payload_json : [];
+                if ($sucursal === null && is_array($rawPayload['loginter'] ?? null)) {
+                    $loginter = $rawPayload['loginter'];
+                    $sucursal = $this->resolveLoginterSucursalCodeFromText(
+                        (string) ($loginter['origen'] ?? '') . ' ' . (string) ($loginter['clientes'] ?? '')
+                    );
+                }
+
+                $kmsLabel = '—';
+                if (is_array($rawPayload['loginter'] ?? null)) {
+                    $loginter = $rawPayload['loginter'];
+                    $concepto = $this->normalizeNullableString((string) ($loginter['concepto'] ?? ''))
+                        ?? $this->normalizeNullableString((string) ($stagingRow?->product ?? ''));
+                    if ($concepto !== null) {
+                        $kmsLabel = $concepto;
+                    }
+                }
+
+                $categoria = $this->normalizeNullableString((string) ($linea->svc ?? '')) ?? '';
+                $jornada = (float) ($linea->tarifa_dist_calculada ?? 0);
+                $importe = (float) ($linea->importe_final ?? 0);
+
+                $lineRows[] = [
+                    'fecha' => $linea->fecha ? $linea->fecha->format('d/m/Y') : '',
+                    'id_viaje' => (string) ($linea->id_ruta ?? ''),
+                    'categoria' => $categoria,
+                    'km' => $kmsLabel,
+                    'jornada' => '$ ' . number_format($jornada, 2, ',', '.'),
+                    'importe' => '$ ' . number_format($importe, 2, ',', '.'),
+                ];
+            }
+
+            $personaNombre = trim((string) (($persona->nombres ?? '') . ' ' . ($persona->apellidos ?? '')));
+            $periodo = (string) ($run->period_from?->format('Y-m-d') ?? '') . ' / ' . (string) ($run->period_to?->format('Y-m-d') ?? '');
+
+            $pdfPayload = [
+                'company_name' => 'Logistica Argentina',
+                'titulo' => '',
+                'persona_nombre' => $personaNombre,
+                'dominio' => (string) ($persona->patente ?? $distribuidor->patente_norm ?? ''),
+                'cliente' => $clientCode,
+                'sucursal' => $sucursal,
+                'periodo' => $periodo,
+                'quincena' => $periodToken,
+                'rows' => $lineRows,
+                'totals' => [
+                    'subtotal' => '$ ' . number_format((float) ($distribuidor->subtotal_final ?? 0), 2, ',', '.'),
+                    'gastos_admin' => '$ ' . number_format((float) ($distribuidor->gastos_admin_final ?? ($distribuidor->gastos_admin_default ?? 0)), 2, ',', '.'),
+                    'ajuste' => '$ ' . number_format((float) ($distribuidor->ajuste_manual ?? 0), 2, ',', '.'),
+                    'total' => '$ ' . number_format((float) ($distribuidor->total_final ?? 0), 2, ',', '.'),
+                ],
+            ];
+
+            $pdfBytes = (new LiquidacionExtractoPdfService())->generate($pdfPayload);
+
+            $nameToken = $this->buildLoginterPersonaNameToken((string) ($persona->apellidos ?? ''), (string) ($persona->nombres ?? ''));
+            $sucursalToken = $sucursal ?? 'XXX';
+            $baseName = sprintf('%s_%s_%s.pdf', $sucursalToken, $nameToken !== '' ? $nameToken : ('PERS' . (int) $persona->id), $periodToken);
+            $zipName = $baseName;
+            if (isset($usedNames[$zipName])) {
+                $suffix = $this->normalizeNullableString((string) ($distribuidor->patente_norm ?? '')) ?? ('PERS' . (int) $persona->id);
+                $zipName = str_replace('.pdf', '_' . $suffix . '.pdf', $baseName);
+            }
+            $usedNames[$zipName] = true;
+
+            $zip->addFromString($zipName, $pdfBytes);
+        }
+
+        $zip->close();
+
+        try {
+            AuditLogger::log($request, 'liquidaciones.run.export_zip', 'liq_import_run', $run->id, [
+                'client_code' => $clientCode,
+                'zip_name' => $zipFileName,
+                'skipped' => count($skipped),
+            ]);
+        } catch (\Throwable $exception) {
+            report($exception);
+        }
+
+        return response()->download($tmpZipPath, $zipFileName, [
+            'Content-Type' => 'application/zip',
+        ])->deleteFileAfterSend(true);
+    }
+
     public function showDistribuidor(LiquidacionDistribuidor $distribuidor)
     {
         $run = $distribuidor->run()->first();
@@ -969,8 +1126,12 @@ class LiquidacionRunController extends Controller
         $normalizedClientCode = $this->normalizeClientCode($validated['client_code'] ?? null)
             ?? strtoupper(trim((string) ($validated['client_code'] ?? '')));
         $isEpsaMode = $this->isEpsaUploadMode($normalizedClientCode, $format);
+        $isLoginterMode = $this->isLoginterUploadMode($normalizedClientCode, $format);
         if ($isEpsaMode && $extension !== 'csv') {
             $sheet = 'Table';
+        }
+        if (!$isEpsaMode && $isLoginterMode && $extension !== 'csv' && $sheet === null) {
+            $sheet = 'Detalle';
         }
         $autoObservations = array_key_exists('auto_observations', $validated)
             ? (bool) $validated['auto_observations']
@@ -978,7 +1139,7 @@ class LiquidacionRunController extends Controller
 
         [$columns, $rawRows, $rowCount, $parseMeta] = $extension === 'csv'
             ? $this->parseUploadCsv($storedAbsolutePath)
-            : $this->parseUploadXlsx($storedAbsolutePath, $sheet, $isEpsaMode);
+            : $this->parseUploadXlsx($storedAbsolutePath, $sheet, $isEpsaMode || $isLoginterMode);
 
         if ($isEpsaMode && (bool) ($parseMeta['sheet_not_found'] ?? false)) {
             return response()->json([
@@ -989,15 +1150,35 @@ class LiquidacionRunController extends Controller
                 'availableSheets' => array_values((array) ($parseMeta['available_sheets'] ?? [])),
             ], Response::HTTP_UNPROCESSABLE_ENTITY);
         }
+        if ($isLoginterMode && (bool) ($parseMeta['sheet_not_found'] ?? false)) {
+            return response()->json([
+                'message' => sprintf(
+                    'Para LOGINTER la hoja obligatoria es "%s". No fue encontrada en el archivo.',
+                    (string) ($parseMeta['requested_sheet'] ?? 'Detalle')
+                ),
+                'availableSheets' => array_values((array) ($parseMeta['available_sheets'] ?? [])),
+            ], Response::HTTP_UNPROCESSABLE_ENTITY);
+        }
+
+        $loginterTarifasHoja1 = [];
+        if ($isLoginterMode && $extension !== 'csv') {
+            $loginterTarifasHoja1 = $this->buildLoginterHoja1Tarifas($storedAbsolutePath);
+        }
+        $loginterExpectedIdLiquidacion = null;
+        $loginterPrefacturaMeta = null;
+        if ($isLoginterMode && $extension !== 'csv') {
+            $loginterExpectedIdLiquidacion = $this->resolveLoginterExpectedIdLiquidacion($columns, $rawRows);
+            $loginterPrefacturaMeta = $this->extractLoginterPrefacturaMeta($storedAbsolutePath, $loginterExpectedIdLiquidacion);
+        }
 
         $mapping = $isEpsaMode
             ? $this->mapEpsaUploadRows($columns, $rawRows)
-            : $this->mapUploadRows($columns, $rawRows, $format);
+            : ($isLoginterMode ? $this->mapLoginterUploadRows($columns, $rawRows) : $this->mapUploadRows($columns, $rawRows, $format));
         if (!$mapping['mapped']) {
             return response()->json([
                 'message' => $isEpsaMode
                     ? 'No se pudieron mapear columnas requeridas para EPSA.'
-                    : 'No se pudieron mapear columnas al formato general.',
+                    : ($isLoginterMode ? 'No se pudieron mapear columnas requeridas para LOGINTER.' : 'No se pudieron mapear columnas al formato general.'),
                 'unmappedColumns' => $mapping['unmappedColumns'],
                 'missingColumns' => $mapping['missingColumns'] ?? [],
             ], Response::HTTP_UNPROCESSABLE_ENTITY);
@@ -1011,28 +1192,41 @@ class LiquidacionRunController extends Controller
                 'mapped_fields' => $mapping['mappedFields'] ?? [],
                 'format' => $mapping['format'] ?? null,
             ])
-            : $this->prepareUploadStagingAndValidations($mapping['columns'], $mapping['rows'], [
+            : ($isLoginterMode ? $this->prepareLoginterUploadStagingAndValidations($mapping['columns'], $mapping['rows'], [
+                'client_code' => $normalizedClientCode,
+                'period_from' => $validated['period_from'] ?? null,
+                'period_to' => $validated['period_to'] ?? null,
+                'loginter_tarifas_hoja1' => $loginterTarifasHoja1,
+                'loginter_expected_id_liquidacion' => $loginterExpectedIdLiquidacion,
+                'loginter_prefactura_meta' => $loginterPrefacturaMeta,
+                'mapped_fields' => $mapping['mappedFields'] ?? [],
+                'format' => $mapping['format'] ?? null,
+            ]) : $this->prepareUploadStagingAndValidations($mapping['columns'], $mapping['rows'], [
                 'client_code' => $normalizedClientCode,
                 'period_from' => $validated['period_from'] ?? null,
                 'period_to' => $validated['period_to'] ?? null,
                 'mapped_fields' => $mapping['mappedFields'] ?? [],
                 'format' => $mapping['format'] ?? null,
-            ]);
+            ]));
 
-        $run = DB::transaction(function () use (
-            $validated,
-            $request,
-            $file,
-            $storedPath,
-            $storedAbsolutePath,
-            $rowCount,
-            $mapping,
-            $prepared,
-            $parseMeta,
-            $autoObservations,
-            $isEpsaMode,
-            $normalizedClientCode
-        ) {
+	        $run = DB::transaction(function () use (
+	            $validated,
+	            $request,
+	            $file,
+	            $storedPath,
+	            $storedAbsolutePath,
+	            $rowCount,
+	            $mapping,
+	            $prepared,
+	            $parseMeta,
+	            $autoObservations,
+	            $isEpsaMode,
+	            $isLoginterMode,
+	            $loginterTarifasHoja1,
+	            $loginterExpectedIdLiquidacion,
+	            $loginterPrefacturaMeta,
+	            $normalizedClientCode
+	        ) {
             $run = LiquidacionImportRun::query()->create([
                 'source_system' => $validated['source_system'] ?? 'powerbi',
                 'client_code' => $normalizedClientCode,
@@ -1054,7 +1248,7 @@ class LiquidacionRunController extends Controller
                         'mapped' => true,
                         'unmappedColumns' => $mapping['unmappedColumns'],
                         'format' => $mapping['format'],
-                        'mode' => $isEpsaMode ? 'EPSA_TABLE' : 'GENERIC',
+                        'mode' => $isEpsaMode ? 'EPSA_TABLE' : ($isLoginterMode ? 'LOGINTER' : 'GENERIC'),
                         'productColumn' => $mapping['productColumn'] ?? null,
                         'sheet' => $parseMeta['sheet'] ?? null,
                         'sheetName' => $parseMeta['sheet_name'] ?? null,
@@ -1087,7 +1281,15 @@ class LiquidacionRunController extends Controller
                             'sheet' => $parseMeta['sheet_name'] ?? ($parseMeta['sheet'] ?? null),
                         ]
                         : null,
-                ],
+	                    'loginter' => $isLoginterMode
+	                        ? [
+	                            'expected_id_liquidacion' => $loginterExpectedIdLiquidacion,
+	                            'prefactura' => is_array($loginterPrefacturaMeta) ? $loginterPrefacturaMeta : null,
+	                            'tarifas_hoja1_count' => count($loginterTarifasHoja1),
+	                            'sheet' => $parseMeta['sheet_name'] ?? ($parseMeta['sheet'] ?? null),
+	                        ]
+	                        : null,
+	                ],
                 'created_by' => $request->user()?->id,
             ]);
 
@@ -1171,14 +1373,22 @@ class LiquidacionRunController extends Controller
 
         $sheet = $this->normalizeNullableString($validated['sheet'] ?? null);
         $format = $this->normalizeNullableString($validated['format'] ?? null) ?? 'custom';
-        $isEpsaMode = $this->isEpsaUploadMode($validated['client_code'] ?? null, $format);
+        $normalizedClientCode = $this->normalizeClientCode($validated['client_code'] ?? null)
+            ?? ($this->normalizeNullableString((string) ($validated['client_code'] ?? '')) !== null
+                ? strtoupper(trim((string) ($validated['client_code'] ?? '')))
+                : null);
+        $isEpsaMode = $this->isEpsaUploadMode($normalizedClientCode, $format);
+        $isLoginterMode = $this->isLoginterUploadMode($normalizedClientCode, $format);
         if ($isEpsaMode && $extension !== 'csv') {
             $sheet = 'Table';
+        }
+        if (!$isEpsaMode && $isLoginterMode && $extension !== 'csv' && $sheet === null) {
+            $sheet = 'Detalle';
         }
 
         [$columns, $rawRows, $rowCount, $parseMeta] = $extension === 'csv'
             ? $this->parseUploadCsv($path)
-            : $this->parseUploadXlsx($path, $sheet, $isEpsaMode);
+            : $this->parseUploadXlsx($path, $sheet, $isEpsaMode || $isLoginterMode);
 
         if ($isEpsaMode && (bool) ($parseMeta['sheet_not_found'] ?? false)) {
             return response()->json([
@@ -1192,10 +1402,22 @@ class LiquidacionRunController extends Controller
                 'availableSheets' => array_values((array) ($parseMeta['available_sheets'] ?? [])),
             ], Response::HTTP_UNPROCESSABLE_ENTITY);
         }
+        if ($isLoginterMode && (bool) ($parseMeta['sheet_not_found'] ?? false)) {
+            return response()->json([
+                'mapped' => false,
+                'message' => sprintf(
+                    'Para LOGINTER la hoja obligatoria es "%s".',
+                    (string) ($parseMeta['requested_sheet'] ?? 'Detalle')
+                ),
+                'sheetNotFound' => true,
+                'requestedSheet' => (string) ($parseMeta['requested_sheet'] ?? 'Detalle'),
+                'availableSheets' => array_values((array) ($parseMeta['available_sheets'] ?? [])),
+            ], Response::HTTP_UNPROCESSABLE_ENTITY);
+        }
 
         $mapping = $isEpsaMode
             ? $this->mapEpsaUploadRows($columns, $rawRows)
-            : $this->mapUploadRows($columns, $rawRows, $format);
+            : ($isLoginterMode ? $this->mapLoginterUploadRows($columns, $rawRows) : $this->mapUploadRows($columns, $rawRows, $format));
         if (!$mapping['mapped']) {
             return response()->json([
                 'mapped' => false,
@@ -1211,21 +1433,41 @@ class LiquidacionRunController extends Controller
             ]);
         }
 
+        $loginterTarifasHoja1 = [];
+        if ($isLoginterMode && $extension !== 'csv') {
+            $loginterTarifasHoja1 = $this->buildLoginterHoja1Tarifas($path);
+        }
+        $loginterExpectedIdLiquidacion = null;
+        $loginterPrefacturaMeta = null;
+        if ($isLoginterMode && $extension !== 'csv') {
+            $loginterExpectedIdLiquidacion = $this->resolveLoginterExpectedIdLiquidacion($columns, $rawRows);
+            $loginterPrefacturaMeta = $this->extractLoginterPrefacturaMeta($path, $loginterExpectedIdLiquidacion);
+        }
+
         $prepared = $isEpsaMode
             ? $this->prepareEpsaUploadStagingAndValidations($mapping['columns'], $mapping['rows'], [
-                'client_code' => $validated['client_code'] ?? null,
+                'client_code' => $normalizedClientCode,
                 'period_from' => $validated['period_from'] ?? null,
                 'period_to' => $validated['period_to'] ?? null,
                 'mapped_fields' => $mapping['mappedFields'] ?? [],
                 'format' => $mapping['format'] ?? null,
             ])
-            : $this->prepareUploadStagingAndValidations($mapping['columns'], $mapping['rows'], [
-                'client_code' => $validated['client_code'] ?? null,
+            : ($isLoginterMode ? $this->prepareLoginterUploadStagingAndValidations($mapping['columns'], $mapping['rows'], [
+                'client_code' => $normalizedClientCode,
+                'period_from' => $validated['period_from'] ?? null,
+                'period_to' => $validated['period_to'] ?? null,
+                'loginter_tarifas_hoja1' => $loginterTarifasHoja1,
+                'loginter_expected_id_liquidacion' => $loginterExpectedIdLiquidacion,
+                'loginter_prefactura_meta' => $loginterPrefacturaMeta,
+                'mapped_fields' => $mapping['mappedFields'] ?? [],
+                'format' => $mapping['format'] ?? null,
+            ]) : $this->prepareUploadStagingAndValidations($mapping['columns'], $mapping['rows'], [
+                'client_code' => $normalizedClientCode,
                 'period_from' => $validated['period_from'] ?? null,
                 'period_to' => $validated['period_to'] ?? null,
                 'mapped_fields' => $mapping['mappedFields'] ?? [],
                 'format' => $mapping['format'] ?? null,
-            ]);
+            ]));
         $rowsByStatus = [
             'ok' => 0,
             'error' => 0,
@@ -1248,6 +1490,8 @@ class LiquidacionRunController extends Controller
         $sampleRows = [];
         if ($isEpsaMode) {
             $sampleRows = array_slice($prepared['sample_rows'] ?? [], 0, 5);
+        } elseif ($isLoginterMode) {
+            $sampleRows = array_slice($prepared['sample_rows'] ?? [], 0, 5);
         } else {
             foreach (array_slice($mapping['rows'], 0, 5) as $row) {
                 $sampleRows[] = [
@@ -1265,7 +1509,7 @@ class LiquidacionRunController extends Controller
             'mapped' => true,
             'rowCount' => $rowCount,
             'previewCount' => count($sampleRows),
-            'mode' => $isEpsaMode ? 'EPSA_TABLE' : 'GENERIC',
+            'mode' => $isEpsaMode ? 'EPSA_TABLE' : ($isLoginterMode ? 'LOGINTER' : 'GENERIC'),
             'sheet' => $parseMeta['sheet'] ?? null,
             'sheetName' => $parseMeta['sheet_name'] ?? null,
             'detectedColumns' => array_values(array_filter(
@@ -1278,7 +1522,7 @@ class LiquidacionRunController extends Controller
             'productColumn' => $mapping['productColumn'] ?? null,
             'productColumnMessage' => ($mapping['productColumn'] ?? null) === 'V'
                 ? 'Concepto tomado desde columna V.'
-                : ($isEpsaMode ? 'Importación EPSA desde hoja Table.' : 'Concepto tomado por encabezado detectado.'),
+                : ($isEpsaMode ? 'Importación EPSA desde hoja Table.' : ($isLoginterMode ? 'Importación LOGINTER desde hoja Detalle.' : 'Concepto tomado por encabezado detectado.')),
             'rowsByStatus' => $rowsByStatus,
             'sampleRows' => $sampleRows,
             'epsaSummary' => $isEpsaMode ? ($prepared['stats'] ?? null) : null,
@@ -2545,6 +2789,584 @@ class LiquidacionRunController extends Controller
         ];
     }
 
+    private function prepareLoginterUploadStagingAndValidations(array $columns, array $rows, array $context = []): array
+    {
+        $normalizedClientCode = $this->normalizeClientCode($context['client_code'] ?? null);
+        $rulesPayload = $this->resolveClientRuleSet($normalizedClientCode);
+        $rules = $rulesPayload['rules'];
+        $periodFrom = $this->parseDateOnlyOrNull($context['period_from'] ?? null);
+        $periodTo = $this->parseDateOnlyOrNull($context['period_to'] ?? null);
+        $tarifasHoja1 = is_array($context['loginter_tarifas_hoja1'] ?? null) ? $context['loginter_tarifas_hoja1'] : [];
+        $loginterRules = is_array($rules['loginter'] ?? null) ? $rules['loginter'] : [];
+
+        $idLiquidacionIdx = $this->resolveUploadHeaderIndexByAliases($columns, ['IdLiquidacion', 'Id Liquidacion', 'Id Liquidación', 'ID LIQUIDACION', 'IDLIQUIDACION']);
+        $idViajeIdx = $this->resolveUploadHeaderIndexByAliases($columns, ['IdViaje', 'Id Viaje', 'IDVIAJE', 'ID VIAJE']);
+        $categoriaViajeIdx = $this->resolveUploadHeaderIndexByAliases($columns, ['CategoriaViaje', 'CategoríaViaje', 'Categoria Viaje', 'Categoría Viaje']);
+        $origenIdx = $this->resolveUploadHeaderIndexByAliases($columns, ['Origen']);
+        $destinoIdx = $this->resolveUploadHeaderIndexByAliases($columns, ['Destino']);
+        $fechaViajeIdx = $this->resolveUploadHeaderIndexByAliases($columns, ['FechaViaje', 'Fecha Viaje', 'Fecha']);
+        $clientesIdx = $this->resolveUploadHeaderIndexByAliases($columns, ['Clientes', 'Cliente']);
+        $conductorIdx = $this->resolveUploadHeaderIndexByAliases($columns, ['Conductor', 'Distribuidor']);
+        $dominioIdx = $this->resolveUploadHeaderIndexByAliases($columns, ['Dominio', 'Patente']);
+        $categoriaVehiculoIdx = $this->resolveUploadHeaderIndexByAliases($columns, ['CategoriaVehiculo', 'CategoríaVehiculo', 'Categoria Vehiculo', 'Categoría Vehículo', 'Tipo unidad', 'TIPO UNIDAD']);
+        $conceptoIdx = $this->resolveUploadHeaderIndexByAliases($columns, ['Concepto', 'Producto']);
+        $valorIdx = $this->resolveUploadHeaderIndexByAliases($columns, ['Valor', 'Importe']);
+        $originalIdx = $this->resolveUploadHeaderIndexByAliases($columns, ['ORIGINAL', 'Original', 'Tarifa ORIGINAL', 'TARIFA ORIGINAL']);
+        $distribuidorIdx = $this->resolveUploadHeaderIndexByAliases($columns, ['DISTRIBUIDOR', 'Distribuidor', 'Tarifa DISTRIBUIDOR', 'TARIFA DISTRIBUIDOR']);
+
+        $stagingRows = [];
+        $validationResults = [];
+        $sampleRows = [];
+        $seenViajes = [];
+
+        $factorDefault = $this->parseFloatOrNull($loginterRules['factor_default'] ?? null) ?? 0.87;
+        if ($factorDefault <= 0 || $factorDefault > 1.0) {
+            $factorDefault = 0.87;
+        }
+	        $factorByZone = is_array($loginterRules['factor_by_zone'] ?? null) ? $loginterRules['factor_by_zone'] : [];
+	        $expectedIdLiquidacion = $this->normalizeLoginterIdViaje($context['loginter_expected_id_liquidacion'] ?? null)
+	            ?? $this->resolveLoginterExpectedIdLiquidacion($columns, $rows);
+	        $prefacturaMeta = is_array($context['loginter_prefactura_meta'] ?? null) ? $context['loginter_prefactura_meta'] : null;
+	        $prefacturaTotal = $prefacturaMeta ? $this->parseFloatOrNull($prefacturaMeta['total_amount'] ?? null) : null;
+	        $prefacturaIdMatch = $prefacturaMeta ? ($prefacturaMeta['id_liquidacion_match'] ?? null) : null;
+
+	        if ($prefacturaMeta && (bool) ($prefacturaMeta['sheet_not_found'] ?? false)) {
+	            $this->addUploadValidationFail(
+	                $validationResults,
+	                1,
+	                'LOGINTER_PREFACTURA_MISSING',
+	                'WARNING',
+	                'Hoja Prefactura presente',
+	                null,
+	                'No se encontró la hoja Prefactura en el archivo.'
+	            );
+	        } elseif ($expectedIdLiquidacion !== null && $prefacturaIdMatch === false) {
+	            $this->addUploadValidationFail(
+	                $validationResults,
+	                1,
+	                'LOGINTER_PREFACTURA_ID_MISMATCH',
+	                'WARNING',
+	                'IdLiquidacion presente en Prefactura',
+	                $expectedIdLiquidacion,
+	                'No se encontró el IdLiquidacion del detalle dentro de la hoja Prefactura.'
+	            );
+	        }
+
+	        $totalRowIndexes = [];
+	        $detalleTotalAmount = null;
+	        $detalleTotalRowNumber = null;
+	        foreach ($rows as $index => $row) {
+	            if (!is_array($row)) {
+	                continue;
+	            }
+	            $candidateIdViajeRaw = $idViajeIdx !== null ? trim((string) ($row[$idViajeIdx] ?? '')) : '';
+	            $candidateConceptoRaw = $conceptoIdx !== null ? trim((string) ($row[$conceptoIdx] ?? '')) : '';
+	            $upperId = strtoupper($candidateIdViajeRaw);
+	            $upperConcepto = strtoupper($candidateConceptoRaw);
+	            $isTotalRow = $upperId === 'TOTAL' || $upperConcepto === 'TOTAL';
+	            if (!$isTotalRow) {
+	                $totalCells = 0;
+	                $nonEmpty = 0;
+	                foreach ($row as $cell) {
+	                    $cellStr = trim((string) $cell);
+	                    if ($cellStr === '') {
+	                        continue;
+	                    }
+	                    $nonEmpty += 1;
+	                    if (strtoupper($cellStr) === 'TOTAL') {
+	                        $totalCells += 1;
+	                    }
+	                }
+	                if ($nonEmpty > 0 && $totalCells >= max(2, (int) floor($nonEmpty * 0.6))) {
+	                    $isTotalRow = true;
+	                }
+	            }
+
+	            if ($isTotalRow) {
+	                $candidateValorRaw = $valorIdx !== null ? (string) ($row[$valorIdx] ?? '') : '';
+	                $candidateTotal = $this->parseFloatOrNull($candidateValorRaw);
+	                $detalleTotalAmount = $candidateTotal !== null ? round((float) $candidateTotal, 2) : null;
+	                $detalleTotalRowNumber = $index + 1;
+	                $totalRowIndexes[$index] = true;
+	            }
+	        }
+	        if ($detalleTotalRowNumber === null) {
+	            $this->addUploadValidationFail(
+	                $validationResults,
+	                1,
+	                'LOGINTER_TOTAL_ROW_MISSING',
+	                'WARNING',
+	                'Fila TOTAL presente',
+	                null,
+	                'No se detectó una fila TOTAL al final del Detalle.'
+	            );
+	        }
+
+	        $enforcePeriodValidation = $fechaViajeIdx !== null && ($periodFrom !== null || $periodTo !== null);
+	        if ($enforcePeriodValidation) {
+	            $parseableDates = 0;
+	            $withinPeriodDates = 0;
+	            foreach ($rows as $index => $row) {
+	                if (isset($totalRowIndexes[$index]) || !is_array($row)) {
+	                    continue;
+	                }
+	                $dateRaw = (string) ($row[$fechaViajeIdx] ?? '');
+	                $parsed = $this->parseUploadDate($dateRaw, 'dmy');
+	                if (!$parsed) {
+	                    continue;
+	                }
+	                $parseableDates += 1;
+
+	                $isOutsideFrom = $periodFrom !== null && $parsed->copy()->startOfDay()->lt($periodFrom->copy()->startOfDay());
+	                $isOutsideTo = $periodTo !== null && $parsed->copy()->startOfDay()->gt($periodTo->copy()->startOfDay());
+	                if (!$isOutsideFrom && !$isOutsideTo) {
+	                    $withinPeriodDates += 1;
+	                }
+	            }
+
+	            if ($parseableDates > 0) {
+	                $coverage = $withinPeriodDates / max(1, $parseableDates);
+	                if ($coverage < 0.35) {
+	                    $enforcePeriodValidation = false;
+	                    $this->addUploadValidationFail(
+	                        $validationResults,
+	                        1,
+	                        'LOGINTER_PERIOD_VALIDATION_DISABLED',
+	                        'WARNING',
+	                        'Período consistente con fechas del archivo',
+	                        sprintf('coverage=%.2f', $coverage),
+	                        'La mayoría de las fechas del archivo están fuera del período seleccionado; se desactivó la validación por período para evitar falsos errores.'
+	                    );
+	                }
+	            }
+	        }
+
+	        $sumValorCliente = 0.0;
+	        $detalleIdLiquidacionValues = [];
+
+	        foreach ($rows as $index => $row) {
+	            $rowNumber = $index + 1;
+	            if (isset($totalRowIndexes[$index])) {
+	                continue;
+	            }
+
+	            $idLiquidacionRaw = $idLiquidacionIdx !== null ? (string) ($row[$idLiquidacionIdx] ?? '') : '';
+	            $idViajeRaw = $idViajeIdx !== null ? (string) ($row[$idViajeIdx] ?? '') : '';
+            $categoriaViajeRaw = $categoriaViajeIdx !== null ? (string) ($row[$categoriaViajeIdx] ?? '') : '';
+            $origenRaw = $origenIdx !== null ? (string) ($row[$origenIdx] ?? '') : '';
+            $destinoRaw = $destinoIdx !== null ? (string) ($row[$destinoIdx] ?? '') : '';
+            $fechaViajeRaw = $fechaViajeIdx !== null ? (string) ($row[$fechaViajeIdx] ?? '') : '';
+            $clientesRaw = $clientesIdx !== null ? (string) ($row[$clientesIdx] ?? '') : '';
+            $conductorRaw = $conductorIdx !== null ? (string) ($row[$conductorIdx] ?? '') : '';
+            $dominioRaw = $dominioIdx !== null ? (string) ($row[$dominioIdx] ?? '') : '';
+            $categoriaVehiculoRaw = $categoriaVehiculoIdx !== null ? (string) ($row[$categoriaVehiculoIdx] ?? '') : '';
+            $conceptoRaw = $conceptoIdx !== null ? (string) ($row[$conceptoIdx] ?? '') : '';
+            $valorRaw = $valorIdx !== null ? (string) ($row[$valorIdx] ?? '') : '';
+
+            $idViaje = $this->normalizeLoginterIdViaje($idViajeRaw);
+            $occurredAt = $this->parseUploadDate($fechaViajeRaw, 'dmy');
+            $domainNorm = $this->normalizeDomain($dominioRaw);
+	            $nameExcelRaw = $this->normalizeNullableString($conductorRaw);
+	            $nameExcelNorm = $this->normalizePersonName($conductorRaw);
+	            $amountCliente = $this->parseFloatOrNull($valorRaw);
+	            if ($amountCliente !== null) {
+	                $sumValorCliente += (float) $amountCliente;
+	            }
+	            $detalleId = $this->normalizeLoginterIdViaje($idLiquidacionRaw);
+	            if ($detalleId !== null) {
+	                $detalleIdLiquidacionValues[$detalleId] = true;
+	            }
+
+            $isBlankRow = trim($idViajeRaw) === ''
+                && trim($fechaViajeRaw) === ''
+                && trim($dominioRaw) === ''
+                && trim($conceptoRaw) === ''
+                && trim($valorRaw) === ''
+                && trim($conductorRaw) === '';
+            if ($isBlankRow) {
+                continue;
+            }
+
+            $criticalIssues = [];
+            $warningIssues = [];
+
+            $providerMatch = $this->resolveProviderMatch(
+                $normalizedClientCode,
+                $domainNorm,
+                $nameExcelNorm
+            );
+            $matchStatus = (string) ($providerMatch['status'] ?? self::PROVIDER_MATCH_NONE);
+            $providerId = isset($providerMatch['provider_id']) ? (int) $providerMatch['provider_id'] : null;
+            $providerName = $this->normalizeNullableString((string) ($providerMatch['provider_name'] ?? ''));
+            $matchCandidates = is_array($providerMatch['candidates'] ?? null) ? $providerMatch['candidates'] : [];
+
+	            if ($matchStatus === self::PROVIDER_MATCH_PENDING) {
+	                $warningIssues[] = 'Proveedor pendiente de asignación manual.';
+	                $this->addUploadValidationFail(
+	                    $validationResults,
+	                    $rowNumber,
+                    'LOGINTER_PROVIDER_MATCH_PENDING',
+                    'WARNING',
+                    'Proveedor identificado',
+                    $nameExcelRaw ?? $dominioRaw,
+	                    'No se pudo resolver proveedor por patente. Requiere asignación manual por nombre.'
+	                );
+	            } elseif ($matchStatus === self::PROVIDER_MATCH_NONE) {
+	                $warningIssues[] = 'Proveedor sin match por patente ni nombre.';
+	                $this->addUploadValidationFail(
+	                    $validationResults,
+	                    $rowNumber,
+	                    'LOGINTER_PROVIDER_MATCH_REQUIRED',
+	                    'WARNING',
+	                    'Proveedor identificado',
+	                    $nameExcelRaw ?? $dominioRaw,
+	                    'Sin match de proveedor por patente y sin candidatos válidos por nombre.'
+	                );
+	            }
+
+            if ($idViaje === null) {
+                $criticalIssues[] = 'IdViaje vacío o inválido.';
+                $this->addUploadValidationFail(
+                    $validationResults,
+                    $rowNumber,
+                    'LOGINTER_IDVIAJE_REQUIRED',
+                    'CRITICAL',
+                    'IdViaje no vacío',
+                    $idViajeRaw !== '' ? $idViajeRaw : null,
+                    'No se pudo resolver IdViaje.'
+                );
+            }
+
+            if ($occurredAt === null) {
+                $criticalIssues[] = 'FechaViaje inválida.';
+                $this->addUploadValidationFail(
+                    $validationResults,
+                    $rowNumber,
+                    'LOGINTER_FECHA_REQUIRED',
+                    'CRITICAL',
+                    'FechaViaje válida',
+                    $fechaViajeRaw !== '' ? $fechaViajeRaw : null,
+                    'No se pudo parsear FechaViaje.'
+                );
+            }
+
+            if ($domainNorm === null) {
+                $criticalIssues[] = 'Dominio vacío o inválido.';
+                $this->addUploadValidationFail(
+                    $validationResults,
+                    $rowNumber,
+                    'LOGINTER_DOMINIO_REQUIRED',
+                    'CRITICAL',
+                    'Dominio válido',
+                    $dominioRaw !== '' ? $dominioRaw : null,
+                    'No se pudo normalizar el dominio.'
+                );
+            }
+
+            $conceptoNorm = $this->normalizeNullableString($conceptoRaw);
+            if ($conceptoNorm === null) {
+                $criticalIssues[] = 'Concepto vacío.';
+                $this->addUploadValidationFail(
+                    $validationResults,
+                    $rowNumber,
+                    'LOGINTER_CONCEPTO_REQUIRED',
+                    'CRITICAL',
+                    'Concepto no vacío',
+                    $conceptoRaw !== '' ? $conceptoRaw : null,
+                    'No se recibió Concepto.'
+                );
+            }
+
+            if ($amountCliente === null || $amountCliente <= 0) {
+                $criticalIssues[] = 'Valor inválido o <= 0.';
+                $this->addUploadValidationFail(
+                    $validationResults,
+                    $rowNumber,
+                    'LOGINTER_VALOR_REQUIRED',
+                    'CRITICAL',
+                    'Valor numérico > 0',
+                    $valorRaw !== '' ? $valorRaw : null,
+                    'No se pudo parsear Valor.'
+                );
+            }
+
+	            if ($occurredAt !== null && $enforcePeriodValidation) {
+	                $isOutsideFrom = $periodFrom !== null && $occurredAt->copy()->startOfDay()->lt($periodFrom->copy()->startOfDay());
+	                $isOutsideTo = $periodTo !== null && $occurredAt->copy()->startOfDay()->gt($periodTo->copy()->startOfDay());
+	                if ($isOutsideFrom || $isOutsideTo) {
+	                    $warningIssues[] = 'Fecha fuera del período seleccionado.';
+                    $this->addUploadValidationFail(
+                        $validationResults,
+                        $rowNumber,
+                        'LOGINTER_OUTSIDE_PERIOD',
+                        ($rules['blocking_rules']['outside_period'] ?? true) ? 'CRITICAL' : 'WARNING',
+                        'Fecha dentro del período',
+                        $occurredAt->format('Y-m-d'),
+                        'La fecha del viaje está fuera del período informado.'
+                    );
+                    if ((bool) ($rules['blocking_rules']['outside_period'] ?? true)) {
+                        $criticalIssues[] = 'Fecha fuera del período seleccionado.';
+                    }
+                }
+            }
+
+            $tarifaOriginal = $originalIdx !== null ? $this->parseFloatOrNull($row[$originalIdx] ?? null) : null;
+            $tarifaDistribuidor = $distribuidorIdx !== null ? $this->parseFloatOrNull($row[$distribuidorIdx] ?? null) : null;
+            $factor = null;
+
+            if ($idViaje !== null && isset($tarifasHoja1[$idViaje]) && is_array($tarifasHoja1[$idViaje])) {
+                $entry = $tarifasHoja1[$idViaje];
+                if ($tarifaOriginal === null) {
+                    $tarifaOriginal = $this->parseFloatOrNull($entry['tarifa_original'] ?? null);
+                }
+                if ($tarifaDistribuidor === null) {
+                    $tarifaDistribuidor = $this->parseFloatOrNull($entry['tarifa_distribuidor'] ?? null);
+                }
+                $factor = $this->parseFloatOrNull($entry['factor'] ?? null);
+            }
+
+            if ($factor === null && $tarifaOriginal !== null && $tarifaOriginal > 0 && $tarifaDistribuidor !== null && $tarifaDistribuidor > 0) {
+                $factor = round($tarifaDistribuidor / $tarifaOriginal, 6);
+            }
+
+            $zoneKeyCandidate = $this->normalizeRuleProduct(trim($origenRaw . ' ' . $clientesRaw));
+            $zoneFactor = null;
+            foreach ($factorByZone as $zoneKey => $zoneValue) {
+                if (!is_string($zoneKey) || trim($zoneKey) === '') {
+                    continue;
+                }
+                $normalizedZoneKey = $this->normalizeRuleProduct($zoneKey);
+                if ($normalizedZoneKey !== '' && str_contains($zoneKeyCandidate, $normalizedZoneKey)) {
+                    $zoneFactor = $this->parseFloatOrNull($zoneValue);
+                    break;
+                }
+            }
+
+            $effectiveFactor = $zoneFactor ?? $factor ?? $factorDefault;
+            if ($effectiveFactor !== null && ($effectiveFactor <= 0 || $effectiveFactor > 1.0)) {
+                $effectiveFactor = $factorDefault;
+            }
+
+            if ($tarifaDistribuidor === null) {
+                if ($tarifaOriginal !== null && $tarifaOriginal > 0 && $effectiveFactor !== null) {
+                    $tarifaDistribuidor = round($tarifaOriginal * $effectiveFactor, 6);
+                } elseif ($amountCliente !== null && $amountCliente > 0 && $effectiveFactor !== null) {
+                    $tarifaDistribuidor = round($amountCliente * $effectiveFactor, 6);
+                }
+            }
+
+            if ($tarifaDistribuidor === null) {
+                $warningIssues[] = 'Sin tarifa distribuidor (DISTRIBUIDOR/Hoja1).';
+                $this->addUploadValidationFail(
+                    $validationResults,
+                    $rowNumber,
+                    'LOGINTER_TARIFA_DISTRIBUIDOR_MISSING',
+                    'WARNING',
+                    'Tarifa distribuidor calculada',
+                    null,
+                    'No se encontró la tarifa de distribuidor para el viaje.'
+                );
+            }
+
+            if ($amountCliente !== null && $tarifaDistribuidor !== null && $tarifaDistribuidor > $amountCliente) {
+                $warningIssues[] = 'Tarifa distribuidor mayor al valor del cliente.';
+                $this->addUploadValidationFail(
+                    $validationResults,
+                    $rowNumber,
+                    'LOGINTER_TARIFA_GT_CLIENTE',
+                    'WARNING',
+                    'Tarifa distribuidor < valor cliente',
+                    sprintf('%.2f', $tarifaDistribuidor),
+                    'La tarifa del distribuidor supera el valor del cliente.'
+                );
+            }
+
+            $isDuplicate = false;
+            $duplicateKey = null;
+            if ($idViaje !== null) {
+                $duplicateKey = 'IDVIAJE:' . $idViaje;
+                if (isset($seenViajes[$duplicateKey])) {
+                    $isDuplicate = true;
+                    $firstIndex = (int) $seenViajes[$duplicateKey];
+                    if (isset($stagingRows[$firstIndex])) {
+                        $stagingRows[$firstIndex]['is_duplicate'] = true;
+                        $stagingRows[$firstIndex]['duplicate_group_key'] = $duplicateKey;
+                        if (($stagingRows[$firstIndex]['validation_status'] ?? 'OK') === 'OK') {
+                            $stagingRows[$firstIndex]['validation_status'] = 'ALERTA';
+                            $stagingRows[$firstIndex]['severity_max'] = 'WARNING';
+                            $stagingRows[$firstIndex]['validation_score'] = 75.0;
+                        }
+                    }
+
+                    $warningIssues[] = 'IdViaje duplicado.';
+                    $this->addUploadValidationFail(
+                        $validationResults,
+                        $rowNumber,
+                        'LOGINTER_DUPLICATE_IDVIAJE',
+                        ($rules['blocking_rules']['duplicate_row'] ?? true) ? 'CRITICAL' : 'WARNING',
+                        'IdViaje único',
+                        $idViaje,
+                        'Se encontró un IdViaje duplicado dentro del mismo archivo.'
+                    );
+                    if ((bool) ($rules['blocking_rules']['duplicate_row'] ?? true)) {
+                        $criticalIssues[] = 'IdViaje duplicado.';
+                    }
+                } else {
+                    $seenViajes[$duplicateKey] = count($stagingRows);
+                }
+            }
+
+            $validationStatus = !empty($criticalIssues)
+                ? 'ERROR_CRITICO'
+                : (!empty($warningIssues) ? 'ALERTA' : 'OK');
+            $severityMax = $validationStatus === 'ERROR_CRITICO' ? 'CRITICAL' : ($validationStatus === 'OK' ? 'INFO' : 'WARNING');
+            $validationScore = $validationStatus === 'OK' ? 100.0 : ($validationStatus === 'ERROR_CRITICO' ? 0.0 : 75.0);
+
+            $observations = array_merge($criticalIssues, $warningIssues);
+
+            $rawPayload = [
+                'mapped' => [
+                    'Fecha' => $fechaViajeRaw,
+                    'Estación' => $origenRaw,
+                    'Dominio' => $dominioRaw,
+                    'Producto' => $conceptoRaw,
+                    'Conductor' => $conductorRaw,
+                    'Importe' => $valorRaw,
+                    'ID RUTA' => $idViajeRaw,
+                    'SVC' => $categoriaViajeRaw,
+                    'Categoria' => $categoriaVehiculoRaw,
+                ],
+                'loginter' => [
+                    'id_liquidacion' => $this->normalizeNullableString($idLiquidacionRaw),
+                    'id_viaje' => $idViaje,
+                    'categoria_viaje' => $this->normalizeNullableString($categoriaViajeRaw),
+                    'origen' => $this->normalizeNullableString($origenRaw),
+                    'destino' => $this->normalizeNullableString($destinoRaw),
+                    'clientes' => $this->normalizeNullableString($clientesRaw),
+                    'dominio' => $domainNorm,
+                    'concepto' => $conceptoNorm,
+                    'valor_cliente' => $amountCliente !== null ? round($amountCliente, 2) : null,
+                    'tarifa_original' => $tarifaOriginal !== null ? round($tarifaOriginal, 6) : null,
+                    'tarifa_distribuidor' => $tarifaDistribuidor !== null ? round($tarifaDistribuidor, 6) : null,
+                    'factor' => $effectiveFactor !== null ? round((float) $effectiveFactor, 6) : null,
+                ],
+                'rules' => [
+                    'clientCode' => $normalizedClientCode,
+                ],
+            ];
+
+            $stagingRows[] = [
+                'row_number' => $rowNumber,
+                'external_row_id' => $idViaje,
+                'domain_norm' => $domainNorm,
+                'occurred_at' => $occurredAt?->toIso8601String(),
+                'station' => $this->normalizeNullableString($origenRaw),
+                'product' => $conceptoNorm,
+                'invoice_number' => null,
+                'conductor' => $this->normalizeNullableString($conductorRaw),
+                'name_excel_raw' => $nameExcelRaw,
+                'name_excel_norm' => $nameExcelNorm,
+                'distributor_id' => $providerId,
+                'distributor_code' => $providerId !== null ? ($domainNorm ?? ('PERS-' . $providerId)) : null,
+                'distributor_name' => $providerName,
+                'liters' => null,
+                'amount' => $amountCliente,
+                'price_per_liter' => null,
+                'tariff_expected' => $tarifaOriginal !== null ? round($tarifaOriginal, 6) : null,
+                'amount_expected' => $tarifaDistribuidor !== null ? round($tarifaDistribuidor, 6) : null,
+                'validation_status' => $validationStatus,
+                'validation_score' => $validationScore,
+                'severity_max' => $severityMax,
+                'match_status' => $matchStatus,
+                'match_provider_persona_id' => $providerId,
+                'is_duplicate' => $isDuplicate,
+                'duplicate_group_key' => $isDuplicate ? $duplicateKey : null,
+                'observations_auto' => !empty($observations) ? implode('; ', $observations) : null,
+                'raw_payload_json' => $rawPayload,
+                'match_candidates_json' => $matchCandidates,
+            ];
+
+            if (count($sampleRows) < 5) {
+                $sampleRows[] = [
+                    'fecha' => (string) $fechaViajeRaw,
+                    'estacion' => (string) $origenRaw,
+                    'dominio' => (string) $dominioRaw,
+                    'producto' => (string) $conceptoRaw,
+                    'litros' => '',
+                    'importe' => (string) $valorRaw,
+                ];
+            }
+	        }
+
+	        if ($detalleTotalAmount !== null && $detalleTotalRowNumber !== null) {
+	            $diff = abs($sumValorCliente - (float) $detalleTotalAmount);
+	            if ($diff > 1.0) {
+	                $this->addUploadValidationFail(
+	                    $validationResults,
+	                    $detalleTotalRowNumber,
+	                    'LOGINTER_TOTAL_ROW_MISMATCH',
+	                    'WARNING',
+	                    sprintf('%.2f', $detalleTotalAmount),
+	                    sprintf('%.2f', round($sumValorCliente, 2)),
+	                    'La suma de Valor en Detalle no coincide con la fila TOTAL.'
+	                );
+	            }
+	        }
+
+	        if ($prefacturaTotal !== null) {
+	            $diff = abs($sumValorCliente - (float) $prefacturaTotal);
+	            if ($diff > 1.0) {
+	                $this->addUploadValidationFail(
+	                    $validationResults,
+	                    1,
+	                    'LOGINTER_PREFACTURA_TOTAL_MISMATCH',
+	                    'WARNING',
+	                    sprintf('%.2f', $prefacturaTotal),
+	                    sprintf('%.2f', round($sumValorCliente, 2)),
+	                    'La suma de Valor en Detalle no coincide con el total detectado en Prefactura.'
+	                );
+	            }
+	        }
+
+	        if (count($detalleIdLiquidacionValues) === 1 && $expectedIdLiquidacion !== null) {
+	            $detalleId = (string) array_key_first($detalleIdLiquidacionValues);
+	            if ($detalleId !== $expectedIdLiquidacion) {
+	                $this->addUploadValidationFail(
+	                    $validationResults,
+	                    1,
+	                    'LOGINTER_IDLIQUIDACION_INCONSISTENTE',
+	                    'WARNING',
+	                    $expectedIdLiquidacion,
+	                    $detalleId,
+	                    'El IdLiquidacion del Detalle no coincide con el esperado.'
+	                );
+	            }
+	        } elseif (count($detalleIdLiquidacionValues) > 1) {
+	            $this->addUploadValidationFail(
+	                $validationResults,
+	                1,
+	                'LOGINTER_IDLIQUIDACION_MULTIPLE',
+	                'WARNING',
+	                'Un IdLiquidacion único',
+	                implode(', ', array_slice(array_keys($detalleIdLiquidacionValues), 0, 5)),
+	                'Se detectaron múltiples IdLiquidacion dentro del Detalle.'
+	            );
+	        }
+
+	        return [
+	            'staging_rows' => $stagingRows,
+	            'validation_results' => $validationResults,
+            'rules' => $rules,
+            'rules_source' => $rulesPayload['source'] ?? 'default',
+            'sample_rows' => $sampleRows,
+            'stats' => [
+                'input_rows_count' => count($rows),
+                'imported_rows_count' => count($stagingRows),
+                'tarifas_hoja1_count' => count($tarifasHoja1),
+            ],
+        ];
+    }
+
     private function buildPendingMatchItems(LiquidacionImportRun $run): array
     {
         $rows = LiquidacionStagingRow::query()
@@ -3197,6 +4019,7 @@ class LiquidacionRunController extends Controller
         $normalizedClientCode = $this->normalizeClientCode($clientCode);
         $intermedioDefaults = $this->defaultIntermedioClientRuleSet();
         $epsaDefaults = $this->defaultEpsaClientRuleSet();
+        $loginterDefaults = $this->defaultLoginterClientRuleSet();
         if ($normalizedClientCode === null) {
             return [
                 'rules' => $defaults,
@@ -3222,6 +4045,12 @@ class LiquidacionRunController extends Controller
                 return [
                     'rules' => $epsaDefaults,
                     'source' => 'default_epsa',
+                ];
+            }
+            if ($this->isLoginterClientCode($normalizedClientCode)) {
+                return [
+                    'rules' => $loginterDefaults,
+                    'source' => 'default_loginter',
                 ];
             }
             return [
@@ -3446,6 +4275,16 @@ class LiquidacionRunController extends Controller
         return str_contains($normalized, 'EPSA');
     }
 
+    private function isLoginterClientCode(?string $clientCode): bool
+    {
+        if ($clientCode === null) {
+            return false;
+        }
+
+        $normalized = strtoupper(trim($clientCode));
+        return str_contains($normalized, 'LOGINTER') || str_contains($normalized, 'MERCADOLIBRE');
+    }
+
     private function defaultIntermedioClientRuleSet(): array
     {
         $rules = $this->defaultClientRuleSet();
@@ -3576,6 +4415,25 @@ class LiquidacionRunController extends Controller
                 ['km_desde' => 150.00001, 'km_hasta' => 170, 'la_jornada' => 127375.47],
                 ['km_desde' => 170.00001, 'km_hasta' => 200, 'la_jornada' => 127375.47],
             ],
+        ];
+
+        return $rules;
+    }
+
+    private function defaultLoginterClientRuleSet(): array
+    {
+        $rules = $this->defaultClientRuleSet();
+        $rules['blocking_rules'] = array_merge($rules['blocking_rules'], [
+            'duplicate_row' => true,
+            'outside_period' => true,
+            'tariff_mismatch' => false,
+        ]);
+        $rules['loginter'] = [
+            'sheet_name' => 'Detalle',
+            'factor_default' => 0.87,
+            'factor_by_zone' => [],
+            'gastos_admin_default' => 2010.0,
+            'beneficio_seguro_default' => 0.0,
         ];
 
         return $rules;
@@ -3795,6 +4653,389 @@ class LiquidacionRunController extends Controller
         ]];
     }
 
+    private function normalizeLoginterIdViaje($value): ?string
+    {
+        $trimmed = trim((string) ($value ?? ''));
+        if ($trimmed === '') {
+            return null;
+        }
+
+        $numeric = $this->parseFloatOrNull($trimmed);
+        if ($numeric !== null && $numeric > 0) {
+            $rounded = (int) round($numeric);
+            if (abs($numeric - $rounded) < 0.00001) {
+                return (string) $rounded;
+            }
+        }
+
+        if (preg_match('/^\d+$/', $trimmed) === 1) {
+            $trimmed = ltrim($trimmed, '0');
+            return $trimmed !== '' ? $trimmed : '0';
+        }
+
+        return $trimmed;
+    }
+
+    private function resolveLoginterExpectedIdLiquidacion(array $columns, array $rows): ?string
+    {
+        $idIndex = $this->resolveUploadHeaderIndexByAliases($columns, ['IdLiquidacion', 'Id Liquidacion', 'Id Liquidación', 'ID LIQUIDACION', 'IDLIQUIDACION']);
+        if ($idIndex === null) {
+            return null;
+        }
+
+        $unique = [];
+        foreach (array_slice($rows, 0, 2000) as $row) {
+            if (!is_array($row) || !array_key_exists($idIndex, $row)) {
+                continue;
+            }
+            $id = $this->normalizeLoginterIdViaje($row[$idIndex] ?? null);
+            if ($id !== null) {
+                $unique[$id] = true;
+                if (count($unique) > 5) {
+                    break;
+                }
+            }
+        }
+
+        if (count($unique) === 1) {
+            return (string) array_key_first($unique);
+        }
+
+        return null;
+    }
+
+    private function readUploadXlsxSheetRawRows(string $path, string $preferredSheet, bool $strictPreferred = true): array
+    {
+        $zip = new ZipArchive();
+        if ($zip->open($path) !== true) {
+            return [
+                'rows' => [],
+                'meta' => [
+                    'sheet_not_found' => true,
+                    'requested_sheet' => $preferredSheet,
+                    'available_sheets' => [],
+                ],
+            ];
+        }
+
+        $sharedStrings = $this->readUploadSharedStrings($zip);
+        $sheetEntries = $this->listUploadWorksheetFiles($zip);
+        if (empty($sheetEntries)) {
+            $zip->close();
+            return [
+                'rows' => [],
+                'meta' => [
+                    'sheet_not_found' => true,
+                    'requested_sheet' => $preferredSheet,
+                    'available_sheets' => [],
+                ],
+            ];
+        }
+
+        $resolvedPreferredSheet = $this->resolveUploadPreferredSheet($preferredSheet, $sheetEntries);
+        if ($strictPreferred && $resolvedPreferredSheet === null) {
+            $availableSheets = array_values(array_filter(
+                array_map(static fn ($entry) => (string) ($entry['name'] ?? ''), $sheetEntries),
+                static fn ($sheetName) => $sheetName !== ''
+            ));
+            $zip->close();
+            return [
+                'rows' => [],
+                'meta' => [
+                    'sheet_not_found' => true,
+                    'requested_sheet' => $preferredSheet,
+                    'available_sheets' => $availableSheets,
+                ],
+            ];
+        }
+
+        $sheetPath = $resolvedPreferredSheet ?? $sheetEntries[0]['path'];
+        $sheetName = basename($sheetPath, '.xml');
+        foreach ($sheetEntries as $sheetEntry) {
+            if (($sheetEntry['path'] ?? null) !== $sheetPath) {
+                continue;
+            }
+            $sheetName = (string) ($sheetEntry['name'] ?? $sheetName);
+            break;
+        }
+
+        $sheetXml = $zip->getFromName($sheetPath);
+        $zip->close();
+        if (!$sheetXml) {
+            return [
+                'rows' => [],
+                'meta' => [
+                    'sheet_not_found' => true,
+                    'requested_sheet' => $preferredSheet,
+                    'available_sheets' => [],
+                ],
+            ];
+        }
+
+        [$rawRows] = $this->extractUploadSheetRows($sheetXml, $sharedStrings, 200000);
+        return [
+            'rows' => $rawRows,
+            'meta' => [
+                'sheet_not_found' => false,
+                'requested_sheet' => $preferredSheet,
+                'sheet_name' => $sheetName,
+            ],
+        ];
+    }
+
+    private function extractLoginterPrefacturaMeta(string $path, ?string $expectedIdLiquidacion): array
+    {
+        $result = $this->readUploadXlsxSheetRawRows($path, 'Prefactura', true);
+        $rawRows = is_array($result['rows'] ?? null) ? $result['rows'] : [];
+        $meta = is_array($result['meta'] ?? null) ? $result['meta'] : [];
+        if ((bool) ($meta['sheet_not_found'] ?? false)) {
+            return [
+                'sheet_not_found' => true,
+                'id_liquidacion_match' => null,
+                'total_amount' => null,
+                'period_from' => null,
+                'period_to' => null,
+            ];
+        }
+
+        $idMatch = null;
+        $expectedNumeric = $expectedIdLiquidacion !== null ? $this->parseFloatOrNull($expectedIdLiquidacion) : null;
+        if ($expectedIdLiquidacion !== null) {
+            $idMatch = false;
+        }
+
+        $detectedDates = [];
+        $totalCandidates = [];
+        $maxNumeric = null;
+
+        foreach ($rawRows as $row) {
+            if (!is_array($row)) {
+                continue;
+            }
+
+            $rowTexts = [];
+            foreach ($row as $cell) {
+                $cellStr = trim((string) $cell);
+                if ($cellStr === '') {
+                    $rowTexts[] = '';
+                    continue;
+                }
+
+                $rowTexts[] = $cellStr;
+
+                if ($expectedIdLiquidacion !== null && $idMatch === false) {
+                    if (str_contains($cellStr, $expectedIdLiquidacion)) {
+                        $idMatch = true;
+                    } elseif ($expectedNumeric !== null) {
+                        $num = $this->parseFloatOrNull($cellStr);
+                        if ($num !== null && abs($num - $expectedNumeric) < 0.00001) {
+                            $idMatch = true;
+                        }
+                    }
+                }
+
+                $maybeDate = $this->parseUploadDate($cellStr, 'dmy');
+                if ($maybeDate) {
+                    $detectedDates[] = $maybeDate->copy()->startOfDay();
+                }
+
+                $num = $this->parseFloatOrNull($cellStr);
+                if ($num !== null) {
+                    $abs = abs($num);
+                    if ($maxNumeric === null || $abs > $maxNumeric) {
+                        $maxNumeric = $abs;
+                    }
+                }
+            }
+
+            foreach ($rowTexts as $idx => $cellStr) {
+                if ($cellStr === '') {
+                    continue;
+                }
+                $label = $this->normalizeRuleProduct($cellStr);
+                if ($label === '') {
+                    continue;
+                }
+                if (!str_contains($label, 'total') && !str_contains($label, 'importe')) {
+                    continue;
+                }
+
+                $neighbors = [];
+                foreach ([$idx - 2, $idx - 1, $idx + 1, $idx + 2] as $nIdx) {
+                    if ($nIdx < 0 || $nIdx >= count($rowTexts)) {
+                        continue;
+                    }
+                    $neighbors[] = $this->parseFloatOrNull($rowTexts[$nIdx]);
+                }
+                $neighbors = array_values(array_filter($neighbors, static fn ($v) => $v !== null));
+                if (!empty($neighbors)) {
+                    $totalCandidates[] = max($neighbors);
+                }
+            }
+        }
+
+        $totalAmount = null;
+        if (!empty($totalCandidates)) {
+            $totalAmount = max($totalCandidates);
+        } elseif ($maxNumeric !== null && $maxNumeric > 0) {
+            $totalAmount = $maxNumeric;
+        }
+
+        $periodFrom = null;
+        $periodTo = null;
+        if (!empty($detectedDates)) {
+            $sorted = collect($detectedDates)
+                ->filter(fn ($d) => $d instanceof Carbon)
+                ->sortBy(fn (Carbon $d) => $d->timestamp)
+                ->values()
+                ->all();
+            if (!empty($sorted)) {
+                $periodFrom = $sorted[0];
+                $periodTo = $sorted[count($sorted) - 1];
+            }
+        }
+
+        return [
+            'sheet_not_found' => false,
+            'id_liquidacion_match' => $idMatch,
+            'total_amount' => $totalAmount !== null ? round((float) $totalAmount, 2) : null,
+            'period_from' => $periodFrom?->toDateString(),
+            'period_to' => $periodTo?->toDateString(),
+        ];
+    }
+
+    private function buildLoginterHoja1Tarifas(string $path): array
+    {
+        [$columns, $rows, , $meta] = $this->parseUploadXlsx($path, 'Hoja1', true);
+        if ((bool) ($meta['sheet_not_found'] ?? false)) {
+            return [];
+        }
+
+        $idIndex = $this->resolveUploadHeaderIndexByAliases($columns, ['IdViaje', 'Id Viaje', 'IDVIAJE', 'ID VIAJE']);
+        $originalIndex = $this->resolveUploadHeaderIndexByAliases($columns, ['ORIGINAL', 'Tarifa ORIGINAL', 'TARIFA ORIGINAL', 'Original']);
+        $distribuidorIndex = $this->resolveUploadHeaderIndexByAliases($columns, ['DISTRIBUIDOR', 'Tarifa DISTRIBUIDOR', 'TARIFA DISTRIBUIDOR', 'Distribuidor']);
+        if ($idIndex === null || $originalIndex === null || $distribuidorIndex === null) {
+            return [];
+        }
+
+        $tarifas = [];
+        foreach ($rows as $row) {
+            $idViaje = $this->normalizeLoginterIdViaje($row[$idIndex] ?? null);
+            if ($idViaje === null || isset($tarifas[$idViaje])) {
+                continue;
+            }
+
+            $original = $this->parseFloatOrNull($row[$originalIndex] ?? null);
+            $distribuidor = $this->parseFloatOrNull($row[$distribuidorIndex] ?? null);
+            if ($original === null && $distribuidor === null) {
+                continue;
+            }
+
+            $factor = null;
+            if ($original !== null && $original > 0 && $distribuidor !== null && $distribuidor > 0) {
+                $factor = round($distribuidor / $original, 6);
+            }
+
+            $tarifas[$idViaje] = [
+                'tarifa_original' => $original !== null ? round($original, 6) : null,
+                'tarifa_distribuidor' => $distribuidor !== null ? round($distribuidor, 6) : null,
+                'factor' => $factor,
+            ];
+        }
+
+        return $tarifas;
+    }
+
+    private function resolveLoginterSucursalCodeFromText(string $value): ?string
+    {
+        $normalized = $this->normalizeRuleProduct($value);
+        if ($normalized === '') {
+            return null;
+        }
+
+        if (str_contains($normalized, 'neuquen')) {
+            return 'NEU';
+        }
+        if (str_contains($normalized, 'tucuman')) {
+            return 'TUC';
+        }
+        if (str_contains($normalized, 'bahia blanca') || str_contains($normalized, 'bahia')) {
+            return 'BAH';
+        }
+        if (str_contains($normalized, 'resistencia')) {
+            return 'RES';
+        }
+        if (str_contains($normalized, 'santa fe')) {
+            return 'SFE';
+        }
+        if (str_contains($normalized, 'concepcion')) {
+            return 'CDU';
+        }
+        if (str_contains($normalized, 'tres arroyos')) {
+            return '3AR';
+        }
+        if (str_contains($normalized, 'cordoba')) {
+            return 'CDO';
+        }
+        if (str_contains($normalized, 'rosario')) {
+            return 'RSO';
+        }
+        if (str_contains($normalized, 'amba') || str_contains($normalized, 'cadmercadolibre')) {
+            return 'CTA';
+        }
+        if (str_contains($normalized, 'mar del plata') || str_contains($normalized, 'mdq')) {
+            return 'MDQ';
+        }
+
+        return null;
+    }
+
+    private function buildLoginterPersonaNameToken(string $apellidos, string $nombres): string
+    {
+        $apellidosNorm = $this->normalizePersonName($apellidos) ?? '';
+        $nombresNorm = $this->normalizePersonName($nombres) ?? '';
+
+        $apellidoToken = '';
+        if ($apellidosNorm !== '') {
+            $tokens = preg_split('/\s+/', trim($apellidosNorm)) ?: [];
+            $apellidoToken = (string) ($tokens[0] ?? '');
+        }
+
+        $nombresToken = $nombresNorm !== '' ? str_replace(' ', '', $nombresNorm) : '';
+        $result = trim($apellidoToken . $nombresToken);
+        $result = preg_replace('/[^A-Z0-9]+/u', '', $result ?? '') ?? '';
+        return strtoupper($result);
+    }
+
+    private function resolveLoginterPeriodoToken(LiquidacionImportRun $run): string
+    {
+        $metadata = is_array($run->metadata) ? $run->metadata : [];
+        $period = is_array($metadata['period'] ?? null) ? $metadata['period'] : [];
+        $quincena = strtoupper(trim((string) ($period['quincena'] ?? '')));
+        $mes = isset($period['mes']) ? (int) $period['mes'] : null;
+
+        if (!in_array($quincena, ['1Q', '2Q'], true)) {
+            $quincena = '';
+        }
+
+        if ($mes === null || $mes < 1 || $mes > 12) {
+            $mes = $run->period_from ? (int) $run->period_from->format('n') : null;
+        }
+
+        if ($quincena === '' && $run->period_from) {
+            $quincena = ((int) $run->period_from->format('j')) <= 15 ? '1Q' : '2Q';
+        }
+
+        if ($quincena === '') {
+            $quincena = '1Q';
+        }
+        if ($mes === null) {
+            $mes = 1;
+        }
+
+        return $quincena . str_pad((string) $mes, 2, '0', STR_PAD_LEFT);
+    }
+
     private function mapUploadRows(array $columns, array $rows, ?string $format = null): array
     {
         $standardColumns = [
@@ -3861,6 +5102,86 @@ class LiquidacionRunController extends Controller
             'unmappedColumns' => $unmapped,
             'format' => strtolower(trim((string) ($format ?? 'custom'))),
             'productColumn' => $productColumn,
+        ];
+    }
+
+    private function mapLoginterUploadRows(array $columns, array $rows): array
+    {
+        $required = [
+            'IdViaje',
+            'FechaViaje',
+            'Conductor',
+            'Dominio',
+            'Concepto',
+            'Valor',
+            'Origen',
+            'CategoriaViaje',
+        ];
+
+        $indexMap = [
+            'IdLiquidacion' => $this->resolveUploadHeaderIndexByAliases($columns, ['IdLiquidacion', 'Id Liquidacion', 'Id Liquidación', 'ID LIQUIDACION', 'IDLIQUIDACION']),
+            'IdViaje' => $this->resolveUploadHeaderIndexByAliases($columns, ['IdViaje', 'Id Viaje', 'IDVIAJE', 'ID VIAJE']),
+            'CategoriaViaje' => $this->resolveUploadHeaderIndexByAliases($columns, ['CategoriaViaje', 'CategoríaViaje', 'Categoria Viaje', 'Categoría Viaje']),
+            'Origen' => $this->resolveUploadHeaderIndexByAliases($columns, ['Origen']),
+            'Destino' => $this->resolveUploadHeaderIndexByAliases($columns, ['Destino']),
+            'FechaViaje' => $this->resolveUploadHeaderIndexByAliases($columns, ['FechaViaje', 'Fecha Viaje', 'Fecha']),
+            'Clientes' => $this->resolveUploadHeaderIndexByAliases($columns, ['Clientes', 'Cliente']),
+            'Conductor' => $this->resolveUploadHeaderIndexByAliases($columns, ['Conductor', 'Distribuidor']),
+            'Dominio' => $this->resolveUploadHeaderIndexByAliases($columns, ['Dominio', 'Patente']),
+            'CategoriaVehiculo' => $this->resolveUploadHeaderIndexByAliases($columns, ['CategoriaVehiculo', 'CategoríaVehiculo', 'Categoria Vehiculo', 'Categoría Vehículo', 'Tipo unidad', 'TIPO UNIDAD']),
+            'Concepto' => $this->resolveUploadHeaderIndexByAliases($columns, ['Concepto', 'Producto']),
+            'Valor' => $this->resolveUploadHeaderIndexByAliases($columns, ['Valor', 'Importe']),
+            'ORIGINAL' => $this->resolveUploadHeaderIndexByAliases($columns, ['ORIGINAL', 'Original', 'Tarifa ORIGINAL', 'TARIFA ORIGINAL']),
+            'DISTRIBUIDOR' => $this->resolveUploadHeaderIndexByAliases($columns, ['DISTRIBUIDOR', 'Distribuidor', 'Tarifa DISTRIBUIDOR', 'TARIFA DISTRIBUIDOR']),
+        ];
+
+        $missing = [];
+        foreach ($required as $key) {
+            if (($indexMap[$key] ?? null) === null) {
+                $missing[] = $key;
+            }
+        }
+
+        if (!empty($missing)) {
+            return [
+                'mapped' => false,
+                'columns' => $columns,
+                'rows' => $rows,
+                'mappedFields' => [],
+                'unmappedColumns' => [],
+                'missingColumns' => $missing,
+                'format' => 'loginter',
+                'productColumn' => null,
+            ];
+        }
+
+        $usedIndexes = [];
+        foreach ($indexMap as $idx) {
+            if ($idx !== null) {
+                $usedIndexes[(int) $idx] = true;
+            }
+        }
+
+        $unmapped = [];
+        foreach ($columns as $idx => $header) {
+            if (isset($usedIndexes[(int) $idx])) {
+                continue;
+            }
+            $normalizedHeader = $this->normalizeNullableString((string) $header);
+            if ($normalizedHeader !== null) {
+                $unmapped[] = $normalizedHeader;
+            }
+        }
+
+        return [
+            'mapped' => true,
+            'columns' => $columns,
+            'rows' => $rows,
+            'mappedFields' => array_values(array_filter(array_keys($indexMap), fn ($key) => ($indexMap[$key] ?? null) !== null)),
+            'unmappedColumns' => array_values(array_unique($unmapped)),
+            'missingColumns' => [],
+            'format' => 'loginter',
+            'productColumn' => null,
         ];
     }
 
@@ -4726,12 +6047,40 @@ class LiquidacionRunController extends Controller
             return [null, 0];
         }
 
+        $loginterHeaders = [
+            'idliquidacion',
+            'idviaje',
+            'categoriaviaje',
+            'origen',
+            'destino',
+            'fechaviaje',
+            'clientes',
+            'conductor',
+            'dominio',
+            'categoriavehiculo',
+            'razonsocial',
+            'vuelta',
+            'volumen',
+            'peso',
+            'idguia',
+            'concepto',
+            'valor',
+            'original',
+            'distribuidor',
+        ];
+
         $bestIndex = null;
         $bestScore = 0;
         foreach ($rows as $index => $row) {
             $score = 0;
             foreach ($row as $cell) {
                 if ($this->mapUploadHeaderToStandard((string) $cell) !== null) {
+                    $score += 1;
+                    continue;
+                }
+
+                $normalized = $this->normalizeUploadHeader((string) $cell);
+                if ($normalized !== '' && in_array($normalized, $loginterHeaders, true)) {
                     $score += 1;
                 }
             }
@@ -5694,6 +7043,12 @@ class LiquidacionRunController extends Controller
         ?string $svc
     ): float {
         $rawPayload = is_array($row->raw_payload_json) ? $row->raw_payload_json : [];
+        $loginter = is_array($rawPayload['loginter'] ?? null) ? $rawPayload['loginter'] : [];
+        $loginterTarifa = $this->parseFloatOrNull($loginter['tarifa_distribuidor'] ?? null);
+        if ($loginterTarifa !== null && $loginterTarifa > 0) {
+            return round($loginterTarifa, 2);
+        }
+
         $epsa = is_array($rawPayload['epsa'] ?? null) ? $rawPayload['epsa'] : [];
         $epsaTarifa = $this->parseFloatOrNull($epsa['la_jornada_base'] ?? null);
         if ($epsaTarifa !== null && $epsaTarifa > 0) {
@@ -6421,6 +7776,16 @@ class LiquidacionRunController extends Controller
         return in_array($normalizedFormat, ['epsa', 'epsa_table', 'epsa-table'], true);
     }
 
+    private function isLoginterUploadMode($clientCode, ?string $format): bool
+    {
+        if ($this->isLoginterClientCode($this->normalizeClientCode($clientCode))) {
+            return true;
+        }
+
+        $normalizedFormat = strtolower(trim((string) ($format ?? '')));
+        return in_array($normalizedFormat, ['loginter', 'mercadolibre', 'ml', 'bi_erp', 'bi-erp'], true);
+    }
+
     private function normalizeEpsaPlanillaNumber($value): ?string
     {
         $numeric = $this->parseFloatOrNull($value);
@@ -6631,14 +7996,26 @@ class LiquidacionRunController extends Controller
 
                 foreach ($lineas as $linea) {
                     $stagingRow = $linea->stagingRow;
+                    $rawPayload = $stagingRow && is_array($stagingRow->raw_payload_json) ? $stagingRow->raw_payload_json : [];
                     if ($sucursal === null && $stagingRow) {
-                        $zoneKey = $this->resolveLineZoneKey($stagingRow, $linea->svc);
-                        if (is_string($zoneKey) && trim($zoneKey) !== '') {
-                            $sucursal = strtoupper(substr(trim($zoneKey), 0, 3));
+                        if (is_array($rawPayload['loginter'] ?? null)) {
+                            $loginter = $rawPayload['loginter'];
+                            $sucursalCode = $this->resolveLoginterSucursalCodeFromText(
+                                (string) ($loginter['origen'] ?? '') . ' ' . (string) ($loginter['clientes'] ?? '')
+                            );
+                            if ($sucursalCode !== null) {
+                                $sucursal = $sucursalCode;
+                            }
+                        }
+
+                        if ($sucursal === null) {
+                            $zoneKey = $this->resolveLineZoneKey($stagingRow, $linea->svc);
+                            if (is_string($zoneKey) && trim($zoneKey) !== '') {
+                                $sucursal = strtoupper(substr(trim($zoneKey), 0, 3));
+                            }
                         }
                     }
 
-                    $rawPayload = $stagingRow && is_array($stagingRow->raw_payload_json) ? $stagingRow->raw_payload_json : [];
                     $mapped = is_array($rawPayload['mapped'] ?? null) ? $rawPayload['mapped'] : [];
                     $kmsRaw = $this->mappedPayloadString($mapped, ['KMS', 'KM', 'Kilometros', 'Kilómetros', 'Kilometraje']);
                     $kmsValue = $this->parseFloatOrNull($kmsRaw);
@@ -6650,6 +8027,13 @@ class LiquidacionRunController extends Controller
                         $bucket = (int) floor($kmsValue / 50) * 50;
                         $upper = $bucket + 50;
                         $kmsLabel = sprintf('Rango %d-%dkms', $bucket, $upper);
+                    } elseif (is_array($rawPayload['loginter'] ?? null)) {
+                        $loginter = $rawPayload['loginter'];
+                        $concepto = $this->normalizeNullableString((string) ($loginter['concepto'] ?? ''))
+                            ?? $this->normalizeNullableString((string) ($stagingRow->product ?? ''));
+                        if ($concepto !== null) {
+                            $kmsLabel = $concepto;
+                        }
                     }
 
                     $categoria = $this->normalizeNullableString((string) ($linea->svc ?? ''))

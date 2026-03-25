@@ -40,6 +40,44 @@ Ya existen componentes clave en backend:
 
 Esto permite integrar el nuevo flujo sin reemplazar todo.
 
+### 3.1 Implementación actual en plataforma: Extractos BI/ERP (LOGINTER / MercadoLibre)
+Además del flujo de combustible, el backend ya soporta un modo de importación para archivos de liquidación del cliente **LOGINTER/Mercado Libre** dentro del módulo de **Liquidaciones > Extractos**.
+
+**Cómo se usa**
+- Subir el Excel (`.xlsx`) desde `POST /api/liquidaciones/runs/upload-preview` (vista previa) y `POST /api/liquidaciones/runs/upload` (creación del run).
+- En frontend, basta con seleccionar/ingresar `client_code = LOGINTER` (o `MERCADOLIBRE`).
+- Por defecto el sistema busca la hoja `Detalle` y, si existe, toma `Hoja1` como auxiliar.
+- Exportar todos los PDFs en un ZIP: `GET /api/liquidaciones/runs/{run}/export-pdfs-zip`
+
+**Hojas y columnas**
+- Hoja principal: `Detalle` (obligatoria). Se detecta el encabezado por columnas como `IdViaje`, `FechaViaje`, `Conductor`, `Dominio`, `Concepto`, `Valor`, `Origen`.
+- Hoja auxiliar: `Hoja1` (opcional). Si contiene `ORIGINAL` y `DISTRIBUIDOR`, se usa para obtener la tarifa de distribuidor por `IdViaje`.
+- Hoja `Prefactura` (si existe): se usa para validar presencia de `IdLiquidacion` y detectar un total de referencia (heurístico).
+
+**Reglas de cálculo (estado actual)**
+- `tarifa_distribuidor`:
+  - Preferencia 1: `Hoja1.DISTRIBUIDOR` por `IdViaje`.
+  - Preferencia 2: si existe `ORIGINAL`/`DISTRIBUIDOR` en `Detalle`, se usan esos valores.
+  - Fallback: se aplica un factor configurable (por defecto `0.87`) sobre la tarifa disponible.
+- PDF:
+  - `Categoria` del renglón se toma de `CategoriaViaje` (ej: `DISTRIBUCION`, `FALSO FLETE`).
+  - `KM` se muestra con el `Concepto` (ej: `Rango 0-50kms`, `Valor Viaje`) cuando no hay kilómetros numéricos.
+  - `Suc` se infiere desde `Origen/Clientes` con códigos (`NEU`, `TUC`, `BAH`, `RES`, `SFE`, `CDU`, `3AR`, `CDO`, `RSO`, `CTA`).
+
+**Configuración**
+- El factor por defecto y/o por zona se puede versionar en reglas de cliente (`/api/liquidaciones/reglas-cliente/{client_code}`) bajo la clave `loginter`:
+  - `loginter.factor_default` (default `0.87`)
+  - `loginter.factor_by_zone` (objeto `zona -> factor`)
+
+**Archivos y código**
+- Backend: `back/app/Http/Controllers/Api/LiquidacionRunController.php`
+- PDF: `back/app/Services/Pdf/LiquidacionExtractoPdfService.php`
+
+**Pendientes (para alinear 100% con el blueprint)**
+- ABM de tarifas **ORIGINAL** por sucursal/concepto + vigencias (para no depender de `Hoja1`).
+- Confirmación y parametrización de `Gastos Administrativos` y `Beneficio Seguro`.
+- Naming de PDFs: el ZIP respeta `{COD_SUCURSAL}_{APELLIDONOMBRE}_{PERIODO}.pdf`, pero el documento guardado en “personal” mantiene `run_{id}_persona_{id}.pdf`.
+
 ## 4. Diseño objetivo (arquitectura lógica)
 
 ### 4.1 Flujo E2E
