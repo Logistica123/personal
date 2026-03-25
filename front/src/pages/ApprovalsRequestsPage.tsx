@@ -779,6 +779,7 @@ export const ApprovalsRequestsPage: React.FC<ApprovalsRequestsPageProps> = ({
   const [solicitudesFechaFrom, setSolicitudesFechaFrom] = useState('');
   const [solicitudesFechaTo, setSolicitudesFechaTo] = useState('');
   const [bulkRejectingSolicitudes, setBulkRejectingSolicitudes] = useState(false);
+  const [updatingSolicitudEstadoIds, setUpdatingSolicitudEstadoIds] = useState<Set<number>>(() => new Set());
   const [flash, setFlash] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
   const [deletingSolicitudId, setDeletingSolicitudId] = useState<number | null>(null);
   const perfilNames: Record<number, string> = useMemo(
@@ -4991,6 +4992,124 @@ const sucursalOptions = useMemo(() => {
     setSolicitudesFechaTo('');
   };
 
+  const applyInlineSolicitudEstadoUpdate = (solicitudId: number, estado: string) => {
+    const apply = (item: PersonalRecord): PersonalRecord => {
+      if (item.id !== solicitudId) {
+        return item;
+      }
+      const data = (item.solicitudData as any) ?? {};
+      const form = typeof data?.form === 'object' && data.form !== null ? data.form : {};
+      return normalizeSolicitudRecord({
+        ...item,
+        estado,
+        solicitudData: {
+          ...data,
+          form: {
+            ...form,
+            estado,
+          },
+        },
+      } as PersonalRecord);
+    };
+
+    setPersonalSolicitudes((prev) => prev.map(apply));
+    setBackendSolicitudes((prev) => prev.map(apply));
+    updateLocalSolicitud(solicitudId, (prev) => apply(prev));
+  };
+
+  const resolveSolicitudDestinatarioIds = (registro: PersonalRecord): string[] => {
+    const data = registro.solicitudData as any;
+    if (Array.isArray(data?.form?.destinatarioIds)) {
+      return data.form.destinatarioIds.map((value: string | number) => String(value));
+    }
+    if (data?.form?.destinatarioId != null) {
+      return [String(data.form.destinatarioId)];
+    }
+    return [];
+  };
+
+  const handleInlineSolicitudEstadoChange = async (registro: PersonalRecord, nextEstado: string) => {
+    if (!isSolicitudPersonalView) {
+      return;
+    }
+
+    const solicitudId = registro.id;
+    const currentEstado = (registro.estado ?? 'Pendiente').trim();
+    const normalizedNext = (nextEstado ?? '').trim();
+    if (!normalizedNext || normalizedNext === currentEstado) {
+      return;
+    }
+
+    if (updatingSolicitudEstadoIds.has(solicitudId)) {
+      return;
+    }
+
+    const destinatarioIds = resolveSolicitudDestinatarioIds(registro);
+    if (!isUserDestinatario(destinatarioIds) || registro.solicitudTipo === 'cambio_asignacion') {
+      setFlash({ type: 'error', message: 'No tenés permisos para cambiar el estado de esta solicitud.' });
+      return;
+    }
+
+    setUpdatingSolicitudEstadoIds((prev) => {
+      const next = new Set(prev);
+      next.add(solicitudId);
+      return next;
+    });
+
+    setFlash(null);
+    applyInlineSolicitudEstadoUpdate(solicitudId, normalizedNext);
+
+    try {
+      const endpoint = `${apiBaseUrl}/api/solicitud-personal/${solicitudId}`;
+      const requestInit: RequestInit = {
+        method: 'PUT',
+        headers: {
+          Accept: 'application/json',
+          'Content-Type': 'application/json',
+          ...actorHeaders,
+        },
+        body: JSON.stringify({ estado: normalizedNext }),
+      };
+
+      let response = await fetch(endpoint, requestInit);
+      if (response.status === 405) {
+        response = await fetch(endpoint, { ...requestInit, method: 'POST' });
+      }
+
+      if (!response.ok) {
+        let message = `Error ${response.status}: ${response.statusText}`;
+        const payload = (await parseJsonSafe(response).catch(() => null)) as { message?: string } | null;
+        if (typeof payload?.message === 'string') {
+          message = payload.message;
+        }
+        throw new Error(message);
+      }
+
+      const payload = (await parseJsonSafe(response)) as {
+        message?: string;
+        data?: Parameters<typeof mapSolicitudPersonalToRecord>[0];
+      };
+
+      const origin = ((registro.solicitudData as any)?.origin ?? 'solicitud-personal') as
+        | 'solicitud-personal'
+        | 'aprobaciones-solicitud-personal';
+
+      if (payload?.data) {
+        const updated = normalizeSolicitudRecord(mapSolicitudPersonalToRecord(payload.data, origin));
+        setPersonalSolicitudes((prev) => prev.map((item) => (item.id === solicitudId ? updated : item)));
+      }
+    } catch (err) {
+      applyInlineSolicitudEstadoUpdate(solicitudId, currentEstado);
+      setFlash({ type: 'error', message: (err as Error).message ?? 'No se pudo actualizar el estado.' });
+    } finally {
+      setUpdatingSolicitudEstadoIds((prev) => {
+        const next = new Set(prev);
+        next.delete(solicitudId);
+        return next;
+      });
+    }
+  };
+
   const isSolicitudPendiente = useCallback((estado?: string | null) => {
     return (estado ?? '').trim().toLowerCase() === 'pendiente';
   }, []);
@@ -5793,11 +5912,51 @@ const sucursalOptions = useMemo(() => {
                     {!isSolicitudPersonalView ? <td>{registro.sucursal ?? '—'}</td> : null}
                     <td>{registro.agente ?? '—'}</td>
                     <td>
-                      {registro.estado ? (
-                        <span className={`estado-badge ${getSolicitudEstadoBadgeClass(registro.estado)}`}>
-                          {registro.estado}
-                        </span>
-                      ) : '—'}
+                      {(() => {
+                        const estadoValue = (registro.estado ?? 'Pendiente').trim();
+                        if (isSolicitudPersonalView) {
+                          if (registro.solicitudTipo === 'cambio_asignacion') {
+                            return registro.estado ? (
+                              <span className={`estado-badge ${getSolicitudEstadoBadgeClass(registro.estado)}`}>
+                                {registro.estado}
+                              </span>
+                            ) : (
+                              '—'
+                            );
+                          }
+
+                          const estadoOptionsBase =
+                            registro.solicitudTipo === 'vacaciones' ? VACACIONES_ESTADO_OPTIONS : SOLICITUD_ESTADO_OPTIONS;
+                          const estadoOptions = estadoOptionsBase.includes(estadoValue)
+                            ? estadoOptionsBase
+                            : [estadoValue, ...estadoOptionsBase];
+                          const canEditRow = isUserDestinatario(destinatarioIds);
+                          const isUpdating = updatingSolicitudEstadoIds.has(registro.id);
+                          return (
+                            <select
+                              className="solicitud-inline-select"
+                              value={estadoValue}
+                              onChange={(event) => handleInlineSolicitudEstadoChange(registro, event.target.value)}
+                              disabled={!canEditRow || isUpdating}
+                              aria-label={`Cambiar estado de solicitud #${registro.id}`}
+                            >
+                              {estadoOptions.map((option) => (
+                                <option key={option} value={option}>
+                                  {option}
+                                </option>
+                              ))}
+                            </select>
+                          );
+                        }
+
+                        return registro.estado ? (
+                          <span className={`estado-badge ${getSolicitudEstadoBadgeClass(registro.estado)}`}>
+                            {registro.estado}
+                          </span>
+                        ) : (
+                          '—'
+                        );
+                      })()}
                     </td>
                     {isSolicitudPersonalView ? <td>{formatCurrency(importeSolicitado)}</td> : null}
                     <td>

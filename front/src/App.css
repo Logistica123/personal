@@ -2811,6 +2811,22 @@ tbody tr:hover {
   cursor: not-allowed;
 }
 
+.solicitud-inline-select {
+  min-width: 120px;
+  padding: 0.35rem 0.5rem;
+  border: 1px solid #c7d3ea;
+  border-radius: 8px;
+  background: #fff;
+  color: #243a63;
+  font-size: 0.8rem;
+}
+
+.solicitud-inline-select:disabled {
+  background: #eef2fb;
+  color: #6b7280;
+  cursor: not-allowed;
+}
+
 .action-buttons button {
   border: none;
   background: #eef3ff;
