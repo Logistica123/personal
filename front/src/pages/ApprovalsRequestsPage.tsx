@@ -2820,8 +2820,8 @@ const sucursalOptions = useMemo(() => {
       return;
     }
 
-    if (!canManagePersonal) {
-      setFlash({ type: 'error', message: 'Solo los usuarios autorizados pueden aprobar o editar personal.' });
+    if (!canEditSolicitud) {
+      setFlash({ type: 'error', message: 'Solo se puede aprobar o rechazar una solicitud pendiente.' });
       return;
     }
 
@@ -3322,8 +3322,8 @@ const sucursalOptions = useMemo(() => {
     if (!reviewPersonaDetail) {
       return;
     }
-    if (!canManagePersonal) {
-      setFlash({ type: 'error', message: 'Solo los usuarios autorizados pueden aprobar o editar personal.' });
+    if (!canEditSolicitud) {
+      setFlash({ type: 'error', message: 'Solo se puede aprobar o rechazar una solicitud pendiente.' });
       return;
     }
 
@@ -6654,10 +6654,10 @@ const sucursalOptions = useMemo(() => {
                   className="primary-action"
                   onClick={() => handleApproveSolicitud()}
                   disabled={
-                    approveLoading || reviewPersonaDetail.aprobado || reviewEditMode || !canManagePersonal
+                    approveLoading || reviewPersonaDetail.aprobado || reviewEditMode || !canEditSolicitud
                   }
                   title={
-                    canManagePersonal
+                    canEditSolicitud
                       ? undefined
                       : 'Solo los usuarios autorizados pueden aprobar personal.'
                   }
@@ -6672,7 +6672,7 @@ const sucursalOptions = useMemo(() => {
                   type="button"
                   className="danger-action"
                   onClick={handleRejectSolicitud}
-                  disabled={approveLoading || reviewPersonaDetail.aprobado || reviewEditMode || !canManagePersonal}
+                  disabled={approveLoading || reviewPersonaDetail.aprobado || reviewEditMode || !canEditSolicitud}
                 >
                   Rechazado
                 </button>

@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
-import type { LiquidacionSummary, PersonalRecord } from '../features/personal/types';
+import type { PersonalRecord } from '../features/personal/types';
 
 type DashboardLayoutProps = {
   title: string;
@@ -299,6 +299,23 @@ const formatNumber = (value: string | number | null | undefined): string => {
   return numberFormatter.format(numeric);
 };
 
+const resolveInstallmentAmounts = (total: number, installments: 1 | 2 | 3): number[] => {
+  const safeTotal = Number.isFinite(total) ? total : 0;
+  const totalCents = Math.max(0, Math.round(safeTotal * 100));
+  const n = installments;
+  if (n <= 1) {
+    return [totalCents / 100];
+  }
+
+  const base = Math.floor(totalCents / n);
+  const remainder = totalCents % n;
+  const amounts: number[] = [];
+  for (let index = 0; index < n; index += 1) {
+    amounts.push((base + (index < remainder ? 1 : 0)) / 100);
+  }
+  return amounts;
+};
+
 const formatMonthKeyLabel = (monthKey?: string | null): string => {
   if (!monthKey || monthKey === 'unknown') {
     return 'Sin fecha';
@@ -341,6 +358,9 @@ const getFuelStatusLabel = (status?: string | null, discounted?: boolean | null)
   if (!status) {
     return 'Pendiente';
   }
+  if (status === 'CUOTA') {
+    return 'Cuota pendiente';
+  }
   if (status === 'PENDING') {
     return 'Pendiente';
   }
@@ -358,6 +378,9 @@ const getFuelStatusVariant = (status?: string | null, discounted?: boolean | nul
     return 'success';
   }
   if (!status) {
+    return 'neutral';
+  }
+  if (status === 'CUOTA') {
     return 'neutral';
   }
   if (status === 'OBSERVED') {
@@ -453,6 +476,7 @@ export const LiquidacionesPage: React.FC<LiquidacionesPageProps> = ({
   const [listImporteSavingIds, setListImporteSavingIds] = useState<Set<number>>(() => new Set());
   const [selectedPersonaId, setSelectedPersonaId] = useState<number | null>(personaIdFromRoute);
   const [selectedLiquidacionPersonaIds, setSelectedLiquidacionPersonaIds] = useState<Set<number>>(() => new Set());
+  const [expandedPersonaId, setExpandedPersonaId] = useState<number | null>(null);
   const [liquidacionVisualClientInput, setLiquidacionVisualClientInput] = useState('');
   const [liquidacionVisualClientByDocId, setLiquidacionVisualClientByDocId] = useState<Record<number, string>>(
     () => readStoredLiquidacionesVisualClient()
@@ -470,7 +494,6 @@ export const LiquidacionesPage: React.FC<LiquidacionesPageProps> = ({
   const [showFuelPasteModal, setShowFuelPasteModal] = useState(false);
   const [fuelPasteError, setFuelPasteError] = useState<string | null>(null);
   const [fuelParentDocumentId, setFuelParentDocumentId] = useState<string>('');
-  const pendingPersonaLiquidacionFilterRef = useRef<{ year: string; month: string; fortnight: string } | null>(null);
   const pendingPreviewUrlsRef = useRef<string[]>([]);
   useEffect(() => {
     pendingPreviewUrlsRef.current = pendingUploads
@@ -565,6 +588,7 @@ export const LiquidacionesPage: React.FC<LiquidacionesPageProps> = ({
     }>;
   } | null>(null);
   const [fuelSelection, setFuelSelection] = useState<Set<number>>(() => new Set());
+  const [fuelInstallments, setFuelInstallments] = useState<1 | 2 | 3>(1);
   const [fuelAdjustmentType, setFuelAdjustmentType] = useState<
     'ajuste_favor' | 'cuota_combustible' | 'pendiente' | 'adelantos_prestamos' | 'credito' | 'debito' | 'poliza'
   >('ajuste_favor');
@@ -641,6 +665,11 @@ export const LiquidacionesPage: React.FC<LiquidacionesPageProps> = ({
     () => fuelSelectedTotal + fuelSelectionAdjustmentsTotal,
     [fuelSelectedTotal, fuelSelectionAdjustmentsTotal]
   );
+  const fuelSelectedInstallments = useMemo(
+    () => resolveInstallmentAmounts(fuelSelectedTotal, fuelInstallments),
+    [fuelInstallments, fuelSelectedTotal]
+  );
+  const fuelSelectedInstallmentFuelToBill = fuelSelectedInstallments[0] ?? 0;
   const fuelSelectedCount = fuelSelectedItems.length;
   const [deletingDocumentIds, setDeletingDocumentIds] = useState<Set<number>>(() => new Set());
   const [documentTypes, setDocumentTypes] = useState<PersonalDocumentType[]>([]);
@@ -796,17 +825,9 @@ export const LiquidacionesPage: React.FC<LiquidacionesPageProps> = ({
     [isPagosView, visiblePagosColumns, visibleLiquidacionesColumns]
   );
   useEffect(() => {
-    const pending = pendingPersonaLiquidacionFilterRef.current;
-    pendingPersonaLiquidacionFilterRef.current = null;
-    if (pending) {
-      setLiquidacionMonthFilter(pending.month);
-      setLiquidacionFortnightFilter(pending.fortnight);
-      setLiquidacionYearFilter(pending.year);
-    } else {
-      setLiquidacionMonthFilter('');
-      setLiquidacionFortnightFilter('');
-      setLiquidacionYearFilter('');
-    }
+    setLiquidacionMonthFilter('');
+    setLiquidacionFortnightFilter('');
+    setLiquidacionYearFilter('');
     setDeletingDocumentIds(new Set<number>());
     setSelectedPagadoIds(new Set<number>());
   }, [selectedPersonaId]);
@@ -1045,6 +1066,10 @@ export const LiquidacionesPage: React.FC<LiquidacionesPageProps> = ({
       setLiquidacionUseStoredImporte(true);
     }
   }, [personaIdFromRoute, selectedPersonaId]);
+
+  const handleTogglePersonaLiquidaciones = useCallback((personaId: number) => {
+    setExpandedPersonaId((prev) => (prev === personaId ? null : personaId));
+  }, []);
 
   const formatFileSize = (size: number | null | undefined): string => {
     if (!size || size <= 0) {
@@ -1494,6 +1519,7 @@ export const LiquidacionesPage: React.FC<LiquidacionesPageProps> = ({
       body: JSON.stringify({
         movement_ids: Array.from(fuelSelection),
         liquidacion_id: Number(fuelParentDocumentId),
+        installments: fuelInstallments,
       }),
     });
       if (!response.ok) {
@@ -1520,6 +1546,7 @@ export const LiquidacionesPage: React.FC<LiquidacionesPageProps> = ({
         };
       });
       setFuelSelection(new Set());
+      setFuelInstallments(1);
       setFuelSelectionAdjustments([]);
       setFuelAdjustmentNote('');
       setFuelAdjustmentAmount('');
@@ -1536,6 +1563,7 @@ export const LiquidacionesPage: React.FC<LiquidacionesPageProps> = ({
     fuelParentDocumentId,
     fuelSelectedTotalWithAdjustments,
     fuelSelectionAdjustments,
+    fuelInstallments,
     refreshPersonaDetail,
   ]);
 
@@ -3354,6 +3382,7 @@ export const LiquidacionesPage: React.FC<LiquidacionesPageProps> = ({
     setDocumentExpiry('');
     setLiquidacionImporteManual('');
     setLiquidacionUseStoredImporte(true);
+    setExpandedPersonaId(null);
     navigate(`/liquidaciones/${registro.id}`);
   };
 
@@ -4944,8 +4973,36 @@ export const LiquidacionesPage: React.FC<LiquidacionesPageProps> = ({
 
             {!loading &&
               !error &&
-              pageRecords.map((registro) => (
-                <tr key={registro.rowId ?? registro.id}>
+              pageRecords.flatMap((registro) => {
+                const rowKey = registro.rowId ?? registro.id;
+                const isExpanded = !isPagosView && expandedPersonaId === registro.id;
+                const liquidaciones = Array.isArray(registro.liquidaciones) ? registro.liquidaciones : [];
+                const hasLiquidaciones = liquidaciones.length > 0;
+
+                const rows: React.ReactNode[] = [];
+
+                rows.push(
+                  <tr
+                    key={rowKey}
+                    onClick={(event) => {
+                      if (isPagosView) {
+                        return;
+                      }
+                      if (!hasLiquidaciones) {
+                        return;
+                      }
+                      const target = event.target as HTMLElement | null;
+                      if (!target) {
+                        return;
+                      }
+                      if (target.closest('button, input, select, textarea, a, label')) {
+                        return;
+                      }
+                      handleTogglePersonaLiquidaciones(registro.id);
+                    }}
+                    style={!isPagosView && hasLiquidaciones ? { cursor: 'pointer' } : undefined}
+                    aria-expanded={isPagosView ? undefined : isExpanded}
+                  >
                   {!isPagosView ? (
                     <td>
                       <input
@@ -5091,61 +5148,47 @@ export const LiquidacionesPage: React.FC<LiquidacionesPageProps> = ({
                         >
                           Gestionar
                         </button>
-                        <select
-                          defaultValue=""
-                          disabled={!Array.isArray(registro.liquidaciones) || registro.liquidaciones.length === 0}
-                          onChange={(event) => {
-                            const value = event.currentTarget.value;
-                            event.currentTarget.value = '';
-                            const liquidacionId = Number(value);
-                            if (!Number.isFinite(liquidacionId) || liquidacionId <= 0) {
-                              return;
-                            }
-                            const liquidaciones = Array.isArray(registro.liquidaciones) ? registro.liquidaciones : [];
-                            const selected = liquidaciones.find((liq) => liq.id === liquidacionId) ?? null;
-                            if (selected) {
-                              const month = selected.monthKey ?? '';
-                              const year =
-                                typeof month === 'string' && /^\d{4}-\d{2}$/.test(month) ? month.slice(0, 4) : '';
-                              const fortnight = selected.fortnightKey ?? '';
-                              pendingPersonaLiquidacionFilterRef.current = {
-                                year,
-                                month: typeof month === 'string' ? month : '',
-                                fortnight: typeof fortnight === 'string' ? fortnight : '',
-                              };
-                            }
-                            handleSelectPersona(registro);
-                          }}
-                          title="Abrir liquidaciones del personal"
-                        >
-                          <option value="">
-                            {Array.isArray(registro.liquidaciones) && registro.liquidaciones.length > 0
-                              ? 'Ver liquidaciones…'
-                              : 'Sin liquidaciones'}
-                          </option>
-                          {(Array.isArray(registro.liquidaciones) ? [...registro.liquidaciones] : [])
-                            .sort((a, b) => {
-                              const aKey = a.fecha ?? a.monthKey ?? '';
-                              const bKey = b.fecha ?? b.monthKey ?? '';
-                              return String(bKey).localeCompare(String(aKey));
-                            })
-                            .map((liq: LiquidacionSummary) => {
-                              const parts = [
-                                formatMonthKeyLabel(liq.monthKey),
-                                formatFortnightKeyLabel(liq.fortnightKey),
-                              ];
-                              return (
-                                <option key={`liq-${registro.id}-${liq.id}`} value={liq.id}>
-                                  {parts.join(' · ')}
-                                </option>
-                              );
-                            })}
-                        </select>
+                        {!isPagosView ? (
+                          <button
+                            type="button"
+                            className="secondary-action secondary-action--ghost"
+                            onClick={() => handleTogglePersonaLiquidaciones(registro.id)}
+                            disabled={!hasLiquidaciones}
+                            aria-label={`Ver liquidaciones de ${registro.nombre ?? `ID ${registro.id}`}`}
+                          >
+                            {hasLiquidaciones ? (isExpanded ? 'Ocultar liquidaciones' : 'Ver liquidaciones') : 'Sin liquidaciones'}
+                          </button>
+                        ) : null}
                       </div>
                     </td>
                   ) : null}
-                </tr>
-              ))}
+                  </tr>
+                );
+
+                if (isExpanded) {
+                  rows.push(
+                    <tr key={`${rowKey}-expanded`} className="liquidaciones-persona-expanded">
+                      <td colSpan={listTableColumnCount}>
+                        <div className="liquidaciones-persona-expanded__inner">
+                          {liquidaciones
+                            .slice()
+                            .sort((a, b) => String(b.fecha ?? b.monthKey ?? '').localeCompare(String(a.fecha ?? a.monthKey ?? '')))
+                            .map((liq) => {
+                              const label = `Liquidación #${liq.id} · ${formatMonthKeyLabel(liq.monthKey)} · ${formatFortnightKeyLabel(liq.fortnightKey)}`;
+                              return (
+                                <span key={`liq-chip-${registro.id}-${liq.id}`} className="liquidaciones-persona-chip">
+                                  {label}
+                                </span>
+                              );
+                            })}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                }
+
+                return rows;
+              })}
           </tbody>
         </table>
       </div>
@@ -5843,8 +5886,41 @@ export const LiquidacionesPage: React.FC<LiquidacionesPageProps> = ({
                 <strong className="summary-card__value">{formatCurrency(fuelSelectionAdjustmentsTotal)}</strong>
               </div>
               <div className="summary-card">
-                <span className="summary-card__label">Total a facturar</span>
-                <strong className="summary-card__value">{formatCurrency(fuelSelectedTotalWithAdjustments)}</strong>
+                <span className="summary-card__label">
+                  {fuelInstallments > 1 ? `Total a facturar (cuota 1/${fuelInstallments})` : 'Total a facturar'}
+                </span>
+                <strong className="summary-card__value">
+                  {formatCurrency(
+                    (fuelInstallments > 1 ? fuelSelectedInstallmentFuelToBill : fuelSelectedTotal) +
+                      fuelSelectionAdjustmentsTotal
+                  )}
+                </strong>
+              </div>
+            </div>
+            <div className="summary-cards" style={{ marginTop: '0.5rem' }}>
+              <div className="summary-card">
+                <span className="summary-card__label">Cuotas</span>
+                <select
+                  value={fuelInstallments}
+                  onChange={(event) => {
+                    const parsed = Number(event.target.value);
+                    if (parsed === 2 || parsed === 3) {
+                      setFuelInstallments(parsed);
+                      return;
+                    }
+                    setFuelInstallments(1);
+                  }}
+                  style={{ marginTop: '0.35rem' }}
+                >
+                  <option value={1}>1 (contado)</option>
+                  <option value={2}>2 sin interés</option>
+                  <option value={3}>3 sin interés</option>
+                </select>
+                {fuelInstallments > 1 ? (
+                  <small style={{ display: 'block', marginTop: '0.35rem', color: '#5c667a' }}>
+                    Se difiere {fuelInstallments - 1} cuota(s) y aparecen como “Cuota combustible” para próximas liquidaciones.
+                  </small>
+                ) : null}
               </div>
             </div>
             <div className="table-wrapper" style={{ marginTop: '0.75rem' }}>

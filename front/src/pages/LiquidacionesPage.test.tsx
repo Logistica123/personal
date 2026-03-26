@@ -244,15 +244,15 @@ describe('LiquidacionesPage', () => {
 
     expect(fetchMock).toHaveBeenCalled();
 
-    const select = await screen.findByTitle(/abrir liquidaciones del personal/i);
-    expect(select).not.toBeDisabled();
-    expect(screen.getByRole('option', { name: /2026/i })).toBeInTheDocument();
-    expect(screen.queryByRole('option', { name: /1000/ })).not.toBeInTheDocument();
+    const toggleButton = await screen.findByRole('button', { name: /ver liquidaciones de/i });
+    expect(toggleButton).not.toBeDisabled();
+    await userEvent.click(toggleButton);
 
-    await userEvent.selectOptions(select, '10');
+    expect(screen.getByText(/liquidación #10/i)).toBeInTheDocument();
+    expect(screen.getByText(/febrero/i)).toBeInTheDocument();
+    expect(screen.queryByText(/1000/)).not.toBeInTheDocument();
 
-    await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledWith('/api/personal/1?includePending=1', expect.anything());
-    });
+    expect(screen.getByText(/liquidación #10/i)).toBeInTheDocument();
+    expect(fetchMock).not.toHaveBeenCalledWith('/api/personal/1?includePending=1', expect.anything());
   });
 });

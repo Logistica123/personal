@@ -104,7 +104,11 @@ class PersonalController extends Controller
         $role = strtolower(trim((string) ($actorUser?->role ?? '')));
         $permissions = $actorUser?->permissions ?? null;
         $hasPersonalPermission = is_array($permissions)
-            && (in_array('personal', $permissions, true) || in_array('proveedores', $permissions, true));
+            && (
+                in_array('personal', $permissions, true)
+                || in_array('proveedores', $permissions, true)
+                || in_array('aprobaciones', $permissions, true)
+            );
         $roleCanManage = ($role !== '' && Str::contains($role, 'admin'))
             || in_array($role, ['asesor', 'encargado'], true);
 
@@ -1740,7 +1744,7 @@ class PersonalController extends Controller
 
     public function approve(Request $request, Persona $persona): JsonResponse
     {
-        $this->ensureCanManagePersonal($request);
+        $this->ensureCanManagePersonal($request, $persona);
 
         $validated = $request->validate([
             'userId' => ['nullable', 'integer', 'exists:users,id'],

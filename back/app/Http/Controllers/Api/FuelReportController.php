@@ -256,6 +256,7 @@ class FuelReportController extends Controller
             'movement_ids' => ['required', 'array', 'min:1'],
             'movement_ids.*' => ['integer'],
             'liquidacion_id' => ['nullable', 'integer'],
+            'installments' => ['nullable', 'integer', 'in:1,2,3'],
             'adjustments' => ['nullable', 'array'],
             'adjustments.*.type' => ['required', 'in:credito,debito,ajuste_favor,cuota_combustible,pendiente,adelantos_prestamos'],
             'adjustments.*.amount' => ['required', 'numeric'],
@@ -284,7 +285,9 @@ class FuelReportController extends Controller
             ->filter(fn ($adj) => is_array($adj))
             ->values();
 
-        return DB::transaction(function () use ($request, $movements, $liquidacionId, $distributorId, $periodFrom, $periodTo, $adjustments) {
+        $installments = (int) ($validated['installments'] ?? 1);
+
+        return DB::transaction(function () use ($request, $movements, $liquidacionId, $distributorId, $periodFrom, $periodTo, $adjustments, $installments) {
             $report = FuelReport::query()->create([
                 'distributor_id' => $distributorId,
                 'period_from' => $periodFrom,
@@ -334,6 +337,76 @@ class FuelReportController extends Controller
                 ]);
 
             $this->recalculateTotals($report);
+
+            if ($installments > 1) {
+                $report->refresh();
+                $totalToBillCents = (int) round(((float) $report->total_to_bill) * 100);
+                if ($totalToBillCents > 0) {
+                    $baseCents = intdiv($totalToBillCents, $installments);
+                    $remainderCents = $totalToBillCents % $installments;
+
+                    $installmentCents = [];
+                    for ($index = 0; $index < $installments; $index++) {
+                        $installmentCents[] = $baseCents + ($index < $remainderCents ? 1 : 0);
+                    }
+
+                    $futureTotalCents = array_sum(array_slice($installmentCents, 1));
+                    if ($futureTotalCents > 0) {
+                        FuelAdjustment::query()->create([
+                            'fuel_report_id' => $report->id,
+                            'type' => 'cuota_combustible',
+                            'amount' => $futureTotalCents / 100,
+                            'note' => sprintf(
+                                'Cuotas sin interés: %d cuota(s). Se difiere %d cuota(s) a futuras liquidaciones.',
+                                $installments,
+                                $installments - 1
+                            ),
+                            'created_by' => $request->user()?->id,
+                        ]);
+
+                        $domainNorm = $movements->first()?->domain_norm;
+                        $now = now();
+                        $movementRows = [];
+                        for ($index = 1; $index < $installments; $index++) {
+                            $amountCents = (int) ($installmentCents[$index] ?? 0);
+                            if ($amountCents <= 0) {
+                                continue;
+                            }
+                            $movementRows[] = [
+                                'occurred_at' => $now,
+                                'station' => 'Cuota combustible',
+                                'domain_raw' => $domainNorm,
+                                'domain_norm' => $domainNorm,
+                                'product' => 'CUOTA',
+                                'liters' => null,
+                                'amount' => $amountCents / 100,
+                                'price_per_liter' => null,
+                                'status' => 'CUOTA',
+                                'observations' => sprintf('Cuota %d/%d (sin interés) generada desde reporte #%d', $index + 1, $installments, $report->id),
+                                'source_file' => null,
+                                'source_row' => null,
+                                'duplicate_hash' => null,
+                                'provider' => 'INTERNAL',
+                                'format' => 'CUOTA',
+                                'period_from' => $report->period_from,
+                                'period_to' => $report->period_to,
+                                'imported_by' => $request->user()?->id,
+                                'distributor_id' => $report->distributor_id,
+                                'fuel_report_id' => null,
+                                'discounted' => false,
+                                'created_at' => $now,
+                                'updated_at' => $now,
+                            ];
+                        }
+
+                        if (! empty($movementRows)) {
+                            FuelMovement::query()->insert($movementRows);
+                        }
+
+                        $this->recalculateTotals($report);
+                    }
+                }
+            }
 
             if ($liquidacionId) {
                 $this->attachFuelDiscountToLiquidacion($liquidacionId, $report);

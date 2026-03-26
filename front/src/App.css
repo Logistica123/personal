@@ -2441,6 +2441,32 @@ tbody tr:hover {
   padding: 0.6rem 0.9rem;
 }
 
+.table-wrapper table tr.liquidaciones-persona-expanded {
+  background-color: #f5f8ff;
+}
+
+.table-wrapper table tr.liquidaciones-persona-expanded td {
+  padding: 0.85rem 1rem;
+}
+
+.liquidaciones-persona-expanded__inner {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.liquidaciones-persona-chip {
+  border: 1px solid rgba(140, 163, 194, 0.65);
+  background-color: #ffffff;
+  color: #243a63;
+  padding: 0.6rem 0.75rem;
+  border-radius: 12px;
+  font-weight: 600;
+  cursor: default;
+}
+
+
 .fortnight-row__separator {
   margin: 0 0.5rem;
   color: #8ca3c2;
