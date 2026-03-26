@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import type { PersonalRecord } from '../features/personal/types';
 
 type DashboardLayoutProps = {
@@ -1608,23 +1608,28 @@ export const ProveedoresPage: React.FC<ProveedoresPageProps> = ({
                               : 'Abrir QR único del transportista'
                           }
                           onClick={() => void handleOpenTransportistaQr(registro)}
-                        >
-                          {`QR${(registro.transportistaQrScansCount ?? 0) > 0 ? ` (${registro.transportistaQrScansCount})` : ''}`}
-                        </button>
-                        <button
-                          type="button"
-                          aria-label={`Editar proveedor ${registro.nombre ?? ''}`}
-                          onClick={() => navigate(`/personal/${registro.id}/editar`)}
-                          disabled={!canManagePersonal}
-                        >
-                          ✏️
-                        </button>
-                        <button
-                          type="button"
-                          aria-label={`Eliminar proveedor ${registro.nombre ?? ''}`}
-                          onClick={() => handleDeletePersonal(registro)}
-                          disabled={!canManagePersonal || deletingPersonalId === registro.id}
-                        >
+	                        >
+	                          {`QR${(registro.transportistaQrScansCount ?? 0) > 0 ? ` (${registro.transportistaQrScansCount})` : ''}`}
+	                        </button>
+	                        {canManagePersonal ? (
+	                          <Link
+	                            to={`/personal/${registro.id}/editar`}
+	                            aria-label={`Editar proveedor ${registro.nombre ?? ''}`}
+	                            title="Editar (clic derecho para abrir en nueva pestaña)"
+	                          >
+	                            ✏️
+	                          </Link>
+	                        ) : (
+	                          <button type="button" aria-label={`Editar proveedor ${registro.nombre ?? ''}`} disabled>
+	                            ✏️
+	                          </button>
+	                        )}
+	                        <button
+	                          type="button"
+	                          aria-label={`Eliminar proveedor ${registro.nombre ?? ''}`}
+	                          onClick={() => handleDeletePersonal(registro)}
+	                          disabled={!canManagePersonal || deletingPersonalId === registro.id}
+	                        >
                           🗑️
                         </button>
                       </div>

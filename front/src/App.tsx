@@ -1077,6 +1077,12 @@ const getEstadoBadgeClass = (estado?: string | null) => {
 
 const uniqueKey = () => Math.random().toString(36).slice(2);
 
+const AUTH_BROADCAST_CHANNEL = 'auth:sync';
+
+type AuthBroadcastRequestMessage = { type: 'auth:request'; requestId: string };
+type AuthBroadcastResponseMessage = { type: 'auth:response'; requestId: string; raw: string | null };
+type AuthBroadcastMessage = AuthBroadcastRequestMessage | AuthBroadcastResponseMessage;
+
 const readAuthUserFromStorage = (): AuthUser | null => {
   if (typeof window === 'undefined') {
     return null;
@@ -1105,6 +1111,107 @@ const readAuthTokenFromStorage = (): string | null => {
   }
 
   return token;
+};
+
+const installAuthBroadcastResponder = () => {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  const globalScope = window as Window & { __authBroadcastInstalled?: boolean };
+  if (globalScope.__authBroadcastInstalled) {
+    return;
+  }
+  globalScope.__authBroadcastInstalled = true;
+
+  if (typeof BroadcastChannel === 'undefined') {
+    return;
+  }
+
+  try {
+    const channel = new BroadcastChannel(AUTH_BROADCAST_CHANNEL);
+    channel.addEventListener('message', (event: MessageEvent<AuthBroadcastMessage>) => {
+      const data = event.data as AuthBroadcastMessage | null | undefined;
+      if (!data || typeof data !== 'object' || data.type !== 'auth:request') {
+        return;
+      }
+
+      const raw =
+        window.localStorage.getItem(AUTH_STORAGE_KEY) ??
+        window.sessionStorage.getItem(AUTH_STORAGE_KEY);
+
+      if (!raw) {
+        return;
+      }
+
+      channel.postMessage({ type: 'auth:response', requestId: data.requestId, raw });
+    });
+  } catch {
+    // ignore unsupported BroadcastChannel environments
+  }
+};
+
+const requestAuthFromOtherTabs = (timeoutMs = 600): Promise<string | null> => {
+  if (typeof window === 'undefined') {
+    return Promise.resolve(null);
+  }
+  if (typeof BroadcastChannel === 'undefined') {
+    return Promise.resolve(null);
+  }
+
+  return new Promise((resolve) => {
+    let finished = false;
+
+    const finish = (value: string | null) => {
+      if (finished) {
+        return;
+      }
+      finished = true;
+      resolve(value);
+    };
+
+    const requestId = uniqueKey();
+    let channel: BroadcastChannel | null = null;
+    let timeoutHandle: number | null = null;
+
+    const cleanup = () => {
+      if (timeoutHandle != null) {
+        window.clearTimeout(timeoutHandle);
+      }
+      if (channel) {
+        try {
+          channel.close();
+        } catch {
+          // ignore
+        }
+      }
+    };
+
+    try {
+      channel = new BroadcastChannel(AUTH_BROADCAST_CHANNEL);
+      channel.addEventListener('message', (event: MessageEvent<AuthBroadcastMessage>) => {
+        const data = event.data as AuthBroadcastMessage | null | undefined;
+        if (!data || typeof data !== 'object' || data.type !== 'auth:response') {
+          return;
+        }
+        if (data.requestId !== requestId) {
+          return;
+        }
+        cleanup();
+        finish(typeof data.raw === 'string' && data.raw.length > 0 ? data.raw : null);
+      });
+
+      timeoutHandle = window.setTimeout(() => {
+        cleanup();
+        finish(null);
+      }, Math.max(50, timeoutMs));
+
+      channel.postMessage({ type: 'auth:request', requestId });
+    } catch {
+      cleanup();
+      finish(null);
+    }
+  });
 };
 
 const installAuthFetchInterceptor = () => {
@@ -1174,6 +1281,7 @@ const installAuthFetchInterceptor = () => {
 };
 
 installAuthFetchInterceptor();
+installAuthBroadcastResponder();
 
 const useStoredAuthUser = (): AuthUser | null => {
   const [authUser, setAuthUser] = useState<AuthUser | null>(() => readAuthUserFromStorage());
@@ -19245,8 +19353,55 @@ const RequireAccess: React.FC<{ section: AccessSection; children: React.ReactEle
 
 const RequireAuth: React.FC = () => {
   const authUser = useStoredAuthUser();
+  const [checkedOtherTabs, setCheckedOtherTabs] = useState(false);
+
+  useEffect(() => {
+    if (authUser?.role) {
+      return;
+    }
+    if (checkedOtherTabs) {
+      return;
+    }
+    if (typeof window === 'undefined') {
+      setCheckedOtherTabs(true);
+      return;
+    }
+
+    let cancelled = false;
+
+    void (async () => {
+      const raw = await requestAuthFromOtherTabs(700);
+      if (cancelled) {
+        return;
+      }
+      if (raw) {
+        try {
+          window.sessionStorage.setItem(AUTH_STORAGE_KEY, raw);
+          window.dispatchEvent(new CustomEvent('auth:updated'));
+        } catch {
+          // ignore storage failures
+        }
+      }
+      setCheckedOtherTabs(true);
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [authUser?.role, checkedOtherTabs]);
 
   if (!authUser?.role) {
+    if (!checkedOtherTabs) {
+      return (
+        <main className="login-page">
+          <section className="login-panel">
+            <div className="login-content">
+              <p className="form-info">Cargando sesión...</p>
+            </div>
+          </section>
+        </main>
+      );
+    }
     return <Navigate to="/" replace />;
   }
 

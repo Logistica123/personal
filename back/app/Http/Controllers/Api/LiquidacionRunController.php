@@ -2809,6 +2809,7 @@ class LiquidacionRunController extends Controller
         $conductorIdx = $this->resolveUploadHeaderIndexByAliases($columns, ['Conductor', 'Distribuidor']);
         $dominioIdx = $this->resolveUploadHeaderIndexByAliases($columns, ['Dominio', 'Patente']);
         $categoriaVehiculoIdx = $this->resolveUploadHeaderIndexByAliases($columns, ['CategoriaVehiculo', 'CategoríaVehiculo', 'Categoria Vehiculo', 'Categoría Vehículo', 'Tipo unidad', 'TIPO UNIDAD']);
+        $vueltaIdx = $this->resolveUploadHeaderIndexByAliases($columns, ['Vuelta', 'Vueltas']);
         $conceptoIdx = $this->resolveUploadHeaderIndexByAliases($columns, ['Concepto', 'Producto']);
         $valorIdx = $this->resolveUploadHeaderIndexByAliases($columns, ['Valor', 'Importe']);
         $originalIdx = $this->resolveUploadHeaderIndexByAliases($columns, ['ORIGINAL', 'Original', 'Tarifa ORIGINAL', 'TARIFA ORIGINAL']);
@@ -2824,6 +2825,7 @@ class LiquidacionRunController extends Controller
             $factorDefault = 0.87;
         }
 	        $factorByZone = is_array($loginterRules['factor_by_zone'] ?? null) ? $loginterRules['factor_by_zone'] : [];
+	        $tarifarioMatrix = is_array($loginterRules['tarifario']['matrix'] ?? null) ? $loginterRules['tarifario']['matrix'] : [];
 	        $expectedIdLiquidacion = $this->normalizeLoginterIdViaje($context['loginter_expected_id_liquidacion'] ?? null)
 	            ?? $this->resolveLoginterExpectedIdLiquidacion($columns, $rows);
 	        $prefacturaMeta = is_array($context['loginter_prefactura_meta'] ?? null) ? $context['loginter_prefactura_meta'] : null;
@@ -2960,6 +2962,7 @@ class LiquidacionRunController extends Controller
             $conductorRaw = $conductorIdx !== null ? (string) ($row[$conductorIdx] ?? '') : '';
             $dominioRaw = $dominioIdx !== null ? (string) ($row[$dominioIdx] ?? '') : '';
             $categoriaVehiculoRaw = $categoriaVehiculoIdx !== null ? (string) ($row[$categoriaVehiculoIdx] ?? '') : '';
+            $vueltaRaw = $vueltaIdx !== null ? (string) ($row[$vueltaIdx] ?? '') : '';
             $conceptoRaw = $conceptoIdx !== null ? (string) ($row[$conceptoIdx] ?? '') : '';
             $valorRaw = $valorIdx !== null ? (string) ($row[$valorIdx] ?? '') : '';
 
@@ -3147,11 +3150,75 @@ class LiquidacionRunController extends Controller
                 $effectiveFactor = $factorDefault;
             }
 
+            $tarifaOriginalExcel = $tarifaOriginal;
+            $tarifaDistribuidorExcel = $tarifaDistribuidor;
+            $effectiveFactorExcel = $effectiveFactor;
+
+            $tarifarioEntry = $this->resolveLoginterTarifarioEntry(
+                $tarifarioMatrix,
+                $origenRaw,
+                $clientesRaw,
+                $categoriaVehiculoRaw,
+                $categoriaViajeRaw,
+                $conceptoRaw,
+                $vueltaRaw
+            );
+
+            if ($tarifarioEntry !== null) {
+                $expectedCliente = $this->parseFloatOrNull($tarifarioEntry['original'] ?? null);
+                $expectedDistribuidor = $this->parseFloatOrNull($tarifarioEntry['la'] ?? null);
+                $tarifarioFactor = $this->parseFloatOrNull($tarifarioEntry['factor'] ?? null);
+
+                if ($amountCliente !== null && $expectedCliente !== null && $expectedCliente > 0) {
+                    $diff = abs((float) $amountCliente - (float) $expectedCliente);
+                    $diffPercent = $diff / max(1.0, (float) $expectedCliente) * 100.0;
+                    if ($diff >= 1.0 && $diffPercent >= 0.05) {
+                        $severity = (bool) ($rules['blocking_rules']['tariff_mismatch'] ?? false) ? 'CRITICAL' : 'WARNING';
+                        $warningIssues[] = 'Valor cliente distinto al tarifario.';
+                        $this->addUploadValidationFail(
+                            $validationResults,
+                            $rowNumber,
+                            'LOGINTER_TARIFA_CLIENTE_MISMATCH',
+                            $severity,
+                            sprintf('%.2f', $expectedCliente),
+                            sprintf('%.2f', (float) $amountCliente),
+                            'El Valor del Excel no coincide con el tarifario para ese concepto/sucursal.'
+                        );
+                        if ($severity === 'CRITICAL') {
+                            $criticalIssues[] = 'Valor cliente distinto al tarifario.';
+                        }
+                    }
+                }
+
+                if ($expectedCliente !== null) {
+                    $tarifaOriginal = $expectedCliente;
+                }
+
+                if ($tarifarioFactor !== null && $tarifarioFactor > 0 && $tarifarioFactor <= 1.0) {
+                    $effectiveFactor = $tarifarioFactor;
+                }
+
+                if ($tarifaDistribuidor === null && $expectedDistribuidor !== null && ($amountCliente === null || $amountCliente <= 0)) {
+                    $tarifaDistribuidor = $expectedDistribuidor;
+                }
+            } elseif (!empty($tarifarioMatrix) && $conceptoNorm !== null) {
+                $warningIssues[] = 'Sin match en tarifario.';
+                $this->addUploadValidationFail(
+                    $validationResults,
+                    $rowNumber,
+                    'LOGINTER_TARIFARIO_MISSING',
+                    'WARNING',
+                    'Tarifario contiene el concepto/sucursal',
+                    $conceptoNorm,
+                    'No se encontró una tarifa en el tarifario para ese concepto/sucursal/vehículo.'
+                );
+            }
+
             if ($tarifaDistribuidor === null) {
-                if ($tarifaOriginal !== null && $tarifaOriginal > 0 && $effectiveFactor !== null) {
-                    $tarifaDistribuidor = round($tarifaOriginal * $effectiveFactor, 6);
-                } elseif ($amountCliente !== null && $amountCliente > 0 && $effectiveFactor !== null) {
+                if ($amountCliente !== null && $amountCliente > 0 && $effectiveFactor !== null) {
                     $tarifaDistribuidor = round($amountCliente * $effectiveFactor, 6);
+                } elseif ($tarifaOriginal !== null && $tarifaOriginal > 0 && $effectiveFactor !== null) {
+                    $tarifaDistribuidor = round($tarifaOriginal * $effectiveFactor, 6);
                 }
             }
 
@@ -3235,6 +3302,7 @@ class LiquidacionRunController extends Controller
                     'ID RUTA' => $idViajeRaw,
                     'SVC' => $categoriaViajeRaw,
                     'Categoria' => $categoriaVehiculoRaw,
+                    'Vuelta' => $vueltaRaw,
                 ],
                 'loginter' => [
                     'id_liquidacion' => $this->normalizeNullableString($idLiquidacionRaw),
@@ -3246,9 +3314,17 @@ class LiquidacionRunController extends Controller
                     'dominio' => $domainNorm,
                     'concepto' => $conceptoNorm,
                     'valor_cliente' => $amountCliente !== null ? round($amountCliente, 2) : null,
+                    'tarifa_distribuidor_tarifario' => is_array($tarifarioEntry ?? null)
+                        ? ($this->parseFloatOrNull($tarifarioEntry['la'] ?? null) !== null ? round((float) $this->parseFloatOrNull($tarifarioEntry['la'] ?? null), 6) : null)
+                        : null,
+                    'tarifa_original_excel' => $tarifaOriginalExcel !== null ? round((float) $tarifaOriginalExcel, 6) : null,
+                    'tarifa_distribuidor_excel' => $tarifaDistribuidorExcel !== null ? round((float) $tarifaDistribuidorExcel, 6) : null,
+                    'factor_excel' => $effectiveFactorExcel !== null ? round((float) $effectiveFactorExcel, 6) : null,
                     'tarifa_original' => $tarifaOriginal !== null ? round($tarifaOriginal, 6) : null,
                     'tarifa_distribuidor' => $tarifaDistribuidor !== null ? round($tarifaDistribuidor, 6) : null,
                     'factor' => $effectiveFactor !== null ? round((float) $effectiveFactor, 6) : null,
+                    'tarifario_sucursal' => is_array($tarifarioEntry ?? null) ? ($tarifarioEntry['sucursal_label'] ?? null) : null,
+                    'tarifario_concepto' => is_array($tarifarioEntry ?? null) ? ($tarifarioEntry['concepto_label'] ?? null) : null,
                 ],
                 'rules' => [
                     'clientCode' => $normalizedClientCode,
@@ -4020,6 +4096,9 @@ class LiquidacionRunController extends Controller
         $intermedioDefaults = $this->defaultIntermedioClientRuleSet();
         $epsaDefaults = $this->defaultEpsaClientRuleSet();
         $loginterDefaults = $this->defaultLoginterClientRuleSet();
+        $isIntermedio = $this->isIntermedioClientCode($normalizedClientCode);
+        $isEpsa = $this->isEpsaClientCode($normalizedClientCode);
+        $isLoginter = $this->isLoginterClientCode($normalizedClientCode);
         if ($normalizedClientCode === null) {
             return [
                 'rules' => $defaults,
@@ -4060,6 +4139,13 @@ class LiquidacionRunController extends Controller
         }
 
         $rules = $defaults;
+        if ($isIntermedio) {
+            $rules = $intermedioDefaults;
+        } elseif ($isEpsa) {
+            $rules = $epsaDefaults;
+        } elseif ($isLoginter) {
+            $rules = $loginterDefaults;
+        }
         $payload = $recordRules;
         if (isset($payload['blocking_rules']) && is_array($payload['blocking_rules'])) {
             $rules['blocking_rules'] = array_merge($rules['blocking_rules'], $payload['blocking_rules']);
@@ -4076,12 +4162,21 @@ class LiquidacionRunController extends Controller
                 $payload['epsa']
             );
         }
+        if (isset($payload['loginter']) && is_array($payload['loginter'])) {
+            $rules['loginter'] = array_replace_recursive(
+                is_array($rules['loginter'] ?? null) ? $rules['loginter'] : [],
+                $payload['loginter']
+            );
+        }
 
-        if ($this->isIntermedioClientCode($normalizedClientCode)) {
+        if ($isIntermedio) {
             $rules = $this->mergeIntermedioTariffDefaults($rules, $intermedioDefaults);
         }
-        if ($this->isEpsaClientCode($normalizedClientCode)) {
+        if ($isEpsa) {
             $rules = $this->mergeEpsaDefaults($rules, $epsaDefaults);
+        }
+        if ($isLoginter) {
+            $rules = $this->mergeLoginterDefaults($rules, $loginterDefaults);
         }
 
         $recordClientCode = $this->normalizeClientCode($record->client_code ?? null);
@@ -4444,6 +4539,15 @@ class LiquidacionRunController extends Controller
         $base = is_array($rules['epsa'] ?? null) ? $rules['epsa'] : [];
         $defaultEpsa = is_array($defaults['epsa'] ?? null) ? $defaults['epsa'] : [];
         $rules['epsa'] = array_replace_recursive($defaultEpsa, $base);
+
+        return $rules;
+    }
+
+    private function mergeLoginterDefaults(array $rules, array $defaults): array
+    {
+        $base = is_array($rules['loginter'] ?? null) ? $rules['loginter'] : [];
+        $defaultLoginter = is_array($defaults['loginter'] ?? null) ? $defaults['loginter'] : [];
+        $rules['loginter'] = array_replace_recursive($defaultLoginter, $base);
 
         return $rules;
     }
@@ -4988,6 +5092,210 @@ class LiquidacionRunController extends Controller
         }
 
         return null;
+    }
+
+    private function resolveLoginterTarifarioEntry(
+        array $tarifarioMatrix,
+        string $origenRaw,
+        string $clientesRaw,
+        string $categoriaVehiculoRaw,
+        string $categoriaViajeRaw,
+        string $conceptoRaw,
+        string $vueltaRaw
+    ): ?array {
+        if (empty($tarifarioMatrix)) {
+            return null;
+        }
+
+        $conceptoNorm = $this->normalizeRuleProduct($conceptoRaw);
+        $categoriaViajeNorm = $this->normalizeRuleProduct($categoriaViajeRaw);
+        $vehiculoNorm = $this->normalizeRuleProduct($categoriaVehiculoRaw);
+
+        $isColecta = str_contains($conceptoNorm, 'valor viaje');
+        $isChasis = str_contains($vehiculoNorm, 'chasis');
+
+        $conceptKeyCandidates = [];
+        if ($isColecta) {
+            if (str_contains($categoriaViajeNorm, 'falso flete')) {
+                $conceptKeyCandidates[] = $this->normalizeRuleProduct('Falso flete');
+            } else {
+                $vuelta = is_numeric(trim($vueltaRaw)) ? (int) trim($vueltaRaw) : 1;
+                $conceptKeyCandidates[] = $this->normalizeRuleProduct($vuelta >= 2 ? 'Jornada 2 vueltas' : 'Jornada 1 vuelta');
+                if ($vuelta >= 2) {
+                    $conceptKeyCandidates[] = $this->normalizeRuleProduct('2da vuelta');
+                    $conceptKeyCandidates[] = $this->normalizeRuleProduct('Segunda vuelta');
+                } else {
+                    $conceptKeyCandidates[] = $this->normalizeRuleProduct('1ra vuelta');
+                    $conceptKeyCandidates[] = $this->normalizeRuleProduct('Primera vuelta');
+                }
+            }
+        } else {
+            $isAmb = str_contains($conceptoNorm, 'ambulancia') || preg_match('/\\bamb\\b/', $conceptoNorm) === 1;
+            $label = null;
+
+            if (str_contains($conceptoNorm, '0 50') || preg_match('/0\\s*[- ]\\s*50/', $conceptoNorm) === 1) {
+                $label = $isAmb ? 'Ambulancia 0-50 km' : '0 a 50km';
+            } elseif (preg_match('/50\\s*[- ]\\s*100/', $conceptoNorm) === 1) {
+                $label = $isAmb ? 'Ambulancia 50-100 km' : '50 a 100km';
+            } elseif (preg_match('/0\\s*[- ]\\s*100/', $conceptoNorm) === 1) {
+                $label = $isAmb ? 'Ambulancia 0-100 km' : '0 a 100km';
+            } elseif (preg_match('/100\\s*[- ]\\s*150/', $conceptoNorm) === 1) {
+                $label = $isAmb ? 'Ambulancia 100-150 km' : '100 a 150km';
+            } elseif (preg_match('/150\\s*[- ]\\s*200/', $conceptoNorm) === 1) {
+                $label = $isAmb ? 'Ambulancia 150-200 km' : '150 a 200km';
+            } elseif (preg_match('/100\\s*[- ]\\s*200/', $conceptoNorm) === 1) {
+                $label = $isAmb ? 'Ambulancia 100-200 km' : '100 a 200km';
+            } elseif (preg_match('/\\+\\s*200/i', $conceptoRaw) === 1) {
+                $label = $isAmb ? 'Ambulancia 100-200 km' : 'más de 200km';
+            } elseif (preg_match('/\\+\\s*250/i', $conceptoRaw) === 1) {
+                $label = 'mas 250km';
+            }
+
+            if ($label !== null) {
+                $conceptKeyCandidates[] = $this->normalizeRuleProduct($label);
+            } else {
+                $conceptKeyCandidates[] = $this->normalizeRuleProduct($conceptoRaw);
+            }
+        }
+
+        $conceptKeyCandidates = array_values(array_unique(array_filter($conceptKeyCandidates)));
+        if (empty($conceptKeyCandidates)) {
+            return null;
+        }
+
+        $sucursalCode = $this->resolveLoginterSucursalCodeFromText(trim($origenRaw . ' ' . $clientesRaw));
+        $sucursalToken = match ($sucursalCode) {
+            'NEU' => 'neuquen',
+            'TUC' => 'tucuman',
+            'BAH' => 'bahia blanca',
+            'RES' => 'resistencia',
+            'SFE' => 'santa fe',
+            'CDU' => 'concepcion',
+            '3AR' => 'tres arroyos',
+            'CDO' => 'cordoba',
+            'RSO' => 'rosario',
+            'CTA' => 'amba',
+            'MDQ' => 'mar del plata',
+            default => '',
+        };
+        $sucursalTokenNorm = $sucursalToken !== '' ? $this->normalizeRuleProduct($sucursalToken) : '';
+
+        $bestKey = null;
+        $bestScore = null;
+        $bestLabelLen = null;
+
+        $scoreSucursal = function (string $key, array $data, bool $requireToken) use ($sucursalTokenNorm, $isColecta, $isChasis, $conceptKeyCandidates): ?array {
+            if ($requireToken && $sucursalTokenNorm !== '' && !str_contains($key, $sucursalTokenNorm)) {
+                return null;
+            }
+
+            $score = 0;
+            if ($sucursalTokenNorm !== '' && str_contains($key, $sucursalTokenNorm)) {
+                $score += 10;
+            }
+
+            $hasColecta = str_contains($key, 'colecta');
+            if ($isColecta) {
+                $score += $hasColecta ? 6 : -2;
+            } else {
+                $score += $hasColecta ? -4 : 0;
+            }
+
+            if ($isChasis) {
+                if (str_contains($key, 'chasis')) {
+                    $score += 10;
+                } else {
+                    $score -= 4;
+                }
+                if (str_contains($key, 'utilitario')) {
+                    $score -= 6;
+                }
+                if (str_contains($key, '2500')) {
+                    $score += 2;
+                }
+            } else {
+                if (str_contains($key, 'chasis')) {
+                    $score -= 6;
+                }
+                if (str_contains($key, '700')) {
+                    $score += 7;
+                }
+                if (str_contains($key, 'utilitario')) {
+                    $score += 4;
+                }
+            }
+
+            $concepts = is_array($data['concepts'] ?? null) ? $data['concepts'] : [];
+            if (!empty($concepts)) {
+                $hasConcept = false;
+                foreach ($conceptKeyCandidates as $candidateKey) {
+                    if (isset($concepts[$candidateKey])) {
+                        $hasConcept = true;
+                        break;
+                    }
+                }
+                $score += $hasConcept ? 8 : -3;
+            }
+
+            $label = is_string($data['label'] ?? null) ? $data['label'] : $key;
+            return [$score, strlen($label)];
+        };
+
+        foreach ([true, false] as $requireToken) {
+            foreach ($tarifarioMatrix as $key => $data) {
+                if (!is_string($key) || $key === '' || !is_array($data)) {
+                    continue;
+                }
+                $result = $scoreSucursal($key, $data, $requireToken);
+                if ($result === null) {
+                    continue;
+                }
+                [$score, $labelLen] = $result;
+                if ($bestKey === null || $bestScore === null || $score > $bestScore || ($score === $bestScore && $bestLabelLen !== null && $labelLen < $bestLabelLen)) {
+                    $bestKey = $key;
+                    $bestScore = $score;
+                    $bestLabelLen = $labelLen;
+                }
+            }
+            if ($bestKey !== null && $bestScore !== null && $bestScore > 0) {
+                break;
+            }
+        }
+
+        if ($bestKey === null || !isset($tarifarioMatrix[$bestKey]) || !is_array($tarifarioMatrix[$bestKey])) {
+            return null;
+        }
+
+        $sucursalData = $tarifarioMatrix[$bestKey];
+        $concepts = is_array($sucursalData['concepts'] ?? null) ? $sucursalData['concepts'] : [];
+        if (empty($concepts)) {
+            return null;
+        }
+
+        $conceptData = null;
+        $conceptKey = null;
+        foreach ($conceptKeyCandidates as $candidateKey) {
+            if (isset($concepts[$candidateKey]) && is_array($concepts[$candidateKey])) {
+                $conceptData = $concepts[$candidateKey];
+                $conceptKey = $candidateKey;
+                break;
+            }
+        }
+
+        if ($conceptData === null) {
+            return null;
+        }
+
+        return [
+            'sucursal_key' => $bestKey,
+            'sucursal_label' => is_string($sucursalData['label'] ?? null) ? $sucursalData['label'] : $bestKey,
+            'concepto_key' => $conceptKey,
+            'concepto_label' => is_string($conceptData['label'] ?? null) ? $conceptData['label'] : $conceptKey,
+            'original' => $conceptData['original'] ?? null,
+            'la' => $conceptData['la'] ?? null,
+            'percent' => $conceptData['percent'] ?? null,
+            'factor' => $conceptData['factor'] ?? null,
+        ];
     }
 
     private function buildLoginterPersonaNameToken(string $apellidos, string $nombres): string

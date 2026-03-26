@@ -2853,7 +2853,11 @@ tbody tr:hover {
   cursor: not-allowed;
 }
 
-.action-buttons button {
+.action-buttons button,
+.action-buttons a {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   border: none;
   background: #eef3ff;
   color: #1d74f5;
@@ -2861,9 +2865,12 @@ tbody tr:hover {
   border-radius: 8px;
   cursor: pointer;
   transition: background-color 0.2s ease;
+  text-decoration: none;
+  line-height: 1;
 }
 
-.action-buttons button:hover {
+.action-buttons button:hover,
+.action-buttons a:hover {
   background-color: rgba(29, 116, 245, 0.18);
 }
 
