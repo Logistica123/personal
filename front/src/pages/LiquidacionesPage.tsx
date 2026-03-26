@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
-import type { PersonalRecord } from '../features/personal/types';
+import type { LiquidacionSummary, PersonalRecord } from '../features/personal/types';
 
 type DashboardLayoutProps = {
   title: string;
@@ -115,6 +115,7 @@ const FORTNIGHT_FILTER_OPTIONS = [
 
 const LIQUIDACIONES_PERIOD_SELECTION_STORAGE_KEY = 'liquidaciones.periodSelection';
 const LIQUIDACIONES_VISUAL_CLIENT_STORAGE_KEY = 'liquidaciones.visualClientByDocument';
+const LIQUIDACIONES_VISUAL_CLIENT_BY_PERSONA_STORAGE_KEY = 'liquidaciones.visualClientByPersona';
 
 type LiquidacionesPeriodSelection = { month: string; fortnight: string };
 
@@ -204,6 +205,53 @@ const writeStoredLiquidacionesVisualClient = (value: Record<number, string>) => 
   }
 };
 
+const readStoredLiquidacionesVisualClientByPersona = (): Record<number, string> => {
+  if (typeof window === 'undefined') {
+    return {};
+  }
+
+  try {
+    const raw = window.localStorage.getItem(LIQUIDACIONES_VISUAL_CLIENT_BY_PERSONA_STORAGE_KEY);
+    if (!raw) {
+      return {};
+    }
+
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    const next: Record<number, string> = {};
+    Object.entries(parsed ?? {}).forEach(([key, value]) => {
+      const numericKey = Number(key);
+      const label = typeof value === 'string' ? value.trim() : '';
+      if (!Number.isInteger(numericKey) || numericKey <= 0 || !label) {
+        return;
+      }
+      next[numericKey] = label;
+    });
+    return next;
+  } catch {
+    return {};
+  }
+};
+
+const writeStoredLiquidacionesVisualClientByPersona = (value: Record<number, string>) => {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  try {
+    const payload: Record<string, string> = {};
+    Object.entries(value).forEach(([key, label]) => {
+      const normalizedLabel = typeof label === 'string' ? label.trim() : '';
+      if (!normalizedLabel) {
+        return;
+      }
+      payload[String(key)] = normalizedLabel;
+    });
+    window.localStorage.setItem(LIQUIDACIONES_VISUAL_CLIENT_BY_PERSONA_STORAGE_KEY, JSON.stringify(payload));
+  } catch {
+    // ignore storage failures
+  }
+};
+
 const parsePagoFlag = (value: string | number | boolean | null | undefined): boolean | null => {
   if (value === null || value === undefined) {
     return null;
@@ -249,6 +297,41 @@ const formatNumber = (value: string | number | null | undefined): string => {
     return '—';
   }
   return numberFormatter.format(numeric);
+};
+
+const formatMonthKeyLabel = (monthKey?: string | null): string => {
+  if (!monthKey || monthKey === 'unknown') {
+    return 'Sin fecha';
+  }
+  if (!/^\d{4}-\d{2}$/.test(monthKey)) {
+    return monthKey;
+  }
+  const parsed = new Date(`${monthKey}-01T00:00:00`);
+  if (Number.isNaN(parsed.getTime())) {
+    return monthKey;
+  }
+  const formatter = new Intl.DateTimeFormat('es-AR', { month: 'long', year: 'numeric' });
+  const label = formatter.format(parsed);
+  return label.charAt(0).toUpperCase() + label.slice(1);
+};
+
+const formatFortnightKeyLabel = (fortnightKey?: string | null): string => {
+  if (!fortnightKey) {
+    return 'Mes completo';
+  }
+  if (fortnightKey === 'MONTHLY') {
+    return 'Mes completo';
+  }
+  if (fortnightKey === 'Q1') {
+    return 'Primera quincena';
+  }
+  if (fortnightKey === 'Q2') {
+    return 'Segunda quincena';
+  }
+  if (fortnightKey === 'NO_DATE') {
+    return 'Sin quincena';
+  }
+  return fortnightKey;
 };
 
 const getFuelStatusLabel = (status?: string | null, discounted?: boolean | null): string => {
@@ -357,6 +440,7 @@ export const LiquidacionesPage: React.FC<LiquidacionesPageProps> = ({
   const [liquidacionFortnightFilter, setLiquidacionFortnightFilter] = useState('');
   const [liquidacionYearFilter, setLiquidacionYearFilter] = useState('');
   const [liquidacionImporteManual, setLiquidacionImporteManual] = useState('');
+  const [liquidacionUseStoredImporte, setLiquidacionUseStoredImporte] = useState(true);
   const [liquidacionFortnightSelection, setLiquidacionFortnightSelection] = useState(
     () => readStoredLiquidacionesPeriodSelection().fortnight
   );
@@ -373,6 +457,9 @@ export const LiquidacionesPage: React.FC<LiquidacionesPageProps> = ({
   const [liquidacionVisualClientByDocId, setLiquidacionVisualClientByDocId] = useState<Record<number, string>>(
     () => readStoredLiquidacionesVisualClient()
   );
+  const [liquidacionVisualClientByPersonaId, setLiquidacionVisualClientByPersonaId] = useState<Record<number, string>>(
+    () => readStoredLiquidacionesVisualClientByPersona()
+  );
   const [liquidacionRecipientType, setLiquidacionRecipientType] = useState<'proveedor' | 'cobrador' | 'ambos'>('proveedor');
   const [detail, setDetail] = useState<PersonalDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
@@ -383,6 +470,7 @@ export const LiquidacionesPage: React.FC<LiquidacionesPageProps> = ({
   const [showFuelPasteModal, setShowFuelPasteModal] = useState(false);
   const [fuelPasteError, setFuelPasteError] = useState<string | null>(null);
   const [fuelParentDocumentId, setFuelParentDocumentId] = useState<string>('');
+  const pendingPersonaLiquidacionFilterRef = useRef<{ year: string; month: string; fortnight: string } | null>(null);
   const pendingPreviewUrlsRef = useRef<string[]>([]);
   useEffect(() => {
     pendingPreviewUrlsRef.current = pendingUploads
@@ -708,9 +796,17 @@ export const LiquidacionesPage: React.FC<LiquidacionesPageProps> = ({
     [isPagosView, visiblePagosColumns, visibleLiquidacionesColumns]
   );
   useEffect(() => {
-    setLiquidacionMonthFilter('');
-    setLiquidacionFortnightFilter('');
-    setLiquidacionYearFilter('');
+    const pending = pendingPersonaLiquidacionFilterRef.current;
+    pendingPersonaLiquidacionFilterRef.current = null;
+    if (pending) {
+      setLiquidacionMonthFilter(pending.month);
+      setLiquidacionFortnightFilter(pending.fortnight);
+      setLiquidacionYearFilter(pending.year);
+    } else {
+      setLiquidacionMonthFilter('');
+      setLiquidacionFortnightFilter('');
+      setLiquidacionYearFilter('');
+    }
     setDeletingDocumentIds(new Set<number>());
     setSelectedPagadoIds(new Set<number>());
   }, [selectedPersonaId]);
@@ -762,6 +858,10 @@ export const LiquidacionesPage: React.FC<LiquidacionesPageProps> = ({
   useEffect(() => {
     writeStoredLiquidacionesVisualClient(liquidacionVisualClientByDocId);
   }, [liquidacionVisualClientByDocId]);
+
+  useEffect(() => {
+    writeStoredLiquidacionesVisualClientByPersona(liquidacionVisualClientByPersonaId);
+  }, [liquidacionVisualClientByPersonaId]);
 
   const selectedDocumentType = useMemo(() => {
     if (!selectedDocumentTypeId) {
@@ -941,6 +1041,8 @@ export const LiquidacionesPage: React.FC<LiquidacionesPageProps> = ({
   useEffect(() => {
     if (personaIdFromRoute !== selectedPersonaId) {
       setSelectedPersonaId(personaIdFromRoute);
+      setLiquidacionImporteManual('');
+      setLiquidacionUseStoredImporte(true);
     }
   }, [personaIdFromRoute, selectedPersonaId]);
 
@@ -1707,13 +1809,28 @@ export const LiquidacionesPage: React.FC<LiquidacionesPageProps> = ({
     [personal, selectedPersonaId]
   );
 
+  useEffect(() => {
+    if (!selectedPersonaId) {
+      setLiquidacionVisualClientInput('');
+      return;
+    }
+
+    const stored = liquidacionVisualClientByPersonaId[selectedPersonaId];
+    const fallback = selectedPersonalRecord?.cliente ?? '';
+    const nextLabel = (typeof stored === 'string' && stored.trim().length > 0 ? stored.trim() : null) ?? fallback ?? '';
+    setLiquidacionVisualClientInput(nextLabel);
+  }, [liquidacionVisualClientByPersonaId, selectedPersonaId, selectedPersonalRecord]);
+
   const importeFacturarBase = useMemo(() => {
     if (liquidacionImporteManual.trim() !== '') {
       const parsed = Number(liquidacionImporteManual.replace(',', '.'));
       return Number.isFinite(parsed) ? parsed : null;
     }
+    if (!liquidacionUseStoredImporte) {
+      return null;
+    }
     return selectedPersonalRecord?.liquidacionImporteFacturar ?? null;
-  }, [liquidacionImporteManual, selectedPersonalRecord]);
+  }, [liquidacionImporteManual, liquidacionUseStoredImporte, selectedPersonalRecord]);
 
   const pagosMonthChips = useMemo(() => {
     if (!isPagosView) {
@@ -2416,6 +2533,36 @@ export const LiquidacionesPage: React.FC<LiquidacionesPageProps> = ({
     return normalized.length > 0 ? normalized : null;
   }, []);
 
+  const applyVisualClientToPersona = useCallback(
+    (personaId: number | null | undefined, label?: string | null) => {
+      const normalizedLabel = normalizeVisualClientLabel(label);
+      if (!personaId || !Number.isInteger(personaId)) {
+        return;
+      }
+
+      setLiquidacionVisualClientByPersonaId((prev) => {
+        const currentValue = prev[personaId];
+        if (!normalizedLabel) {
+          if (!currentValue) {
+            return prev;
+          }
+          const next = { ...prev };
+          delete next[personaId];
+          return next;
+        }
+
+        if (currentValue === normalizedLabel) {
+          return prev;
+        }
+        return {
+          ...prev,
+          [personaId]: normalizedLabel,
+        };
+      });
+    },
+    [normalizeVisualClientLabel]
+  );
+
   const resolveRecordVisualClient = useCallback(
     (registro: PersonalRecord): string | null => {
       const liquidacionId = typeof registro.liquidacionIdLatest === 'number' ? registro.liquidacionIdLatest : null;
@@ -2462,12 +2609,15 @@ export const LiquidacionesPage: React.FC<LiquidacionesPageProps> = ({
     const baseClients = personal
       .map((registro) => registro.cliente)
       .filter((value): value is string => Boolean(value));
+    const personaClients = Object.values(liquidacionVisualClientByPersonaId).filter(
+      (value): value is string => typeof value === 'string' && value.trim().length > 0
+    );
     const visualClients = listRecords
       .map((registro) => resolveRecordVisualClient(registro))
       .filter((value): value is string => Boolean(value));
 
-    return Array.from(new Set([...baseClients, ...visualClients])).sort();
-  }, [listRecords, personal, resolveRecordVisualClient]);
+    return Array.from(new Set([...baseClients, ...visualClients, ...personaClients])).sort();
+  }, [liquidacionVisualClientByPersonaId, listRecords, personal, resolveRecordVisualClient]);
   const sucursalOptions = useMemo(
     () =>
       Array.from(new Set(personal.map((registro) => registro.sucursal).filter((value): value is string => Boolean(value)))).sort(),
@@ -2672,24 +2822,7 @@ export const LiquidacionesPage: React.FC<LiquidacionesPageProps> = ({
     return liquidacion ?? groups.find((group) => !group.main.isAttachment) ?? groups[0];
   }, []);
 
-  const selectedLiquidacionGroup = useMemo(() => {
-    if (fuelParentDocumentId) {
-      return (
-        liquidacionGroupsForSelect.find(
-          (group) => String(group.main.id ?? '') === String(fuelParentDocumentId)
-        ) ?? null
-      );
-    }
-    return getDefaultLiquidacionGroup(liquidacionGroupsForSelect);
-  }, [fuelParentDocumentId, getDefaultLiquidacionGroup, liquidacionGroupsForSelect]);
-
   const importeFacturarConDescuento = useMemo(() => {
-    if (selectedLiquidacionGroup) {
-      const netTotal = getLiquidacionNetTotal(selectedLiquidacionGroup);
-      if (netTotal != null) {
-        return netTotal;
-      }
-    }
     if (importeFacturarBase == null) {
       return null;
     }
@@ -2698,7 +2831,7 @@ export const LiquidacionesPage: React.FC<LiquidacionesPageProps> = ({
       return null;
     }
     return importeFacturarBase - descuento;
-  }, [getLiquidacionNetTotal, importeFacturarBase, selectedLiquidacionGroup, selectedPersonalRecord]);
+  }, [importeFacturarBase, selectedPersonalRecord]);
 
   const liquidacionFortnightSections = useMemo(() => {
     if (liquidacionGroups.length === 0) {
@@ -3219,6 +3352,8 @@ export const LiquidacionesPage: React.FC<LiquidacionesPageProps> = ({
     clearPendingUploads();
     setUploadStatus(null);
     setDocumentExpiry('');
+    setLiquidacionImporteManual('');
+    setLiquidacionUseStoredImporte(true);
     navigate(`/liquidaciones/${registro.id}`);
   };
 
@@ -3245,8 +3380,16 @@ export const LiquidacionesPage: React.FC<LiquidacionesPageProps> = ({
     });
     pendingPreviewUrlsRef.current = [];
     closePreviewModal();
-    setLiquidacionVisualClientInput('');
   }, [closePreviewModal]);
+
+  const handleNuevaLiquidacion = useCallback(() => {
+    clearPendingUploads();
+    setUploadStatus(null);
+    setValidationStatus(null);
+    setDocumentExpiry('');
+    setLiquidacionImporteManual('');
+    setLiquidacionUseStoredImporte(false);
+  }, [clearPendingUploads]);
 
   const openQueuedPersona = useCallback(
     (personaId: number) => {
@@ -3254,6 +3397,8 @@ export const LiquidacionesPage: React.FC<LiquidacionesPageProps> = ({
       clearPendingUploads();
       setUploadStatus(null);
       setDocumentExpiry('');
+      setLiquidacionImporteManual('');
+      setLiquidacionUseStoredImporte(true);
       navigate(`/liquidaciones/${personaId}`);
     },
     [clearPendingUploads, navigate]
@@ -3938,6 +4083,7 @@ export const LiquidacionesPage: React.FC<LiquidacionesPageProps> = ({
           parentDocumentId = payload.data.id;
         }
         applyVisualClientToDocument(payload?.data?.id ?? null, item.visualClient ?? null);
+        applyVisualClientToPersona(selectedPersonaId, item.visualClient ?? null);
 
         if (payload?.data?.id && isPdfFile(item.file)) {
           try {
@@ -4131,6 +4277,7 @@ export const LiquidacionesPage: React.FC<LiquidacionesPageProps> = ({
         try {
           const payload = (await response.json()) as { data?: { id?: number } };
           applyVisualClientToDocument(payload?.data?.id ?? null, item.visualClient ?? null);
+          applyVisualClientToPersona(selectedPersonaId, item.visualClient ?? null);
           if (payload?.data?.id) {
             lastSavedId = payload.data.id;
             if (isPdfFile(item.file)) {
@@ -4936,13 +5083,65 @@ export const LiquidacionesPage: React.FC<LiquidacionesPageProps> = ({
                   ) : null}
                   {isListColumnVisible('acciones') ? (
                     <td>
-                      <button
-                        type="button"
-                        className="secondary-action"
-                        onClick={() => handleSelectPersona(registro)}
-                      >
-                        Gestionar
-                      </button>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
+                        <button
+                          type="button"
+                          className="secondary-action"
+                          onClick={() => handleSelectPersona(registro)}
+                        >
+                          Gestionar
+                        </button>
+                        <select
+                          defaultValue=""
+                          disabled={!Array.isArray(registro.liquidaciones) || registro.liquidaciones.length === 0}
+                          onChange={(event) => {
+                            const value = event.currentTarget.value;
+                            event.currentTarget.value = '';
+                            const liquidacionId = Number(value);
+                            if (!Number.isFinite(liquidacionId) || liquidacionId <= 0) {
+                              return;
+                            }
+                            const liquidaciones = Array.isArray(registro.liquidaciones) ? registro.liquidaciones : [];
+                            const selected = liquidaciones.find((liq) => liq.id === liquidacionId) ?? null;
+                            if (selected) {
+                              const month = selected.monthKey ?? '';
+                              const year =
+                                typeof month === 'string' && /^\d{4}-\d{2}$/.test(month) ? month.slice(0, 4) : '';
+                              const fortnight = selected.fortnightKey ?? '';
+                              pendingPersonaLiquidacionFilterRef.current = {
+                                year,
+                                month: typeof month === 'string' ? month : '',
+                                fortnight: typeof fortnight === 'string' ? fortnight : '',
+                              };
+                            }
+                            handleSelectPersona(registro);
+                          }}
+                          title="Abrir liquidaciones del personal"
+                        >
+                          <option value="">
+                            {Array.isArray(registro.liquidaciones) && registro.liquidaciones.length > 0
+                              ? 'Ver liquidaciones…'
+                              : 'Sin liquidaciones'}
+                          </option>
+                          {(Array.isArray(registro.liquidaciones) ? [...registro.liquidaciones] : [])
+                            .sort((a, b) => {
+                              const aKey = a.fecha ?? a.monthKey ?? '';
+                              const bKey = b.fecha ?? b.monthKey ?? '';
+                              return String(bKey).localeCompare(String(aKey));
+                            })
+                            .map((liq: LiquidacionSummary) => {
+                              const parts = [
+                                formatMonthKeyLabel(liq.monthKey),
+                                formatFortnightKeyLabel(liq.fortnightKey),
+                              ];
+                              return (
+                                <option key={`liq-${registro.id}-${liq.id}`} value={liq.id}>
+                                  {parts.join(' · ')}
+                                </option>
+                              );
+                            })}
+                        </select>
+                      </div>
                     </td>
                   ) : null}
                 </tr>
@@ -5359,12 +5558,16 @@ export const LiquidacionesPage: React.FC<LiquidacionesPageProps> = ({
             )}
           </label>
           <label className="input-control">
-            <span>Cliente visual (solo filtro liquidaciones)</span>
+            <span>Cliente visual (se guarda; solo filtro liquidaciones)</span>
             <input
               value={liquidacionVisualClientInput}
-              onChange={(event) => setLiquidacionVisualClientInput(event.target.value)}
+              onChange={(event) => {
+                const nextValue = event.target.value;
+                setLiquidacionVisualClientInput(nextValue);
+                applyVisualClientToPersona(selectedPersonaId, nextValue);
+              }}
               list="liquidaciones-cliente-visual-options"
-              placeholder="Opcional. No cambia Proveedores."
+              placeholder="Se precompleta y se guarda para próximas liquidaciones."
             />
             <datalist id="liquidaciones-cliente-visual-options">
               {clienteOptions.map((option) => (
@@ -5381,7 +5584,10 @@ export const LiquidacionesPage: React.FC<LiquidacionesPageProps> = ({
               step="0.01"
               placeholder="0,00"
               value={liquidacionImporteManual}
-              onChange={(event) => setLiquidacionImporteManual(event.target.value)}
+              onChange={(event) => {
+                setLiquidacionImporteManual(event.target.value);
+                setLiquidacionUseStoredImporte(false);
+              }}
             />
           </label>
           <label className="input-control">
@@ -5430,6 +5636,18 @@ export const LiquidacionesPage: React.FC<LiquidacionesPageProps> = ({
         {documentTypesError ? (
           <p className="form-info form-info--error">{documentTypesError}</p>
         ) : null}
+
+        <div className="liquidaciones-actions" style={{ marginTop: '0.75rem', justifyContent: 'flex-end' }}>
+          <button
+            type="button"
+            className="secondary-action secondary-action--ghost"
+            onClick={handleNuevaLiquidacion}
+            disabled={uploading}
+            title="Resetea el importe y limpia archivos para cargar una nueva liquidación."
+          >
+            Nueva liquidación
+          </button>
+        </div>
 
         <div
           className="upload-dropzone"
