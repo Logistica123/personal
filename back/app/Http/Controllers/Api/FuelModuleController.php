@@ -381,7 +381,9 @@ class FuelModuleController extends Controller
         }
 
         if ($onlyPending) {
-            $baseQuery->where('discounted', false);
+            $baseQuery->where(function ($query) {
+                $query->where('discounted', false)->orWhereNull('discounted');
+            });
         }
 
         if ($onlyImputed) {

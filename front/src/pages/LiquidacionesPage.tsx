@@ -1043,60 +1043,93 @@ export const LiquidacionesPage: React.FC<LiquidacionesPageProps> = ({
       }
       const selectedRange = resolveFuelRange(liquidacionMonthSelection, liquidacionFortnightSelection);
       const documentRange = resolveFuelRange(doc.monthKey, doc.fortnightKey);
-      const range = selectedRange ?? documentRange;
-      const url = new URL(`${apiBaseUrl}/api/combustible/consumos`);
-      url.searchParams.set('domain', domain);
-      url.searchParams.set('only_pending', '1');
-      if (range) {
-        url.searchParams.set('date_from', range.from);
-        url.searchParams.set('date_to', range.to);
-      }
+      const labelRange = selectedRange ?? documentRange;
+      const requestDocId = String(doc.id ?? '');
       setFuelPreviewLoading(true);
       setFuelPreviewError(null);
       setFuelPreviewMessage(null);
       setFuelPreview(null);
       setFuelSelectionAdjustments([]);
       setFuelAdjustmentError(null);
-      fetch(url.toString(), {
-        credentials: 'include',
-      })
-        .then(async (response) => {
+      const fetchAllPages = async () => {
+        const items: Array<{
+          id: number;
+          occurred_at: string | null;
+          station: string | null;
+          domain_norm: string | null;
+          product: string | null;
+          liters: number | null;
+          price_per_liter: number | null;
+          amount: number | null;
+          status?: string | null;
+          discounted?: boolean | null;
+        }> = [];
+
+        let page = 1;
+        let hasNextPage = true;
+        let totalPages: number | null = null;
+
+        while (hasNextPage) {
+          const url = new URL(`${apiBaseUrl}/api/combustible/consumos`);
+          url.searchParams.set('domain', domain);
+          url.searchParams.set('only_pending', '1');
+          url.searchParams.set('per_page', '500');
+          url.searchParams.set('page', String(page));
+
+          const response = await fetch(url.toString(), { credentials: 'include' });
           if (!response.ok) {
             const payload = await parseJsonSafe(response).catch(() => null);
             throw new Error(payload?.message ?? `No se pudo cargar el consumo (${response.status}).`);
           }
-          return parseJsonSafe(response);
-        })
-        .then((payload) => {
-          const mergedItems = Array.isArray(payload.data)
-            ? (payload.data as Array<{
-                id: number;
-                occurred_at: string | null;
-                station: string | null;
-                domain_norm: string | null;
-                product: string | null;
-                liters: number | null;
-                price_per_liter: number | null;
-                amount: number | null;
-                status?: string | null;
-                discounted?: boolean | null;
-              }>)
-            : [];
-          const totalAmount = mergedItems.reduce(
-            (sum: number, item) => sum + (item.amount ?? 0),
-            0
-          );
-          const selectableIds = mergedItems
+
+          const payload = await parseJsonSafe(response);
+          const pageItems = Array.isArray(payload?.data) ? payload.data : [];
+          items.push(...pageItems);
+
+          const pagination = payload?.pagination ?? null;
+          hasNextPage = Boolean(pagination?.has_next_page);
+          totalPages =
+            typeof pagination?.total_pages === 'number' ? (pagination.total_pages as number) : totalPages;
+
+          page += 1;
+          if (totalPages !== null && page > totalPages) {
+            break;
+          }
+          if (page > 50) {
+            break;
+          }
+        }
+
+        return items;
+      };
+
+      fetchAllPages()
+        .then((mergedItems) => {
+          if (fuelPreviewDocIdRef.current !== requestDocId) {
+            return;
+          }
+          const totalAmount = mergedItems.reduce((sum: number, item) => sum + (item.amount ?? 0), 0);
+          const selectedIds = mergedItems
             .filter((item) => item.status !== 'OBSERVED')
+            .filter((item) => {
+              if (!labelRange) {
+                return true;
+              }
+              const dateValue = item.occurred_at ? item.occurred_at.slice(0, 10) : null;
+              if (!dateValue) {
+                return false;
+              }
+              return dateValue >= labelRange.from && dateValue <= labelRange.to;
+            })
             .map((item) => item.id);
-          setFuelSelection(new Set(selectableIds));
+          setFuelSelection(new Set(selectedIds));
           const dateValues = mergedItems
             .map((item) => item.occurred_at)
             .filter((value): value is string => Boolean(value))
             .map((value) => value.slice(0, 10))
             .sort();
-          const dateFrom = range?.from ?? dateValues[0] ?? '—';
-          const dateTo = range?.to ?? dateValues[dateValues.length - 1] ?? '—';
+          const dateFrom = labelRange?.from ?? dateValues[0] ?? '—';
+          const dateTo = labelRange?.to ?? dateValues[dateValues.length - 1] ?? '—';
           setFuelPreview({
             domain,
             dateFrom,
@@ -1108,10 +1141,16 @@ export const LiquidacionesPage: React.FC<LiquidacionesPageProps> = ({
           });
         })
         .catch((err) => {
+          if (fuelPreviewDocIdRef.current !== requestDocId) {
+            return;
+          }
           setFuelPreviewError(err instanceof Error ? err.message : 'No se pudo calcular el descuento.');
           setFuelPreview(null);
         })
         .finally(() => {
+          if (fuelPreviewDocIdRef.current !== requestDocId) {
+            return;
+          }
           setFuelPreviewLoading(false);
         });
     },
@@ -5548,7 +5587,9 @@ export const LiquidacionesPage: React.FC<LiquidacionesPageProps> = ({
             <h3>Descontar combustible</h3>
           </header>
           <div className="card-body">
-            <p className="form-info">Seleccioná la liquidación destino. Se muestran todos los consumos para que elijas qué descontar.</p>
+            <p className="form-info">
+              Seleccioná la liquidación destino. Se muestran todos los consumos históricos pendientes (no incluye los ya descontados) para que elijas qué descontar.
+            </p>
             <label className="input-control">
               <span>Liquidación destino</span>
               <select value={fuelParentDocumentId} onChange={(event) => setFuelParentDocumentId(event.target.value)}>
