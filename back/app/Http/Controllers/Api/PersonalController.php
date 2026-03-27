@@ -1103,8 +1103,7 @@ class PersonalController extends Controller
     public function update(Request $request, Persona $persona): JsonResponse
     {
         $this->ensureCanManagePersonal($request, $persona);
-        $role = strtolower(trim((string) ($request->user()?->role ?? '')));
-        $canEditCbu = in_array($role, ['admin', 'admin2', 'encargado'], true);
+        $canEditCbu = true;
 
         $validated = $request->validate([
             'nombres' => ['nullable', 'string', 'max:255'],

@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>Factura Preview</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: #ccc; display: flex; justify-content: center; padding: 30px; font-family: Helvetica, Arial, sans-serif; }
+
+  .page {
+    background: white;
+    width: 595px;
+    min-height: 842px;
+    padding: 22px 50px 22px 50px;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+    position: relative;
+    font-size: 8px;
+    border: 1px solid #888;
+  }
+
+  /* ── COPY LABEL ── */
+  .copy-label {
+    text-align: center;
+    font-weight: bold;
+    font-size: 12px;
+    margin-bottom: 6px;
+  }
+
+  /* ── HEADER ── */
+  .header {
+    display: grid;
+    grid-template-columns: 1fr 60px 1fr;
+    border: 1px solid #555;
+    height: 120px;
+  }
+  .header-left, .header-right { padding: 6px 8px; }
+  .header-center {
+    border-left: 1px solid #555;
+    border-right: 1px solid #555;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: space-between;
+    padding: 6px 4px;
+  }
+  .header-center .letra {
+    font-size: 34px;
+    font-weight: bold;
+    line-height: 1;
+    flex: 1;
+    display: flex;
+    align-items: center;
+  }
+  .header-center .cod { font-weight: bold; font-size: 7px; }
+  .header-left .company { font-weight: bold; font-size: 11px; margin-bottom: 4px; }
+  .header-left .field { margin-bottom: 2px; }
+  .header-right .factura-title { font-weight: bold; font-size: 14px; margin-bottom: 6px; }
+  .header-right .field { margin-bottom: 2px; }
+  .bold { font-weight: bold; }
+
+  /* ── PERIOD ROW ── */
+  .period-row {
+    border: 1px solid #555;
+    border-top: none;
+    padding: 4px 8px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-weight: bold;
+  }
+
+  /* ── CLIENT SECTION ── */
+  .client-section {
+    border: 1px solid #555;
+    border-top: none;
+  }
+  .client-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    border-bottom: 1px solid #555;
+    min-height: 20px;
+  }
+  .client-row:last-child { border-bottom: none; }
+  .client-cell {
+    padding: 3px 6px;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .client-cell:first-child { border-right: 1px solid #555; }
+  .client-row.full-width { grid-template-columns: 1fr; }
+  .client-row.full-width .client-cell { border-right: none; }
+
+  /* ── ITEMS TABLE ── */
+  .table-wrap {
+    border: 1px solid #555;
+    border-top: none;
+    margin-bottom: 0;
+  }
+  .table-header {
+    display: grid;
+    grid-template-columns: 35px 130px 42px 48px 55px 35px 50px 45px 55px;
+    background: #f0f0f0;
+    border-bottom: 1px solid #555;
+    font-weight: bold;
+  }
+  .th, .td {
+    padding: 3px 2px;
+    border-right: 1px solid #555;
+    font-size: 7px;
+    overflow: hidden;
+    white-space: nowrap;
+  }
+  .th:last-child, .td:last-child { border-right: none; }
+  .table-row {
+    display: grid;
+    grid-template-columns: 35px 130px 42px 48px 55px 35px 50px 45px 55px;
+    border-bottom: 1px solid #eee;
+    min-height: 18px;
+    align-items: center;
+  }
+  .table-body { min-height: 200px; }
+
+  /* ── TOTALS ── */
+  .totals-box {
+    border: 1px solid #555;
+    border-top: none;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    padding: 8px;
+    gap: 4px;
+  }
+  .totals-left .field { margin-bottom: 3px; }
+  .totals-right { text-align: left; }
+  .totals-right .field { margin-bottom: 3px; }
+  .totals-right .total-final {
+    font-weight: bold;
+    font-size: 10px;
+    margin-top: 6px;
+  }
+
+  /* ── FOOTER ── */
+  .footer {
+    border: 1px solid #555;
+    border-top: none;
+    padding: 6px 8px;
+    display: grid;
+    grid-template-columns: 40px 1fr 1fr;
+    gap: 6px;
+    align-items: center;
+    min-height: 52px;
+  }
+  .qr-box {
+    width: 38px;
+    height: 38px;
+    border: 1px solid #555;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 6px;
+    color: #999;
+  }
+  .arca-block .arca-name { font-weight: bold; font-size: 10px; }
+  .arca-block .arca-sub { font-size: 7px; color: #333; }
+  .cae-block { text-align: right; }
+  .cae-block .field { margin-bottom: 2px; }
+
+  hr.sep { border: none; border-top: 1px solid #555; }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <!-- ORIGINAL -->
+  <div class="copy-label">ORIGINAL</div>
+
+  <!-- HEADER -->
+  <div class="header">
+    <div class="header-left">
+      <div class="company">LOGISTICA ARGENTINA S.R.L</div>
+      <div class="field">Razon Social: LOGISTICA ARGENTINA S.R.L</div>
+      <div class="field">Domicilio Comercial: San Cayetano 3470 - San Cayetano, Corrientes</div>
+      <div class="field">Condicion frente al IVA: IVA Responsable Inscripto</div>
+    </div>
+    <div class="header-center">
+      <div class="letra">A</div>
+      <div class="cod">COD. 01</div>
+    </div>
+    <div class="header-right">
+      <div class="factura-title">FACTURA</div>
+      <div class="field">Punto de Venta: 00002&nbsp;&nbsp; Comp. Nro: 00000556</div>
+      <div class="field">Fecha de Emision: 09/03/2026</div>
+      <div class="field">CUIT: 30717060985</div>
+      <div class="field">Ingresos Brutos: 30717060985</div>
+      <div class="field">Fecha de Inicio de Actividades: 01/04/2021</div>
+    </div>
+  </div>
+
+  <!-- PERIOD ROW -->
+  <div class="period-row">
+    <span>Periodo Facturado Desde:&nbsp;&nbsp; 01/02/2026 &nbsp;&nbsp; Hasta: 28/02/2026</span>
+    <span>Fecha de Vto. para el pago: 15/04/2026</span>
+  </div>
+
+  <!-- CLIENT SECTION -->
+  <div class="client-section">
+    <div class="client-row">
+      <div class="client-cell"><span class="bold">CUIT:</span>&nbsp;30717024393</div>
+      <div class="client-cell"><span class="bold">Apellido y Nombre / Razon Social:</span>&nbsp;OCA LOG S.A.</div>
+    </div>
+    <div class="client-row">
+      <div class="client-cell"><span class="bold">Condicion frente al IVA:</span>&nbsp;IVA Responsable Inscripto</div>
+      <div class="client-cell"><span class="bold">Domicilio Comercial:</span>&nbsp;Alferez H. Bouchard 4177 - Munro, Bs As</div>
+    </div>
+    <div class="client-row">
+      <div class="client-cell"><span class="bold">Condicion de venta:</span>&nbsp;Cuenta Corriente</div>
+      <div class="client-cell"><span class="bold">Sucursal:</span>&nbsp;Casa Central</div>
+    </div>
+  </div>
+
+  <!-- ITEMS TABLE -->
+  <div class="table-wrap">
+    <div class="table-header">
+      <div class="th">Codigo</div>
+      <div class="th">Producto / Servicio</div>
+      <div class="th">Cantidad</div>
+      <div class="th">U. medida</div>
+      <div class="th">Precio Unit.</div>
+      <div class="th">% Bonif</div>
+      <div class="th">Subtotal</div>
+      <div class="th">Alicuota IVA</div>
+      <div class="th">Subtotal c/IVA</div>
+    </div>
+    <div class="table-body">
+      <div class="table-row">
+        <div class="td"></div>
+        <div class="td">OR SERVICIO DE TRANSPORTE DE CARGA SEGUN LIQUIDACION N° 1461597-1461556</div>
+        <div class="td">1,00</div>
+        <div class="td">unidades</div>
+        <div class="td">6659775,52</div>
+        <div class="td">0,00</div>
+        <div class="td">6659775,52</div>
+        <div class="td">21%</div>
+        <div class="td">8058328,38</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- TOTALS -->
+  <div class="totals-box">
+    <div class="totals-left">
+      <div class="field">Importe Otros Tributos: $ 0,00</div>
+    </div>
+    <div class="totals-right">
+      <div class="field"><strong>Importe Neto Gravado: $ 6659775,52</strong></div>
+      <div class="field">IVA 27%: $ 0,00</div>
+      <div class="field">IVA 21%: $ 1398552,86</div>
+      <div class="field">IVA 10.5%: $ 0,00</div>
+      <div class="field">IVA 5%: $ 0,00</div>
+      <div class="field">IVA 2.5%: $ 0,00</div>
+      <div class="field">IVA 0%: $ 0,00</div>
+      <div class="field">Importe Otros Tributos: $ 0,00</div>
+      <div class="total-final">Importe Total: $ 8058328,38</div>
+    </div>
+  </div>
+
+  <!-- FOOTER -->
+  <div class="footer">
+    <div class="qr-box">QR</div>
+    <div class="arca-block">
+      <div class="arca-name">ARCA</div>
+      <div class="arca-sub">Agencia de recaudacion y control aduanero</div>
+      <div class="arca-sub">Comprobante Autorizado</div>
+      <div class="arca-sub" style="font-size:6px;">Esta Agencia no se responsabiliza por los datos ingresados en el detalle de la operacion.</div>
+    </div>
+    <div class="cae-block">
+      <div class="field">Pag. 1/3</div>
+      <div class="field bold">CAE N: 86117940799231</div>
+      <div class="field">Fecha de Vto. de CAE: 19/03/2026</div>
+    </div>
+  </div>
+
+</div>
+</body>
+</html>
