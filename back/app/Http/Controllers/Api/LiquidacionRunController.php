@@ -7062,6 +7062,8 @@ class LiquidacionRunController extends Controller
                     $linea->staging_row_id = $row->id;
                 }
 
+                $isNewLinea = !$linea->exists;
+
                 $linea->distributor_id = $distribuidor->id;
                 $linea->row_number = $row->row_number;
                 $linea->fecha = $row->occurred_at;
@@ -7087,26 +7089,32 @@ class LiquidacionRunController extends Controller
                 $lineTurno = $this->resolveLineTurno($row);
                 $lineCategory = $this->resolveLineCategory($row);
                 $linea->turno_norm = $lineTurno;
-                if ($penaltyLineAmount !== null) {
-                    $linea->factor_jornada = 1.0;
-                    $linea->tarifa_dist_calculada = $penaltyLineAmount;
-                    $linea->plus_calculado = 0.0;
-                } else {
-                    $linea->factor_jornada = $factorJornada;
-                    $linea->tarifa_dist_calculada = $this->resolveLineTarifaDistCalculada(
-                        $run,
-                        $row,
-                        $lineCategory,
-                        $lineTurno,
-                        $linea->svc
+
+                // Solo recalcular tarifa/importe para líneas nuevas o sin valor calculado previo.
+                // Esto preserva el valor histórico cuando el tarifario se actualiza posteriormente.
+                $needsCalc = $isNewLinea || $linea->tarifa_dist_calculada === null;
+                if ($needsCalc) {
+                    if ($penaltyLineAmount !== null) {
+                        $linea->factor_jornada = 1.0;
+                        $linea->tarifa_dist_calculada = $penaltyLineAmount;
+                        $linea->plus_calculado = 0.0;
+                    } else {
+                        $linea->factor_jornada = $factorJornada;
+                        $linea->tarifa_dist_calculada = $this->resolveLineTarifaDistCalculada(
+                            $run,
+                            $row,
+                            $lineCategory,
+                            $lineTurno,
+                            $linea->svc
+                        );
+                        $linea->plus_calculado = $this->resolveLinePlus($run, $row, $factorJornada);
+                    }
+                    $linea->importe_calculado = round(
+                        ((float) ($linea->tarifa_dist_calculada ?? 0) * (float) ($linea->factor_jornada ?? 1))
+                        + (float) ($linea->plus_calculado ?? 0),
+                        2
                     );
-                    $linea->plus_calculado = $this->resolveLinePlus($run, $row, $factorJornada);
                 }
-                $linea->importe_calculado = round(
-                    ((float) ($linea->tarifa_dist_calculada ?? 0) * (float) ($linea->factor_jornada ?? 1))
-                    + (float) ($linea->plus_calculado ?? 0),
-                    2
-                );
                 $linea->alertas = $this->resolveLineAlerts($row);
                 $this->recalculateLineaFinal($linea);
                 $linea->save();
