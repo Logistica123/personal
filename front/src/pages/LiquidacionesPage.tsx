@@ -5190,6 +5190,31 @@ export const LiquidacionesPage: React.FC<LiquidacionesPageProps> = ({
                           <td />
                           <td colSpan={colsBeforeEnviada - 1} className="liquidaciones-persona-expanded__label-cell">
                             <span className="liquidaciones-persona-chip">{label}</span>
+                            {liq.adjuntos && liq.adjuntos.length > 0 && (
+                              <div className="liquidaciones-persona-adjuntos">
+                                {liq.adjuntos.map((adj) => {
+                                  const url = adj.downloadUrl
+                                    ? withAuthToken(resolveApiUrl(apiBaseUrl, adj.downloadUrl))
+                                    : withAuthToken(resolveApiUrl(apiBaseUrl, `/api/personal/${registro.id}/documentos/${adj.id}/descargar`));
+                                  return url ? (
+                                    <a
+                                      key={adj.id}
+                                      href={url}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="liquidaciones-persona-adjunto-link"
+                                      download
+                                    >
+                                      📎 {adj.nombre}
+                                    </a>
+                                  ) : (
+                                    <span key={adj.id} className="liquidaciones-persona-adjunto-link liquidaciones-persona-adjunto-link--disabled">
+                                      📎 {adj.nombre}
+                                    </span>
+                                  );
+                                })}
+                              </div>
+                            )}
                           </td>
                           {isListColumnVisible('enviada') ? <td>{renderLiquidacionStatus(liq.enviada)}</td> : null}
                           {isListColumnVisible('facturado') ? (

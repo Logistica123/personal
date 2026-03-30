@@ -7,6 +7,7 @@ export type LiquidacionSummary = {
   recibido: boolean | null;
   pagado: boolean | null;
   importeFacturar: number | null;
+  adjuntos?: Array<{ id: number; nombre: string; downloadUrl: string | null }>;
 };
 
 export type PersonalRecord = {
