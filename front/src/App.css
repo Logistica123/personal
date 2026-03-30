@@ -548,6 +548,42 @@ body {
   transition: background-color 0.2s ease, color 0.2s ease;
 }
 
+.sidebar-nav button.sidebar-link {
+  border: 0;
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.sidebar-nav button.sidebar-link:active {
+  background: transparent;
+}
+
+.sidebar-link.has-submenu {
+  justify-content: space-between;
+  width: 100%;
+}
+
+.sidebar-link.has-submenu::after {
+  content: '';
+  width: 0.45rem;
+  height: 0.45rem;
+  border-right: 2px solid currentColor;
+  border-bottom: 2px solid currentColor;
+  transform: rotate(45deg);
+  opacity: 0.55;
+  transition: transform 0.2s ease, opacity 0.2s ease;
+}
+
+.sidebar-link.has-submenu.is-submenu-open::after {
+  transform: rotate(-135deg);
+  opacity: 0.8;
+}
+
 .sidebar-link:hover {
   background-color: #eef3ff;
   color: #1d74f5;

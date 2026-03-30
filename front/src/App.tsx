@@ -3308,21 +3308,19 @@ const DashboardLayout: React.FC<{
           ) : null}
           {canAccessSection(userRole, 'personal', authUser?.permissions) ? (
             <>
-              <NavLink
-                to="/personal"
-                className={({ isActive }) => `sidebar-link${isActive ? ' is-active' : ''}`}
+              <button
+                type="button"
+                className={`sidebar-link has-submenu${isPersonalListRoute ? ' is-active' : ''}${
+                  personalSubmenuOpen ? ' is-submenu-open' : ''
+                }`}
                 onClick={(event) => {
-                  if (location.pathname === '/personal') {
-                    event.preventDefault();
-                    setPersonalSubmenuOpen((prev) => !prev);
-                  } else {
-                    setPersonalSubmenuOpen(true);
-                  }
+                  event.stopPropagation();
+                  setPersonalSubmenuOpen((prev) => !prev);
                 }}
               >
                 Proveedores
-              </NavLink>
-              {isPersonalListRoute && personalSubmenuOpen ? (
+              </button>
+              {personalSubmenuOpen ? (
                 <div className="sidebar-submenu">
                   {[
                     { value: 'todos', label: 'Todos' },
@@ -3355,12 +3353,12 @@ const DashboardLayout: React.FC<{
             <>
               <button
                 type="button"
-                className={`sidebar-link${isReclamosRoute ? ' is-active' : ''}`}
-                onClick={() => {
+                className={`sidebar-link has-submenu${isReclamosRoute ? ' is-active' : ''}${
+                  reclamosSubmenuOpen ? ' is-submenu-open' : ''
+                }`}
+                onClick={(event) => {
+                  event.stopPropagation();
                   setReclamosSubmenuOpen((prev) => !prev);
-                  if (!isReclamosRoute) {
-                    navigate('/reclamos');
-                  }
                 }}
               >
                 Reclamos
@@ -3426,12 +3424,12 @@ const DashboardLayout: React.FC<{
             <>
               <button
                 type="button"
-                className={`sidebar-link${isLiquidacionesGroupRoute ? ' is-active' : ''}`}
-                onClick={() => {
+                className={`sidebar-link has-submenu${isLiquidacionesGroupRoute ? ' is-active' : ''}${
+                  liquidacionesSubmenuOpen ? ' is-submenu-open' : ''
+                }`}
+                onClick={(event) => {
+                  event.stopPropagation();
                   setLiquidacionesSubmenuOpen((prev) => !prev);
-                  if (!isLiquidacionesGroupRoute) {
-                    navigate('/liquidaciones');
-                  }
                 }}
               >
                 Liquidaciones/Pagos
@@ -3500,12 +3498,12 @@ const DashboardLayout: React.FC<{
             <>
               <button
                 type="button"
-                className={`sidebar-link${isFacturacionRoute ? ' is-active' : ''}`}
-                onClick={() => {
+                className={`sidebar-link has-submenu${isFacturacionRoute ? ' is-active' : ''}${
+                  facturacionSubmenuOpen ? ' is-submenu-open' : ''
+                }`}
+                onClick={(event) => {
+                  event.stopPropagation();
                   setFacturacionSubmenuOpen((prev) => !prev);
-                  if (!isFacturacionRoute) {
-                    navigate('/facturacion/facturas');
-                  }
                 }}
               >
                 Facturación
