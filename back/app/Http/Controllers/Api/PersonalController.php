@@ -2385,7 +2385,7 @@ class PersonalController extends Controller
         $transportistaQrLastScanAt = $persona->transportista_qr_last_scan_at ?? null;
         $latestLiquidacion = $persona->documentos?->first();
         $liquidacionEnviada = $latestLiquidacion ? (bool) $latestLiquidacion->enviada : null;
-        $liquidacionRecibido = $latestLiquidacion ? (bool) $latestLiquidacion->recibido : null;
+        $liquidacionRecibido = $latestLiquidacion ? ((bool) $latestLiquidacion->recibido || ($latestLiquidacion->children_count > 0)) : null;
         $liquidacionPagado = $latestLiquidacion ? (bool) $latestLiquidacion->pagado : null;
         $liquidacionImporteFacturar = $latestLiquidacion?->importe_facturar;
         $liquidacionesResumen = collect($persona->documentos ?? [])
@@ -2397,7 +2397,7 @@ class PersonalController extends Controller
                 $monthKey = $date ? $date->format('Y-m') : 'unknown';
                 $fortnightKey = $date ? $this->determineFortnightKey($documento, $date) : 'NO_DATE';
 
-                $recibido = (bool) $documento->recibido;
+                $recibido = (bool) $documento->recibido || ($documento->children_count > 0);
 
                 return [
                     'id' => $documento->id,

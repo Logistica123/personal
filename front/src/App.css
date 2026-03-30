@@ -2485,21 +2485,38 @@ tbody tr:hover {
   padding: 0.85rem 1rem;
 }
 
-.liquidaciones-persona-expanded__inner {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem;
-  align-items: center;
+.status-toggle-btn {
+  background: none;
+  border: none;
+  padding: 2px;
+  cursor: pointer;
+  display: inline-flex;
+  border-radius: 8px;
+  transition: box-shadow 0.15s;
+}
+
+.status-toggle-btn:hover {
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.4);
+}
+
+.status-toggle-btn:active {
+  opacity: 0.7;
 }
 
 .liquidaciones-persona-chip {
+  display: inline-flex;
+  align-items: center;
   border: 1px solid rgba(140, 163, 194, 0.65);
   background-color: #ffffff;
   color: #243a63;
-  padding: 0.6rem 0.75rem;
+  padding: 0.4rem 0.75rem;
   border-radius: 12px;
   font-weight: 600;
   cursor: default;
+}
+
+.liquidaciones-persona-expanded__label-cell {
+  padding: 0.5rem 1rem !important;
 }
 
 

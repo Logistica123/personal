@@ -488,13 +488,10 @@ class PersonalDocumentController extends Controller
                     $this->attachPendingFuelInvoices($persona, $documento, $request->boolean('marcarRecibido'));
                 }
 
-                if ($parentDocumentId && ! $isLiquidacionDoc) {
-                    $shouldMarkReceived = $request->boolean('marcarRecibido') || $request->boolean('esFacturaCombustible');
-                    if ($shouldMarkReceived) {
-                        $persona->documentos()
-                            ->where('id', $parentDocumentId)
-                            ->update(['recibido' => true]);
-                    }
+                if ($parentDocumentId) {
+                    $persona->documentos()
+                        ->where('id', $parentDocumentId)
+                        ->update(['recibido' => true]);
                 }
             });
         } catch (\Throwable $exception) {
@@ -745,6 +742,27 @@ class PersonalDocumentController extends Controller
         ]);
     }
 
+    public function updateRecibido(Request $request, Persona $persona): JsonResponse
+    {
+        $validated = $request->validate([
+            'documentIds' => ['required', 'array', 'min:1'],
+            'documentIds.*' => ['integer'],
+            'recibido' => ['required', 'boolean'],
+        ]);
+
+        $updated = $persona->documentos()
+            ->whereIn('id', $validated['documentIds'])
+            ->whereNull('parent_document_id')
+            ->update(['recibido' => $validated['recibido']]);
+
+        return response()->json([
+            'message' => 'Estado de facturación actualizado correctamente.',
+            'data' => [
+                'updated' => $updated,
+            ],
+        ]);
+    }
+
     public function updatePagadoBulk(Request $request): JsonResponse
     {
         $validated = $request->validate([
@@ -882,7 +900,7 @@ class PersonalDocumentController extends Controller
         $documento->save();
         $documento->loadMissing('tipo:id,nombre,vence');
 
-        if ($hasParentAssignment && $parentDocumentId && $request->boolean('marcarRecibido')) {
+        if ($hasParentAssignment && $parentDocumentId) {
             $persona->documentos()
                 ->where('id', $parentDocumentId)
                 ->update(['recibido' => true]);

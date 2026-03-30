@@ -51,6 +51,7 @@ Route::middleware('auth.api')->group(function () {
     Route::post('/personal/{persona}/documentos', [PersonalDocumentController::class, 'store']);
     Route::post('/personal/{persona}/documentos/publicar', [PersonalDocumentController::class, 'publishPending']);
     Route::post('/personal/{persona}/documentos/pagado', [PersonalDocumentController::class, 'updatePagado']);
+    Route::post('/personal/{persona}/documentos/recibido', [PersonalDocumentController::class, 'updateRecibido']);
     Route::post('/documentos/pagado', [PersonalDocumentController::class, 'updatePagadoBulk']);
     Route::put('/personal/{persona}/documentos/{documento}', [PersonalDocumentController::class, 'updateDocument']);
     Route::delete('/personal/{persona}/documentos/{documento}', [PersonalDocumentController::class, 'destroy']);

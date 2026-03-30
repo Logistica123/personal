@@ -708,7 +708,6 @@ export const LiquidacionesPage: React.FC<LiquidacionesPageProps> = ({
       { key: 'unidad', label: 'Unidad' },
       { key: 'sucursal', label: 'Sucursal' },
       { key: 'fechaAlta', label: 'Fecha alta' },
-      { key: 'importeFacturar', label: 'Importe a facturar' },
       { key: 'enviada', label: 'Enviada' },
       { key: 'facturado', label: 'Facturado' },
       { key: 'pagado', label: 'Pagado' },
@@ -735,7 +734,6 @@ export const LiquidacionesPage: React.FC<LiquidacionesPageProps> = ({
       { key: 'unidad', label: 'Unidad' },
       { key: 'sucursal', label: 'Sucursal' },
       { key: 'fechaAlta', label: 'Fecha alta' },
-      { key: 'importeFacturar', label: 'Importe a facturar' },
       { key: 'importeFacturarConDescuento', label: 'Importe a facturar con descuento' },
       { key: 'combustibleResumen', label: 'Resumen combustible' },
       { key: 'enviada', label: 'Enviada' },
@@ -1700,6 +1698,25 @@ export const LiquidacionesPage: React.FC<LiquidacionesPageProps> = ({
     );
   }, []);
 
+  const handleToggleRecibido = useCallback(
+    async (personaId: number, documentId: number, currentValue: boolean | null) => {
+      const newValue = !currentValue;
+      const token = readAuthTokenFromStorage();
+      const headers: Record<string, string> = { 'Content-Type': 'application/json', Accept: 'application/json' };
+      if (token) {
+        headers.Authorization = `Bearer ${token}`;
+      }
+      await fetch(`${apiBaseUrl}/api/personal/${personaId}/documentos/recibido`, {
+        method: 'POST',
+        headers,
+        credentials: 'include',
+        body: JSON.stringify({ documentIds: [documentId], recibido: newValue }),
+      });
+      await fetchPersonal();
+    },
+    [apiBaseUrl, fetchPersonal]
+  );
+
   const handleSaveListImporte = useCallback(
     async (registro: PersonalRecord) => {
       if (isPagosView) {
@@ -1958,6 +1975,7 @@ export const LiquidacionesPage: React.FC<LiquidacionesPageProps> = ({
     },
     [apiBaseUrl, actorHeaders, fetchPersonal, listRecords, selectedListPagadoIds]
   );
+
 
   useEffect(() => {
     const controller = new AbortController();
@@ -2854,12 +2872,15 @@ export const LiquidacionesPage: React.FC<LiquidacionesPageProps> = ({
     if (importeFacturarBase == null) {
       return null;
     }
+    if (!liquidacionUseStoredImporte) {
+      return null;
+    }
     const descuento = selectedPersonalRecord?.combustibleResumen?.totalToBill ?? null;
     if (descuento == null) {
       return null;
     }
     return importeFacturarBase - descuento;
-  }, [importeFacturarBase, selectedPersonalRecord]);
+  }, [importeFacturarBase, liquidacionUseStoredImporte, selectedPersonalRecord]);
 
   const liquidacionFortnightSections = useMemo(() => {
     if (liquidacionGroups.length === 0) {
@@ -4941,7 +4962,7 @@ export const LiquidacionesPage: React.FC<LiquidacionesPageProps> = ({
               {isListColumnVisible('unidad') ? <th>Unidad</th> : null}
               {isListColumnVisible('sucursal') ? <th>Sucursal</th> : null}
               {isListColumnVisible('fechaAlta') ? <th>Fecha alta</th> : null}
-              {isListColumnVisible('importeFacturar') ? <th>Importe a facturar</th> : null}
+
               {isListColumnVisible('importeFacturarConDescuento') ? <th>Importe a facturar con descuento</th> : null}
               {isListColumnVisible('combustibleResumen') ? <th>Resumen combustible</th> : null}
               {isListColumnVisible('enviada') ? <th>Enviada</th> : null}
@@ -5062,34 +5083,6 @@ export const LiquidacionesPage: React.FC<LiquidacionesPageProps> = ({
                   {isListColumnVisible('unidad') ? <td>{registro.unidad ?? '—'}</td> : null}
                   {isListColumnVisible('sucursal') ? <td>{registro.sucursal ?? '—'}</td> : null}
                   {isListColumnVisible('fechaAlta') ? <td>{registro.fechaAlta ?? '—'}</td> : null}
-                  {isListColumnVisible('importeFacturar') ? (
-                    <td>
-                      {!isPagosView && typeof registro.liquidacionIdLatest === 'number' ? (
-                        <div className="liquidaciones-importe-cell">
-                          <input
-                            type="text"
-                            inputMode="decimal"
-                            className="liquidaciones-importe-input"
-                            placeholder="0,00"
-                            value={getListImporteInputValue(registro)}
-                            onChange={(event) =>
-                              handleListImporteDraftChange(registro.liquidacionIdLatest!, event.target.value)
-                            }
-                            onBlur={() => void handleSaveListImporte(registro)}
-                            onKeyDown={(event) => handleListImporteKeyDown(event, registro)}
-                            disabled={listImporteSavingIds.has(registro.liquidacionIdLatest)}
-                          />
-                          {listImporteSavingIds.has(registro.liquidacionIdLatest) ? (
-                            <span className="liquidaciones-importe-saving">Guardando...</span>
-                          ) : null}
-                        </div>
-                      ) : registro.liquidacionImporteFacturar != null ? (
-                        formatCurrency(registro.liquidacionImporteFacturar)
-                      ) : (
-                        '—'
-                      )}
-                    </td>
-                  ) : null}
                   {isListColumnVisible('importeFacturarConDescuento') ? (
                     <td>
                       {registro.liquidacionImporteFacturar != null && registro.combustibleResumen
@@ -5119,7 +5112,20 @@ export const LiquidacionesPage: React.FC<LiquidacionesPageProps> = ({
                     <td>{renderLiquidacionStatus(registro.liquidacionEnviada)}</td>
                   ) : null}
                   {isListColumnVisible('facturado') ? (
-                    <td>{renderLiquidacionStatus(registro.liquidacionRecibido)}</td>
+                    <td>
+                      {typeof registro.liquidacionIdLatest === 'number' ? (
+                        <button
+                          type="button"
+                          className="status-toggle-btn"
+                          title="Clic para cambiar estado de facturación"
+                          onClick={() => void handleToggleRecibido(registro.id, registro.liquidacionIdLatest!, registro.liquidacionRecibido ?? null)}
+                        >
+                          {renderLiquidacionStatus(registro.liquidacionRecibido)}
+                        </button>
+                      ) : (
+                        renderLiquidacionStatus(registro.liquidacionRecibido)
+                      )}
+                    </td>
                   ) : null}
                   {isListColumnVisible('pagado') ? (
                     <td>
@@ -5166,25 +5172,37 @@ export const LiquidacionesPage: React.FC<LiquidacionesPageProps> = ({
                 );
 
                 if (isExpanded) {
-                  rows.push(
-                    <tr key={`${rowKey}-expanded`} className="liquidaciones-persona-expanded">
-                      <td colSpan={listTableColumnCount}>
-                        <div className="liquidaciones-persona-expanded__inner">
-                          {liquidaciones
-                            .slice()
-                            .sort((a, b) => String(b.fecha ?? b.monthKey ?? '').localeCompare(String(a.fecha ?? a.monthKey ?? '')))
-                            .map((liq) => {
-                              const label = `Liquidación #${liq.id} · ${formatMonthKeyLabel(liq.monthKey)} · ${formatFortnightKeyLabel(liq.fortnightKey)}`;
-                              return (
-                                <span key={`liq-chip-${registro.id}-${liq.id}`} className="liquidaciones-persona-chip">
-                                  {label}
-                                </span>
-                              );
-                            })}
-                        </div>
-                      </td>
-                    </tr>
-                  );
+                  const colsBeforeEnviada = 1 +
+                    ['id', 'nombre', 'cuil', 'telefono', 'email', 'cbuAlias', 'cobradorCbuAlias', 'cobradorCuil', 'perfil', 'agente', 'estado', 'combustible', 'tarifaEspecial', 'cliente', 'unidad', 'sucursal', 'fechaAlta', 'importeFacturarConDescuento', 'combustibleResumen']
+                      .filter((key) => isListColumnVisible(key)).length;
+                  liquidaciones
+                    .slice()
+                    .sort((a, b) => String(b.fecha ?? b.monthKey ?? '').localeCompare(String(a.fecha ?? a.monthKey ?? '')))
+                    .forEach((liq) => {
+                      const label = `Liquidación #${liq.id} · ${formatMonthKeyLabel(liq.monthKey)} · ${formatFortnightKeyLabel(liq.fortnightKey)}`;
+                      rows.push(
+                        <tr key={`${rowKey}-liq-${liq.id}`} className="liquidaciones-persona-expanded">
+                          <td colSpan={colsBeforeEnviada} className="liquidaciones-persona-expanded__label-cell">
+                            <span className="liquidaciones-persona-chip">{label}</span>
+                          </td>
+                          {isListColumnVisible('enviada') ? <td>{renderLiquidacionStatus(liq.enviada)}</td> : null}
+                          {isListColumnVisible('facturado') ? (
+                            <td>
+                              <button
+                                type="button"
+                                className="status-toggle-btn"
+                                title="Clic para cambiar estado de facturación"
+                                onClick={() => void handleToggleRecibido(registro.id, liq.id, liq.recibido)}
+                              >
+                                {renderLiquidacionStatus(liq.recibido)}
+                              </button>
+                            </td>
+                          ) : null}
+                          {isListColumnVisible('pagado') ? <td>{renderLiquidacionStatus(liq.pagado)}</td> : null}
+                          {isListColumnVisible('acciones') ? <td /> : null}
+                        </tr>
+                      );
+                    });
                 }
 
                 return rows;
@@ -5438,7 +5456,16 @@ export const LiquidacionesPage: React.FC<LiquidacionesPageProps> = ({
                                     : '—'}
                                 </td>
                                 <td>{renderLiquidacionStatus(group.main.enviada)}</td>
-                                <td>{renderLiquidacionStatus(group.main.recibido)}</td>
+                                <td>
+                                  <button
+                                    type="button"
+                                    className="status-toggle-btn"
+                                    title="Clic para cambiar estado de facturación"
+                                    onClick={() => void handleToggleRecibido(selectedPersonaId!, group.main.id, group.main.recibido ?? null)}
+                                  >
+                                    {renderLiquidacionStatus(group.main.recibido)}
+                                  </button>
+                                </td>
                                 <td>{renderAiValidationStatus(group.main)}</td>
                                 <td>
                                   <div className="liquidaciones-pagado-cell">
