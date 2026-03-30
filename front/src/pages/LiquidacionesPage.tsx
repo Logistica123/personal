@@ -445,6 +445,7 @@ export const LiquidacionesPage: React.FC<LiquidacionesPageProps> = ({
   const apiBaseUrl = useMemo(() => resolveApiBaseUrl(), []);
   const authUser = useStoredAuthUser();
   const actorHeaders = useMemo(() => buildActorHeaders(authUser), [authUser]);
+  const isAsesor = (authUser?.role ?? '').toLowerCase().includes('asesor');
   const [personal, setPersonal] = useState<PersonalRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -4701,22 +4702,24 @@ export const LiquidacionesPage: React.FC<LiquidacionesPageProps> = ({
             </button>
             {showLiquidacionesColumnPicker ? (
               <div className="column-picker__menu">
-                {liquidacionesColumnOptions.map((column) => (
-                  <label key={column.key} className="column-picker__option">
-                    <input
-                      type="checkbox"
-                      checked={visibleLiquidacionesColumns[column.key] !== false}
-                      disabled={Boolean(column.locked)}
-                      onChange={() =>
-                        setVisibleLiquidacionesColumns((prev) => ({
-                          ...prev,
-                          [column.key]: column.locked ? true : !prev[column.key],
-                        }))
-                      }
-                    />
-                    <span>{column.label}</span>
-                  </label>
-                ))}
+                {liquidacionesColumnOptions
+                  .filter((column) => !(isAsesor && column.key === 'importeFacturarConDescuento'))
+                  .map((column) => (
+                    <label key={column.key} className="column-picker__option">
+                      <input
+                        type="checkbox"
+                        checked={visibleLiquidacionesColumns[column.key] !== false}
+                        disabled={Boolean(column.locked)}
+                        onChange={() =>
+                          setVisibleLiquidacionesColumns((prev) => ({
+                            ...prev,
+                            [column.key]: column.locked ? true : !prev[column.key],
+                          }))
+                        }
+                      />
+                      <span>{column.label}</span>
+                    </label>
+                  ))}
               </div>
             ) : null}
           </div>
@@ -4963,7 +4966,7 @@ export const LiquidacionesPage: React.FC<LiquidacionesPageProps> = ({
               {isListColumnVisible('sucursal') ? <th>Sucursal</th> : null}
               {isListColumnVisible('fechaAlta') ? <th>Fecha alta</th> : null}
 
-              {isListColumnVisible('importeFacturarConDescuento') ? <th>Importe a facturar con descuento</th> : null}
+              {!isAsesor && isListColumnVisible('importeFacturarConDescuento') ? <th>Importe a facturar con descuento</th> : null}
               {isListColumnVisible('combustibleResumen') ? <th>Resumen combustible</th> : null}
               {isListColumnVisible('enviada') ? <th>Enviada</th> : null}
               {isListColumnVisible('facturado') ? <th>Facturado</th> : null}
@@ -5083,7 +5086,7 @@ export const LiquidacionesPage: React.FC<LiquidacionesPageProps> = ({
                   {isListColumnVisible('unidad') ? <td>{registro.unidad ?? '—'}</td> : null}
                   {isListColumnVisible('sucursal') ? <td>{registro.sucursal ?? '—'}</td> : null}
                   {isListColumnVisible('fechaAlta') ? <td>{registro.fechaAlta ?? '—'}</td> : null}
-                  {isListColumnVisible('importeFacturarConDescuento') ? (
+                  {!isAsesor && isListColumnVisible('importeFacturarConDescuento') ? (
                     <td>
                       {registro.liquidacionImporteFacturar != null && registro.combustibleResumen
                         ? formatCurrency(registro.liquidacionImporteFacturar - registro.combustibleResumen.totalToBill)
@@ -5147,13 +5150,15 @@ export const LiquidacionesPage: React.FC<LiquidacionesPageProps> = ({
                   {isListColumnVisible('acciones') ? (
                     <td>
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
-                        <button
-                          type="button"
-                          className="secondary-action"
-                          onClick={() => handleSelectPersona(registro)}
-                        >
-                          Gestionar
-                        </button>
+                        {!isAsesor ? (
+                          <button
+                            type="button"
+                            className="secondary-action"
+                            onClick={() => handleSelectPersona(registro)}
+                          >
+                            Gestionar
+                          </button>
+                        ) : null}
                         {!isPagosView ? (
                           <button
                             type="button"
@@ -5182,7 +5187,8 @@ export const LiquidacionesPage: React.FC<LiquidacionesPageProps> = ({
                       const label = `Liquidación #${liq.id} · ${formatMonthKeyLabel(liq.monthKey)} · ${formatFortnightKeyLabel(liq.fortnightKey)}`;
                       rows.push(
                         <tr key={`${rowKey}-liq-${liq.id}`} className="liquidaciones-persona-expanded">
-                          <td colSpan={colsBeforeEnviada} className="liquidaciones-persona-expanded__label-cell">
+                          <td />
+                          <td colSpan={colsBeforeEnviada - 1} className="liquidaciones-persona-expanded__label-cell">
                             <span className="liquidaciones-persona-chip">{label}</span>
                           </td>
                           {isListColumnVisible('enviada') ? <td>{renderLiquidacionStatus(liq.enviada)}</td> : null}
