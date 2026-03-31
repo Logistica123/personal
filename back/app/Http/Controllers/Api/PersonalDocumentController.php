@@ -386,7 +386,9 @@ class PersonalDocumentController extends Controller
         $monthKey = $validated['monthKey'] ?? null;
         if (! $parsedFecha && $monthKey) {
             try {
-                $parsedFecha = Carbon::createFromFormat('Y-m', $monthKey)->startOfMonth();
+                // Usar "!" para que los campos no provistos (día/hora) no se completen con "hoy".
+                // Ej: si hoy es 31/03 y se parsea "2026-02" sin "!", PHP completa día=31 y termina en marzo.
+                $parsedFecha = Carbon::createFromFormat('!Y-m', $monthKey)->startOfMonth();
             } catch (\Throwable $exception) {
                 // ignore invalid monthKey
             }
