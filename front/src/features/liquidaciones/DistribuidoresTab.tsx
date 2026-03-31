@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import type {
   LiqClienteLiq,
   LiquidacionDistribuidor,
@@ -13,10 +14,45 @@ import {
   formatFecha,
   formatPeso,
 } from './types';
+import { LIQ_DISTRIBUIDORES_PREFILL_KEY } from './storageKeys';
 
 type Props = {
   apiBaseUrl: string;
   buildActorHeaders: () => Record<string, string>;
+};
+
+const readApiErrorMessage = async (res: Response): Promise<string> => {
+  const contentType = res.headers.get('content-type') ?? '';
+  if (contentType.includes('application/json')) {
+    try {
+      const body = (await res.json()) as { message?: string };
+      if (body?.message) return body.message;
+    } catch {
+      // ignore
+    }
+  }
+
+  let text = '';
+  try {
+    text = (await res.text()) ?? '';
+  } catch {
+    // ignore
+  }
+
+  if (text.trim().startsWith('<!DOCTYPE') || text.trim().startsWith('<html')) {
+    return `La API devolvió HTML (status ${res.status}) en ${res.url}. Revisar apiBaseUrl / sesión.`;
+  }
+
+  const suffix = text ? ` ${text.slice(0, 160)}` : '';
+  return `Error HTTP ${res.status}.${suffix}`;
+};
+
+const readJsonOrThrow = async <T,>(res: Response): Promise<T> => {
+  const contentType = res.headers.get('content-type') ?? '';
+  if (!contentType.includes('application/json')) {
+    throw new Error(await readApiErrorMessage(res));
+  }
+  return (await res.json()) as T;
 };
 
 const ESTADO_BADGE: Record<LiquidacionDistribuidorEstado, React.CSSProperties> = {
@@ -71,12 +107,12 @@ const LiquidacionDetalle: React.FC<{
               {LIQ_DISTRIBUIDOR_ESTADO_LABEL[liq.estado]}
             </span>
             {liq.pdf_url && (
-              <button style={{ ...btnPrimaryStyle, background: '#059669' }} onClick={onDescargarPdf}>
+              <button type="button" style={{ ...btnPrimaryStyle, background: '#059669' }} onClick={onDescargarPdf}>
                 ↓ PDF
               </button>
             )}
             {liq.estado === 'generada' && (
-              <button style={btnPrimaryStyle} disabled={aprobando} onClick={() => void onAprobar()}>
+              <button type="button" style={btnPrimaryStyle} disabled={aprobando} onClick={() => void onAprobar()}>
                 {aprobando ? '…' : '✓ Aprobar'}
               </button>
             )}
@@ -220,6 +256,7 @@ const TotalCard: React.FC<{
 // ─── Componente principal ────────────────────────────────────────────────────
 
 export const DistribuidoresTab: React.FC<Props> = ({ apiBaseUrl, buildActorHeaders }) => {
+  const navigate = useNavigate();
   const [clientes, setClientes] = useState<LiqClienteLiq[]>([]);
   const [filtros, setFiltros] = useState({ clienteId: '', periodoDesde: '', periodoHasta: '', estado: '' as LiquidacionDistribuidorEstado | '' });
   const [liquidaciones, setLiquidaciones] = useState<LiquidacionDistribuidor[]>([]);
@@ -231,18 +268,58 @@ export const DistribuidoresTab: React.FC<Props> = ({ apiBaseUrl, buildActorHeade
   const [error, setError] = useState<string | null>(null);
   const [buscar, setBuscar] = useState('');
 
+  const normalizeLiquidacion = useCallback((l: LiquidacionDistribuidor): LiquidacionDistribuidor => {
+    const num = (v: unknown): number => {
+      if (typeof v === 'number') return Number.isFinite(v) ? v : 0;
+      if (typeof v === 'string') {
+        const n = Number(v);
+        return Number.isFinite(n) ? n : 0;
+      }
+      return 0;
+    };
+
+    return {
+      ...l,
+      cantidad_operaciones: num((l as unknown as { cantidad_operaciones?: unknown }).cantidad_operaciones),
+      subtotal: num((l as unknown as { subtotal?: unknown }).subtotal),
+      gastos_administrativos: num((l as unknown as { gastos_administrativos?: unknown }).gastos_administrativos),
+      total_a_pagar: num((l as unknown as { total_a_pagar?: unknown }).total_a_pagar),
+    };
+  }, []);
+
+  // Prefill de filtros desde Extractos (al generar liquidaciones)
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(LIQ_DISTRIBUIDORES_PREFILL_KEY);
+      if (!raw) return;
+      localStorage.removeItem(LIQ_DISTRIBUIDORES_PREFILL_KEY);
+      const parsed = JSON.parse(raw) as Partial<{ clienteId: number | string; periodoDesde: string; periodoHasta: string }>;
+
+      setFiltros((prev) => ({
+        ...prev,
+        clienteId: parsed.clienteId != null ? String(parsed.clienteId) : prev.clienteId,
+        periodoDesde: typeof parsed.periodoDesde === 'string' ? parsed.periodoDesde : prev.periodoDesde,
+        periodoHasta: typeof parsed.periodoHasta === 'string' ? parsed.periodoHasta : prev.periodoHasta,
+      }));
+    } catch {
+      // ignore
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // ── Cargar clientes ──────────────────────────────────────────────────────
   useEffect(() => {
     const load = async () => {
       try {
         const res = await fetch(`${apiBaseUrl}/api/liq/clientes`, {
           credentials: 'include',
-          headers: buildActorHeaders(),
+          headers: { ...buildActorHeaders(), Accept: 'application/json' },
         });
-        const data = (await res.json()) as { data?: LiqClienteLiq[] };
+        if (!res.ok) throw new Error(await readApiErrorMessage(res));
+        const data = await readJsonOrThrow<{ data?: LiqClienteLiq[] }>(res);
         setClientes(data.data ?? []);
-      } catch {
-        setError('No se pudieron cargar los clientes.');
+      } catch (e) {
+        setError(e instanceof Error ? e.message : 'No se pudieron cargar los clientes.');
       }
     };
     void load();
@@ -259,12 +336,16 @@ export const DistribuidoresTab: React.FC<Props> = ({ apiBaseUrl, buildActorHeade
       if (filtros.estado) params.set('estado', filtros.estado);
       const res = await fetch(`${apiBaseUrl}/api/liq/distribuidores?${params.toString()}`, {
         credentials: 'include',
-        headers: buildActorHeaders(),
+        headers: { ...buildActorHeaders(), Accept: 'application/json' },
       });
-      const data = (await res.json()) as { data?: LiquidacionDistribuidor[] };
-      setLiquidaciones(data.data ?? []);
-    } catch {
-      setError('No se pudieron cargar las liquidaciones de distribuidores.');
+      if (!res.ok) throw new Error(await readApiErrorMessage(res));
+      const data = await readJsonOrThrow<{ data?: LiquidacionDistribuidor[] }>(res);
+      setLiquidaciones((data.data ?? []).map((l) => normalizeLiquidacion(l)));
+      setError(null);
+    } catch (e) {
+      setError(
+        e instanceof Error ? e.message : 'No se pudieron cargar las liquidaciones de distribuidores.',
+      );
     } finally {
       setCargando(false);
     }
@@ -285,12 +366,13 @@ export const DistribuidoresTab: React.FC<Props> = ({ apiBaseUrl, buildActorHeade
       try {
         const res = await fetch(
           `${apiBaseUrl}/api/liq/distribuidores/${seleccionada.id}/operaciones`,
-          { credentials: 'include', headers: buildActorHeaders() },
+          { credentials: 'include', headers: { ...buildActorHeaders(), Accept: 'application/json' } },
         );
-        const data = (await res.json()) as { data?: Operacion[] };
+        if (!res.ok) throw new Error(await readApiErrorMessage(res));
+        const data = await readJsonOrThrow<{ data?: Operacion[] }>(res);
         setOperaciones(data.data ?? []);
-      } catch {
-        setError('No se pudieron cargar las operaciones.');
+      } catch (e) {
+        setError(e instanceof Error ? e.message : 'No se pudieron cargar las operaciones.');
       } finally {
         setCargandoOps(false);
       }
@@ -305,20 +387,24 @@ export const DistribuidoresTab: React.FC<Props> = ({ apiBaseUrl, buildActorHeade
     try {
       const res = await fetch(
         `${apiBaseUrl}/api/liq/distribuidores/${seleccionada.id}/aprobar`,
-        { method: 'POST', credentials: 'include', headers: buildActorHeaders() },
+        { method: 'POST', credentials: 'include', headers: { ...buildActorHeaders(), Accept: 'application/json' } },
       );
-      if (!res.ok) throw new Error('No se pudo aprobar.');
-      const data = (await res.json()) as { data?: LiquidacionDistribuidor };
+      if (!res.ok) throw new Error(await readApiErrorMessage(res));
+      const data = await readJsonOrThrow<{ data?: LiquidacionDistribuidor }>(res);
       if (data.data) {
-        setSeleccionada(data.data);
-        setLiquidaciones((prev) => prev.map((l) => (l.id === data.data!.id ? data.data! : l)));
+        const normalized = normalizeLiquidacion(data.data);
+        setSeleccionada(normalized);
+        setLiquidaciones((prev) => prev.map((l) => (l.id === normalized.id ? normalized : l)));
+        if (normalized.distribuidor_id) {
+          navigate(`/liquidaciones/${normalized.distribuidor_id}`);
+        }
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Error al aprobar.');
     } finally {
       setAprobando(false);
     }
-  }, [apiBaseUrl, buildActorHeaders, seleccionada]);
+  }, [apiBaseUrl, buildActorHeaders, navigate, normalizeLiquidacion, seleccionada]);
 
   // ── Descargar PDF ────────────────────────────────────────────────────────
   const handleDescargarPdf = useCallback(() => {
@@ -366,7 +452,18 @@ export const DistribuidoresTab: React.FC<Props> = ({ apiBaseUrl, buildActorHeade
         <div>
           {/* Filtros */}
           <div style={cardStyle}>
-            <h3 style={{ fontSize: 14, fontWeight: 600, marginBottom: 12 }}>Filtros</h3>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+              <h3 style={{ fontSize: 14, fontWeight: 600, marginBottom: 12 }}>Filtros</h3>
+              <button
+                type="button"
+                style={{ ...btnPrimaryStyle, background: '#f3f4f6', color: '#111827', padding: '6px 12px' }}
+                disabled={cargando}
+                onClick={() => void cargar()}
+                title="Vuelve a consultar la API"
+              >
+                {cargando ? '…' : 'Refrescar'}
+              </button>
+            </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
               <div style={formFieldStyle}>
                 <label style={labelStyle}>Cliente</label>

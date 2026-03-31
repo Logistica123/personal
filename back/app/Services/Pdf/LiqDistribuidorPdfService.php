@@ -17,7 +17,7 @@ namespace App\Services\Pdf;
  *   distribuidor_cuit string     CUIT/CUIL
  *   periodo           string     Ej. "01/03/2026 al 31/03/2026"
  *   fecha_generacion  string     Ej. "31/03/2026"
- *   rows              list<array{fecha,dominio,concepto,valor_cliente,tarifa_dist,diferencia}>
+ *   rows              list<array{fecha,dominio,concepto,tarifa_dist,diferencia}>
  *   totals            array{subtotal,gastos_admin,total}  (strings ya formateados)
  */
 class LiqDistribuidorPdfService
@@ -100,7 +100,6 @@ class LiqDistribuidorPdfService
         $this->drawText($c, 55,  $hY, 'Fecha',          'F2', 8);
         $this->drawText($c, 115, $hY, 'Dominio',        'F2', 8);
         $this->drawText($c, 175, $hY, 'Concepto',       'F2', 8);
-        $this->drawTextRight($c, 390, $hY, 'Val. Cliente', 'F2', 8);
         $this->drawTextRight($c, 480, $hY, 'Tarifa Dist.', 'F2', 8);
         $this->drawTextRight($c, 560, $hY, 'Diferencia',   'F2', 8);
         $y -= 20;
@@ -116,8 +115,7 @@ class LiqDistribuidorPdfService
 
             $this->drawText($c, 55,  $y, (string) ($row['fecha']         ?? ''), 'F3', 8);
             $this->drawText($c, 115, $y, (string) ($row['dominio']       ?? ''), 'F3', 8);
-            $this->drawText($c, 175, $y, $this->truncate((string) ($row['concepto'] ?? ''), 28), 'F3', 8);
-            $this->drawTextRight($c, 390, $y, (string) ($row['valor_cliente'] ?? ''), 'F3', 8);
+            $this->drawText($c, 175, $y, $this->truncate((string) ($row['concepto'] ?? ''), 34), 'F3', 8);
             $this->drawTextRight($c, 480, $y, (string) ($row['tarifa_dist']   ?? ''), 'F3', 8);
 
             // Diferencia: rojo si negativa, verde si positiva

@@ -79,7 +79,7 @@ class LiqPagoController extends Controller
         $items = $pago->items()
             ->with([
                 'liquidacionDistribuidor:id,liquidacion_cliente_id,distribuidor_id,periodo_desde,periodo_hasta,total_a_pagar,estado,pdf_path,pago_id,fecha_pago,pagado_por,pago_referencia',
-                'distribuidor:id,nombres,apellidos,patente,cuit_cuil,cbu_alias',
+                'distribuidor:id,nombres,apellidos,patente,cuil,cbu_alias',
             ])
             ->orderBy('id')
             ->get()
@@ -90,7 +90,7 @@ class LiqPagoController extends Controller
                     ...$i->toArray(),
                     'distribuidor_nombre' => $dist ? trim("{$dist->apellidos} {$dist->nombres}") : null,
                     'distribuidor_patente' => $dist?->patente,
-                    'distribuidor_cuit' => $dist?->cuit_cuil,
+                    'distribuidor_cuit' => $dist?->cuil,
                 ];
             });
 
@@ -114,7 +114,7 @@ class LiqPagoController extends Controller
 
         if ($dryRun) {
             $eligibleQuery = LiqLiquidacionDistribuidor::query()
-                ->with('distribuidor:id,nombres,apellidos,patente,cuit_cuil,cbu_alias')
+                ->with('distribuidor:id,nombres,apellidos,patente,cuil,cbu_alias')
                 ->where('estado', 'aprobada')
                 ->whereNull('pago_id')
                 ->where('total_a_pagar', '>', 0)
@@ -170,7 +170,7 @@ class LiqPagoController extends Controller
         /** @var LiqPago $pago */
         $pago = DB::transaction(function () use ($validated, $request) {
             $eligibleQuery = LiqLiquidacionDistribuidor::query()
-                ->with('distribuidor:id,nombres,apellidos,patente,cuit_cuil,cbu_alias')
+                ->with('distribuidor:id,nombres,apellidos,patente,cuil,cbu_alias')
                 ->where('estado', 'aprobada')
                 ->whereNull('pago_id')
                 ->where('total_a_pagar', '>', 0)
@@ -298,7 +298,7 @@ class LiqPagoController extends Controller
         $pago->load('cliente:id,nombre_corto');
 
         $items = $pago->items()
-            ->with(['distribuidor:id,nombres,apellidos,patente,cuit_cuil'])
+            ->with(['distribuidor:id,nombres,apellidos,patente,cuil'])
             ->orderBy('id')
             ->get();
 
@@ -339,7 +339,7 @@ class LiqPagoController extends Controller
                     $i->distribuidor_id,
                     $nombre,
                     $dist?->patente ?? '',
-                    $dist?->cuit_cuil ?? '',
+                    $dist?->cuil ?? '',
                     $i->cbu_alias ?? '',
                     (string) $i->monto,
                     $pago->periodo_desde->format('Y-m-d'),

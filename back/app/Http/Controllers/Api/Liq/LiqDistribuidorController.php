@@ -5,8 +5,11 @@ namespace App\Http\Controllers\Api\Liq;
 use App\Http\Controllers\Controller;
 use App\Models\LiqLiquidacionDistribuidor;
 use App\Models\LiqOperacion;
+use App\Services\Liq\LiqDistribuidorPersonalLiquidacionService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 
 class LiqDistribuidorController extends Controller
@@ -16,7 +19,7 @@ class LiqDistribuidorController extends Controller
         $this->authorize($request);
 
         $query = LiqLiquidacionDistribuidor::query()
-            ->with(['distribuidor:id,nombres,apellidos,patente,cuit_cuil', 'liquidacionCliente:id,cliente_id,archivo_origen,periodo_desde,periodo_hasta'])
+            ->with(['distribuidor:id,nombres,apellidos,patente,cuil', 'liquidacionCliente:id,cliente_id,archivo_origen,periodo_desde,periodo_hasta'])
             ->with('liquidacionCliente.cliente:id,nombre_corto')
             ->orderByDesc('id');
 
@@ -82,9 +85,36 @@ class LiqDistribuidorController extends Controller
             ], 422);
         }
 
-        $liqDistribuidor->update(['estado' => 'aprobada']);
+        $liqDistribuidor->loadMissing(['distribuidor', 'liquidacionCliente.cliente']);
 
-        return response()->json(['data' => $this->format($liqDistribuidor->fresh())]);
+        $personalDocumentoId = null;
+        try {
+            $service = new LiqDistribuidorPersonalLiquidacionService();
+
+            DB::transaction(function () use ($liqDistribuidor, $service, &$personalDocumentoId) {
+                $liqDistribuidor->update(['estado' => 'aprobada']);
+
+                $documento = $service->crearDocumentoPersonalDesdeLiquidacion($liqDistribuidor);
+                $personalDocumentoId = $documento?->id;
+            });
+        } catch (\Throwable $exception) {
+            Log::warning('No se pudo crear la liquidación en Personal al aprobar liquidación de distribuidor.', [
+                'liq_distribuidor_id' => $liqDistribuidor->id,
+                'distribuidor_id' => $liqDistribuidor->distribuidor_id,
+                'error' => $exception->getMessage(),
+            ]);
+
+            return response()->json([
+                'message' => $exception->getMessage() ?: 'No se pudo generar la liquidación en Personal.',
+            ], 422);
+        }
+
+        return response()->json([
+            'data' => [
+                ...$this->format($liqDistribuidor->fresh()),
+                'personal_documento_id' => $personalDocumentoId,
+            ],
+        ]);
     }
 
     public function pdf(Request $request, LiqLiquidacionDistribuidor $liqDistribuidor): JsonResponse
@@ -109,7 +139,7 @@ class LiqDistribuidorController extends Controller
             ...$l->toArray(),
             'distribuidor_nombre'  => $nombre,
             'distribuidor_patente' => $dist?->patente,
-            'distribuidor_cuit'    => $dist?->cuit_cuil,
+            'distribuidor_cuit'    => $dist?->cuil,
             'pdf_url'              => $l->pdf_url,
         ];
     }

@@ -950,15 +950,29 @@ export const LiquidacionesPage: React.FC<LiquidacionesPageProps> = ({
     }
     return detail.documents.some((doc) => isFuelDocument(doc));
   }, [detail, isFuelDocument]);
-  const hasPendingStoredDocuments = useMemo(() => {
+  const publishableStoredDocumentIds = useMemo(() => {
     if (!detail?.documents) {
-      return false;
+      return [];
     }
-    return detail.documents.some(
-      (doc) => (doc.pendiente ?? false) && (isLiquidacionDocument(doc) || isFuelDocument(doc))
-    );
-  }, [detail, isFuelDocument, isLiquidacionDocument]);
-  const canPublishPending = hasPendingStoredDocuments;
+
+    return detail.documents
+      .filter((doc) => {
+        const isAttachment = doc.isAttachment ?? (doc.parentDocumentId !== null && doc.parentDocumentId !== undefined);
+        if (isAttachment) {
+          return false;
+        }
+        if (!isLiquidacionDocument(doc)) {
+          return false;
+        }
+
+        const isPending = Boolean(doc.pendiente);
+        const isUnsent = doc.enviada === false;
+        return isPending || isUnsent;
+      })
+      .map((doc) => doc.id)
+      .filter((id): id is number => typeof id === 'number' && Number.isFinite(id));
+  }, [detail, isLiquidacionDocument]);
+  const canPublishPending = publishableStoredDocumentIds.length > 0;
   const canSubmitUploads = pendingUploads.length > 0;
   const hasAnyUploadTarget = canSubmitUploads || canPublishPending;
   const hasFuelDataForSubmit =
@@ -3991,12 +4005,15 @@ export const LiquidacionesPage: React.FC<LiquidacionesPageProps> = ({
     ]
   );
 
-  const publishPendingDocuments = useCallback(async () => {
+  const publishPendingDocuments = useCallback(async (documentIds?: number[]) => {
     if (!selectedPersonaId) {
       return false;
     }
 
     const formData = new FormData();
+    if (Array.isArray(documentIds) && documentIds.length > 0) {
+      documentIds.forEach((id) => formData.append('documentIds[]', String(id)));
+    }
     if (importeFacturarFinal != null) {
       formData.append('importeFacturar', String(importeFacturarFinal));
     }
@@ -4030,7 +4047,7 @@ export const LiquidacionesPage: React.FC<LiquidacionesPageProps> = ({
     }
 
     const hasLocalUploads = pendingUploads.length > 0;
-    const hasPublishablePending = hasPendingStoredDocuments;
+    const hasPublishablePending = publishableStoredDocumentIds.length > 0;
     if (!hasLocalUploads && !hasPublishablePending) {
       return;
     }
@@ -4042,7 +4059,7 @@ export const LiquidacionesPage: React.FC<LiquidacionesPageProps> = ({
       try {
         setUploading(true);
         setUploadStatus(null);
-        await publishPendingDocuments();
+        await publishPendingDocuments(publishableStoredDocumentIds);
         setUploadStatus({ type: 'success', message: 'Liquidaciones publicadas correctamente.' });
         refreshPersonaDetail();
         advanceToNextQueuedPersona('subida');

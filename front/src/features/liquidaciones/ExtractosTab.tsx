@@ -16,10 +16,12 @@ import {
   formatFecha,
   formatPeso,
 } from './types';
+import { LIQ_DISTRIBUIDORES_PREFILL_KEY } from './storageKeys';
 
 type Props = {
   apiBaseUrl: string;
   buildActorHeaders: () => Record<string, string>;
+  onNavigateToDistribuidores?: () => void;
 };
 
 type PeriodoForm = {
@@ -467,7 +469,7 @@ const OperacionesTable: React.FC<{
 
 // ─── Componente principal ────────────────────────────────────────────────────
 
-export const ExtractosTab: React.FC<Props> = ({ apiBaseUrl, buildActorHeaders }) => {
+export const ExtractosTab: React.FC<Props> = ({ apiBaseUrl, buildActorHeaders, onNavigateToDistribuidores }) => {
   const [clientes, setClientes] = useState<LiqClienteLiq[]>([]);
   const [runs, setRuns] = useState<LiquidacionCliente[]>([]);
   const [runSeleccionado, setRunSeleccionado] = useState<LiquidacionCliente | null>(null);
@@ -1022,6 +1024,19 @@ export const ExtractosTab: React.FC<Props> = ({ apiBaseUrl, buildActorHeaders })
       setAccionMsg(
         data.message ?? `Se generaron ${data.count ?? 0} liquidaciones por distribuidor.`,
       );
+      try {
+        localStorage.setItem(
+          LIQ_DISTRIBUIDORES_PREFILL_KEY,
+          JSON.stringify({
+            clienteId: runSeleccionado.cliente_id,
+            periodoDesde: runSeleccionado.periodo_desde,
+            periodoHasta: runSeleccionado.periodo_hasta,
+          }),
+        );
+      } catch {
+        // ignore
+      }
+      onNavigateToDistribuidores?.();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Error al generar.');
     } finally {

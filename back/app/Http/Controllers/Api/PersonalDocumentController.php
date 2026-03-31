@@ -1591,7 +1591,7 @@ class PersonalDocumentController extends Controller
             $baseName = basename($documento->ruta ?? '') ?: 'documento';
         }
 
-        $baseName = trim($baseName);
+        $baseName = $this->sanitizeDownloadFileName(trim($baseName));
 
         $extension = $this->resolveExtension($documento, $downloadUrl);
 
@@ -1600,11 +1600,40 @@ class PersonalDocumentController extends Controller
 
             // Si el nombre compuesto ya termina con la extensión, no la duplicamos
             if (! str_ends_with(strtolower($baseName), '.'.strtolower($extension))) {
-                return sprintf('%s.%s', $baseName, $extension);
+                return $this->sanitizeDownloadFileName(sprintf('%s.%s', $baseName, $extension));
             }
         }
 
-        return $baseName;
+        return $this->sanitizeDownloadFileName($baseName);
+    }
+
+    protected function sanitizeDownloadFileName(string $name): string
+    {
+        $name = trim($name);
+        if ($name === '') {
+            return 'documento';
+        }
+
+        $name = str_replace(["\r", "\n", "\t"], ' ', $name);
+        // Evitar separadores de path y caracteres problemáticos (Windows + Content-Disposition).
+        $name = preg_replace('/[\\\\\\/\\:\\*\\?\"\\<\\>\\|]+/u', '-', $name) ?? $name;
+        $name = preg_replace('/\s+/u', ' ', $name) ?? $name;
+        $name = preg_replace('/-+/u', '-', $name) ?? $name;
+        $name = trim($name);
+
+        if ($name === '' || $name === '-' || $name === '.' || $name === '..') {
+            return 'documento';
+        }
+
+        // Evitar nombres excesivamente largos en headers.
+        if (mb_strlen($name) > 180) {
+            $ext = pathinfo($name, PATHINFO_EXTENSION);
+            $base = $ext ? substr($name, 0, -1 * (strlen($ext) + 1)) : $name;
+            $base = mb_substr($base, 0, 160);
+            $name = $ext ? ($base . '.' . $ext) : $base;
+        }
+
+        return $name;
     }
 
     protected function resolveExtension(Archivo $documento, ?string $downloadUrl): ?string

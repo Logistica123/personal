@@ -87,7 +87,11 @@ export const LiquidacionesExtractosPage: React.FC<Props> = ({
     >
       <div style={contentStyle}>
         {tabActivo === 'extractos' && (
-          <ExtractosTab apiBaseUrl={apiBaseUrl} buildActorHeaders={stableHeaders} />
+          <ExtractosTab
+            apiBaseUrl={apiBaseUrl}
+            buildActorHeaders={stableHeaders}
+            onNavigateToDistribuidores={() => setTabActivo('distribuidores')}
+          />
         )}
         {tabActivo === 'distribuidores' && (
           <DistribuidoresTab apiBaseUrl={apiBaseUrl} buildActorHeaders={stableHeaders} />

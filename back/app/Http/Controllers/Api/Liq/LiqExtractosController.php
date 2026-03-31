@@ -448,7 +448,6 @@ class LiqExtractosController extends Controller
                 'fecha'        => $op->created_at?->format('d/m/Y') ?? '',
                 'dominio'      => (string) ($op->dominio ?? ''),
                 'concepto'     => (string) ($op->concepto ?? ''),
-                'valor_cliente'=> $this->formatPeso((float) ($op->valor_cliente ?? 0)),
                 'tarifa_dist'  => $this->formatPeso((float) ($op->valor_tarifa_distribuidor ?? 0)),
                 'diferencia'   => $this->formatPeso((float) ($op->diferencia_cliente ?? 0)),
             ];
@@ -463,7 +462,7 @@ class LiqExtractosController extends Controller
             'cliente'                => $clienteNombre,
             'distribuidor_nombre'    => $dist ? trim("{$dist->apellidos} {$dist->nombres}") : '',
             'distribuidor_patente'   => (string) ($dist?->patente ?? ''),
-            'distribuidor_cuit'      => (string) ($dist?->cuit_cuil ?? ''),
+            'distribuidor_cuit'      => (string) ($dist?->cuil ?? ''),
             'periodo'                => sprintf(
                 '%s al %s',
                 $liqDist->periodo_desde->format('d/m/Y'),

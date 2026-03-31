@@ -2305,6 +2305,9 @@ class PersonalController extends Controller
                         ->sortByDesc('id')
                         ->first();
                 }
+                $date = $this->resolveDocumentDate($documento);
+                $monthKey = $date ? $date->format('Y-m') : 'unknown';
+                $fortnightKey = $date ? $this->determineFortnightKey($documento, $date) : 'NO_DATE';
                 $hasAttachments = $documento->parent_document_id === null
                     && ($documento->children?->isNotEmpty() ?? false);
                 $relativeDownloadUrl = route('personal.documentos.descargar', [
@@ -2334,6 +2337,8 @@ class PersonalController extends Controller
                     'fechaCarga' => optional($documento->created_at)->format('Y-m-d'),
                     'fechaCargaIso' => optional($documento->created_at)->toIso8601String(),
                     'fechaVencimiento' => $this->formatFechaVencimiento($documento->fecha_vencimiento),
+                    'monthKey' => $monthKey,
+                    'fortnightKey' => $fortnightKey,
                     'tipoId' => $documento->tipo_archivo_id,
                     'tipoNombre' => $documento->tipo?->nombre,
                     'requiereVencimiento' => (bool) $documento->tipo?->vence,
@@ -2389,12 +2394,14 @@ class PersonalController extends Controller
         $transportistaQr = $this->buildTransportistaQrPayload($persona, request());
         $transportistaQrScansCount = (int) ($persona->transportista_qr_scans_count ?? 0);
         $transportistaQrLastScanAt = $persona->transportista_qr_last_scan_at ?? null;
-        $latestLiquidacion = $persona->documentos?->first();
+        $allDocumentos = collect($persona->documentos ?? []);
+        $latestLiquidacion = $allDocumentos->first(function (Archivo $documento) {
+            return ! $documento->parent_document_id && $this->isLiquidacionDocument($documento);
+        });
         $liquidacionEnviada = $latestLiquidacion ? (bool) $latestLiquidacion->enviada : null;
         $liquidacionRecibido = $latestLiquidacion ? ((bool) $latestLiquidacion->recibido || ($latestLiquidacion->children_count > 0)) : null;
         $liquidacionPagado = $latestLiquidacion ? (bool) $latestLiquidacion->pagado : null;
         $liquidacionImporteFacturar = $latestLiquidacion?->importe_facturar;
-        $allDocumentos = collect($persona->documentos ?? []);
         $liquidacionesResumen = $allDocumentos
             ->filter(function (Archivo $documento) {
                 return ! $documento->parent_document_id && $this->isLiquidacionDocument($documento);
