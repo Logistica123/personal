@@ -52,6 +52,7 @@ import { WorkflowPage } from './pages/WorkflowPage';
 import { ApprovalsRequestsPage } from './pages/ApprovalsRequestsPage';
 import { LiquidacionesClientePage } from './pages/LiquidacionesClientePage';
 import { LiquidacionesPage } from './pages/LiquidacionesPage';
+import { LiquidacionesExtractosPage } from './pages/LiquidacionesExtractosPage';
 import { RecibosPage } from './pages/RecibosPage';
 import { DocumentTypesPage } from './pages/DocumentTypesPage';
 import { DocumentTypeCreatePage } from './pages/DocumentTypeCreatePage';
@@ -188,6 +189,24 @@ type ActivoAsesorComercialRecord = {
   rowOrder?: number | null;
   updatedAt?: string | null;
 };
+type CierreDiarioRecord = {
+  id: number;
+  fecha_importacion: string;
+  fecha_lead: string | null;
+  lead_id: number | null;
+  contacto: string | null;
+  estatus_lead: string | null;
+  etiquetas_lead: string | null;
+  sucursal: string | null;
+  vehiculo: string | null;
+  empresa: string | null;
+  embudo: string | null;
+  nombre_distribuidor: string | null;
+  asesor_comercial: string | null;
+  mes: number | null;
+  semana: number | null;
+  dia: number | null;
+};
 type TarifaImagenItem = {
   id: number;
   clienteId: number | null;
@@ -272,6 +291,7 @@ type AccessSection =
   | 'solicitud-personal'
   | 'bases'
   | 'bdd-activos-asesores'
+  | 'asesoria-cierres'
   | 'documentos'
   | 'configuracion';
 
@@ -646,6 +666,7 @@ const USER_PERMISSION_OPTIONS: Array<{ value: AccessSection; label: string }> = 
   { value: 'tarifas', label: 'Tarifas' },
   { value: 'bases', label: 'Bases de distribución' },
   { value: 'bdd-activos-asesores', label: 'BDD Activos x Asesores Comerciales' },
+  { value: 'asesoria-cierres', label: 'Asesoría - Cierres Diarios' },
   { value: 'documentos', label: 'Documentos' },
   { value: 'configuracion', label: 'Configuración' },
 ];
@@ -715,6 +736,8 @@ const canAccessSection = (
       return true;
     case 'bdd-activos-asesores':
       return role === 'asesor';
+    case 'asesoria-cierres':
+      return role === 'encargado';
     default:
       return true;
   }
@@ -3569,6 +3592,14 @@ const DashboardLayout: React.FC<{
               className={({ isActive }) => `sidebar-link${isActive ? ' is-active' : ''}`}
             >
               BDD Activos x Asesores Comerciales
+            </NavLink>
+          ) : null}
+          {canAccessSection(userRole, 'asesoria-cierres', authUser?.permissions) ? (
+            <NavLink
+              to="/asesoria/cierres-diarios"
+              className={({ isActive }) => `sidebar-link${isActive ? ' is-active' : ''}`}
+            >
+              Cierres Diarios
             </NavLink>
           ) : null}
 
@@ -18627,7 +18658,7 @@ const ActivosAsesoresPage: React.FC = () => {
               />
             </label>
           </div>
-          <p className="form-info">La importación reemplaza la base actual y luego la muestra en pantalla.</p>
+          <p className="form-info">La importación suma registros para la fecha seleccionada y actualiza los existentes (por ID).</p>
           <div className="form-actions">
             <button type="submit" className="primary-action" disabled={importing}>
               {importing ? 'Importando...' : 'Subir Excel'}
@@ -19078,6 +19109,293 @@ const ActivosAsesoresPage: React.FC = () => {
           </div>
         </div>
       ) : null}
+    </DashboardLayout>
+  );
+};
+
+const CierresDiariosPage: React.FC = () => {
+  const apiBaseUrl = useMemo(() => resolveApiBaseUrl(), []);
+  const [fechas, setFechas] = useState<string[]>([]);
+  const [selectedFecha, setSelectedFecha] = useState<string>('');
+  const [records, setRecords] = useState<CierreDiarioRecord[]>([]);
+  const [loadingFechas, setLoadingFechas] = useState(true);
+  const [loadingRecords, setLoadingRecords] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [importInfo, setImportInfo] = useState<string | null>(null);
+  const [importError, setImportError] = useState<string | null>(null);
+  const [importing, setImporting] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [totalRecords, setTotalRecords] = useState(0);
+  const [debugResult, setDebugResult] = useState<string | null>(null);
+
+  const loadFechas = useCallback(async () => {
+    setLoadingFechas(true);
+    setLoadError(null);
+    try {
+      const res = await fetch(`${apiBaseUrl}/api/cierres-diarios/fechas`);
+      if (!res.ok) throw new Error(`Error ${res.status}`);
+      const json = await res.json();
+      const lista: string[] = json.data ?? [];
+      setFechas(lista);
+      if (lista.length > 0) {
+        setSelectedFecha((prev) => prev || lista[0]);
+      }
+    } catch (err) {
+      setLoadError((err as Error).message ?? 'Error al cargar fechas.');
+    } finally {
+      setLoadingFechas(false);
+    }
+  }, [apiBaseUrl]);
+
+  const loadRecords = useCallback(async (fecha: string) => {
+    if (!fecha) return;
+    setLoadingRecords(true);
+    setLoadError(null);
+    try {
+      const params = new URLSearchParams({ fecha, per_page: '500' });
+      const res = await fetch(`${apiBaseUrl}/api/cierres-diarios?${params}`);
+      if (!res.ok) throw new Error(`Error ${res.status}`);
+      const json = await res.json();
+      setRecords(json.data ?? []);
+      setTotalRecords(json.meta?.total ?? (json.data ?? []).length);
+    } catch (err) {
+      setLoadError((err as Error).message ?? 'Error al cargar registros.');
+    } finally {
+      setLoadingRecords(false);
+    }
+  }, [apiBaseUrl]);
+
+  useEffect(() => {
+    loadFechas();
+  }, [loadFechas]);
+
+  useEffect(() => {
+    if (selectedFecha) {
+      loadRecords(selectedFecha);
+    }
+  }, [selectedFecha, loadRecords]);
+
+  const handleImport = async () => {
+    if (!selectedFile) return;
+    setImporting(true);
+    setImportError(null);
+    setImportInfo(null);
+    try {
+      const formData = new FormData();
+      formData.append('file', selectedFile);
+      const res = await fetch(`${apiBaseUrl}/api/cierres-diarios/import`, {
+        method: 'POST',
+        body: formData,
+      });
+      const json = await res.json();
+      if (!res.ok) {
+        setImportError(json.message ?? `Error ${res.status}`);
+        return;
+      }
+      setImportInfo(json.message ?? 'Importado correctamente.');
+      setSelectedFile(null);
+      await loadFechas();
+      if (json.meta?.fecha_importacion) {
+        setSelectedFecha(json.meta.fecha_importacion);
+      }
+    } catch (err) {
+      setImportError((err as Error).message ?? 'Error al importar.');
+    } finally {
+      setImporting(false);
+    }
+  };
+
+  const handleDeleteFecha = async () => {
+    if (!selectedFecha) return;
+    if (!window.confirm(`¿Eliminar todos los registros del cierre del ${selectedFecha}?`)) return;
+    setDeleting(true);
+    setImportError(null);
+    setImportInfo(null);
+    try {
+      const res = await fetch(`${apiBaseUrl}/api/cierres-diarios/fecha/${selectedFecha}`, {
+        method: 'DELETE',
+      });
+      const json = await res.json();
+      if (!res.ok) {
+        setImportError(json.message ?? `Error ${res.status}`);
+        return;
+      }
+      setImportInfo(json.message ?? 'Eliminado correctamente.');
+      setRecords([]);
+      setTotalRecords(0);
+      await loadFechas();
+    } catch (err) {
+      setImportError((err as Error).message ?? 'Error al eliminar.');
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  const handleDebug = async () => {
+    if (!selectedFile) return;
+    setDebugResult(null);
+    const formData = new FormData();
+    formData.append('file', selectedFile);
+    try {
+      const res = await fetch(`${apiBaseUrl}/api/cierres-diarios/debug`, { method: 'POST', body: formData });
+      const json = await res.json();
+      setDebugResult(JSON.stringify(json, null, 2));
+    } catch (err) {
+      setDebugResult('Error: ' + (err as Error).message);
+    }
+  };
+
+  const formatDate = (iso: string | null): string => {
+    if (!iso) return '—';
+    try {
+      const d = new Date(iso);
+      return d.toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', year: 'numeric' });
+    } catch {
+      return iso;
+    }
+  };
+
+  return (
+    <DashboardLayout title="Cierres Diarios" subtitle="Importación y consulta de cierres diarios de asesores">
+      <div className="page-section">
+        <div className="page-section__header">
+          <h2 className="page-section__title">Importar cierre diario</h2>
+        </div>
+        <div className="page-section__body">
+          <p className="form-info">
+            Exportá el listado desde Kommo (entre las 16:40 y 17:00 hs) y subí el archivo .xlsx o .csv.
+            Si ya existe un cierre para hoy, se sumará y actualizará por ID (no se borra lo importado previamente).
+          </p>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap', marginTop: '12px' }}>
+            <label className="secondary-action" style={{ cursor: 'pointer', display: 'inline-block' }}>
+              {selectedFile ? selectedFile.name : 'Seleccionar archivo'}
+              <input
+                type="file"
+                accept=".xlsx,.csv,.txt"
+                style={{ display: 'none' }}
+                onChange={(e) => {
+                  setSelectedFile(e.target.files?.[0] ?? null);
+                  setImportInfo(null);
+                  setImportError(null);
+                }}
+              />
+            </label>
+            <button
+              type="button"
+              className="primary-action"
+              disabled={!selectedFile || importing}
+              onClick={handleImport}
+            >
+              {importing ? 'Importando...' : 'Importar'}
+            </button>
+          </div>
+          {selectedFile ? (
+            <button type="button" className="secondary-action" style={{ marginTop: '4px', fontSize: '0.78rem' }} onClick={handleDebug}>
+              Debug: ver headers leídos
+            </button>
+          ) : null}
+          {importInfo ? <p className="form-info form-info--success" style={{ marginTop: '8px' }}>{importInfo}</p> : null}
+          {importError ? <p className="form-info form-info--error" style={{ marginTop: '8px' }}>{importError}</p> : null}
+          {debugResult ? (
+            <pre style={{ marginTop: '8px', fontSize: '0.75rem', background: '#f5f5f5', padding: '8px', borderRadius: '4px', overflow: 'auto', maxHeight: '200px' }}>
+              {debugResult}
+            </pre>
+          ) : null}
+        </div>
+      </div>
+
+      <div className="page-section" style={{ marginTop: '24px' }}>
+        <div className="page-section__header">
+          <h2 className="page-section__title">Registros por fecha</h2>
+        </div>
+        <div className="page-section__body">
+          {loadError ? <p className="form-info form-info--error">{loadError}</p> : null}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap', marginBottom: '16px' }}>
+            <label className="input-control" style={{ margin: 0 }}>
+              <span>Fecha de cierre</span>
+              <select
+                value={selectedFecha}
+                onChange={(e) => setSelectedFecha(e.target.value)}
+                disabled={loadingFechas}
+              >
+                {fechas.length === 0 ? (
+                  <option value="">Sin importaciones</option>
+                ) : (
+                  fechas.map((f) => (
+                    <option key={f} value={f}>{formatDate(f)}</option>
+                  ))
+                )}
+              </select>
+            </label>
+            {selectedFecha ? (
+              <button
+                type="button"
+                className="secondary-action"
+                style={{ color: 'var(--color-danger, #e53e3e)', borderColor: 'var(--color-danger, #e53e3e)', marginTop: '20px' }}
+                disabled={deleting}
+                onClick={handleDeleteFecha}
+              >
+                {deleting ? 'Eliminando...' : 'Eliminar este cierre'}
+              </button>
+            ) : null}
+            {!loadingRecords && selectedFecha ? (
+              <span style={{ marginTop: '20px', color: 'var(--color-text-muted, #666)', fontSize: '0.85rem' }}>
+                {totalRecords} registros
+              </span>
+            ) : null}
+          </div>
+
+          {loadingRecords ? (
+            <p className="form-info">Cargando...</p>
+          ) : records.length === 0 && selectedFecha ? (
+            <p className="form-info">No hay registros para esta fecha.</p>
+          ) : records.length > 0 ? (
+            <div style={{ overflowX: 'auto' }}>
+              <table className="data-table" style={{ minWidth: '1200px', fontSize: '0.82rem' }}>
+                <thead>
+                  <tr>
+                    <th>Fecha Lead</th>
+                    <th>ID</th>
+                    <th>Contacto</th>
+                    <th>Estatus</th>
+                    <th>Etiquetas</th>
+                    <th>Sucursal</th>
+                    <th>Vehículo</th>
+                    <th>Empresa</th>
+                    <th>Embudo</th>
+                    <th>Distribuidor</th>
+                    <th>Asesor Comercial</th>
+                    <th>Mes</th>
+                    <th>Semana</th>
+                    <th>Día</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {records.map((r) => (
+                    <tr key={r.id}>
+                      <td>{formatDate(r.fecha_lead)}</td>
+                      <td>{r.lead_id ?? '—'}</td>
+                      <td>{r.contacto ?? '—'}</td>
+                      <td>{r.estatus_lead ?? '—'}</td>
+                      <td>{r.etiquetas_lead ?? '—'}</td>
+                      <td>{r.sucursal ?? '—'}</td>
+                      <td>{r.vehiculo ?? '—'}</td>
+                      <td>{r.empresa ?? '—'}</td>
+                      <td>{r.embudo ?? '—'}</td>
+                      <td>{r.nombre_distribuidor ?? '—'}</td>
+                      <td>{r.asesor_comercial ?? '—'}</td>
+                      <td>{r.mes ?? '—'}</td>
+                      <td>{r.semana ?? '—'}</td>
+                      <td>{r.dia ?? '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : null}
+        </div>
+      </div>
     </DashboardLayout>
   );
 };
@@ -19562,6 +19880,14 @@ const AppRoutes: React.FC = () => {
         }
       />
       <Route
+        path="/asesoria/cierres-diarios"
+        element={
+          <RequireAccess section="asesoria-cierres">
+            <CierresDiariosPage />
+          </RequireAccess>
+        }
+      />
+      <Route
         path="/unidades"
         element={
           <RequireAccess section="unidades">
@@ -19824,7 +20150,12 @@ const AppRoutes: React.FC = () => {
         path="/liquidaciones/extractos"
         element={
           <RequireAccess section="liquidaciones">
-            <CombustibleRunsPage />
+            <LiquidacionesExtractosPage
+              DashboardLayout={DashboardLayout}
+              resolveApiBaseUrl={resolveApiBaseUrl}
+              useStoredAuthUser={useStoredAuthUser}
+              buildActorHeaders={buildActorHeaders}
+            />
           </RequireAccess>
         }
       />

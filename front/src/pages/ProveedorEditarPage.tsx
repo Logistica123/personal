@@ -2785,17 +2785,15 @@ export const ProveedorEditarPage: React.FC<ProveedorEditarPageProps> = ({
                         Descargar
                       </a>
                     ) : null}
-                    {doc.status === 'vencido' ? (
-                      <button
-                        type="button"
-                        className="secondary-action secondary-action--danger"
-                        onClick={() => void handleDeleteDocumento(doc)}
-                        disabled={isReadOnly || isDeletingDoc}
-                        title={isReadOnly ? 'No tenés permisos para eliminar documentos.' : 'Eliminar documento'}
-                      >
-                        {isDeletingDoc ? 'Eliminando...' : 'Eliminar'}
-                      </button>
-                    ) : null}
+                    <button
+                      type="button"
+                      className="secondary-action secondary-action--danger"
+                      onClick={() => void handleDeleteDocumento(doc)}
+                      disabled={isReadOnly || isDeletingDoc}
+                      title={isReadOnly ? 'No tenés permisos para eliminar documentos.' : 'Eliminar documento'}
+                    >
+                      {isDeletingDoc ? 'Eliminando...' : 'Eliminar'}
+                    </button>
                   </div>
                 </li>
               );

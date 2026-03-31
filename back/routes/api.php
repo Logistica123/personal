@@ -19,6 +19,7 @@ use App\Http\Controllers\Api\PersonalDocumentController;
 use App\Http\Controllers\Api\PersonalCommentController;
 use App\Http\Controllers\Api\AttendanceController;
 use App\Http\Controllers\Api\ActivoAsesorComercialController;
+use App\Http\Controllers\Api\CierreDiarioController;
 use App\Http\Controllers\Api\WorkflowTaskController;
 use App\Http\Controllers\Api\GeneralInfoController;
 use App\Http\Controllers\Api\AuditController;
@@ -30,8 +31,12 @@ use App\Http\Controllers\Api\TaxProfileController;
 use App\Http\Controllers\Api\SolicitudPersonalController;
 use App\Http\Controllers\Api\VacacionesDiasController;
 use App\Http\Controllers\Api\DistriappController;
-use App\Http\Controllers\Api\LiquidacionRunController;
-use App\Http\Controllers\Api\LiquidacionReciboController;
+use App\Http\Controllers\Api\Liq\LiqClienteController;
+use App\Http\Controllers\Api\Liq\LiqDistribuidorController;
+use App\Http\Controllers\Api\Liq\LiqExtractosController;
+use App\Http\Controllers\Api\Liq\LiqOperacionController;
+use App\Http\Controllers\Api\Liq\LiqPagoController;
+use App\Http\Controllers\Api\Liq\LiqTarifaController;
 use App\Http\Controllers\Api\UserDocumentController;
 use App\Http\Controllers\Api\CallController;
 use App\Http\Controllers\Api\MembresiaController;
@@ -159,6 +164,12 @@ Route::middleware('auth.api')->group(function () {
     Route::get('/facturacion/clientes', [ClientesFacturacionController::class, 'resumen']);
     Route::get('/facturacion/clientes/{cliente}/facturas', [ClientesFacturacionController::class, 'facturasCliente']);
 
+    Route::get('/cierres-diarios', [CierreDiarioController::class, 'index']);
+    Route::get('/cierres-diarios/fechas', [CierreDiarioController::class, 'fechas']);
+    Route::post('/cierres-diarios/import', [CierreDiarioController::class, 'import']);
+    Route::post('/cierres-diarios/debug', [CierreDiarioController::class, 'debug']);
+    Route::delete('/cierres-diarios/fecha/{fecha}', [CierreDiarioController::class, 'destroyByFecha']);
+
     Route::get('/bdd-activos-asesores', [ActivoAsesorComercialController::class, 'index']);
     Route::post('/bdd-activos-asesores', [ActivoAsesorComercialController::class, 'store']);
     Route::post('/bdd-activos-asesores/import', [ActivoAsesorComercialController::class, 'import']);
@@ -247,34 +258,71 @@ Route::middleware('auth.api')->group(function () {
     Route::delete('/tarifas/imagen/{tarifaImagen}', [TarifaImagenController::class, 'destroy']);
 
     Route::post('/facturas/validar', [\App\Http\Controllers\Api\FacturaAiController::class, 'validar']);
-    Route::get('/liquidaciones/runs', [LiquidacionRunController::class, 'index']);
-    Route::post('/liquidaciones/runs/upload-preview', [LiquidacionRunController::class, 'uploadPreview']);
-    Route::post('/liquidaciones/runs/upload', [LiquidacionRunController::class, 'upload']);
-    Route::post('/liquidaciones/runs', [LiquidacionRunController::class, 'store']);
-    Route::get('/liquidaciones/runs/{run}', [LiquidacionRunController::class, 'show']);
-    Route::delete('/liquidaciones/runs/{run}', [LiquidacionRunController::class, 'destroy']);
-    Route::post('/liquidaciones/runs/{run}/upsert', [LiquidacionRunController::class, 'upsert']);
-    Route::post('/liquidaciones/runs/{run}/approve', [LiquidacionRunController::class, 'approve']);
-    Route::post('/liquidaciones/runs/{run}/sync-personal', [LiquidacionRunController::class, 'syncToPersonal']);
-    Route::get('/liquidaciones/runs/{run}/export-pdfs-zip', [LiquidacionRunController::class, 'exportPdfsZip']);
-    Route::post('/liquidaciones/runs/{run}/publicar-erp', [LiquidacionRunController::class, 'publishToErp']);
-    Route::get('/liquidaciones/reglas-template', [LiquidacionRunController::class, 'rulesTemplate']);
-    Route::get('/liquidaciones/reglas-cliente/{clientCode}', [LiquidacionRunController::class, 'showClientRules']);
-    Route::put('/liquidaciones/reglas-cliente/{clientCode}', [LiquidacionRunController::class, 'upsertClientRules']);
-    Route::post('/liquidaciones/reglas-cliente/{clientCode}', [LiquidacionRunController::class, 'upsertClientRules']);
-    Route::get('/liquidaciones/proveedores/buscar', [LiquidacionRunController::class, 'searchProviders']);
-    Route::post('/liquidaciones/importaciones', [LiquidacionRunController::class, 'createImportacion']);
-    Route::get('/liquidaciones/importaciones/{run}/preview', [LiquidacionRunController::class, 'previewImportacion']);
-    Route::post('/liquidaciones/importaciones/{run}/asignar-proveedor', [LiquidacionRunController::class, 'assignImportacionProvider']);
-    Route::post('/liquidaciones/importaciones/{run}/approve', [LiquidacionRunController::class, 'approveImportacion']);
-    Route::post('/liquidaciones/importaciones/{run}/publish', [LiquidacionRunController::class, 'publishImportacion']);
-    Route::get('/liquidaciones/distribuidores/{distribuidor}', [LiquidacionRunController::class, 'showDistribuidor']);
-    Route::patch('/liquidaciones/distribuidores/{distribuidor}', [LiquidacionRunController::class, 'updateDistribuidor']);
-    Route::patch('/liquidaciones/lineas/{linea}', [LiquidacionRunController::class, 'updateLinea']);
-    Route::get('/liquidaciones/recibos', [LiquidacionReciboController::class, 'index']);
-    Route::post('/liquidaciones/recibos', [LiquidacionReciboController::class, 'store']);
-    Route::get('/liquidaciones/recibos/{recibo}', [LiquidacionReciboController::class, 'show']);
-    Route::post('/liquidaciones/recibos/{recibo}/anular', [LiquidacionReciboController::class, 'anular']);
+    // ── Liquidaciones v2 (/api/liq/*) ────────────────────────────────────────
+    Route::prefix('liq')->group(function () {
+        // Clientes
+        Route::get('/clientes', [LiqClienteController::class, 'index']);
+        Route::post('/clientes', [LiqClienteController::class, 'store']);
+        Route::patch('/clientes/{cliente}', [LiqClienteController::class, 'update']);
+
+        // Esquemas tarifarios
+        Route::get('/clientes/{cliente}/esquemas', [LiqClienteController::class, 'esquemas']);
+        Route::post('/clientes/{cliente}/esquemas', [LiqClienteController::class, 'storeEsquema']);
+
+        // Dimensiones de un esquema
+        Route::get('/esquemas/{esquema}/dimensiones', [LiqTarifaController::class, 'dimensiones']);
+        Route::post('/esquemas/{esquema}/dimensiones', [LiqTarifaController::class, 'storeDimension']);
+        Route::put('/dimension-valores/{dimensionValor}/desactivar', [LiqTarifaController::class, 'desactivarDimension']);
+
+        // Líneas de tarifa
+        Route::get('/esquemas/{esquema}/lineas', [LiqTarifaController::class, 'lineas']);
+        Route::post('/esquemas/{esquema}/lineas', [LiqTarifaController::class, 'storeLinea']);
+        Route::put('/lineas/{lineaTarifa}/aprobar', [LiqTarifaController::class, 'aprobarLinea']);
+        Route::put('/lineas/{lineaTarifa}/desactivar', [LiqTarifaController::class, 'desactivarLinea']);
+
+        // Mapeos de concepto
+        Route::get('/clientes/{cliente}/mapeos-concepto', [LiqClienteController::class, 'mapeosConcepto']);
+        Route::post('/clientes/{cliente}/mapeos-concepto', [LiqClienteController::class, 'storeMapeosConcepto']);
+        Route::put('/mapeos-concepto/{id}/desactivar', [LiqTarifaController::class, 'desactivarMapeoConcepto']);
+
+        // Mapeos de sucursal
+        Route::get('/clientes/{cliente}/mapeos-sucursal', [LiqClienteController::class, 'mapeosSucursal']);
+        Route::post('/clientes/{cliente}/mapeos-sucursal', [LiqClienteController::class, 'storeMapeosSucursal']);
+        Route::put('/mapeos-sucursal/{id}/desactivar', [LiqTarifaController::class, 'desactivarMapeoSucursal']);
+
+        // Gastos administrativos
+        Route::get('/clientes/{cliente}/gastos', [LiqClienteController::class, 'gastos']);
+        Route::post('/clientes/{cliente}/gastos', [LiqClienteController::class, 'storeGastos']);
+
+        // Extractos (liquidaciones del cliente)
+        Route::get('/liquidaciones', [LiqExtractosController::class, 'index']);
+        Route::post('/liquidaciones/upload', [LiqExtractosController::class, 'upload']);
+        Route::get('/liquidaciones/{liquidacionCliente}/operaciones', [LiqExtractosController::class, 'operaciones']);
+        Route::post('/liquidaciones/{liquidacionCliente}/recalcular', [LiqExtractosController::class, 'recalcular']);
+        Route::post('/liquidaciones/{liquidacionCliente}/aprobar', [LiqExtractosController::class, 'aprobar']);
+        Route::delete('/liquidaciones/{liquidacionCliente}', [LiqExtractosController::class, 'destroy']);
+        Route::post('/liquidaciones/{liquidacionCliente}/generar-distribuidores', [LiqExtractosController::class, 'generarDistribuidores']);
+        // DEBUG: eliminar antes de producción
+        Route::post('/liquidaciones/debug-xlsx', [LiqExtractosController::class, 'debugXlsx']);
+
+        // Operaciones (auditoría manual)
+        Route::patch('/operaciones/{operacion}/exclusion', [LiqOperacionController::class, 'updateExclusion']);
+        Route::patch('/operaciones/{operacion}/asignar-tarifa', [LiqOperacionController::class, 'assignTarifa']);
+
+        // Liquidaciones por distribuidor
+        Route::get('/distribuidores', [LiqDistribuidorController::class, 'index']);
+        Route::get('/distribuidores/{liqDistribuidor}/operaciones', [LiqDistribuidorController::class, 'operaciones']);
+        Route::post('/distribuidores/{liqDistribuidor}/aprobar', [LiqDistribuidorController::class, 'aprobar']);
+        Route::get('/distribuidores/{liqDistribuidor}/pdf', [LiqDistribuidorController::class, 'pdf']);
+
+        // Pagos (lotes de liquidaciones aprobadas)
+        Route::get('/pagos', [LiqPagoController::class, 'index']);
+        Route::post('/pagos', [LiqPagoController::class, 'store']);
+        Route::get('/pagos/{pago}', [LiqPagoController::class, 'show']);
+        Route::get('/pagos/{pago}/items', [LiqPagoController::class, 'items']);
+        Route::post('/pagos/{pago}/marcar-pagado', [LiqPagoController::class, 'marcarPagado']);
+        Route::get('/pagos/{pago}/export.csv', [LiqPagoController::class, 'exportCsv']);
+    });
     Route::post('/combustible/extractos/preview', [\App\Http\Controllers\Api\FuelExtractController::class, 'preview']);
     Route::post('/combustible/extractos/process', [\App\Http\Controllers\Api\FuelExtractController::class, 'process']);
     Route::get('/combustible/distribuidores', [\App\Http\Controllers\Api\FuelModuleController::class, 'distributors']);
