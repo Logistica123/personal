@@ -203,6 +203,7 @@ Route::middleware('auth.api')->group(function () {
         // Líneas de tarifa
         Route::get('/esquemas/{esquema}/lineas', [LiqTarifaController::class, 'lineas']);
         Route::post('/esquemas/{esquema}/lineas', [LiqTarifaController::class, 'storeLinea']);
+        Route::post('/esquemas/{esquema}/importar-excel', [LiqTarifaController::class, 'importarExcel']);
         Route::put('/lineas/{lineaTarifa}/aprobar', [LiqTarifaController::class, 'aprobarLinea']);
         Route::put('/lineas/{lineaTarifa}/desactivar', [LiqTarifaController::class, 'desactivarLinea']);
 

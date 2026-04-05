@@ -12,6 +12,9 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
+use PhpOffice\PhpSpreadsheet\Cell\Coordinate;
+use PhpOffice\PhpSpreadsheet\IOFactory;
 
 class LiqTarifaController extends Controller
 {
@@ -197,6 +200,242 @@ class LiqTarifaController extends Controller
         return response()->json(['data' => $linea, 'message' => 'Línea de tarifa creada'], 201);
     }
 
+    // POST /liq/esquemas/{esquema}/importar-excel - importar líneas/dimensiones desde un Excel (asistido)
+    public function importarExcel(Request $request, LiqEsquemaTarifario $esquema): JsonResponse
+    {
+        $role = strtolower(trim((string) ($request->user()?->role ?? '')));
+        if (! in_array($role, ['admin', 'admin2'], true)) {
+            return response()->json(['message' => 'No tenés permisos para importar tarifas.'], 403);
+        }
+
+        $data = $request->validate([
+            'archivo' => 'required|file|mimes:xlsx,xls',
+            'vigencia_desde' => 'required|date',
+            'vigencia_hasta' => 'nullable|date|after_or_equal:vigencia_desde',
+            'motivo' => 'required|string|min:3',
+            'dry_run' => 'nullable|boolean',
+        ]);
+
+        $dryRun = (bool) ($data['dry_run'] ?? false);
+        $vigDesde = Carbon::parse($data['vigencia_desde'])->toDateString();
+        $vigHasta = isset($data['vigencia_hasta']) ? Carbon::parse($data['vigencia_hasta'])->toDateString() : null;
+
+        $file = $request->file('archivo');
+        $path = $file?->getRealPath();
+        if (! $path) {
+            return response()->json(['error' => 'No se pudo leer el archivo'], 422);
+        }
+
+        try {
+            $spreadsheet = IOFactory::load($path);
+        } catch (\Throwable $e) {
+            return response()->json(['error' => 'No se pudo abrir el Excel: ' . $e->getMessage()], 422);
+        }
+
+        $ws = $spreadsheet->getSheet(0);
+        $maxRow = (int) $ws->getHighestDataRow();
+        $maxCol = (string) $ws->getHighestDataColumn();
+        $maxColIndex = Coordinate::columnIndexFromString($maxCol);
+
+        // Header row (fila 1)
+        $headers = [];
+        for ($c = 1; $c <= $maxColIndex; $c++) {
+            $cellRef = Coordinate::stringFromColumnIndex($c) . '1';
+            $raw = (string) ($ws->getCell($cellRef)->getFormattedValue() ?? '');
+            $norm = $this->normHeader($raw);
+            if ($norm !== '' && ! isset($headers[$norm])) {
+                $headers[$norm] = $c;
+            }
+        }
+
+        // Columnas para dimensiones configuradas en el esquema
+        $dimCols = [];
+        foreach (($esquema->dimensiones ?? []) as $dim) {
+            $dimNorm = $this->normHeader((string) $dim);
+            $found = null;
+            foreach ($headers as $h => $colIndex) {
+                if ($h === $dimNorm || Str::contains($h, $dimNorm)) {
+                    $found = $colIndex;
+                    break;
+                }
+            }
+            if (! $found) {
+                return response()->json(['error' => "No se encontró la columna para la dimensión \"$dim\" en el Excel."], 422);
+            }
+            $dimCols[$dim] = $found;
+        }
+
+        $colOriginal = $this->findCol($headers, ['original']);
+        if (! $colOriginal) {
+            return response()->json(['error' => 'No se encontró la columna "Original" en el Excel.'], 422);
+        }
+        $colPct = $this->findCol($headers, ['porcentaje', 'agencia']) ?? $this->findCol($headers, ['%']);
+        $colDist = $this->findCol($headers, ['distribuidor']);
+
+        if (! $colPct && ! $colDist) {
+            return response()->json(['error' => 'No se encontró "Porcentaje agencia" ni "Distribuidor" para calcular el porcentaje.'], 422);
+        }
+
+        $lastDimValues = [];
+        $parsed = [];
+        $warnings = [];
+
+        for ($r = 2; $r <= $maxRow; $r++) {
+            $dimValues = [];
+            foreach ($dimCols as $dim => $c) {
+                $cellRef = Coordinate::stringFromColumnIndex($c) . $r;
+                $raw = trim((string) ($ws->getCell($cellRef)->getFormattedValue() ?? ''));
+                if ($raw === '' && array_key_exists($dim, $lastDimValues)) {
+                    $raw = $lastDimValues[$dim];
+                }
+                $raw = trim($raw);
+                if ($raw !== '') {
+                    $lastDimValues[$dim] = $raw;
+                }
+                $dimValues[$dim] = $raw;
+            }
+
+            if (collect($dimValues)->contains(fn ($v) => trim((string) $v) === '')) {
+                continue;
+            }
+
+            $origRef = Coordinate::stringFromColumnIndex($colOriginal) . $r;
+            $pctRef = $colPct ? (Coordinate::stringFromColumnIndex($colPct) . $r) : null;
+            $distRef = $colDist ? (Coordinate::stringFromColumnIndex($colDist) . $r) : null;
+
+            $origStr = trim((string) ($ws->getCell($origRef)->getFormattedValue() ?? ''));
+            $pctStr = $pctRef ? trim((string) ($ws->getCell($pctRef)->getFormattedValue() ?? '')) : '';
+            $distStr = $distRef ? trim((string) ($ws->getCell($distRef)->getFormattedValue() ?? '')) : '';
+
+            $precioOriginal = $this->parseMoney($origStr);
+            if ($precioOriginal === null || $precioOriginal <= 0) {
+                if ($origStr !== '') {
+                    $warnings[] = ['row' => $r, 'warning' => 'Precio original inválido: ' . $origStr];
+                }
+                continue;
+            }
+
+            $porcentaje = $this->parsePercent($pctStr);
+            $distValue = $this->parseMoney($distStr);
+            if ($porcentaje === null && $distValue !== null && $distValue > 0) {
+                $porcentaje = round((1 - ($distValue / $precioOriginal)) * 100, 2);
+            }
+
+            if ($porcentaje === null || $porcentaje < 0 || $porcentaje >= 100) {
+                $warnings[] = ['row' => $r, 'warning' => 'Porcentaje agencia inválido (vacío o fuera de rango).'];
+                continue;
+            }
+
+            $precioDistribuidor = round($precioOriginal * (1 - $porcentaje / 100), 2);
+            if ($distValue !== null && $distValue > 0 && abs($distValue - $precioDistribuidor) > 5) {
+                $warnings[] = ['row' => $r, 'warning' => 'El valor Distribuidor no coincide con la fórmula (se calculará con %).'];
+            }
+
+            $parsed[] = [
+                'dimensiones_valores' => $dimValues,
+                'precio_original' => $precioOriginal,
+                'porcentaje_agencia' => $porcentaje,
+                'precio_distribuidor' => $precioDistribuidor,
+            ];
+        }
+
+        if ($dryRun) {
+            return response()->json([
+                'message' => 'Previsualización generada',
+                'data' => [
+                    'total_encontradas' => count($parsed),
+                    'preview' => array_slice($parsed, 0, 50),
+                    'warnings' => array_slice($warnings, 0, 100),
+                ],
+            ]);
+        }
+
+        $userId = $request->user()?->id;
+        $inserted = 0;
+        $skipped = 0;
+
+        DB::beginTransaction();
+        try {
+            foreach ($parsed as $item) {
+                foreach (($item['dimensiones_valores'] ?? []) as $dim => $val) {
+                    $val = trim((string) $val);
+                    if ($val === '') continue;
+                    $dv = LiqDimensionValor::where('esquema_id', $esquema->id)
+                        ->where('nombre_dimension', $dim)
+                        ->where('valor', $val)
+                        ->first();
+                    if (! $dv) {
+                        LiqDimensionValor::create([
+                            'esquema_id' => $esquema->id,
+                            'nombre_dimension' => $dim,
+                            'valor' => $val,
+                            'orden_display' => 0,
+                            'activo' => true,
+                        ]);
+                    } elseif (! $dv->activo) {
+                        $dv->update(['activo' => true]);
+                    }
+                }
+            }
+
+            foreach ($parsed as $item) {
+                $dimVals = (array) ($item['dimensiones_valores'] ?? []);
+                $q = LiqLineaTarifa::where('esquema_id', $esquema->id)
+                    ->whereDate('vigencia_desde', $vigDesde);
+                if ($vigHasta) {
+                    $q->whereDate('vigencia_hasta', $vigHasta);
+                } else {
+                    $q->whereNull('vigencia_hasta');
+                }
+                foreach ($dimVals as $dim => $val) {
+                    $q->where("dimensiones_valores->$dim", (string) $val);
+                }
+                if ($q->exists()) {
+                    $skipped++;
+                    continue;
+                }
+
+                $linea = LiqLineaTarifa::create([
+                    'esquema_id' => $esquema->id,
+                    'dimensiones_valores' => $dimVals,
+                    'precio_original' => $item['precio_original'],
+                    'porcentaje_agencia' => $item['porcentaje_agencia'],
+                    'precio_distribuidor' => $item['precio_distribuidor'],
+                    'vigencia_desde' => $vigDesde,
+                    'vigencia_hasta' => $vigHasta,
+                    'creado_por' => $userId,
+                    'activo' => true,
+                ]);
+
+                LiqAuditoriaTarifa::create([
+                    'linea_tarifa_id' => $linea->id,
+                    'accion' => 'creacion',
+                    'valores_anteriores' => null,
+                    'valores_nuevos' => $linea->toArray(),
+                    'usuario_id' => $userId,
+                    'motivo' => $data['motivo'],
+                    'created_at' => now(),
+                ]);
+
+                $inserted++;
+            }
+
+            DB::commit();
+        } catch (\Throwable $e) {
+            DB::rollBack();
+            return response()->json(['error' => 'No se pudo importar: ' . $e->getMessage()], 500);
+        }
+
+        return response()->json([
+            'message' => "Importación completa: $inserted líneas creadas, $skipped omitidas.",
+            'data' => [
+                'inserted' => $inserted,
+                'skipped' => $skipped,
+                'warnings' => array_slice($warnings, 0, 200),
+            ],
+        ], 201);
+    }
+
     // PUT /liq/lineas/{lineaTarifa}/aprobar
     public function aprobarLinea(Request $request, LiqLineaTarifa $lineaTarifa): JsonResponse
     {
@@ -377,5 +616,100 @@ class LiqTarifaController extends Controller
                   $sub->whereNull('vigencia_hasta')->orWhere('vigencia_hasta', '>=', $desde);
               });
         };
+    }
+
+    private function normHeader(string $s): string
+    {
+        $s = Str::ascii(mb_strtolower(trim($s)));
+        $s = preg_replace('/\s+/', ' ', $s) ?: $s;
+        $s = str_replace([':', '.', ';'], '', $s);
+        return trim($s);
+    }
+
+    /**
+     * @param array<string, int> $headers
+     * @param array<int, string> $needles
+     */
+    private function findCol(array $headers, array $needles): ?int
+    {
+        foreach ($headers as $h => $colIndex) {
+            $ok = true;
+            foreach ($needles as $n) {
+                $n = $this->normHeader($n);
+                if ($n === '') {
+                    continue;
+                }
+                if (! Str::contains($h, $n)) {
+                    $ok = false;
+                    break;
+                }
+            }
+            if ($ok) {
+                return $colIndex;
+            }
+        }
+        return null;
+    }
+
+    private function parsePercent(string $s): ?float
+    {
+        $s = trim($s);
+        if ($s === '') {
+            return null;
+        }
+        $s = str_replace('%', '', $s);
+        $s = str_replace(',', '.', $s);
+        $s = preg_replace('/[^\d.\-]/', '', $s) ?: $s;
+        if ($s === '' || $s === '.' || $s === '-') {
+            return null;
+        }
+        $v = (float) $s;
+        return is_finite($v) ? $v : null;
+    }
+
+    private function parseMoney(string $s): ?float
+    {
+        $s = trim($s);
+        if ($s === '') {
+            return null;
+        }
+        $s = Str::lower($s);
+        $s = str_replace(['$', 'ars', 'ar$', ' '], ['', '', '', ''], $s);
+        // Mantener dígitos, coma, punto y signo.
+        $s = preg_replace('/[^\d,.\-]/', '', $s) ?: $s;
+        if ($s === '' || $s === '-' || $s === '.' || $s === ',') {
+            return null;
+        }
+
+        $lastComma = strrpos($s, ',');
+        $lastDot = strrpos($s, '.');
+        if ($lastComma !== false && $lastDot !== false) {
+            // Si el último separador es coma, asumimos coma decimal (es-AR).
+            if ($lastComma > $lastDot) {
+                $s = str_replace('.', '', $s);
+                $s = str_replace(',', '.', $s);
+            } else {
+                // Punto decimal (en-US) y coma miles.
+                $s = str_replace(',', '', $s);
+            }
+        } elseif ($lastComma !== false) {
+            // Solo coma: asumimos decimal si hay 1-2 dígitos al final, sino miles.
+            $decLen = strlen($s) - $lastComma - 1;
+            if ($decLen >= 1 && $decLen <= 2) {
+                $s = str_replace('.', '', $s);
+                $s = str_replace(',', '.', $s);
+            } else {
+                $s = str_replace(',', '', $s);
+            }
+        } else {
+            // Solo punto: asumimos punto decimal.
+            $s = str_replace(',', '', $s);
+        }
+
+        $v = (float) $s;
+        if (! is_finite($v)) {
+            return null;
+        }
+        return round($v, 2);
     }
 }

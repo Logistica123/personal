@@ -71,6 +71,13 @@ export function LiquidacionesClientePage({
   const [newLineaVigHasta, setNewLineaVigHasta] = useState('');
   const [newLineaMotivo, setNewLineaMotivo] = useState('Carga inicial');
 
+  // Import tariff excel
+  const [importTarifaFile, setImportTarifaFile] = useState<File | null>(null);
+  const [importVigDesde, setImportVigDesde] = useState('');
+  const [importVigHasta, setImportVigHasta] = useState('');
+  const [importMotivo, setImportMotivo] = useState('Importación Excel');
+  const [importingTarifa, setImportingTarifa] = useState(false);
+
   // New gasto form
   const [newGastoConcepto, setNewGastoConcepto] = useState('Administración');
   const [newGastoMonto, setNewGastoMonto] = useState('');
@@ -325,6 +332,33 @@ export function LiquidacionesClientePage({
       setError(e instanceof Error ? e.message : 'Error creando esquema');
     }
   }, [api, newEsqNombre, newEsqDims, refreshEsquemas, selectEsquema, selectedCliente]);
+
+  const importarTarifaExcel = useCallback(async () => {
+    if (!selectedEsquema) return;
+    if (!importTarifaFile) { setError('Seleccioná un archivo Excel'); return; }
+    if (!importVigDesde) { setError('Vigencia desde es obligatoria'); return; }
+    if (!importMotivo.trim()) { setError('Motivo es obligatorio'); return; }
+
+    setImportingTarifa(true);
+    setError(null);
+    try {
+      const fd = new FormData();
+      fd.append('archivo', importTarifaFile);
+      fd.append('vigencia_desde', importVigDesde);
+      if (importVigHasta) fd.append('vigencia_hasta', importVigHasta);
+      fd.append('motivo', importMotivo.trim());
+
+      const res = await api.postForm(`/esquemas/${selectedEsquema.id}/importar-excel`, fd);
+      showSuccess(res.message ?? 'Tarifa importada');
+      setImportTarifaFile(null);
+      await refreshEsquemas();
+      await selectEsquema(selectedEsquema);
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Error importando tarifa');
+    } finally {
+      setImportingTarifa(false);
+    }
+  }, [api, importMotivo, importTarifaFile, importVigDesde, importVigHasta, refreshEsquemas, selectEsquema, selectedEsquema]);
 
   const desactivarEsquema = useCallback(async (esquema: LiqEsquemaTarifario) => {
     if (!selectedCliente) return;
@@ -686,6 +720,41 @@ export function LiquidacionesClientePage({
 
               {selectedEsquema && (
                 <>
+                  {/* Import from Excel */}
+                  <div className="dashboard-card">
+                    <header className="card-header"><h3>Importar tarifa desde Excel</h3></header>
+                    <div className="card-body">
+                      <div style={{ display: 'grid', gridTemplateColumns: '1.6fr 0.9fr 0.9fr 1.2fr auto', gap: 10, alignItems: 'end' }}>
+                        <div>
+                          <label style={{ display: 'block', fontSize: 12, marginBottom: 4 }}>Archivo (.xlsx)</label>
+                          <input
+                            type="file"
+                            accept=".xlsx,.xls"
+                            onChange={(e) => setImportTarifaFile(e.target.files?.[0] ?? null)}
+                          />
+                        </div>
+                        <div>
+                          <label style={{ display: 'block', fontSize: 12, marginBottom: 4 }}>Vigencia desde</label>
+                          <input type="date" className="form-input" value={importVigDesde} onChange={(e) => setImportVigDesde(e.target.value)} />
+                        </div>
+                        <div>
+                          <label style={{ display: 'block', fontSize: 12, marginBottom: 4 }}>Vigencia hasta</label>
+                          <input type="date" className="form-input" value={importVigHasta} onChange={(e) => setImportVigHasta(e.target.value)} />
+                        </div>
+                        <div>
+                          <label style={{ display: 'block', fontSize: 12, marginBottom: 4 }}>Motivo</label>
+                          <input type="text" className="form-input" value={importMotivo} onChange={(e) => setImportMotivo(e.target.value)} />
+                        </div>
+                        <button type="button" className="btn-primary" onClick={() => void importarTarifaExcel()} disabled={importingTarifa}>
+                          {importingTarifa ? 'Importando...' : 'Importar'}
+                        </button>
+                      </div>
+                      <p style={{ marginTop: 8, fontSize: 12, color: '#6b7280' }}>
+                        Carga dimensiones + líneas como <strong>borrador</strong> (pendiente de aprobación). Las filas sin precio o incompletas se omiten.
+                      </p>
+                    </div>
+                  </div>
+
                   {/* Dimension values */}
                   <div className="dashboard-card">
                     <header className="card-header"><h3>Valores de dimensiones — {selectedEsquema.nombre}</h3></header>
