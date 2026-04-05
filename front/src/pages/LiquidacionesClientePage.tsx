@@ -32,8 +32,6 @@ export function LiquidacionesClientePage({
 }: Props) {
   const authUser = useStoredAuthUser();
   const api = useLiqApi({ resolveApiBaseUrl, buildActorHeaders, authUser });
-  const apiBaseUrl = resolveApiBaseUrl();
-  const actorHeaders = buildActorHeaders(authUser);
 
   const [activeTab, setActiveTab] = useState<Tab>('clientes');
   const [clientes, setClientes] = useState<LiqCliente[]>([]);
@@ -104,7 +102,9 @@ export function LiquidacionesClientePage({
       if (q.trim() !== '') qs.set('q', q.trim());
       qs.set('limit', '30');
 
-      const r = await fetch(`${apiBaseUrl}/api/clientes/select?${qs.toString()}`, {
+      const baseUrl = resolveApiBaseUrl();
+      const actorHeaders = buildActorHeaders(authUser);
+      const r = await fetch(`${baseUrl}/api/clientes/select?${qs.toString()}`, {
         credentials: 'include',
         headers: { Accept: 'application/json', ...actorHeaders },
       });
@@ -123,7 +123,7 @@ export function LiquidacionesClientePage({
     } finally {
       setBaseClienteLoading(false);
     }
-  }, [apiBaseUrl, actorHeaders]);
+  }, [authUser, buildActorHeaders, resolveApiBaseUrl]);
 
   useEffect(() => {
     if (!showEnableClientForm) return;
