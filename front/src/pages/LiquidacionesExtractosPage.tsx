@@ -67,6 +67,29 @@ export function LiquidacionesExtractosPage({
   const [uploadSucursal, setUploadSucursal] = useState('');
   const [uploadTipo, setUploadTipo] = useState('');
 
+  const uploadTipoOptions = useMemo(() => {
+    // Por defecto mostramos solo los tipos que usamos en el módulo de extractos.
+    // Se puede ampliar por cliente vía configuracion_excel.allowed_tipos_archivo.
+    const base: Array<{ value: string; label: string }> = [
+      { value: 'DATA_CLIENTE', label: 'DATA_CLIENTE' },
+      { value: 'DETALLE_SUCURSAL', label: 'DETALLE_SUCURSAL' },
+    ];
+
+    const cfg = clientes.find((c) => c.id === selectedLiq?.cliente_id)?.configuracion_excel;
+    const extraRaw = (cfg as any)?.allowed_tipos_archivo ?? (cfg as any)?.tipos_archivo ?? [];
+    const extra = Array.isArray(extraRaw) ? extraRaw.filter((v) => typeof v === 'string' && v.trim()) as string[] : [];
+
+    const seen = new Set(base.map((b) => b.value));
+    const merged = [...base];
+    for (const v of extra) {
+      if (!seen.has(v)) {
+        merged.push({ value: v, label: v });
+        seen.add(v);
+      }
+    }
+    return merged;
+  }, [selectedLiq, clientes]);
+
   const autoOpenLiqId = useMemo(() => {
     const params = new URLSearchParams(location.search ?? '');
     const raw = params.get('liq');
@@ -651,11 +674,9 @@ export function LiquidacionesExtractosPage({
 	                  <label style={{ display: 'block', fontSize: 12, marginBottom: 4 }}>Tipo archivo (opcional)</label>
 	                  <select className="form-input" value={uploadTipo} onChange={(e) => setUploadTipo(e.target.value)} style={{ width: 180 }}>
 	                    <option value="">—</option>
-	                    <option value="DATA_CLIENTE">DATA_CLIENTE</option>
-	                    <option value="DETALLE_SUCURSAL">DETALLE_SUCURSAL</option>
-	                    <option value="TARIFARIO">TARIFARIO</option>
-	                    <option value="BASE_DISTRIB">BASE_DISTRIB</option>
-	                    <option value="VARIABLES">VARIABLES</option>
+                      {uploadTipoOptions.map((opt) => (
+                        <option key={opt.value} value={opt.value}>{opt.label}</option>
+                      ))}
 	                  </select>
 	                </div>
                 <button type="button" className="btn-primary" onClick={subirArchivo} disabled={!uploadFile || uploading}>
