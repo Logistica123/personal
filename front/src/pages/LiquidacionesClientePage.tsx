@@ -96,6 +96,54 @@ export function LiquidacionesClientePage({
 
   const fmt = formatCurrency ?? ((n: number) => `$${n.toLocaleString('es-AR', { minimumFractionDigits: 2 })}`);
   const fmtDate = formatDateOnly ?? ((s: string) => s);
+  const parseMoneyInput = (raw: string): number | null => {
+    let s = (raw ?? '').trim();
+    if (s === '') return null;
+    s = s.toLowerCase();
+    s = s.replace(/ars|ar\$|\$/g, '');
+    s = s.replace(/\s+/g, '');
+    // keep digits, separators and sign
+    s = s.replace(/[^0-9,.\-]/g, '');
+    if (s === '' || s === '-' || s === '.' || s === ',') return null;
+
+    const lastComma = s.lastIndexOf(',');
+    const lastDot = s.lastIndexOf('.');
+    if (lastComma !== -1 && lastDot !== -1) {
+      if (lastComma > lastDot) {
+        // es-AR: 211.082,00
+        s = s.replace(/\./g, '');
+        s = s.replace(',', '.');
+      } else {
+        // en-US: 211,082.00
+        s = s.replace(/,/g, '');
+      }
+    } else if (lastComma !== -1) {
+      const decLen = s.length - lastComma - 1;
+      if (decLen >= 1 && decLen <= 2) {
+        s = s.replace(/\./g, '');
+        s = s.replace(',', '.');
+      } else {
+        s = s.replace(/,/g, '');
+      }
+    } else {
+      s = s.replace(/,/g, '');
+    }
+
+    const v = Number(s);
+    if (!Number.isFinite(v)) return null;
+    return Math.round(v * 100) / 100;
+  };
+
+  const parsePercentInput = (raw: string): number | null => {
+    let s = (raw ?? '').trim();
+    if (s === '') return null;
+    s = s.replace('%', '').replace(',', '.');
+    s = s.replace(/[^0-9.\-]/g, '');
+    if (s === '' || s === '.' || s === '-') return null;
+    const v = Number(s);
+    if (!Number.isFinite(v)) return null;
+    return Math.round(v * 100) / 100;
+  };
   const getTolerancia = (c: LiqCliente): string => {
     const raw = c.configuracion_excel && typeof c.configuracion_excel === 'object' ? (c.configuracion_excel as any).tolerancia_porcentaje : null;
     if (typeof raw === 'number') return `${raw}%`;
@@ -425,10 +473,10 @@ export function LiquidacionesClientePage({
 
   const addLinea = useCallback(async () => {
     if (!selectedEsquema) return;
-    const precio = parseFloat(newLineaPrecio);
-    const pct = parseFloat(newLineaPctAg);
-    if (isNaN(precio) || precio <= 0) { setError('Precio inválido'); return; }
-    if (isNaN(pct) || pct <= 0 || pct >= 100) { setError('% agencia inválido (0 a 100)'); return; }
+    const precio = parseMoneyInput(newLineaPrecio);
+    const pct = parsePercentInput(newLineaPctAg);
+    if (precio == null || precio <= 0) { setError('Precio inválido'); return; }
+    if (pct == null || pct <= 0 || pct >= 100) { setError('% agencia inválido (0 a 100)'); return; }
     if (!newLineaVigDesde) { setError('Vigencia desde es obligatoria'); return; }
     if (!newLineaMotivo || newLineaMotivo.trim().length < 3) { setError('Motivo es obligatorio'); return; }
     const dimsFaltantes = (selectedEsquema.dimensiones ?? []).filter((d) => !(newLineaDims[d] ?? '').trim());
@@ -498,9 +546,9 @@ export function LiquidacionesClientePage({
   }, [api, selectedCliente, newGastoConcepto, newGastoMonto, newGastoTipo, newGastoVigDesde]);
 
   const precioDistribuidor = () => {
-    const p = parseFloat(newLineaPrecio);
-    const pct = parseFloat(newLineaPctAg);
-    if (isNaN(p) || isNaN(pct)) return null;
+    const p = parseMoneyInput(newLineaPrecio);
+    const pct = parsePercentInput(newLineaPctAg);
+    if (p == null || pct == null) return null;
     return p * (1 - pct / 100);
   };
 
@@ -815,11 +863,25 @@ export function LiquidacionesClientePage({
                           ))}
                           <div>
                             <label style={{ display: 'block', fontSize: 12, marginBottom: 4 }}>Precio original</label>
-                            <input type="number" className="form-input" value={newLineaPrecio} onChange={(e) => setNewLineaPrecio(e.target.value)} placeholder="0.00" min="0.01" step="0.01" />
+                            <input
+                              type="text"
+                              inputMode="decimal"
+                              className="form-input"
+                              value={newLineaPrecio}
+                              onChange={(e) => setNewLineaPrecio(e.target.value)}
+                              placeholder="Ej: 211082 o 211.082,00"
+                            />
                           </div>
                           <div>
                             <label style={{ display: 'block', fontSize: 12, marginBottom: 4 }}>% Agencia</label>
-                            <input type="number" className="form-input" value={newLineaPctAg} onChange={(e) => setNewLineaPctAg(e.target.value)} min="0" max="99.99" step="0.01" />
+                            <input
+                              type="text"
+                              inputMode="decimal"
+                              className="form-input"
+                              value={newLineaPctAg}
+                              onChange={(e) => setNewLineaPctAg(e.target.value)}
+                              placeholder="Ej: 10 o 10,5"
+                            />
                           </div>
                           <div>
                             <label style={{ display: 'block', fontSize: 12, marginBottom: 4 }}>Precio distribuidor</label>
