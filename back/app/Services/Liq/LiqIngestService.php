@@ -131,6 +131,31 @@ class LiqIngestService
             ->get(['id', 'patente', 'estado_id'])
             ->keyBy(fn($p) => strtoupper(preg_replace('/[\s\-]/', '', $p->patente)));
 
+        // Conceptos cuyo "precio original" se toma desde el Excel (valor variable por viaje).
+        // Ej: Loginter Colecta suele venir con Concepto = "Valor Viaje" y el importe está en la columna Valor.
+        $conceptosValorVariable = $config['conceptos_valor_variable'] ?? [];
+        $conceptosValorVariableNorm = [];
+        if (is_array($conceptosValorVariable)) {
+            foreach ($conceptosValorVariable as $c) {
+                if (is_string($c) && trim($c) !== '') {
+                    $conceptosValorVariableNorm[] = $this->normalizarTexto($c);
+                }
+            }
+        }
+        // Default defensivo (si no está configurado) para el caso típico.
+        $conceptosValorVariableNorm[] = $this->normalizarTexto('Valor Viaje');
+        $conceptosValorVariableNorm = array_values(array_unique(array_filter($conceptosValorVariableNorm)));
+        $isValorVariable = function (string $conceptoKey, array $dimensionesValores) use ($conceptosValorVariableNorm): bool {
+            if (in_array($conceptoKey, $conceptosValorVariableNorm, true)) {
+                return true;
+            }
+            $conceptoTarifa = $dimensionesValores['concepto'] ?? null;
+            if (is_string($conceptoTarifa) && $conceptoTarifa !== '') {
+                return in_array($this->normalizarTexto($conceptoTarifa), $conceptosValorVariableNorm, true);
+            }
+            return false;
+        };
+
         $operacionesCreadas = 0;
         $errores = [];
         $idsVistos = []; // for duplicate detection
@@ -164,6 +189,7 @@ class LiqIngestService
             // Normalize patente
             $dominio = strtoupper(preg_replace('/[\s\-]/', '', (string)($rawPatente ?? '')));
             $concepto = trim((string)($rawConcepto ?? ''));
+            $conceptoKey = $this->normalizarTexto($concepto);
             $valor = $this->parseDecimal($rawValor ?? 0);
 
             // Detect duplicate by idViaje if available
@@ -219,7 +245,6 @@ class LiqIngestService
                     }
 
                     // 1) Intentar resolver por mapeo desde el Concepto (si existe)
-                    $conceptoKey = $this->normalizarTexto($concepto);
                     $mapeosParaConcepto = $mapeosConcepto->get($conceptoKey);
                     if ($mapeosParaConcepto && $mapeosParaConcepto->has($dim)) {
                         $dimensionesValores[$dim] = $canon($dim, (string) $mapeosParaConcepto->get($dim)->valor_tarifa);
@@ -265,14 +290,24 @@ class LiqIngestService
 
                     if ($linea) {
                         $lineaTarifaId = $linea->id;
-                        $valorTarifaOriginal = (float) $linea->precio_original;
-                        $valorTarifaDistribuidor = (float) $linea->precio_distribuidor;
                         $porcentajeAgencia = (float) $linea->porcentaje_agencia;
-                        $diferencia = round($valor - $valorTarifaOriginal, 2);
 
-                        $tolerancia = (float) ($config['tolerancia_porcentaje'] ?? 2.0);
-                        $pctDiff = $valorTarifaOriginal > 0 ? abs($diferencia / $valorTarifaOriginal) * 100 : 0;
-                        $estado = $pctDiff <= $tolerancia ? 'ok' : 'diferencia';
+                        // Caso especial: el precio original se toma del Excel (valor variable).
+                        if ($isValorVariable($conceptoKey, $dimensionesValores)) {
+                            $valorTarifaOriginal = round($valor, 2);
+                            $valorTarifaDistribuidor = round($valor * (1 - $porcentajeAgencia / 100), 2);
+                            $diferencia = 0.0;
+                            $estado = 'ok';
+                            $observaciones = $observaciones ?: 'Tarifa variable: precio original tomado del Excel.';
+                        } else {
+                            $valorTarifaOriginal = (float) $linea->precio_original;
+                            $valorTarifaDistribuidor = (float) $linea->precio_distribuidor;
+                            $diferencia = round($valor - $valorTarifaOriginal, 2);
+
+                            $tolerancia = (float) ($config['tolerancia_porcentaje'] ?? 2.0);
+                            $pctDiff = $valorTarifaOriginal > 0 ? abs($diferencia / $valorTarifaOriginal) * 100 : 0;
+                            $estado = $pctDiff <= $tolerancia ? 'ok' : 'diferencia';
+                        }
                     } else {
                         // Si existe una línea que matchea las dimensiones pero está pendiente de aprobación,
                         // lo informamos explícitamente para evitar confusión (el cruce solo usa líneas aprobadas).
