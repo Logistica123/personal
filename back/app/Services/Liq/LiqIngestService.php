@@ -167,6 +167,7 @@ class LiqIngestService
             $rawPatente = $row[$columnMap['patente']] ?? null;
             $rawConcepto = isset($columnMap['concepto']) ? ($row[$columnMap['concepto']] ?? null) : null;
             $rawValor = $row[$columnMap['valor']] ?? null;
+            $rawCategoriaVehiculo = isset($columnMap['categoria_vehiculo']) ? ($row[$columnMap['categoria_vehiculo']] ?? null) : null;
 
             if (empty($rawPatente) && empty($rawConcepto) && empty($rawValor)) {
                 continue;
@@ -191,6 +192,7 @@ class LiqIngestService
             $concepto = trim((string)($rawConcepto ?? ''));
             $conceptoKey = $this->normalizarTexto($concepto);
             $valor = $this->parseDecimal($rawValor ?? 0);
+            $categoriaVehiculoKey = $this->normalizarTexto(trim((string) ($rawCategoriaVehiculo ?? '')));
 
             // Detect duplicate by idViaje if available
             $idViaje = isset($columnMap['id_viaje']) ? ($row[$columnMap['id_viaje']] ?? null) : null;
@@ -288,6 +290,39 @@ class LiqIngestService
                         $liquidacion->periodo_desde->toDateString()
                     );
 
+                    // Fallback específico para "Valor Viaje": si no hay match, intentamos mapear a un concepto existente
+                    // (por ejemplo, Ut. Corto AM / Chasis) usando CategoriaVehiculo si está disponible.
+                    if (
+                        !$linea
+                        && $isValorVariable($conceptoKey, $dimensionesValores)
+                        && array_key_exists('concepto', $dimensionesValores)
+                    ) {
+                        $candidatos = [];
+                        if (str_contains($categoriaVehiculoKey, 'chasis')) {
+                            $candidatos = ['Chasis'];
+                        } elseif ($categoriaVehiculoKey !== '') {
+                            $candidatos = ['Ut. Corto AM'];
+                        } else {
+                            $candidatos = ['Ut. Corto AM'];
+                        }
+
+                        foreach ($candidatos as $cand) {
+                            $tryDims = $dimensionesValores;
+                            $tryDims['concepto'] = $canon('concepto', $cand);
+                            $tryLinea = $this->buscarLineaTarifaPorDimensiones(
+                                $esquema->id,
+                                $tryDims,
+                                $liquidacion->periodo_desde->toDateString()
+                            );
+                            if ($tryLinea) {
+                                $dimensionesValores = $tryDims;
+                                $linea = $tryLinea;
+                                $observaciones = $observaciones ?: "Concepto '{$concepto}' mapeado automáticamente a '{$cand}' para poder aplicar % agencia.";
+                                break;
+                            }
+                        }
+                    }
+
                     if ($linea) {
                         $lineaTarifaId = $linea->id;
                         $porcentajeAgencia = (float) $linea->porcentaje_agencia;
@@ -320,6 +355,9 @@ class LiqIngestService
                         if ($pendiente) {
                             $dimensionFallida = 'pendiente_aprobacion';
                             $observaciones = 'Existe tarifa pendiente de aprobación para dimensiones: ' . json_encode($dimensionesValores, JSON_UNESCAPED_UNICODE);
+                        } elseif ($isValorVariable($conceptoKey, $dimensionesValores)) {
+                            $dimensionFallida = 'valor_viaje_sin_match';
+                            $observaciones = 'Concepto con valor variable: falta una línea de tarifa aprobada que matchee (sucursal+concepto) para aplicar % agencia. Dimensiones: ' . json_encode($dimensionesValores, JSON_UNESCAPED_UNICODE);
                         } else {
                             $dimensionFallida = 'no_match';
                             $observaciones = 'No match para dimensiones: ' . json_encode($dimensionesValores, JSON_UNESCAPED_UNICODE);
@@ -376,6 +414,7 @@ class LiqIngestService
             'patente' => ['dominio', 'patente', 'placa', 'matricula'],
             'concepto' => ['concepto', 'concepto_viaje', 'tipo_servicio', 'categoria'],
             'valor' => ['valor', 'importe', 'monto', 'precio'],
+            'categoria_vehiculo' => ['categoriavehiculo', 'categoria_vehiculo', 'tipo_vehiculo', 'vehiculo', 'vehículo'],
             'id_viaje' => ['idviaje', 'id_viaje', 'viaje_id', 'id viaje'],
             'fecha' => ['fechaviaje', 'fecha_viaje', 'fecha'],
         ];
