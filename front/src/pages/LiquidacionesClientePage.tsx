@@ -55,6 +55,10 @@ export function LiquidacionesClientePage({
   const [selectedBaseClienteId, setSelectedBaseClienteId] = useState<string>('');
   const [enablingClient, setEnablingClient] = useState(false);
 
+  // New schema form
+  const [newEsqNombre, setNewEsqNombre] = useState('');
+  const [newEsqDims, setNewEsqDims] = useState('sucursal, concepto');
+
   // New dimension form
   const [newDimNombre, setNewDimNombre] = useState('');
   const [newDimValor, setNewDimValor] = useState('');
@@ -292,6 +296,35 @@ export function LiquidacionesClientePage({
       setEsquemas(esqRes.data ?? []);
     } catch { /* silent */ }
   }, [api, selectedCliente]);
+
+  const crearEsquema = useCallback(async () => {
+    if (!selectedCliente) return;
+    const nombre = newEsqNombre.trim();
+    const dims = newEsqDims
+      .split(',')
+      .map((s) => s.trim())
+      .filter((s) => s !== '');
+    const uniqDims = Array.from(new Set(dims));
+    if (!nombre) {
+      setError('Nombre del esquema es obligatorio');
+      return;
+    }
+    if (uniqDims.length === 0) {
+      setError('Ingresá al menos 1 dimensión (ej: sucursal, concepto)');
+      return;
+    }
+    try {
+      const res = await api.post(`/clientes/${selectedCliente.id}/esquemas`, { nombre, dimensiones: uniqDims });
+      setNewEsqNombre('');
+      showSuccess('Esquema creado');
+      await refreshEsquemas();
+      if (res?.data?.id) {
+        await selectEsquema(res.data as LiqEsquemaTarifario);
+      }
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Error creando esquema');
+    }
+  }, [api, newEsqNombre, newEsqDims, refreshEsquemas, selectEsquema, selectedCliente]);
 
   const desactivarEsquema = useCallback(async (esquema: LiqEsquemaTarifario) => {
     if (!selectedCliente) return;
@@ -575,10 +608,34 @@ export function LiquidacionesClientePage({
 	          ) : (
 	            <>
 	              <div className="dashboard-card">
-	                <header className="card-header">
-	                  <h3>Esquemas de {selectedCliente.nombre_corto}</h3>
-	                </header>
+                <header className="card-header">
+                  <h3>Esquemas de {selectedCliente.nombre_corto}</h3>
+                </header>
                 <div className="card-body">
+                  <div style={{ display: 'grid', gridTemplateColumns: '1.3fr 1.2fr auto', gap: 10, alignItems: 'end', marginBottom: 14 }}>
+                    <div>
+                      <label style={{ display: 'block', fontSize: 12, marginBottom: 4 }}>Nombre</label>
+                      <input
+                        type="text"
+                        className="form-input"
+                        placeholder="Tarifa Loginter 2026"
+                        value={newEsqNombre}
+                        onChange={(e) => setNewEsqNombre(e.target.value)}
+                      />
+                    </div>
+                    <div>
+                      <label style={{ display: 'block', fontSize: 12, marginBottom: 4 }}>Dimensiones (separadas por coma)</label>
+                      <input
+                        type="text"
+                        className="form-input"
+                        placeholder="sucursal, concepto"
+                        value={newEsqDims}
+                        onChange={(e) => setNewEsqDims(e.target.value)}
+                      />
+                    </div>
+                    <button type="button" className="btn-primary" onClick={crearEsquema}>Crear esquema</button>
+                  </div>
+
                   <table className="data-table">
                     <thead><tr><th>Nombre</th><th>Dimensiones</th><th>Líneas</th><th>Activo</th><th></th></tr></thead>
                     <tbody>
