@@ -8,6 +8,7 @@ import type {
   LiqOperacion,
   LiqLiquidacionDistribuidor,
   LiqEsquemaTarifario,
+  LiqMapeoSucursal,
 } from '../features/liquidaciones/types';
 import {
   ESTADO_OPERACION_LABELS,
@@ -45,6 +46,7 @@ export function LiquidacionesExtractosPage({
   const [estadosCounts, setEstadosCounts] = useState<Record<string, number>>({});
   const [clientes, setClientes] = useState<LiqCliente[]>([]);
   const [esquemas, setEsquemas] = useState<LiqEsquemaTarifario[]>([]);
+  const [mapeosSucursal, setMapeosSucursal] = useState<LiqMapeoSucursal[]>([]);
   const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [bulkDeleting, setBulkDeleting] = useState(false);
@@ -66,6 +68,14 @@ export function LiquidacionesExtractosPage({
   const [uploadFile, setUploadFile] = useState<File | null>(null);
   const [uploadSucursal, setUploadSucursal] = useState('');
   const [uploadTipo, setUploadTipo] = useState('');
+
+  const sucursalTarifaOptions = useMemo(() => {
+    const values = mapeosSucursal
+      .filter((m) => m.activo)
+      .map((m) => (m.sucursal_tarifa ?? '').trim())
+      .filter((v) => v.length > 0);
+    return Array.from(new Set(values)).sort((a, b) => a.localeCompare(b));
+  }, [mapeosSucursal]);
 
   const uploadTipoOptions = useMemo(() => {
     // Por defecto mostramos solo los tipos que usamos en el módulo de extractos.
@@ -192,12 +202,13 @@ export function LiquidacionesExtractosPage({
     setSelectedArchivoIds({});
     setSelectedOpIds({});
     try {
-      const [archRes, opRes, distRes, detRes, esqRes] = await Promise.all([
+      const [archRes, opRes, distRes, detRes, esqRes, mapSucRes] = await Promise.all([
         api.get(`/liquidaciones/${liq.id}/archivos`),
         api.get(`/liquidaciones/${liq.id}/operaciones`),
         api.get(`/liquidaciones/${liq.id}/distribuidores`),
         api.get(`/liquidaciones/${liq.id}`),
         api.get(`/clientes/${liq.cliente_id}/esquemas`),
+        api.get(`/clientes/${liq.cliente_id}/mapeos-sucursal`),
       ]);
       const archList = (archRes.data ?? []) as LiqArchivoEntrada[];
       setArchivos(archList);
@@ -219,6 +230,7 @@ export function LiquidacionesExtractosPage({
         return prev.map((row) => (row.id === updated.id ? { ...row, ...updated, cliente: row.cliente ?? updated.cliente } : row));
       });
       setEsquemas(esqRes.data ?? []);
+      setMapeosSucursal(mapSucRes.data ?? []);
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Error cargando detalle');
     }
@@ -661,6 +673,11 @@ export function LiquidacionesExtractosPage({
           <div className="dashboard-card" style={{ marginBottom: 16 }}>
             <header className="card-header"><h3>Cargar archivo Excel</h3></header>
             <div className="card-body">
+              <datalist id="liq-sucursal-options">
+                {sucursalTarifaOptions.map((s) => (
+                  <option key={s} value={s} />
+                ))}
+              </datalist>
               <div style={{ display: 'flex', gap: 12, alignItems: 'flex-end', flexWrap: 'wrap' }}>
                 <div>
                   <label style={{ display: 'block', fontSize: 12, marginBottom: 4 }}>Archivo</label>
@@ -668,7 +685,15 @@ export function LiquidacionesExtractosPage({
                 </div>
                 <div>
 	                  <label style={{ display: 'block', fontSize: 12, marginBottom: 4 }}>Sucursal (opcional)</label>
-	                  <input type="text" className="form-input" value={uploadSucursal} onChange={(e) => setUploadSucursal(e.target.value)} placeholder="ej: AMBA" style={{ width: 140 }} />
+	                  <input
+                      type="text"
+                      list="liq-sucursal-options"
+                      className="form-input"
+                      value={uploadSucursal}
+                      onChange={(e) => setUploadSucursal(e.target.value)}
+                      placeholder="ej: AMBA"
+                      style={{ width: 180 }}
+                    />
 	                </div>
 	                <div>
 	                  <label style={{ display: 'block', fontSize: 12, marginBottom: 4 }}>Tipo archivo (opcional)</label>
@@ -737,6 +762,7 @@ export function LiquidacionesExtractosPage({
                                 className="form-input"
                                 style={{ width: 160 }}
                                 placeholder="Ej: AMBA"
+                                list="liq-sucursal-options"
                                 value={archivoSucursalEdit[a.id] ?? (a.sucursal ?? '')}
                                 onChange={(e) => setArchivoSucursalEdit((prev) => ({ ...prev, [a.id]: e.target.value }))}
                               />
