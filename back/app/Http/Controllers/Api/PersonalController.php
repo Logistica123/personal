@@ -22,6 +22,7 @@ use App\Models\PersonalMonthlySummary;
 use App\Models\PersonalNotification;
 use App\Models\ContactReveal;
 use App\Models\TransportistaQrAccessLog;
+use App\Support\Requerimientos\ClienteRequerimientoSync;
 use App\Services\AuditLogger;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -1352,6 +1353,8 @@ class PersonalController extends Controller
 
         $persona->save();
 
+        ClienteRequerimientoSync::syncFromPersonaSolicitud($persona);
+
         $ownerPayload = [
             'nombreapellido' => $validated['duenoNombre'] ?? null,
             'fecha_nacimiento' => $validated['duenoFechaNacimiento'] ?? null,
@@ -1502,6 +1505,7 @@ class PersonalController extends Controller
     {
         $this->ensureCanManagePersonal($request, $persona);
 
+        ClienteRequerimientoSync::deleteSource('persona', (int) $persona->id);
         $persona->delete();
 
         return response()->json([
@@ -1727,6 +1731,8 @@ class PersonalController extends Controller
             $persona->save();
         }
 
+        ClienteRequerimientoSync::syncFromPersonaSolicitud($persona);
+
         $notificationSent = false;
 
         if (! $autoApprove) {
@@ -1788,6 +1794,8 @@ class PersonalController extends Controller
         }
 
         $persona->save();
+
+        ClienteRequerimientoSync::syncFromPersonaSolicitud($persona);
 
         $persona->loadMissing([
             'cliente:id,nombre',
@@ -1891,6 +1899,8 @@ class PersonalController extends Controller
         }
 
         $persona->save();
+
+        ClienteRequerimientoSync::syncFromPersonaSolicitud($persona);
 
         $persona->histories()->create([
             'user_id' => $request->user()?->id,

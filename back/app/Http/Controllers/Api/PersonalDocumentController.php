@@ -8,11 +8,13 @@ use App\Models\Factura;
 use App\Models\FacturaOcr;
 use App\Models\FacturaValidacion;
 use App\Models\FileType;
+use App\Models\FuelReport;
 use App\Models\Persona;
 use App\Models\PersonalNotification;
 use App\Services\FacturaAi\FacturaValidationService;
 use App\Services\FacturaAi\OpenAiFacturaParser;
 use App\Services\FacturaAi\PdfTextExtractor;
+use App\Services\Fuel\FuelDiscountPdfService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\UploadedFile;
@@ -752,6 +754,21 @@ class PersonalDocumentController extends Controller
             'recibido' => ['required', 'boolean'],
         ]);
 
+        $liquidacionTypeId = FileType::query()->where('nombre', 'Liquidación')->value('id');
+        if ($liquidacionTypeId) {
+            $hasLiquidaciones = $persona->documentos()
+                ->whereIn('id', $validated['documentIds'])
+                ->whereNull('parent_document_id')
+                ->where('tipo_archivo_id', $liquidacionTypeId)
+                ->exists();
+
+            if ($hasLiquidaciones) {
+                return response()->json([
+                    'message' => 'El estado de facturación de las liquidaciones se actualiza por importación y no se puede cambiar manualmente.',
+                ], 403);
+            }
+        }
+
         $updated = $persona->documentos()
             ->whereIn('id', $validated['documentIds'])
             ->whereNull('parent_document_id')
@@ -966,7 +983,11 @@ class PersonalDocumentController extends Controller
         $path = $this->normalizeStoragePath($documento->ruta);
 
         if (! $path || ! Storage::disk($disk)->exists($path)) {
-            return $this->streamExternalFile($downloadUrl, $fileName, $documento->mime, true);
+            $materializedPath = $this->maybeMaterializeFuelDiscountAttachment($documento, $disk, $path);
+            if (! $materializedPath || ! Storage::disk($disk)->exists($materializedPath)) {
+                return $this->streamExternalFile($downloadUrl, $fileName, $documento->mime, true);
+            }
+            $path = $materializedPath;
         }
 
         $contentType = $documento->mime ?: Storage::disk($disk)->mimeType($path) ?: 'application/octet-stream';
@@ -1004,7 +1025,11 @@ class PersonalDocumentController extends Controller
         $path = $this->normalizeStoragePath($documento->ruta);
 
         if (! $path || ! Storage::disk($disk)->exists($path)) {
-            return $this->streamExternalFile($downloadUrl, $fileName, $documento->mime, false);
+            $materializedPath = $this->maybeMaterializeFuelDiscountAttachment($documento, $disk, $path);
+            if (! $materializedPath || ! Storage::disk($disk)->exists($materializedPath)) {
+                return $this->streamExternalFile($downloadUrl, $fileName, $documento->mime, false);
+            }
+            $path = $materializedPath;
         }
 
         return Storage::disk($disk)->download($path, $fileName);
@@ -1554,6 +1579,76 @@ class PersonalDocumentController extends Controller
             $normalized = substr($normalized, strlen('storage/'));
         }
         return $normalized;
+    }
+
+    protected function maybeMaterializeFuelDiscountAttachment(Archivo $documento, string $disk, ?string $path): ?string
+    {
+        $tipoNombre = strtolower(trim((string) ($documento->tipo?->nombre ?? '')));
+        if ($tipoNombre !== strtolower('DESCUENTO_COMBUSTIBLE')) {
+            return null;
+        }
+
+        if (! $path) {
+            return null;
+        }
+
+        if (Storage::disk($disk)->exists($path)) {
+            return $path;
+        }
+
+        if (! preg_match('/descuento-combustible-reporte-(\d+)\.(txt|pdf)$/i', $path, $m)) {
+            return null;
+        }
+
+        $reportId = (int) $m[1];
+        if ($reportId <= 0) {
+            return null;
+        }
+        $ext = strtolower((string) ($m[2] ?? ''));
+
+        $targetPath = $path;
+        if ($ext === 'txt') {
+            $targetPath = preg_replace('/\\.txt$/i', '.pdf', $path) ?: $path;
+        }
+
+        $report = FuelReport::query()
+            ->with(['items.movement', 'adjustments'])
+            ->find($reportId);
+
+        if (! $report) {
+            return null;
+        }
+
+        $label = $documento->nombre_original ?? sprintf('Descuento combustible (Reporte #%d)', $reportId);
+
+        $liquidacion = $documento->parent ?: $documento;
+        $pdf = app(FuelDiscountPdfService::class)->renderPdf($liquidacion, $report, $label);
+
+        try {
+            Storage::disk($disk)->put($targetPath, $pdf);
+
+            // Si veníamos de .txt, dejamos de apuntar al archivo viejo.
+            if ($ext === 'txt' && $targetPath !== $path) {
+                try {
+                    if (Storage::disk($disk)->exists($path)) {
+                        Storage::disk($disk)->delete($path);
+                    }
+                } catch (\Throwable) {
+                }
+                $documento->ruta = $targetPath;
+            }
+
+            $documento->mime = 'application/pdf';
+            $documento->size = Storage::disk($disk)->exists($targetPath)
+                ? (int) (Storage::disk($disk)->size($targetPath) ?? 0)
+                : (is_string($pdf) ? strlen($pdf) : null);
+            $documento->disk = $documento->disk ?: $disk;
+            $documento->save();
+
+            return $targetPath;
+        } catch (\Throwable) {
+            return null;
+        }
     }
 
     protected function normalizeUrl(?string $url): ?string

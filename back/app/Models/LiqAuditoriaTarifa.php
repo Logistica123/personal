@@ -2,12 +2,17 @@
 
 namespace App\Models;
 
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class LiqAuditoriaTarifa extends Model
 {
+    use HasFactory;
+
     protected $table = 'liq_auditoria_tarifa';
+
+    /** Managed manually; no updated_at column on this table. */
+    public $timestamps = false;
 
     protected $fillable = [
         'linea_tarifa_id',
@@ -16,23 +21,28 @@ class LiqAuditoriaTarifa extends Model
         'valores_nuevos',
         'usuario_id',
         'motivo',
+        'created_at',
     ];
 
-    protected function casts(): array
-    {
-        return [
-            'valores_anteriores' => 'array',
-            'valores_nuevos'     => 'array',
-        ];
-    }
+    protected $casts = [
+        'valores_anteriores' => 'array',
+        'valores_nuevos'     => 'array',
+    ];
 
-    public function lineaTarifa(): BelongsTo
+    /** Treat created_at as a date so Carbon handles it automatically. */
+    protected $dates = ['created_at'];
+
+    // -------------------------------------------------------------------------
+    // Relationships
+    // -------------------------------------------------------------------------
+
+    public function lineaTarifa()
     {
         return $this->belongsTo(LiqLineaTarifa::class, 'linea_tarifa_id');
     }
 
-    public function usuario(): BelongsTo
+    public function usuario()
     {
-        return $this->belongsTo(User::class, 'usuario_id');
+        return $this->belongsTo(\App\Models\User::class, 'usuario_id');
     }
 }

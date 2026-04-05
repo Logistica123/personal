@@ -2,11 +2,13 @@
 
 namespace App\Models;
 
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class LiqMapeoSucursal extends Model
 {
+    use HasFactory;
+
     protected $table = 'liq_mapeos_sucursal';
 
     protected $fillable = [
@@ -17,13 +19,25 @@ class LiqMapeoSucursal extends Model
         'activo',
     ];
 
-    protected function casts(): array
+    protected $casts = [
+        'activo' => 'boolean',
+    ];
+
+    // -------------------------------------------------------------------------
+    // Relationships
+    // -------------------------------------------------------------------------
+
+    public function cliente()
     {
-        return ['activo' => 'boolean'];
+        return $this->belongsTo(\App\Models\LiqCliente::class, 'cliente_id');
     }
 
-    public function cliente(): BelongsTo
+    // -------------------------------------------------------------------------
+    // Scopes
+    // -------------------------------------------------------------------------
+
+    public function scopeActivo($q)
     {
-        return $this->belongsTo(LiqCliente::class, 'cliente_id');
+        return $q->where('activo', true);
     }
 }

@@ -7,6 +7,7 @@ use App\Http\Controllers\Api\ArcaParametrosController;
 use App\Http\Controllers\Api\ArcaPuntoVentaController;
 use App\Http\Controllers\Api\ChatMessageController;
 use App\Http\Controllers\Api\ClienteController;
+use App\Http\Controllers\Api\ClienteRequerimientoController;
 use App\Http\Controllers\Api\ClientesFacturacionController;
 use App\Http\Controllers\Api\FacturaController;
 use App\Http\Controllers\Api\FacturaCobranzaController;
@@ -31,15 +32,15 @@ use App\Http\Controllers\Api\TaxProfileController;
 use App\Http\Controllers\Api\SolicitudPersonalController;
 use App\Http\Controllers\Api\VacacionesDiasController;
 use App\Http\Controllers\Api\DistriappController;
-use App\Http\Controllers\Api\Liq\LiqClienteController;
-use App\Http\Controllers\Api\Liq\LiqDistribuidorController;
-use App\Http\Controllers\Api\Liq\LiqExtractosController;
-use App\Http\Controllers\Api\Liq\LiqOperacionController;
-use App\Http\Controllers\Api\Liq\LiqPagoController;
-use App\Http\Controllers\Api\Liq\LiqTarifaController;
 use App\Http\Controllers\Api\UserDocumentController;
 use App\Http\Controllers\Api\CallController;
 use App\Http\Controllers\Api\MembresiaController;
+use App\Http\Controllers\Api\Liq\LiqClienteController;
+use App\Http\Controllers\Api\Liq\LiqTarifaController;
+use App\Http\Controllers\Api\Liq\LiqExtractosController;
+use App\Http\Controllers\Api\Liq\LiqArchivoEntradaController;
+use App\Http\Controllers\Api\Liq\LiqDistribuidorLiquidacionesController;
+use App\Http\Controllers\Api\Liq\LiqDistribuidorDocumentoController;
 use Illuminate\Support\Facades\Route;
 
 Route::post('/login', [AuthController::class, 'login']);
@@ -103,6 +104,10 @@ Route::middleware('auth.api')->group(function () {
 
     Route::get('/clientes', [ClienteController::class, 'index']);
     Route::get('/clientes/select', [ClienteController::class, 'select']);
+    Route::get('/clientes/requerimientos', [ClienteRequerimientoController::class, 'index']);
+    Route::post('/clientes/requerimientos', [ClienteRequerimientoController::class, 'store']);
+    Route::put('/clientes/requerimientos/{requerimiento}', [ClienteRequerimientoController::class, 'update']);
+    Route::delete('/clientes/requerimientos/{requerimiento}', [ClienteRequerimientoController::class, 'destroy']);
     Route::get('/clientes/{cliente}', [ClienteController::class, 'show']);
     Route::get('/clientes/{cliente}/sucursales', [ClienteController::class, 'sucursales']);
     Route::post('/clientes', [ClienteController::class, 'store']);
@@ -175,6 +180,74 @@ Route::middleware('auth.api')->group(function () {
     Route::post('/bdd-activos-asesores/import', [ActivoAsesorComercialController::class, 'import']);
     Route::put('/bdd-activos-asesores/{activoAsesorComercial}', [ActivoAsesorComercialController::class, 'update']);
     Route::delete('/bdd-activos-asesores/{activoAsesorComercial}', [ActivoAsesorComercialController::class, 'destroy']);
+
+    // ── Control de Liquidaciones v2 (/api/liq/*) ─────────────────────────────
+    Route::prefix('liq')->group(function () {
+        // Clientes habilitados para liquidaciones
+        Route::get('/clientes', [LiqClienteController::class, 'index']);
+        Route::post('/clientes', [LiqClienteController::class, 'store']);
+        Route::patch('/clientes/{cliente}', [LiqClienteController::class, 'update']);
+
+        // Esquemas tarifarios
+        Route::get('/clientes/{cliente}/esquemas', [LiqClienteController::class, 'esquemas']);
+        Route::post('/clientes/{cliente}/esquemas', [LiqClienteController::class, 'storeEsquema']);
+        Route::put('/esquemas/{esquema}/activar', [LiqTarifaController::class, 'activarEsquema']);
+        Route::put('/esquemas/{esquema}/desactivar', [LiqTarifaController::class, 'desactivarEsquema']);
+        Route::delete('/esquemas/{esquema}', [LiqTarifaController::class, 'destroyEsquema']);
+
+        // Dimensiones de un esquema
+        Route::get('/esquemas/{esquema}/dimensiones', [LiqTarifaController::class, 'dimensiones']);
+        Route::post('/esquemas/{esquema}/dimensiones', [LiqTarifaController::class, 'storeDimension']);
+        Route::put('/dimension-valores/{dimensionValor}/desactivar', [LiqTarifaController::class, 'desactivarDimension']);
+
+        // Líneas de tarifa
+        Route::get('/esquemas/{esquema}/lineas', [LiqTarifaController::class, 'lineas']);
+        Route::post('/esquemas/{esquema}/lineas', [LiqTarifaController::class, 'storeLinea']);
+        Route::put('/lineas/{lineaTarifa}/aprobar', [LiqTarifaController::class, 'aprobarLinea']);
+        Route::put('/lineas/{lineaTarifa}/desactivar', [LiqTarifaController::class, 'desactivarLinea']);
+
+        // Mapeos de concepto
+        Route::get('/clientes/{cliente}/mapeos-concepto', [LiqClienteController::class, 'mapeosConcepto']);
+        Route::post('/clientes/{cliente}/mapeos-concepto', [LiqClienteController::class, 'storeMapeosConcepto']);
+        Route::put('/mapeos-concepto/{id}/desactivar', [LiqClienteController::class, 'desactivarMapeoConcepto']);
+
+        // Mapeos de sucursal
+        Route::get('/clientes/{cliente}/mapeos-sucursal', [LiqClienteController::class, 'mapeosSucursal']);
+        Route::post('/clientes/{cliente}/mapeos-sucursal', [LiqClienteController::class, 'storeMapeosSucursal']);
+        Route::put('/mapeos-sucursal/{id}/desactivar', [LiqClienteController::class, 'desactivarMapeoSucursal']);
+
+        // Gastos administrativos
+        Route::get('/clientes/{cliente}/gastos', [LiqClienteController::class, 'gastos']);
+        Route::post('/clientes/{cliente}/gastos', [LiqClienteController::class, 'storeGastos']);
+
+        // Tarifa vigente + historial de auditoría
+        Route::get('/clientes/{cliente}/tarifa', [LiqClienteController::class, 'tarifaVigente']);
+        Route::get('/clientes/{cliente}/tarifa/historial', [LiqClienteController::class, 'tarifaHistorial']);
+
+        // Liquidaciones del cliente (cabecera)
+        Route::get('/liquidaciones', [LiqExtractosController::class, 'index']);
+        Route::post('/liquidaciones', [LiqExtractosController::class, 'store']);
+        Route::get('/liquidaciones/{liquidacionCliente}', [LiqExtractosController::class, 'show']);
+        Route::delete('/liquidaciones/{liquidacionCliente}', [LiqExtractosController::class, 'destroy']);
+        Route::post('/liquidaciones/upload', [LiqExtractosController::class, 'upload']);
+        Route::post('/liquidaciones/{liquidacionCliente}/generar', [LiqExtractosController::class, 'generarLiquidaciones']);
+        Route::get('/liquidaciones/{liquidacionCliente}/operaciones', [LiqExtractosController::class, 'operaciones']);
+        Route::delete('/liquidaciones/{liquidacionCliente}/operaciones', [LiqExtractosController::class, 'destroyOperaciones']);
+        Route::get('/liquidaciones/{liquidacionCliente}/distribuidores', [LiqExtractosController::class, 'distribuidores']);
+        Route::delete('/operaciones/{operacion}', [\App\Http\Controllers\Api\Liq\LiqOperacionController::class, 'destroy']);
+
+        // Archivos de entrada
+        Route::get('/liquidaciones/{liquidacionCliente}/archivos', [LiqArchivoEntradaController::class, 'index']);
+        Route::patch('/archivos/{archivo}/sucursal', [LiqArchivoEntradaController::class, 'updateSucursal']);
+        Route::post('/archivos/{archivo}/reprocesar', [LiqArchivoEntradaController::class, 'reprocesar']);
+        Route::delete('/archivos/{archivo}', [LiqArchivoEntradaController::class, 'destroy']);
+
+        // Vista de proveedor (LiquidacionesPage) - liquidaciones generadas desde extractos (v2)
+        Route::get('/distribuidores/{persona}/liquidaciones', [LiqDistribuidorLiquidacionesController::class, 'index']);
+
+        // Materializar un documento en el módulo viejo para poder publicar/enviar
+        Route::post('/liquidaciones-distribuidor/{liquidacionDistribuidor}/documento', [LiqDistribuidorDocumentoController::class, 'store']);
+    });
 
     Route::get('/unidades', [UnidadController::class, 'index']);
     Route::post('/unidades', [UnidadController::class, 'store']);
@@ -258,71 +331,8 @@ Route::middleware('auth.api')->group(function () {
     Route::delete('/tarifas/imagen/{tarifaImagen}', [TarifaImagenController::class, 'destroy']);
 
     Route::post('/facturas/validar', [\App\Http\Controllers\Api\FacturaAiController::class, 'validar']);
-    // ── Liquidaciones v2 (/api/liq/*) ────────────────────────────────────────
-    Route::prefix('liq')->group(function () {
-        // Clientes
-        Route::get('/clientes', [LiqClienteController::class, 'index']);
-        Route::post('/clientes', [LiqClienteController::class, 'store']);
-        Route::patch('/clientes/{cliente}', [LiqClienteController::class, 'update']);
 
-        // Esquemas tarifarios
-        Route::get('/clientes/{cliente}/esquemas', [LiqClienteController::class, 'esquemas']);
-        Route::post('/clientes/{cliente}/esquemas', [LiqClienteController::class, 'storeEsquema']);
 
-        // Dimensiones de un esquema
-        Route::get('/esquemas/{esquema}/dimensiones', [LiqTarifaController::class, 'dimensiones']);
-        Route::post('/esquemas/{esquema}/dimensiones', [LiqTarifaController::class, 'storeDimension']);
-        Route::put('/dimension-valores/{dimensionValor}/desactivar', [LiqTarifaController::class, 'desactivarDimension']);
-
-        // Líneas de tarifa
-        Route::get('/esquemas/{esquema}/lineas', [LiqTarifaController::class, 'lineas']);
-        Route::post('/esquemas/{esquema}/lineas', [LiqTarifaController::class, 'storeLinea']);
-        Route::put('/lineas/{lineaTarifa}/aprobar', [LiqTarifaController::class, 'aprobarLinea']);
-        Route::put('/lineas/{lineaTarifa}/desactivar', [LiqTarifaController::class, 'desactivarLinea']);
-
-        // Mapeos de concepto
-        Route::get('/clientes/{cliente}/mapeos-concepto', [LiqClienteController::class, 'mapeosConcepto']);
-        Route::post('/clientes/{cliente}/mapeos-concepto', [LiqClienteController::class, 'storeMapeosConcepto']);
-        Route::put('/mapeos-concepto/{id}/desactivar', [LiqTarifaController::class, 'desactivarMapeoConcepto']);
-
-        // Mapeos de sucursal
-        Route::get('/clientes/{cliente}/mapeos-sucursal', [LiqClienteController::class, 'mapeosSucursal']);
-        Route::post('/clientes/{cliente}/mapeos-sucursal', [LiqClienteController::class, 'storeMapeosSucursal']);
-        Route::put('/mapeos-sucursal/{id}/desactivar', [LiqTarifaController::class, 'desactivarMapeoSucursal']);
-
-        // Gastos administrativos
-        Route::get('/clientes/{cliente}/gastos', [LiqClienteController::class, 'gastos']);
-        Route::post('/clientes/{cliente}/gastos', [LiqClienteController::class, 'storeGastos']);
-
-        // Extractos (liquidaciones del cliente)
-        Route::get('/liquidaciones', [LiqExtractosController::class, 'index']);
-        Route::post('/liquidaciones/upload', [LiqExtractosController::class, 'upload']);
-        Route::get('/liquidaciones/{liquidacionCliente}/operaciones', [LiqExtractosController::class, 'operaciones']);
-        Route::post('/liquidaciones/{liquidacionCliente}/recalcular', [LiqExtractosController::class, 'recalcular']);
-        Route::post('/liquidaciones/{liquidacionCliente}/aprobar', [LiqExtractosController::class, 'aprobar']);
-        Route::delete('/liquidaciones/{liquidacionCliente}', [LiqExtractosController::class, 'destroy']);
-        Route::post('/liquidaciones/{liquidacionCliente}/generar-distribuidores', [LiqExtractosController::class, 'generarDistribuidores']);
-        // DEBUG: eliminar antes de producción
-        Route::post('/liquidaciones/debug-xlsx', [LiqExtractosController::class, 'debugXlsx']);
-
-        // Operaciones (auditoría manual)
-        Route::patch('/operaciones/{operacion}/exclusion', [LiqOperacionController::class, 'updateExclusion']);
-        Route::patch('/operaciones/{operacion}/asignar-tarifa', [LiqOperacionController::class, 'assignTarifa']);
-
-        // Liquidaciones por distribuidor
-        Route::get('/distribuidores', [LiqDistribuidorController::class, 'index']);
-        Route::get('/distribuidores/{liqDistribuidor}/operaciones', [LiqDistribuidorController::class, 'operaciones']);
-        Route::post('/distribuidores/{liqDistribuidor}/aprobar', [LiqDistribuidorController::class, 'aprobar']);
-        Route::get('/distribuidores/{liqDistribuidor}/pdf', [LiqDistribuidorController::class, 'pdf']);
-
-        // Pagos (lotes de liquidaciones aprobadas)
-        Route::get('/pagos', [LiqPagoController::class, 'index']);
-        Route::post('/pagos', [LiqPagoController::class, 'store']);
-        Route::get('/pagos/{pago}', [LiqPagoController::class, 'show']);
-        Route::get('/pagos/{pago}/items', [LiqPagoController::class, 'items']);
-        Route::post('/pagos/{pago}/marcar-pagado', [LiqPagoController::class, 'marcarPagado']);
-        Route::get('/pagos/{pago}/export.csv', [LiqPagoController::class, 'exportCsv']);
-    });
     Route::post('/combustible/extractos/preview', [\App\Http\Controllers\Api\FuelExtractController::class, 'preview']);
     Route::post('/combustible/extractos/process', [\App\Http\Controllers\Api\FuelExtractController::class, 'process']);
     Route::get('/combustible/distribuidores', [\App\Http\Controllers\Api\FuelModuleController::class, 'distributors']);

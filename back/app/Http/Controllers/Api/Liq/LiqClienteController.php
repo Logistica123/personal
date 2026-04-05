@@ -3,208 +3,276 @@
 namespace App\Http\Controllers\Api\Liq;
 
 use App\Http\Controllers\Controller;
+use App\Models\Cliente;
 use App\Models\LiqCliente;
+use App\Models\LiqEsquemaTarifario;
+use App\Models\LiqDimensionValor;
+use App\Models\LiqLineaTarifa;
+use App\Models\LiqMapeoConcepto;
+use App\Models\LiqMapeoSucursal;
+use App\Models\LiqConfiguracionGastos;
+use App\Models\LiqAuditoriaTarifa;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Carbon;
 
 class LiqClienteController extends Controller
 {
+    // GET /liq/clientes - list clients that have liq_activo = true, include esquema count
     public function index(Request $request): JsonResponse
     {
-        $this->authorize($request);
-
-        $clientes = LiqCliente::query()
-            ->when(! $request->boolean('todos'), fn ($q) => $q->where('activo', true))
+        $clientes = LiqCliente::where('activo', true)
+            ->withCount('esquemas')
             ->orderBy('nombre_corto')
-            ->get();
-
+            ->get(['id', 'distriapp_cliente_id', 'razon_social', 'nombre_corto', 'cuit', 'activo', 'configuracion_excel']);
         return response()->json(['data' => $clientes]);
     }
 
+    // POST /liq/clientes - create/enable a liq client linked to Cliente base
     public function store(Request $request): JsonResponse
     {
-        $this->authorize($request);
-
-        $validated = $request->validate([
-            'razon_social' => ['required', 'string', 'max:255'],
-            'nombre_corto' => ['required', 'string', 'max:80', 'unique:liq_clientes,nombre_corto'],
-            'cuit'         => ['nullable', 'string', 'max:20'],
-            'configuracion_excel' => ['nullable', 'array'],
+        $data = $request->validate([
+            'distriapp_cliente_id' => 'required|exists:clientes,id',
+            'razon_social' => 'sometimes|string|max:255',
+            'nombre_corto' => 'sometimes|string|max:80',
+            'codigo_corto' => 'nullable|string|max:3',
+            'cuit' => 'nullable|string|max:20',
+            'configuracion_excel' => 'nullable|array',
         ]);
 
-        $cliente = LiqCliente::query()->create($validated);
-
-        return response()->json(['data' => $cliente], 201);
-    }
-
-    public function update(Request $request, LiqCliente $cliente): JsonResponse
-    {
-        $this->authorize($request);
-
-        $validated = $request->validate([
-            'razon_social' => ['sometimes', 'string', 'max:255'],
-            'nombre_corto' => ['sometimes', 'string', 'max:80', "unique:liq_clientes,nombre_corto,{$cliente->id}"],
-            'cuit'         => ['nullable', 'string', 'max:20'],
-            'activo'       => ['sometimes', 'boolean'],
-            'configuracion_excel' => ['nullable', 'array'],
-        ]);
-
-        $cliente->update($validated);
-
-        return response()->json(['data' => $cliente]);
-    }
-
-    // ── Esquemas tarifarios ───────────────────────────────────────────────
-
-    public function esquemas(Request $request, LiqCliente $cliente): JsonResponse
-    {
-        $this->authorize($request);
-
-        $esquemas = $cliente->esquemas()
-            ->orderByDesc('activo')
-            ->orderByDesc('id')
-            ->get();
-
-        return response()->json(['data' => $esquemas]);
-    }
-
-    public function storeEsquema(Request $request, LiqCliente $cliente): JsonResponse
-    {
-        $this->authorize($request);
-
-        $validated = $request->validate([
-            'nombre'      => ['required', 'string', 'max:255'],
-            'descripcion' => ['nullable', 'string'],
-            'dimensiones' => ['required', 'array', 'min:1'],
-            'dimensiones.*' => ['required', 'string', 'max:80'],
-        ]);
-
-        // Normalizar dimensiones a minúsculas
-        $validated['dimensiones'] = array_map('strtolower', $validated['dimensiones']);
-
-        $esquema = $cliente->esquemas()->create($validated);
-        $esquema->load('cliente:id,nombre_corto');
-
-        return response()->json(['data' => $esquema], 201);
-    }
-
-    // ── Mapeos de concepto ────────────────────────────────────────────────
-
-    public function mapeosConcepto(Request $request, LiqCliente $cliente): JsonResponse
-    {
-        $this->authorize($request);
-
-        $mapeos = $cliente->mapeosConcepto()
-            ->orderBy('valor_excel')
-            ->get();
-
-        return response()->json(['data' => $mapeos]);
-    }
-
-    public function storeMapeosConcepto(Request $request, LiqCliente $cliente): JsonResponse
-    {
-        $this->authorize($request);
-
-        $validated = $request->validate([
-            'valor_excel'       => ['required', 'string', 'max:255'],
-            'dimension_destino' => ['required', 'string', 'max:80'],
-            'valor_tarifa'      => ['required', 'string', 'max:255'],
-        ]);
-
-        $valorExcel = trim($validated['valor_excel']);
-        $dimensionDestino = strtolower(trim($validated['dimension_destino']));
-        $valorTarifa = trim($validated['valor_tarifa']);
-
-        $existing = $cliente->mapeosConcepto()
-            ->where('valor_excel', $valorExcel)
-            ->where('dimension_destino', $dimensionDestino)
-            ->first();
-
-        $mapeo = $cliente->mapeosConcepto()->updateOrCreate(
+        $clienteBase = Cliente::findOrFail($data['distriapp_cliente_id']);
+        $liqCliente = LiqCliente::updateOrCreate(
+            ['distriapp_cliente_id' => $clienteBase->id],
             [
-                'valor_excel' => $valorExcel,
-                'dimension_destino' => $dimensionDestino,
-            ],
-            [
-                'valor_tarifa' => $valorTarifa,
+                'razon_social' => $data['razon_social'] ?? $clienteBase->nombre,
+                'nombre_corto' => $data['nombre_corto'] ?? ($clienteBase->codigo ?: $clienteBase->nombre),
+                'codigo_corto' => $data['codigo_corto'] ?? null,
+                'cuit' => $data['cuit'] ?? $clienteBase->documento_fiscal,
                 'activo' => true,
+                'configuracion_excel' => $data['configuracion_excel'] ?? null,
             ]
         );
 
-        return response()->json(['data' => $mapeo], $existing ? 200 : 201);
+        return response()->json(['data' => $liqCliente, 'message' => 'Cliente habilitado para liquidaciones'], 201);
     }
 
-    // ── Mapeos de sucursal ────────────────────────────────────────────────
-
-    public function mapeosSucursal(Request $request, LiqCliente $cliente): JsonResponse
+    // PATCH /liq/clientes/{cliente} - update liq config
+    public function update(Request $request, LiqCliente $cliente): JsonResponse
     {
-        $this->authorize($request);
+        $data = $request->validate([
+            'razon_social' => 'sometimes|string|max:255',
+            'nombre_corto' => 'sometimes|string|max:80',
+            'codigo_corto' => 'sometimes|nullable|string|max:3',
+            'cuit' => 'sometimes|nullable|string|max:20',
+            'configuracion_excel' => 'sometimes|nullable|array',
+            'activo' => 'sometimes|boolean',
+        ]);
+        $cliente->update($data);
+        return response()->json(['data' => $cliente, 'message' => 'Configuración actualizada']);
+    }
 
-        $mapeos = $cliente->mapeosSucursal()
-            ->orderBy('patron_archivo')
+    // GET /liq/clientes/{cliente}/esquemas - list tariff schemes for client
+    public function esquemas(LiqCliente $cliente): JsonResponse
+    {
+        $esquemas = LiqEsquemaTarifario::where('cliente_id', $cliente->id)
+            ->withCount(['dimensionValores', 'lineasTarifa'])
+            ->orderBy('activo', 'desc')
+            ->latest()
             ->get();
+        return response()->json(['data' => $esquemas]);
+    }
 
+    // POST /liq/clientes/{cliente}/esquemas - create tariff scheme
+    public function storeEsquema(Request $request, LiqCliente $cliente): JsonResponse
+    {
+        $data = $request->validate([
+            'nombre' => 'required|string|max:150',
+            'descripcion' => 'nullable|string',
+            'dimensiones' => 'required|array|min:1',
+            'dimensiones.*' => 'string|max:80',
+        ]);
+
+        // Mantener un solo esquema activo por cliente (histórico queda inactivo)
+        LiqEsquemaTarifario::where('cliente_id', $cliente->id)->where('activo', true)->update(['activo' => false]);
+
+        $esquema = LiqEsquemaTarifario::create([
+            'cliente_id' => $cliente->id,
+            'nombre' => $data['nombre'],
+            'descripcion' => $data['descripcion'] ?? null,
+            'dimensiones' => $data['dimensiones'],
+            'activo' => true,
+        ]);
+        return response()->json(['data' => $esquema, 'message' => 'Esquema creado'], 201);
+    }
+
+    // GET /liq/clientes/{cliente}/mapeos-concepto
+    public function mapeosConcepto(LiqCliente $cliente): JsonResponse
+    {
+        $mapeos = LiqMapeoConcepto::where('cliente_id', $cliente->id)->orderBy('valor_excel')->get();
         return response()->json(['data' => $mapeos]);
     }
 
-    public function storeMapeosSucursal(Request $request, LiqCliente $cliente): JsonResponse
+    // POST /liq/clientes/{cliente}/mapeos-concepto - bulk upsert
+    public function storeMapeosConcepto(Request $request, LiqCliente $cliente): JsonResponse
     {
-        $this->authorize($request);
-
-        $validated = $request->validate([
-            'patron_archivo' => ['required', 'string', 'max:255'],
-            'sucursal_tarifa'=> ['required', 'string', 'max:255'],
-            'tipo_operacion' => ['nullable', 'string', 'max:255'],
+        $data = $request->validate([
+            'mapeos' => 'required|array',
+            'mapeos.*.valor_excel' => 'required|string|max:200',
+            'mapeos.*.dimension_destino' => 'required|string|max:80',
+            'mapeos.*.valor_tarifa' => 'required|string|max:150',
         ]);
-
-        $mapeo = $cliente->mapeosSucursal()->create($validated);
-
-        return response()->json(['data' => $mapeo], 201);
+        $created = [];
+        foreach ($data['mapeos'] as $m) {
+            $created[] = LiqMapeoConcepto::updateOrCreate(
+                ['cliente_id' => $cliente->id, 'valor_excel' => $m['valor_excel'], 'dimension_destino' => $m['dimension_destino']],
+                ['valor_tarifa' => $m['valor_tarifa'], 'activo' => true]
+            );
+        }
+        return response()->json(['data' => $created, 'message' => count($created) . ' mapeos guardados'], 201);
     }
 
-    // ── Gastos administrativos ────────────────────────────────────────────
-
-    public function gastos(Request $request, LiqCliente $cliente): JsonResponse
+    // PUT /liq/mapeos-concepto/{id}/desactivar
+    public function desactivarMapeoConcepto(Request $request, int $id): JsonResponse
     {
-        $this->authorize($request);
+        $mapeo = LiqMapeoConcepto::findOrFail($id);
+        $mapeo->update(['activo' => false]);
+        return response()->json(['message' => 'Mapeo desactivado']);
+    }
 
-        $gastos = $cliente->configuracionGastos()
-            ->orderByDesc('vigencia_desde')
-            ->get();
+    // GET /liq/clientes/{cliente}/mapeos-sucursal
+    public function mapeosSucursal(LiqCliente $cliente): JsonResponse
+    {
+        $mapeos = LiqMapeoSucursal::where('cliente_id', $cliente->id)->orderBy('patron_archivo')->get();
+        return response()->json(['data' => $mapeos]);
+    }
 
+    // POST /liq/clientes/{cliente}/mapeos-sucursal - bulk upsert
+    public function storeMapeosSucursal(Request $request, LiqCliente $cliente): JsonResponse
+    {
+        $data = $request->validate([
+            'mapeos' => 'required|array',
+            'mapeos.*.patron_archivo' => 'required|string|max:200',
+            'mapeos.*.sucursal_tarifa' => 'required|string|max:150',
+            'mapeos.*.tipo_operacion' => 'nullable|string|max:80',
+        ]);
+        $created = [];
+        foreach ($data['mapeos'] as $m) {
+            $created[] = LiqMapeoSucursal::updateOrCreate(
+                ['cliente_id' => $cliente->id, 'patron_archivo' => $m['patron_archivo']],
+                ['sucursal_tarifa' => $m['sucursal_tarifa'], 'tipo_operacion' => $m['tipo_operacion'] ?? null, 'activo' => true]
+            );
+        }
+        return response()->json(['data' => $created, 'message' => count($created) . ' mapeos guardados'], 201);
+    }
+
+    // PUT /liq/mapeos-sucursal/{id}/desactivar
+    public function desactivarMapeoSucursal(Request $request, int $id): JsonResponse
+    {
+        $mapeo = LiqMapeoSucursal::findOrFail($id);
+        $mapeo->update(['activo' => false]);
+        return response()->json(['message' => 'Mapeo desactivado']);
+    }
+
+    // GET /liq/clientes/{cliente}/gastos
+    public function gastos(LiqCliente $cliente): JsonResponse
+    {
+        $gastos = LiqConfiguracionGastos::where('cliente_id', $cliente->id)->orderBy('vigencia_desde', 'desc')->get();
         return response()->json(['data' => $gastos]);
     }
 
+    // POST /liq/clientes/{cliente}/gastos
     public function storeGastos(Request $request, LiqCliente $cliente): JsonResponse
     {
-        $this->authorize($request);
-
-        $validated = $request->validate([
-            'concepto_gasto' => ['required', 'string', 'max:255'],
-            'monto'          => ['required', 'numeric', 'min:0'],
-            'tipo'           => ['required', 'in:fijo,porcentual'],
-            'vigencia_desde' => ['required', 'date'],
-            'vigencia_hasta' => ['nullable', 'date', 'after:vigencia_desde'],
+        $data = $request->validate([
+            'concepto_gasto' => 'required|string|max:150',
+            'monto' => 'required|numeric|min:0',
+            'tipo' => 'required|in:fijo,porcentual',
+            'vigencia_desde' => 'required|date',
+            'vigencia_hasta' => 'nullable|date|after_or_equal:vigencia_desde',
         ]);
-
-        $gasto = $cliente->configuracionGastos()->create($validated);
-
-        return response()->json(['data' => $gasto], 201);
+        // Deactivate previous open-ended config for same concept
+        LiqConfiguracionGastos::where('cliente_id', $cliente->id)
+            ->where('concepto_gasto', $data['concepto_gasto'])
+            ->whereNull('vigencia_hasta')
+            ->where('activo', true)
+            ->update(['activo' => false]);
+        $gasto = LiqConfiguracionGastos::create(array_merge($data, ['cliente_id' => $cliente->id, 'activo' => true]));
+        return response()->json(['data' => $gasto, 'message' => 'Configuración de gastos guardada'], 201);
     }
 
-    // ── Autorización ──────────────────────────────────────────────────────
-
-    private function authorize(Request $request): void
+    // GET /liq/clientes/{cliente}/tarifa?vigencia=YYYY-MM-DD
+    public function tarifaVigente(Request $request, LiqCliente $cliente): JsonResponse
     {
-        $user = $request->user();
-        $role = strtolower(trim((string) ($user?->role ?? '')));
-        $perms = is_array($user?->permissions) ? $user->permissions : [];
+        $fecha = $request->input('vigencia') ? Carbon::parse((string) $request->input('vigencia')) : Carbon::today();
 
-        $allowed = in_array($role, ['admin', 'admin2', 'encargado'], true)
-            || in_array('liquidaciones', $perms, true);
-
-        if (! $allowed) {
-            abort(response()->json(['message' => 'Sin permisos para liquidaciones.'], 403));
+        $esquema = LiqEsquemaTarifario::where('cliente_id', $cliente->id)
+            ->where('activo', true)
+            ->latest()
+            ->first();
+        if (!$esquema) {
+            return response()->json(['error' => 'El cliente no tiene un esquema tarifario activo'], 404);
         }
+
+        $lineas = LiqLineaTarifa::where('esquema_id', $esquema->id)
+            ->where('activo', true)
+            ->whereNotNull('aprobado_por')
+            ->where('vigencia_desde', '<=', $fecha->toDateString())
+            ->where(function ($q) use ($fecha) {
+                $q->whereNull('vigencia_hasta')->orWhere('vigencia_hasta', '>=', $fecha->toDateString());
+            })
+            ->orderBy('vigencia_desde', 'desc')
+            ->get();
+
+        $dimensionesCatalogo = LiqDimensionValor::where('esquema_id', $esquema->id)
+            ->where('activo', true)
+            ->orderBy('nombre_dimension')
+            ->orderBy('orden_display')
+            ->get()
+            ->groupBy('nombre_dimension')
+            ->map(fn($items) => $items->values());
+
+        return response()->json([
+            'data' => [
+                'cliente' => $cliente->only(['id', 'distriapp_cliente_id', 'razon_social', 'nombre_corto', 'cuit']),
+                'fecha' => $fecha->toDateString(),
+                'esquema' => $esquema,
+                'dimensiones' => $dimensionesCatalogo,
+                'lineas' => $lineas,
+            ],
+        ]);
+    }
+
+    // GET /liq/clientes/{cliente}/tarifa/historial
+    public function tarifaHistorial(Request $request, LiqCliente $cliente): JsonResponse
+    {
+        $data = $request->validate([
+            'accion' => 'sometimes|in:creacion,modificacion,desactivacion,aprobacion',
+            'desde' => 'sometimes|date',
+            'hasta' => 'sometimes|date|after_or_equal:desde',
+        ]);
+
+        $query = LiqAuditoriaTarifa::query()
+            ->with([
+                'usuario:id,name,email',
+                'lineaTarifa:id,esquema_id,dimensiones_valores,precio_original,porcentaje_agencia,precio_distribuidor,vigencia_desde,vigencia_hasta,creado_por,aprobado_por,fecha_aprobacion,activo',
+                'lineaTarifa.esquema:id,cliente_id,nombre,dimensiones,activo',
+            ])
+            ->whereHas('lineaTarifa.esquema', function ($q) use ($cliente) {
+                $q->where('cliente_id', $cliente->id);
+            })
+            ->orderByDesc('id');
+
+        if (!empty($data['accion'])) {
+            $query->where('accion', $data['accion']);
+        }
+        if (!empty($data['desde'])) {
+            $query->where('created_at', '>=', Carbon::parse($data['desde'])->startOfDay());
+        }
+        if (!empty($data['hasta'])) {
+            $query->where('created_at', '<=', Carbon::parse($data['hasta'])->endOfDay());
+        }
+
+        $historial = $query->paginate(50);
+        return response()->json(['data' => $historial]);
     }
 }

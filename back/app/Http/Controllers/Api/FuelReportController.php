@@ -13,10 +13,12 @@ use App\Models\FuelReportItem;
 use App\Models\Persona;
 use App\Models\PersonalNotification;
 use App\Services\AuditLogger;
+use App\Services\Fuel\FuelDiscountPdfService;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Storage;
 
 class FuelReportController extends Controller
 {
@@ -710,34 +712,74 @@ class FuelReportController extends Controller
             $report->period_to ? ' - ' . $report->period_to : ''
         );
 
-        $exists = Archivo::query()
+        $existing = Archivo::query()
             ->where('parent_document_id', $liquidacionId)
             ->where('tipo_archivo_id', $tipo->id)
             ->where('nombre_original', $label)
-            ->exists();
-
-        if ($exists) {
-            return;
-        }
+            ->first();
 
         $directory = $liquidacion->carpeta ?? ('personal/' . ($liquidacion->persona_id ?? ''));
-        $fileName = sprintf('descuento-combustible-reporte-%d.txt', $report->id);
+        $fileName = sprintf('descuento-combustible-reporte-%d.pdf', $report->id);
         $ruta = rtrim($directory, '/') . '/' . $fileName;
 
-        Archivo::query()->create([
+        $disk = $liquidacion->disk ?? 'public';
+        $legacyTxt = rtrim($directory, '/') . '/' . sprintf('descuento-combustible-reporte-%d.txt', $report->id);
+
+        // Persistimos el archivo para que "Descargar" funcione.
+        $report->loadMissing([
+            'items.movement',
+            'adjustments',
+        ]);
+        // Limpieza / migración: si existía un .txt viejo, lo borramos para evitar confusiones.
+        try {
+            if (Storage::disk($disk)->exists($legacyTxt)) {
+                Storage::disk($disk)->delete($legacyTxt);
+            }
+        } catch (\Throwable) {
+        }
+
+        $pdf = app(FuelDiscountPdfService::class)->renderPdf($liquidacion, $report, $label);
+
+        try {
+            Storage::disk($disk)->put($ruta, $pdf);
+        } catch (\Throwable) {
+            // si el storage no está disponible, igual dejamos el registro
+        }
+
+        $size = null;
+        $mime = 'application/pdf';
+        try {
+            if (Storage::disk($disk)->exists($ruta)) {
+                $size = (int) (Storage::disk($disk)->size($ruta) ?? 0);
+            }
+        } catch (\Throwable) {
+            $size = is_string($pdf) ? strlen($pdf) : null;
+        }
+
+        $payload = [
             'persona_id' => $liquidacion->persona_id,
             'parent_document_id' => $liquidacionId,
             'liquidacion_id' => $liquidacionId,
             'tipo_archivo_id' => $tipo->id,
             'carpeta' => $directory,
             'ruta' => $ruta,
-            'disk' => $liquidacion->disk ?? 'public',
+            'disk' => $disk,
             'nombre_original' => $label,
+            'mime' => $mime,
+            'size' => $size,
             'importe_facturar' => (float) $report->total_to_bill * -1,
             'enviada' => false,
             'recibido' => false,
             'pagado' => false,
-        ]);
+        ];
+
+        if ($existing) {
+            $existing->fill($payload);
+            $existing->save();
+            return;
+        }
+
+        Archivo::query()->create($payload);
     }
 
     private function notifyPersonalReportApplied(FuelReport $report, array $movementIds): void

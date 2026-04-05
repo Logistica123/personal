@@ -9,6 +9,7 @@ use App\Models\Persona;
 use App\Models\SolicitudPersonal;
 use App\Models\Sucursal;
 use App\Models\User;
+use App\Support\Requerimientos\ClienteRequerimientoSync;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Collection;
 use Illuminate\Http\Request;
@@ -340,6 +341,8 @@ class SolicitudPersonalController extends Controller
             'destinatario_ids' => $destinatarioIds->values()->all(),
         ]);
 
+        ClienteRequerimientoSync::syncFromSolicitudPersonal($item);
+
         if ($destinatarioIds->isNotEmpty()
             && (Schema::hasColumn('notifications', 'message') || Schema::hasColumn('notifications', 'description'))
         ) {
@@ -432,6 +435,8 @@ class SolicitudPersonalController extends Controller
             return $resolutionData;
         });
 
+        ClienteRequerimientoSync::syncFromSolicitudPersonal($solicitudPersonal);
+
         return response()->json([
             'message' => 'Cambio de asignación aprobado correctamente.',
             'data' => [
@@ -472,6 +477,8 @@ class SolicitudPersonalController extends Controller
         $solicitudPersonal->form = $form;
         $solicitudPersonal->estado = 'Rechazado';
         $solicitudPersonal->save();
+
+        ClienteRequerimientoSync::syncFromSolicitudPersonal($solicitudPersonal);
 
         return response()->json([
             'message' => 'Cambio de asignación rechazado.',
@@ -524,6 +531,9 @@ class SolicitudPersonalController extends Controller
         }
 
         $solicitudPersonal->save();
+
+        ClienteRequerimientoSync::syncFromSolicitudPersonal($solicitudPersonal);
+
         $solicitudPersonal->load(['solicitante:id,name']);
         $destinatarioIds = collect($solicitudPersonal->destinatario_ids ?? []);
         if ($solicitudPersonal->destinatario_id) {
@@ -574,6 +584,7 @@ class SolicitudPersonalController extends Controller
             return response()->json(['message' => 'No tenés permisos para eliminar esta solicitud.'], 403);
         }
 
+        ClienteRequerimientoSync::deleteSource('solicitud_personal', (int) $solicitudPersonal->id);
         $solicitudPersonal->delete();
 
         return response()->json([

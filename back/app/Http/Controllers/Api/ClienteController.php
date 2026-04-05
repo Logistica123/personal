@@ -70,6 +70,7 @@ class ClienteController extends Controller
                     'id' => $sucursal->id,
                     'cliente_id' => $sucursal->cliente_id,
                     'nombre' => $sucursal->nombre,
+                    'codigo_corto' => $sucursal->codigo_corto,
                     'direccion' => $sucursal->direccion,
                     'encargado_deposito' => $sucursal->encargado_deposito,
                 ];
@@ -89,6 +90,7 @@ class ClienteController extends Controller
             'logo_url' => ['nullable', 'string', 'max:4096'],
             'sucursales' => ['sometimes', 'array'],
             'sucursales.*.nombre' => ['nullable', 'string'],
+            'sucursales.*.codigo_corto' => ['nullable', 'string', 'size:3', 'regex:/^[A-Za-z0-9]{3}$/'],
             'sucursales.*.direccion' => ['nullable', 'string'],
             'sucursales.*.encargado_deposito' => ['nullable', 'string'],
         ]);
@@ -111,15 +113,20 @@ class ClienteController extends Controller
 
             foreach ($validated['sucursales'] ?? [] as $sucursalData) {
                 $nombre = $this->sanitizeString($sucursalData['nombre'] ?? null);
+                $codigoCorto = $this->sanitizeString($sucursalData['codigo_corto'] ?? null);
+                if ($codigoCorto !== null) {
+                    $codigoCorto = strtoupper(trim($codigoCorto));
+                }
                 $direccion = $this->sanitizeString($sucursalData['direccion'] ?? null);
                 $encargado = $this->sanitizeString($sucursalData['encargado_deposito'] ?? null);
 
-                if ($nombre === null && $direccion === null && $encargado === null) {
+                if ($nombre === null && $codigoCorto === null && $direccion === null && $encargado === null) {
                     continue;
                 }
 
                 $cliente->sucursales()->create([
                     'nombre' => $nombre,
+                    'codigo_corto' => $codigoCorto,
                     'direccion' => $direccion,
                     'encargado_deposito' => $encargado,
                 ]);
@@ -149,6 +156,7 @@ class ClienteController extends Controller
                 Rule::exists('sucursals', 'id')->where('cliente_id', $cliente->id),
             ],
             'sucursales.*.nombre' => ['nullable', 'string'],
+            'sucursales.*.codigo_corto' => ['nullable', 'string', 'size:3', 'regex:/^[A-Za-z0-9]{3}$/'],
             'sucursales.*.direccion' => ['nullable', 'string'],
             'sucursales.*.encargado_deposito' => ['nullable', 'string'],
         ]);
@@ -181,6 +189,10 @@ class ClienteController extends Controller
             foreach ($validated['sucursales'] ?? [] as $sucursalData) {
                 $id = $sucursalData['id'] ?? null;
                 $nombre = $this->sanitizeString($sucursalData['nombre'] ?? null);
+                $codigoCorto = $this->sanitizeString($sucursalData['codigo_corto'] ?? null);
+                if ($codigoCorto !== null) {
+                    $codigoCorto = strtoupper(trim($codigoCorto));
+                }
                 $direccion = $this->sanitizeString($sucursalData['direccion'] ?? null);
                 $encargado = $this->sanitizeString($sucursalData['encargado_deposito'] ?? null);
 
@@ -188,6 +200,7 @@ class ClienteController extends Controller
                     $sucursal = $existing->get($id);
                     $sucursal->fill([
                         'nombre' => $nombre,
+                        'codigo_corto' => $codigoCorto,
                         'direccion' => $direccion,
                         'encargado_deposito' => $encargado,
                     ]);
@@ -197,12 +210,13 @@ class ClienteController extends Controller
                     continue;
                 }
 
-                if ($nombre === null && $direccion === null && $encargado === null) {
+                if ($nombre === null && $codigoCorto === null && $direccion === null && $encargado === null) {
                     continue;
                 }
 
                 $newSucursal = $cliente->sucursales()->create([
                     'nombre' => $nombre,
+                    'codigo_corto' => $codigoCorto,
                     'direccion' => $direccion,
                     'encargado_deposito' => $encargado,
                 ]);
@@ -262,6 +276,7 @@ class ClienteController extends Controller
             'sucursales' => $cliente->sucursales->map(fn ($sucursal) => [
                 'id' => $sucursal->id,
                 'nombre' => $sucursal->nombre,
+                'codigo_corto' => $sucursal->codigo_corto,
                 'direccion' => $sucursal->direccion,
                 'encargado_deposito' => $sucursal->encargado_deposito,
             ])->values(),

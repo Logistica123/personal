@@ -88,6 +88,31 @@ type LiquidacionFortnightSection = {
   }>;
 };
 
+type LiqV2DistribuidorLiquidacion = {
+  id: number;
+  liquidacion_cliente_id: number;
+  distribuidor_id: number;
+  periodo_desde: string;
+  periodo_hasta: string;
+  cantidad_operaciones: number;
+  subtotal: string;
+  gastos_administrativos: string;
+  total_a_pagar: string;
+  estado: string;
+  documento_id?: number | null;
+  documento_preparado?: boolean;
+  documento_ruta?: string;
+  documento_es_pdf?: boolean;
+  liquidacion_cliente?: {
+    id: number;
+    cliente_id: number;
+    periodo_desde: string;
+    periodo_hasta: string;
+    estado: string;
+    cliente?: { id: number; nombre_corto: string; razon_social: string };
+  };
+};
+
 const MONTH_FILTER_OPTIONS = [
   { value: '', label: 'Todos los meses' },
   { value: '01', label: 'Enero' },
@@ -489,6 +514,10 @@ export const LiquidacionesPage: React.FC<LiquidacionesPageProps> = ({
   const [detail, setDetail] = useState<PersonalDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState<string | null>(null);
+  const [liqV2DistribuidorLiquidaciones, setLiqV2DistribuidorLiquidaciones] = useState<LiqV2DistribuidorLiquidacion[]>([]);
+  const [liqV2DistribuidorLoading, setLiqV2DistribuidorLoading] = useState(false);
+  const [liqV2DistribuidorError, setLiqV2DistribuidorError] = useState<string | null>(null);
+  const [liqV2Materializing, setLiqV2Materializing] = useState<Set<number>>(() => new Set());
   const [pendingUploads, setPendingUploads] = useState<PendingPersonalUpload[]>([]);
   const [fuelInvoiceUpload, setFuelInvoiceUpload] = useState<PendingPersonalUpload | null>(null);
   const [fuelUploading, setFuelUploading] = useState(false);
@@ -518,6 +547,48 @@ export const LiquidacionesPage: React.FC<LiquidacionesPageProps> = ({
   const openPreviewModal = useCallback((url: string, label: string) => {
     setPreviewModalImage({ url, label });
   }, []);
+
+  useEffect(() => {
+    if (!selectedPersonaId) {
+      setLiqV2DistribuidorLiquidaciones([]);
+      setLiqV2DistribuidorError(null);
+      setLiqV2DistribuidorLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    const load = async () => {
+      setLiqV2DistribuidorLoading(true);
+      setLiqV2DistribuidorError(null);
+      try {
+        const r = await fetch(`${apiBaseUrl}/api/liq/distribuidores/${selectedPersonaId}/liquidaciones`, {
+          credentials: 'include',
+          headers: { Accept: 'application/json', ...actorHeaders },
+        });
+        const json = await r.json().catch(() => ({}));
+        if (!r.ok) {
+          const msg =
+            (json && typeof json === 'object' && (json.error || json.message)) ? String(json.error || json.message) : `Error ${r.status}`;
+          throw new Error(msg);
+        }
+        const rows = (json?.data ?? []) as unknown;
+        if (!cancelled) {
+          setLiqV2DistribuidorLiquidaciones(Array.isArray(rows) ? (rows as LiqV2DistribuidorLiquidacion[]) : []);
+        }
+      } catch (e: unknown) {
+        if (!cancelled) {
+          setLiqV2DistribuidorError(e instanceof Error ? e.message : 'Error cargando liquidaciones (v2)');
+          setLiqV2DistribuidorLiquidaciones([]);
+        }
+      } finally {
+        if (!cancelled) setLiqV2DistribuidorLoading(false);
+      }
+    };
+    void load();
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedPersonaId, apiBaseUrl, actorHeaders]);
   const closePreviewModal = useCallback(() => {
     setPreviewModalImage(null);
   }, []);
@@ -1448,6 +1519,100 @@ export const LiquidacionesPage: React.FC<LiquidacionesPageProps> = ({
     },
     [apiBaseUrl, selectedPersonaId]
   );
+
+  const autoMaterializeLiqDistId = useMemo(() => {
+    const params = new URLSearchParams(location.search ?? '');
+    const raw = params.get('liqDist');
+    if (!raw) return null;
+    const parsed = Number(raw);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+  }, [location.search]);
+
+  const materializeLiqV2Document = useCallback(
+    async (liqDistId: number) => {
+      if (!selectedPersonaId) return false;
+
+      setLiqV2Materializing((prev) => new Set(prev).add(liqDistId));
+      try {
+        const r = await fetch(`${apiBaseUrl}/api/liq/liquidaciones-distribuidor/${liqDistId}/documento`, {
+          method: 'POST',
+          credentials: 'include',
+          headers: { Accept: 'application/json', 'Content-Type': 'application/json', ...actorHeaders },
+          body: JSON.stringify({}),
+        });
+        const json = await r.json().catch(() => ({}));
+        if (!r.ok) {
+          const msg =
+            json && typeof json === 'object' && (json.error || json.message)
+              ? String(json.error || json.message)
+              : `Error ${r.status}`;
+          throw new Error(msg);
+        }
+
+        const docIdRaw = json?.data?.documento_id;
+        const docId = typeof docIdRaw === 'number' && Number.isFinite(docIdRaw) ? docIdRaw : null;
+        const rutaRaw = json?.data?.ruta;
+        const ruta = typeof rutaRaw === 'string' && rutaRaw.trim() !== '' ? rutaRaw.trim() : null;
+        const mimeRaw = json?.data?.mime;
+        const isPdf =
+          (typeof mimeRaw === 'string' && mimeRaw.toLowerCase() === 'application/pdf') ||
+          (ruta ? ruta.toLowerCase().endsWith('.pdf') : false);
+
+        setLiqV2DistribuidorLiquidaciones((prev) =>
+          prev.map((row) =>
+            row.id === liqDistId
+              ? {
+                  ...row,
+                  documento_id: docId ?? row.documento_id ?? null,
+                  documento_preparado: true,
+                  documento_ruta: ruta ?? row.documento_ruta,
+                  documento_es_pdf: isPdf,
+                }
+              : row
+          )
+        );
+
+        await refreshPersonaDetail({ silent: true });
+        return true;
+      } catch (e: unknown) {
+        setUploadStatus({
+          type: 'error',
+          message: e instanceof Error ? e.message : 'No se pudo preparar la liquidación (v2).',
+        });
+        return false;
+      } finally {
+        setLiqV2Materializing((prev) => {
+          const next = new Set(prev);
+          next.delete(liqDistId);
+          return next;
+        });
+      }
+    },
+    [apiBaseUrl, actorHeaders, refreshPersonaDetail, selectedPersonaId]
+  );
+
+  const prepareAllLiqV2Documents = useCallback(async () => {
+    if (!selectedPersonaId) return;
+    const toPrepare = liqV2DistribuidorLiquidaciones
+      .filter((row) => !(row.documento_id && row.documento_es_pdf))
+      .map((row) => row.id)
+      .filter((id) => typeof id === 'number' && Number.isFinite(id));
+
+    for (const id of toPrepare) {
+      // secuencial para no saturar el backend
+      // eslint-disable-next-line no-await-in-loop
+      await materializeLiqV2Document(id);
+    }
+  }, [liqV2DistribuidorLiquidaciones, materializeLiqV2Document, selectedPersonaId]);
+
+  useEffect(() => {
+    if (!autoMaterializeLiqDistId) return;
+    if (!selectedPersonaId) return;
+    void materializeLiqV2Document(autoMaterializeLiqDistId).finally(() => {
+      // limpiar query param para que no reintente
+      navigate(`/liquidaciones/${selectedPersonaId}`, { replace: true });
+    });
+  }, [autoMaterializeLiqDistId, materializeLiqV2Document, navigate, selectedPersonaId]);
 
   const handleApplyFuelSelectionAdjustments = useCallback(async () => {
     setFuelAdjustmentError(null);
@@ -5428,6 +5593,108 @@ export const LiquidacionesPage: React.FC<LiquidacionesPageProps> = ({
             <span className="form-info">{`${selectedPagadoIds.size} seleccionada${selectedPagadoIds.size === 1 ? '' : 's'}`}</span>
           ) : null}
         </div>
+
+        {selectedPersonaId ? (
+          <div className="dashboard-card" style={{ marginBottom: '0.85rem' }}>
+            <header
+              className="card-header card-header--compact"
+              style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}
+            >
+              <h3 style={{ margin: 0 }}>Extractos generados (v2)</h3>
+              {liqV2DistribuidorLiquidaciones.some((row) => !(row.documento_id && row.documento_es_pdf)) ? (
+                <button
+                  type="button"
+                  className="secondary-action"
+                  onClick={() => void prepareAllLiqV2Documents()}
+                  disabled={liqV2Materializing.size > 0 || liqV2DistribuidorLoading}
+                  title="Crea documentos pendientes para poder usar “Subir liquidaciones” sin tener que cargar un archivo manual."
+                >
+                  {liqV2Materializing.size > 0 ? 'Preparando...' : 'Preparar todos'}
+                </button>
+              ) : null}
+            </header>
+            {liqV2DistribuidorLoading ? (
+              <p className="form-info">Cargando extractos...</p>
+            ) : liqV2DistribuidorError ? (
+              <p className="form-info form-info--error">{liqV2DistribuidorError}</p>
+            ) : liqV2DistribuidorLiquidaciones.length === 0 ? (
+              <p className="form-info">Todavía no hay liquidaciones generadas desde Extractos para este proveedor.</p>
+            ) : (
+              <div className="table-wrapper">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Cliente</th>
+                      <th>Período</th>
+                      <th>Operaciones</th>
+                      <th>Subtotal</th>
+                      <th>Gastos</th>
+                      <th>Total a pagar</th>
+                      <th>Estado</th>
+                      <th style={{ width: '260px' }}>Acciones</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {liqV2DistribuidorLiquidaciones.map((row) => {
+                      const clienteLabel =
+                        row.liquidacion_cliente?.cliente?.nombre_corto ||
+                        row.liquidacion_cliente?.cliente?.razon_social ||
+                        '—';
+                      const periodoLabel = `${String(row.periodo_desde).slice(0, 10)} → ${String(row.periodo_hasta).slice(0, 10)}`;
+                      const subtotal = Number(row.subtotal);
+                      const gastos = Number(row.gastos_administrativos);
+                      const total = Number(row.total_a_pagar);
+                      const liqId = row.liquidacion_cliente_id;
+                      const isPrepared = Boolean(row.documento_id && row.documento_es_pdf);
+                      const isMaterializing = liqV2Materializing.has(row.id);
+                      return (
+                        <tr key={`liq-v2-row-${row.id}`}>
+                          <td>{clienteLabel}</td>
+                          <td>{periodoLabel}</td>
+                          <td>{row.cantidad_operaciones}</td>
+                          <td>{Number.isFinite(subtotal) ? formatCurrency(subtotal) : '—'}</td>
+                          <td>{Number.isFinite(gastos) ? formatCurrency(gastos) : '—'}</td>
+                          <td><strong>{Number.isFinite(total) ? formatCurrency(total) : '—'}</strong></td>
+                          <td style={{ fontSize: '0.85rem', color: '#516277' }}>{row.estado}</td>
+                          <td>
+                            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                              <button
+                                type="button"
+                                className="secondary-action secondary-action--ghost"
+                                onClick={() => navigate(`/liquidaciones/extractos?liq=${liqId}`)}
+                              >
+                                Ver extracto
+                              </button>
+                              <button
+                                type="button"
+                                className={isPrepared ? 'secondary-action' : 'primary-action'}
+                                onClick={() => void materializeLiqV2Document(row.id)}
+                                disabled={isMaterializing}
+                                title={
+                                  isPrepared
+                                    ? 'Ya está preparado para publicar/enviar.'
+                                    : 'Crea un documento pendiente para habilitar “Subir liquidaciones”.'
+                                }
+                              >
+                                {isMaterializing
+                                  ? 'Preparando...'
+                                  : isPrepared
+                                    ? 'Preparado'
+                                    : row.documento_id
+                                      ? 'Convertir a PDF'
+                                      : 'Preparar para subir'}
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        ) : null}
 
         {!detailLoading && !detailError && detail && filteredLiquidacionSections.length === 0 ? (
           <p className="form-info">

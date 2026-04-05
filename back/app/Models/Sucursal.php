@@ -16,6 +16,7 @@ class Sucursal extends Model
     protected $fillable = [
         'cliente_id',
         'nombre',
+        'codigo_corto',
         'direccion',
         'encargado_deposito',
     ];
@@ -23,5 +24,10 @@ class Sucursal extends Model
     public function cliente()
     {
         return $this->belongsTo(Cliente::class, 'cliente_id');
+    }
+
+    public function requerimientos()
+    {
+        return $this->hasMany(ClienteRequerimiento::class, 'sucursal_id');
     }
 }

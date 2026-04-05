@@ -50,8 +50,8 @@ import { AttendanceUserDetailPage } from './pages/AttendanceUserDetailPage';
 import { AuditPage } from './pages/AuditPage';
 import { WorkflowPage } from './pages/WorkflowPage';
 import { ApprovalsRequestsPage } from './pages/ApprovalsRequestsPage';
-import { LiquidacionesClientePage } from './pages/LiquidacionesClientePage';
 import { LiquidacionesPage } from './pages/LiquidacionesPage';
+import { LiquidacionesClientePage } from './pages/LiquidacionesClientePage';
 import { LiquidacionesExtractosPage } from './pages/LiquidacionesExtractosPage';
 import { RecibosPage } from './pages/RecibosPage';
 import { DocumentTypesPage } from './pages/DocumentTypesPage';
@@ -770,8 +770,13 @@ const isPersonalEditor = (authUser: AuthUser | null | undefined): boolean => {
   return true;
 };
 
-const buildActorHeaders = (authUser: AuthUser | null | undefined): Record<string, string> => {
-  const email = normalizeEmail(authUser?.email);
+const buildActorHeaders = (authUser: unknown): Record<string, string> => {
+  const maybeEmail =
+    typeof authUser === 'object' && authUser !== null && 'email' in authUser
+      ? (authUser as { email?: unknown }).email
+      : null;
+
+  const email = normalizeEmail(typeof maybeEmail === 'string' ? maybeEmail : null);
   return email ? { 'X-Actor-Email': email } : {};
 };
 
@@ -2245,14 +2250,12 @@ const DashboardLayout: React.FC<{
     location.pathname.startsWith('/liquidaciones') ||
     location.pathname.startsWith('/pagos') ||
     location.pathname.startsWith('/combustible');
-  const isLiquidacionesExtractosRoute = location.pathname.startsWith('/liquidaciones/extractos');
   const isRecibosRoute = location.pathname.startsWith('/liquidaciones/recibos');
-  const isLiquidacionesClienteRoute = location.pathname.startsWith('/liquidaciones/cliente');
+  const isLiquidacionesExtractosRoute = location.pathname.startsWith('/liquidaciones/extractos');
+  const isLiquidacionesClienteConfigRoute = location.pathname.startsWith('/liquidaciones/cliente');
   const isLiquidacionesRoute =
     (location.pathname === '/liquidaciones' || /^\/liquidaciones\/\d+$/.test(location.pathname)) &&
-    !isLiquidacionesExtractosRoute &&
-    !isRecibosRoute &&
-    !isLiquidacionesClienteRoute;
+    !isRecibosRoute;
   const isCombustibleRoute = location.pathname.startsWith('/combustible');
   const isPagosRoute = location.pathname.startsWith('/pagos');
   const isFacturacionRoute = location.pathname.startsWith('/facturacion');
@@ -2281,12 +2284,6 @@ const DashboardLayout: React.FC<{
     () =>
       canAccessSection(userRole, 'liquidaciones', authUser?.permissions) ||
       canAccessSection(userRole, 'pagos', authUser?.permissions) ||
-      canAccessSection(userRole, 'combustible', authUser?.permissions),
-    [userRole, authUser?.permissions]
-  );
-  const canAccessLiquidacionesExtractos = useMemo(
-    () =>
-      canAccessSection(userRole, 'liquidaciones', authUser?.permissions) ||
       canAccessSection(userRole, 'combustible', authUser?.permissions),
     [userRole, authUser?.permissions]
   );
@@ -3457,33 +3454,42 @@ const DashboardLayout: React.FC<{
               >
                 Liquidaciones/Pagos
               </button>
-              {liquidacionesSubmenuOpen ? (
-                <div className="sidebar-submenu">
-                  {canAccessSection(userRole, 'liquidaciones', authUser?.permissions) ? (
-                    <button
-                      type="button"
-                      className={`sidebar-sublink${isLiquidacionesRoute ? ' is-active' : ''}`}
-                      onClick={() => navigate('/liquidaciones')}
-                    >
-                      Liquidaciones
-                    </button>
-                  ) : null}
-                  {canAccessSection(userRole, 'liquidaciones', authUser?.permissions) ? (
-                    <button
-                      type="button"
-                      className={`sidebar-sublink${isRecibosRoute ? ' is-active' : ''}`}
-                      onClick={() => navigate('/liquidaciones/recibos')}
+	              {liquidacionesSubmenuOpen ? (
+	                <div className="sidebar-submenu">
+	                  {canAccessSection(userRole, 'liquidaciones', authUser?.permissions) ? (
+	                    <button
+	                      type="button"
+	                      className={`sidebar-sublink${isLiquidacionesRoute ? ' is-active' : ''}`}
+	                      onClick={() => navigate('/liquidaciones')}
+	                    >
+	                      Liquidaciones
+	                    </button>
+	                  ) : null}
+	                  {canAccessSection(userRole, 'liquidaciones', authUser?.permissions) ? (
+	                    <button
+	                      type="button"
+	                      className={`sidebar-sublink${isLiquidacionesExtractosRoute ? ' is-active' : ''}`}
+	                      onClick={() => navigate('/liquidaciones/extractos')}
+	                    >
+	                      Extractos (nuevo)
+	                    </button>
+	                  ) : null}
+	                  {canAccessSection(userRole, 'liquidaciones', authUser?.permissions) ? (
+	                    <button
+	                      type="button"
+	                      className={`sidebar-sublink${isLiquidacionesClienteConfigRoute ? ' is-active' : ''}`}
+	                      onClick={() => navigate('/liquidaciones/cliente')}
+	                    >
+	                      Clientes/Tarifas (nuevo)
+	                    </button>
+	                  ) : null}
+	                  {canAccessSection(userRole, 'liquidaciones', authUser?.permissions) ? (
+	                    <button
+	                      type="button"
+	                      className={`sidebar-sublink${isRecibosRoute ? ' is-active' : ''}`}
+	                      onClick={() => navigate('/liquidaciones/recibos')}
                     >
                       Recibos
-                    </button>
-                  ) : null}
-                  {canAccessSection(userRole, 'liquidaciones', authUser?.permissions) ? (
-                    <button
-                      type="button"
-                      className={`sidebar-sublink${isLiquidacionesClienteRoute ? ' is-active' : ''}`}
-                      onClick={() => navigate('/liquidaciones/cliente')}
-                    >
-                      Cliente
                     </button>
                   ) : null}
                   {canAccessSection(userRole, 'pagos', authUser?.permissions) ? (
@@ -3502,15 +3508,6 @@ const DashboardLayout: React.FC<{
                       onClick={() => navigate('/combustible')}
                     >
                       Combustible
-                    </button>
-                  ) : null}
-                  {canAccessLiquidacionesExtractos ? (
-                    <button
-                      type="button"
-                      className={`sidebar-sublink${isLiquidacionesExtractosRoute ? ' is-active' : ''}`}
-                      onClick={() => navigate('/liquidaciones/extractos')}
-                    >
-                      Extractos BI/ERP
                     </button>
                   ) : null}
                 </div>
@@ -14084,7 +14081,6 @@ const CombustibleRunsPage: React.FC = () => {
 
   const apiBaseUrl = useMemo(() => resolveApiBaseUrl(), []);
   const location = useLocation();
-  const isStandaloneExtractosRoute = location.pathname.startsWith('/liquidaciones/extractos');
   const createFileRef = useRef<HTMLInputElement | null>(null);
   const [runs, setRuns] = useState<LiquidacionRunRecord[]>([]);
   const [meta, setMeta] = useState<{ total: number; currentPage: number; lastPage: number; perPage: number }>({
@@ -15692,9 +15688,9 @@ const CombustibleRunsPage: React.FC = () => {
 
   return (
     <DashboardLayout
-      title={isStandaloneExtractosRoute ? 'Liquidaciones' : 'Combustible'}
-      subtitle={isStandaloneExtractosRoute ? 'Extractos BI/ERP' : 'Runs BI/ERP'}
-      headerContent={isStandaloneExtractosRoute ? undefined : <CombustibleTabs />}
+      title="Combustible"
+      subtitle="Runs BI/ERP"
+      headerContent={<CombustibleTabs />}
     >
       <section className="dashboard-card">
         <header className="card-header">
@@ -15763,7 +15759,7 @@ const CombustibleRunsPage: React.FC = () => {
 
       <section className="dashboard-card">
         <header className="card-header">
-          <h3>{isStandaloneExtractosRoute ? 'Subir liquidación y crear run' : 'Crear run manual'}</h3>
+          <h3>Crear run manual</h3>
         </header>
         <div className="card-body">
           <div className="form-grid">
@@ -20090,23 +20086,6 @@ const AppRoutes: React.FC = () => {
         }
       />
       <Route
-        path="/liquidaciones/cliente"
-        element={
-          <RequireAccess section="liquidaciones">
-            <LiquidacionesClientePage
-              DashboardLayout={DashboardLayout}
-              resolveApiBaseUrl={resolveApiBaseUrl}
-              useStoredAuthUser={useStoredAuthUser}
-              buildActorHeaders={buildActorHeaders}
-              resolveApiUrl={resolveApiUrl}
-              parseJsonSafe={parseJsonSafe}
-              formatCurrency={formatCurrency}
-              formatDateOnly={formatDateOnly}
-            />
-          </RequireAccess>
-        }
-      />
-      <Route
         path="/liquidaciones/:personaId"
         element={
           <RequireAccess section="liquidaciones">
@@ -20145,6 +20124,21 @@ const AppRoutes: React.FC = () => {
             />
           </RequireAccess>
         }
+      />
+      <Route
+        path="/liquidaciones/cliente"
+        element={
+          <RequireAccess section="liquidaciones">
+	            <LiquidacionesClientePage
+	              DashboardLayout={DashboardLayout}
+	              resolveApiBaseUrl={resolveApiBaseUrl}
+	              useStoredAuthUser={useStoredAuthUser}
+	              buildActorHeaders={buildActorHeaders}
+	              formatCurrency={formatCurrency}
+	              formatDateOnly={formatDateOnly}
+	            />
+	          </RequireAccess>
+	        }
       />
       <Route
         path="/liquidaciones/extractos"
@@ -20320,10 +20314,6 @@ const AppRoutes: React.FC = () => {
             <CombustibleReportesPage />
           </RequireAccess>
         }
-      />
-      <Route
-        path="/combustible/runs"
-        element={<Navigate to="/liquidaciones/extractos" replace />}
       />
       <Route
         path="/documentos"

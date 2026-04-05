@@ -34,6 +34,19 @@ type PersonalDocumentType = {
   vence: boolean;
 };
 
+type ClienteRequerimiento = {
+  id: number;
+  cliente_id: number;
+  cliente_nombre?: string | null;
+  sucursal_id: number | null;
+  sucursal_nombre?: string | null;
+  unidad_id?: number | null;
+  unidad_label?: string | null;
+  requerimiento: string;
+  created_at?: string | null;
+  updated_at?: string | null;
+};
+
 type PersonalMeta = {
   perfiles: Array<{ value: number; label: string }>;
   clientes: Array<{ id: number; nombre: string | null }>;
@@ -414,6 +427,17 @@ export const ApprovalsRequestsPage: React.FC<ApprovalsRequestsPageProps> = ({
     return '';
   }, []);
   const [meta, setMeta] = useState<PersonalMeta | null>(null);
+  const [clienteRequerimientos, setClienteRequerimientos] = useState<ClienteRequerimiento[]>([]);
+  const [requerimientosLoading, setRequerimientosLoading] = useState(false);
+  const [requerimientosError, setRequerimientosError] = useState<string | null>(null);
+  const [requerimientosFlash, setRequerimientosFlash] = useState<{ type: 'success' | 'error'; message: string } | null>(
+    null
+  );
+  const [requerimientoEditingId, setRequerimientoEditingId] = useState<number | null>(null);
+  const [requerimientoClienteId, setRequerimientoClienteId] = useState('');
+  const [requerimientoSucursalId, setRequerimientoSucursalId] = useState('');
+  const [requerimientoUnidadId, setRequerimientoUnidadId] = useState('');
+  const [requerimientoTexto, setRequerimientoTexto] = useState('');
   const [rejectedIds, setRejectedIds] = useState<Set<number>>(() => readRejectedIds());
   const [solicitudCreatedCache, setSolicitudCreatedCache] = useState<Map<number, string>>(
     () => readSolicitudCreatedCache()
@@ -1503,6 +1527,219 @@ export const ApprovalsRequestsPage: React.FC<ApprovalsRequestsPageProps> = ({
     return () => controller.abort();
   }, [apiBaseUrl]);
 
+  const fetchClienteRequerimientos = useCallback(
+    async (signal?: AbortSignal) => {
+      try {
+        setRequerimientosLoading(true);
+        setRequerimientosError(null);
+        setRequerimientosFlash(null);
+
+        const response = await fetch(`${apiBaseUrl}/api/clientes/requerimientos?limit=500`, {
+          method: 'GET',
+          headers: { ...actorHeaders, Accept: 'application/json' },
+          credentials: 'include',
+          signal,
+        });
+
+        if (!response.ok) {
+          let message = `Error ${response.status}: ${response.statusText}`;
+          try {
+            const payload = await parseJsonSafe(response);
+            if (typeof payload?.message === 'string') {
+              message = payload.message;
+            }
+          } catch {
+            // ignore
+          }
+          throw new Error(message);
+        }
+
+        const payload = (await response.json()) as { data?: ClienteRequerimiento[] };
+        setClienteRequerimientos(Array.isArray(payload?.data) ? payload.data : []);
+      } catch (err) {
+        if ((err as Error).name === 'AbortError') {
+          return;
+        }
+        setRequerimientosError((err as Error).message ?? 'No se pudieron cargar los requerimientos.');
+      } finally {
+        setRequerimientosLoading(false);
+      }
+    },
+    [actorHeaders, apiBaseUrl, parseJsonSafe]
+  );
+
+  useEffect(() => {
+    const controller = new AbortController();
+    fetchClienteRequerimientos(controller.signal);
+    return () => controller.abort();
+  }, [fetchClienteRequerimientos]);
+
+  const resetRequerimientoForm = useCallback(() => {
+    setRequerimientoEditingId(null);
+    setRequerimientoClienteId('');
+    setRequerimientoSucursalId('');
+    setRequerimientoUnidadId('');
+    setRequerimientoTexto('');
+  }, []);
+
+  const requerimientoSucursalOptions = useMemo(() => {
+    if (!meta) {
+      return [] as PersonalMeta['sucursales'];
+    }
+    if (!requerimientoClienteId) {
+      return meta.sucursales;
+    }
+    const clienteId = Number(requerimientoClienteId);
+    return meta.sucursales.filter((sucursal) => Number(sucursal.cliente_id ?? 0) === clienteId);
+  }, [meta, requerimientoClienteId]);
+
+  const handleSubmitRequerimiento = useCallback(async () => {
+    const clienteId = Number(requerimientoClienteId);
+    const sucursalId = requerimientoSucursalId.trim() !== '' ? Number(requerimientoSucursalId) : null;
+    const unidadId = requerimientoUnidadId.trim() !== '' ? Number(requerimientoUnidadId) : null;
+    const texto = requerimientoTexto.trim();
+
+    if (!Number.isFinite(clienteId) || clienteId <= 0) {
+      setRequerimientosFlash({ type: 'error', message: 'Seleccioná un cliente.' });
+      return;
+    }
+    if (texto.length === 0) {
+      setRequerimientosFlash({ type: 'error', message: 'Ingresá un requerimiento.' });
+      return;
+    }
+
+    try {
+      setRequerimientosLoading(true);
+      setRequerimientosFlash(null);
+
+      const payload = {
+        cliente_id: clienteId,
+        sucursal_id: sucursalId,
+        unidad_id: unidadId,
+        requerimiento: texto,
+      };
+
+      const isEditing = requerimientoEditingId != null;
+      const url = isEditing
+        ? `${apiBaseUrl}/api/clientes/requerimientos/${requerimientoEditingId}`
+        : `${apiBaseUrl}/api/clientes/requerimientos`;
+
+      const response = await fetch(url, {
+        method: isEditing ? 'PUT' : 'POST',
+        headers: { ...actorHeaders, 'Content-Type': 'application/json', Accept: 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify(payload),
+      });
+
+      if (!response.ok) {
+        let message = `Error ${response.status}: ${response.statusText}`;
+        try {
+          const parsed = await parseJsonSafe(response);
+          if (typeof parsed?.message === 'string') {
+            message = parsed.message;
+          } else if (parsed?.errors && typeof parsed.errors === 'object') {
+            const firstError = Object.values(parsed.errors)[0];
+            if (Array.isArray(firstError) && typeof firstError[0] === 'string') {
+              message = firstError[0];
+            }
+          }
+        } catch {
+          // ignore
+        }
+        throw new Error(message);
+      }
+
+      const result = (await response.json()) as { data?: ClienteRequerimiento; message?: string };
+      const saved = result?.data ?? null;
+      if (saved) {
+        setClienteRequerimientos((prev) => {
+          const existingIndex = prev.findIndex((item) => item.id === saved.id);
+          if (existingIndex === -1) {
+            return [saved, ...prev];
+          }
+          const next = prev.slice();
+          next[existingIndex] = saved;
+          return next;
+        });
+      } else {
+        await fetchClienteRequerimientos();
+      }
+
+      setRequerimientosFlash({ type: 'success', message: isEditing ? 'Requerimiento actualizado.' : 'Requerimiento agregado.' });
+      resetRequerimientoForm();
+    } catch (err) {
+      setRequerimientosFlash({ type: 'error', message: (err as Error).message ?? 'No se pudo guardar el requerimiento.' });
+    } finally {
+      setRequerimientosLoading(false);
+    }
+  }, [
+    actorHeaders,
+    apiBaseUrl,
+    fetchClienteRequerimientos,
+    parseJsonSafe,
+    requerimientoClienteId,
+    requerimientoEditingId,
+    requerimientoSucursalId,
+    requerimientoUnidadId,
+    requerimientoTexto,
+    resetRequerimientoForm,
+  ]);
+
+  const handleEditRequerimiento = useCallback((item: ClienteRequerimiento) => {
+    setRequerimientosFlash(null);
+    setRequerimientoEditingId(item.id);
+    setRequerimientoClienteId(String(item.cliente_id ?? ''));
+    setRequerimientoSucursalId(item.sucursal_id != null ? String(item.sucursal_id) : '');
+    setRequerimientoUnidadId(item.unidad_id != null ? String(item.unidad_id) : '');
+    setRequerimientoTexto(item.requerimiento ?? '');
+  }, []);
+
+  const handleDeleteRequerimiento = useCallback(
+    async (id: number) => {
+      if (!window.confirm('¿Eliminar este requerimiento?')) {
+        return;
+      }
+
+      try {
+        setRequerimientosLoading(true);
+        setRequerimientosFlash(null);
+
+        const response = await fetch(`${apiBaseUrl}/api/clientes/requerimientos/${id}`, {
+          method: 'DELETE',
+          headers: { ...actorHeaders, Accept: 'application/json' },
+          credentials: 'include',
+        });
+
+        if (!response.ok) {
+          let message = `Error ${response.status}: ${response.statusText}`;
+          try {
+            const parsed = await parseJsonSafe(response);
+            if (typeof parsed?.message === 'string') {
+              message = parsed.message;
+            }
+          } catch {
+            // ignore
+          }
+          throw new Error(message);
+        }
+
+        setClienteRequerimientos((prev) => prev.filter((item) => item.id !== id));
+        setRequerimientosFlash({ type: 'success', message: 'Requerimiento eliminado.' });
+        if (requerimientoEditingId === id) {
+          resetRequerimientoForm();
+        }
+      } catch (err) {
+        setRequerimientosFlash({
+          type: 'error',
+          message: (err as Error).message ?? 'No se pudo eliminar el requerimiento.',
+        });
+      } finally {
+        setRequerimientosLoading(false);
+      }
+    },
+    [actorHeaders, apiBaseUrl, parseJsonSafe, requerimientoEditingId, resetRequerimientoForm]
+  );
+
   useEffect(() => {
     if (!meta?.estados || meta.estados.length === 0) {
       return;
@@ -1559,6 +1796,7 @@ export const ApprovalsRequestsPage: React.FC<ApprovalsRequestsPageProps> = ({
           }
 
           setPersonalSolicitudes(payload.data.map((item) => mapSolicitudPersonalToRecord(item)));
+          await fetchClienteRequerimientos(options?.signal);
           return;
         }
 
@@ -1602,6 +1840,7 @@ export const ApprovalsRequestsPage: React.FC<ApprovalsRequestsPageProps> = ({
           ...personalPayload.data.map((item) => normalizeSolicitudRecord(item)),
           ...cambioAsignacionRecords,
         ]);
+        await fetchClienteRequerimientos(options?.signal);
       } catch (err) {
         if ((err as Error).name === 'AbortError') {
           return;
@@ -1611,7 +1850,7 @@ export const ApprovalsRequestsPage: React.FC<ApprovalsRequestsPageProps> = ({
         setSolicitudesLoading(false);
       }
     },
-    [apiBaseUrl, actorHeaders, isSolicitudPersonalView]
+    [apiBaseUrl, actorHeaders, fetchClienteRequerimientos, isSolicitudPersonalView]
   );
 
   const fetchVacacionesDias = useCallback(
@@ -1784,21 +2023,168 @@ export const ApprovalsRequestsPage: React.FC<ApprovalsRequestsPageProps> = ({
   }, [populateAltaFormFromReview, altaFormDirty]);
 
   const headerContent = (
-    <div className="card-header card-header--compact">
-      <button
-        type="button"
-        className="secondary-action"
-        onClick={() => {
-          if (isSolicitudPersonalView) {
-            setActiveTab('list');
-            navigate('/solicitud-personal');
-            return;
-          }
-          navigate('/personal');
-        }}
-      >
-        {isSolicitudPersonalView ? '← Volver a solicitudes pendientes' : '← Volver a proveedores'}
-      </button>
+    <div className="approvals-header">
+      <div className="card-header card-header--compact">
+        <button
+          type="button"
+          className="secondary-action"
+          onClick={() => {
+            if (isSolicitudPersonalView) {
+              setActiveTab('list');
+              navigate('/solicitud-personal');
+              return;
+            }
+            navigate('/personal');
+          }}
+        >
+          {isSolicitudPersonalView ? '← Volver a solicitudes pendientes' : '← Volver a proveedores'}
+        </button>
+      </div>
+
+      <section className="approvals-requirements" aria-label="Requerimientos">
+        <h4>Requerimientos</h4>
+        <div className="approvals-requirements__grid">
+          <label className="filter-field">
+            <span>Cliente</span>
+            <select
+              value={requerimientoClienteId}
+              onChange={(event) => {
+                setRequerimientoClienteId(event.target.value);
+                setRequerimientoSucursalId('');
+              }}
+            >
+              <option value="">Seleccionar</option>
+              {(meta?.clientes ?? []).map((cliente) => (
+                <option key={cliente.id} value={String(cliente.id)}>
+                  {cliente.nombre ?? `Cliente #${cliente.id}`}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label className="filter-field">
+            <span>Sucursal</span>
+            <select value={requerimientoSucursalId} onChange={(event) => setRequerimientoSucursalId(event.target.value)}>
+              <option value="">Todas</option>
+              {requerimientoSucursalOptions.map((sucursal) => (
+                <option key={sucursal.id} value={String(sucursal.id)}>
+                  {sucursal.nombre ?? `Sucursal #${sucursal.id}`}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label className="filter-field approvals-requirements__text">
+            <span>Requerimiento</span>
+            <input
+              type="text"
+              value={requerimientoTexto}
+              onChange={(event) => setRequerimientoTexto(event.target.value)}
+              placeholder="Ej: Entregar 10 chalecos reflectivos"
+            />
+          </label>
+
+          <label className="filter-field">
+            <span>Unidad</span>
+            <select value={requerimientoUnidadId} onChange={(event) => setRequerimientoUnidadId(event.target.value)}>
+              <option value="">Seleccionar</option>
+              {(meta?.unidades ?? []).map((unidad) => {
+                const details = [unidad.matricula, unidad.marca, unidad.modelo].filter(Boolean).join(' · ');
+                return (
+                  <option key={unidad.id} value={String(unidad.id)}>
+                    {details || `Unidad #${unidad.id}`}
+                  </option>
+                );
+              })}
+            </select>
+          </label>
+
+          <div className="approvals-requirements__actions">
+            <button
+              type="button"
+              className="secondary-action"
+              onClick={() => void handleSubmitRequerimiento()}
+              disabled={requerimientosLoading}
+            >
+              {requerimientoEditingId != null ? 'Guardar' : 'Agregar'}
+            </button>
+            {requerimientoEditingId != null ? (
+              <button
+                type="button"
+                className="secondary-action secondary-action--ghost"
+                onClick={resetRequerimientoForm}
+                disabled={requerimientosLoading}
+              >
+                Cancelar
+              </button>
+            ) : null}
+            <button
+              type="button"
+              className="secondary-action secondary-action--ghost"
+              onClick={() => void fetchClienteRequerimientos()}
+              disabled={requerimientosLoading}
+              title="Vuelve a consultar el listado."
+            >
+              Actualizar
+            </button>
+          </div>
+        </div>
+
+        {requerimientosFlash ? (
+          <p className={`form-info${requerimientosFlash.type === 'error' ? ' form-info--error' : ''}`}>
+            {requerimientosFlash.message}
+          </p>
+        ) : null}
+        {requerimientosError ? <p className="form-info form-info--error">{requerimientosError}</p> : null}
+
+        {clienteRequerimientos.length > 0 ? (
+          <div className="table-wrapper approvals-requirements__table">
+            <table>
+              <thead>
+                <tr>
+                  <th>Cliente</th>
+                  <th>Sucursal</th>
+                  <th>Requerimiento</th>
+                  <th>Unidad</th>
+                  <th>Acciones</th>
+                </tr>
+              </thead>
+              <tbody>
+                {clienteRequerimientos.map((item) => (
+                  <tr key={item.id}>
+                    <td>{item.cliente_nombre ?? `#${item.cliente_id}`}</td>
+                    <td>{item.sucursal_nombre ?? (item.sucursal_id ? `#${item.sucursal_id}` : 'Todas')}</td>
+                    <td>{item.requerimiento}</td>
+                    <td>{item.unidad_label ?? (item.unidad_id ? `#${item.unidad_id}` : '—')}</td>
+                    <td className="table-actions">
+                      <button
+                        type="button"
+                        className="secondary-action secondary-action--ghost"
+                        onClick={() => handleEditRequerimiento(item)}
+                        disabled={requerimientosLoading}
+                      >
+                        Editar
+                      </button>
+                      <button
+                        type="button"
+                        className="secondary-action secondary-action--danger"
+                        onClick={() => void handleDeleteRequerimiento(item.id)}
+                        disabled={requerimientosLoading}
+                      >
+                        Eliminar
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : requerimientosLoading ? (
+          <p className="form-info">Cargando requerimientos...</p>
+        ) : (
+          <p className="form-info">Todavía no hay requerimientos cargados.</p>
+        )}
+      </section>
     </div>
   );
 

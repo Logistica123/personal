@@ -8,9 +8,8 @@ use Illuminate\Support\Facades\Schema;
  * Agrega columna generada patente_idx a personas para búsquedas rápidas
  * por patente normalizada (sin espacios, guiones ni puntos, en mayúsculas).
  *
- * Esto permite que LiqExtractosController haga:
- *   Persona::where('patente_idx', $dominioNormalizado)->first()
- * usando el índice en lugar de un REPLACE/UPPER en la query.
+ * Esto permite hacer búsquedas por patente normalizada usando el índice en
+ * lugar de un REPLACE/UPPER en la query.
  */
 return new class extends Migration
 {

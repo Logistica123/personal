@@ -2,11 +2,13 @@
 
 namespace App\Models;
 
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class LiqConfiguracionGastos extends Model
 {
+    use HasFactory;
+
     protected $table = 'liq_configuracion_gastos';
 
     protected $fillable = [
@@ -19,18 +21,38 @@ class LiqConfiguracionGastos extends Model
         'activo',
     ];
 
-    protected function casts(): array
+    protected $casts = [
+        'monto'          => 'decimal:2',
+        'activo'         => 'boolean',
+        'vigencia_desde' => 'date',
+        'vigencia_hasta' => 'date',
+    ];
+
+    // -------------------------------------------------------------------------
+    // Relationships
+    // -------------------------------------------------------------------------
+
+    public function cliente()
     {
-        return [
-            'monto'          => 'decimal:2',
-            'vigencia_desde' => 'date',
-            'vigencia_hasta' => 'date',
-            'activo'         => 'boolean',
-        ];
+        return $this->belongsTo(\App\Models\LiqCliente::class, 'cliente_id');
     }
 
-    public function cliente(): BelongsTo
+    // -------------------------------------------------------------------------
+    // Scopes
+    // -------------------------------------------------------------------------
+
+    public function scopeActivo($q)
     {
-        return $this->belongsTo(LiqCliente::class, 'cliente_id');
+        return $q->where('activo', true);
+    }
+
+    public function scopeVigente($q, string $fecha)
+    {
+        return $q->where('activo', true)
+                 ->where('vigencia_desde', '<=', $fecha)
+                 ->where(function ($sub) use ($fecha) {
+                     $sub->whereNull('vigencia_hasta')
+                         ->orWhere('vigencia_hasta', '>=', $fecha);
+                 });
     }
 }

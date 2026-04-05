@@ -2,13 +2,24 @@
 
 namespace App\Models;
 
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\Eloquent\Relations\BelongsTo;
-use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class LiqLiquidacionCliente extends Model
 {
+    use HasFactory;
+
     protected $table = 'liq_liquidaciones_cliente';
+
+    // -------------------------------------------------------------------------
+    // Estado constants
+    // -------------------------------------------------------------------------
+
+    const ESTADO_PENDIENTE   = 'pendiente';
+    const ESTADO_EN_PROCESO  = 'en_proceso';
+    const ESTADO_AUDITADA    = 'auditada';
+    const ESTADO_APROBADA    = 'aprobada';
+    const ESTADO_RECHAZADA   = 'rechazada';
 
     protected $fillable = [
         'cliente_id',
@@ -25,48 +36,41 @@ class LiqLiquidacionCliente extends Model
         'total_diferencia',
     ];
 
-    protected function casts(): array
+    protected $casts = [
+        'periodo_desde'          => 'date',
+        'periodo_hasta'          => 'date',
+        'fecha_carga'            => 'datetime',
+        'total_importe_cliente'  => 'decimal:2',
+        'total_importe_correcto' => 'decimal:2',
+        'total_diferencia'       => 'decimal:2',
+    ];
+
+    // -------------------------------------------------------------------------
+    // Relationships
+    // -------------------------------------------------------------------------
+
+    public function cliente()
     {
-        return [
-            'periodo_desde'          => 'date',
-            'periodo_hasta'          => 'date',
-            'fecha_carga'            => 'datetime',
-            'total_operaciones'      => 'integer',
-            'total_importe_cliente'  => 'decimal:2',
-            'total_importe_correcto' => 'decimal:2',
-            'total_diferencia'       => 'decimal:2',
-        ];
+        return $this->belongsTo(\App\Models\LiqCliente::class, 'cliente_id');
     }
 
-    public function cliente(): BelongsTo
+    public function usuarioCarga()
     {
-        return $this->belongsTo(LiqCliente::class, 'cliente_id');
+        return $this->belongsTo(\App\Models\User::class, 'usuario_carga');
     }
 
-    public function usuarioCarga(): BelongsTo
+    public function archivosEntrada()
     {
-        return $this->belongsTo(User::class, 'usuario_carga');
+        return $this->hasMany(LiqArchivoEntrada::class, 'liquidacion_cliente_id');
     }
 
-    public function operaciones(): HasMany
+    public function operaciones()
     {
         return $this->hasMany(LiqOperacion::class, 'liquidacion_cliente_id');
     }
 
-    public function liquidacionesDistribuidor(): HasMany
+    public function liquidacionesDistribuidor()
     {
         return $this->hasMany(LiqLiquidacionDistribuidor::class, 'liquidacion_cliente_id');
-    }
-
-    /** Recalcula los totales desde las operaciones y persiste. */
-    public function recalcularTotales(): void
-    {
-        $ops = $this->operaciones()->where('excluida', false)->get();
-
-        $this->total_operaciones      = $ops->count();
-        $this->total_importe_cliente  = $ops->sum('valor_cliente');
-        $this->total_importe_correcto = $ops->whereIn('estado', ['ok', 'diferencia'])->sum('valor_tarifa_original');
-        $this->total_diferencia       = $ops->whereIn('estado', ['diferencia'])->sum('diferencia_cliente');
-        $this->save();
     }
 }

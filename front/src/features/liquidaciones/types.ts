@@ -1,44 +1,30 @@
-// ============================================================
-// Módulo de Control de Liquidaciones v2.0
-// Tipos TypeScript — spec técnico 28/03/2026
-// ============================================================
+// ── Entities ──────────────────────────────────────────────────────────────────
 
-// ------------------------------------------------------------
-// Configuración de clientes
-// ------------------------------------------------------------
-
-export type LiqClienteLiq = {
+export type LiqCliente = {
   id: number;
+  distriapp_cliente_id: number | null;
   razon_social: string;
   nombre_corto: string;
+  codigo_corto: string | null;
   cuit: string | null;
   activo: boolean;
+  configuracion_excel: Record<string, unknown> | null;
+  esquemas_count?: number;
 };
 
-// ------------------------------------------------------------
-// Módulo de Tarifas
-// ------------------------------------------------------------
-
-/**
- * Define las dimensiones que componen la tarifa de un cliente.
- * Ejemplo: dimensiones = ['sucursal', 'concepto']
- */
-export type EsquemaTarifario = {
+export type LiqEsquemaTarifario = {
   id: number;
   cliente_id: number;
-  cliente_nombre?: string | null;
   nombre: string;
   descripcion: string | null;
-  dimensiones: string[]; // ['sucursal', 'concepto']
+  dimensiones: string[];
   activo: boolean;
-  fecha_creacion: string;
+  created_at: string;
+  dimension_valores_count?: number;
+  lineas_tarifa_count?: number;
 };
 
-/**
- * Un valor posible para una dimensión de un esquema tarifario.
- * Ejemplo: nombre_dimension='sucursal', valor='AMBA'
- */
-export type DimensionTarifaValor = {
+export type LiqDimensionValor = {
   id: number;
   esquema_id: number;
   nombre_dimension: string;
@@ -47,54 +33,25 @@ export type DimensionTarifaValor = {
   activo: boolean;
 };
 
-/**
- * Línea de tarifa: combinación de dimensiones con su precio.
- * precio_distribuidor = precio_original * (1 - porcentaje_agencia / 100)
- */
-export type LineaTarifa = {
+export type LiqLineaTarifa = {
   id: number;
   esquema_id: number;
-  dimensiones_valores: Record<string, string>; // {sucursal: 'AMBA', concepto: 'Ut. Corto AM'}
-  precio_original: number;
-  porcentaje_agencia: number;
-  precio_distribuidor: number; // calculado por el sistema
+  dimensiones_valores: Record<string, string>;
+  precio_original: string;
+  porcentaje_agencia: string;
+  precio_distribuidor: string;
   vigencia_desde: string;
   vigencia_hasta: string | null;
   creado_por: number | null;
   aprobado_por: number | null;
-  creado_por_nombre?: string | null;
-  aprobado_por_nombre?: string | null;
-  fecha_creacion: string;
   fecha_aprobacion: string | null;
   activo: boolean;
+  created_at: string;
+  creado_por_user?: { id: number; name: string; email: string };
+  aprobado_por_user?: { id: number; name: string; email: string };
 };
 
-// Formulario de nueva línea de tarifa (antes de enviar al backend)
-export type LineaTarifaForm = {
-  dimensiones_valores: Record<string, string>;
-  precio_original: string; // string para el input
-  porcentaje_agencia: string;
-  vigencia_desde: string;
-  vigencia_hasta: string;
-};
-
-export const lineaTarifaFormVacia = (): LineaTarifaForm => ({
-  dimensiones_valores: {},
-  precio_original: '',
-  porcentaje_agencia: '',
-  vigencia_desde: '',
-  vigencia_hasta: '',
-});
-
-// ------------------------------------------------------------
-// Mapeos y configuración
-// ------------------------------------------------------------
-
-/**
- * Traduce un concepto del Excel del cliente al valor de la dimensión en la tarifa.
- * Ejemplo: 'Rango 0-50 Km' → dimension='concepto' → 'Ut. Corto AM'
- */
-export type MapeoConcepto = {
+export type LiqMapeoConcepto = {
   id: number;
   cliente_id: number;
   valor_excel: string;
@@ -103,175 +60,127 @@ export type MapeoConcepto = {
   activo: boolean;
 };
 
-/**
- * Vincula un patrón de nombre de archivo con la sucursal tarifa correspondiente.
- * Ejemplo: 'AMBA COLECTA' → sucursal_tarifa='AMBA', tipo_operacion='Colecta'
- */
-export type MapeoSucursal = {
+export type LiqMapeoSucursal = {
   id: number;
   cliente_id: number;
   patron_archivo: string;
   sucursal_tarifa: string;
-  tipo_operacion: string;
+  tipo_operacion: string | null;
   activo: boolean;
 };
 
-/**
- * Gasto administrativo descontado al distribuidor por período.
- * Loginter: $2.010 fijos por período por distribuidor.
- */
-export type ConfiguracionGastos = {
+export type LiqConfiguracionGastos = {
   id: number;
   cliente_id: number;
   concepto_gasto: string;
-  monto: number;
+  monto: string;
   tipo: 'fijo' | 'porcentual';
   vigencia_desde: string;
   vigencia_hasta: string | null;
   activo: boolean;
 };
 
-// ------------------------------------------------------------
-// Proceso de liquidación
-// ------------------------------------------------------------
-
-export type LiquidacionClienteEstado =
-  | 'pendiente'
-  | 'en_proceso'
-  | 'auditada'
-  | 'aprobada'
-  | 'rechazada';
-
-/**
- * Representa una carga de archivo Excel del cliente (un batch de operaciones).
- */
-export type LiquidacionCliente = {
+export type LiqLiquidacionCliente = {
   id: number;
   cliente_id: number;
-  cliente_nombre?: string | null;
-  archivo_origen: string | null;
-  sucursal_tarifa: string | null;
+  archivo_origen?: string | null;
+  sucursal_tarifa?: string | null;
   periodo_desde: string;
   periodo_hasta: string;
-  fecha_carga: string;
-  usuario_carga: number;
-  usuario_nombre?: string | null;
-  estado: LiquidacionClienteEstado;
+  fecha_carga: string | null;
+  estado: 'pendiente' | 'en_proceso' | 'auditada' | 'aprobada' | 'rechazada';
   total_operaciones: number;
-  total_importe_cliente: number;
-  total_importe_correcto: number;
-  total_diferencia: number;
+  total_importe_cliente: string;
+  total_importe_correcto: string;
+  total_diferencia: string;
+  created_at: string;
+  cliente?: { id: number; nombre_corto: string; razon_social: string };
+  archivos_entrada_count?: number;
 };
 
-export type OperacionEstado =
-  | 'ok'
-  | 'diferencia'
-  | 'sin_tarifa'
-  | 'sin_distribuidor'
-  | 'duplicado'
-  | 'observado';
-
-/**
- * Una operación (fila del Excel) procesada y cruzada con la tarifa.
- */
-export type Operacion = {
+export type LiqArchivoEntrada = {
   id: number;
   liquidacion_cliente_id: number;
+  tipo_archivo: 'DATA_CLIENTE' | 'DETALLE_SUCURSAL' | 'TARIFARIO' | 'BASE_DISTRIB' | 'VARIABLES';
+  nombre_original: string;
+  nombre_interno: string;
+  disk: string;
+  ruta_storage: string;
+  tamano: number;
+  cant_registros: number | null;
+  sucursal: string | null;
+  created_at: string;
+  operaciones_count?: number;
+};
+
+export type LiqOperacion = {
+  id: number;
+  liquidacion_cliente_id: number;
+  archivo_entrada_id: number | null;
   campos_originales: Record<string, unknown>;
   dominio: string | null;
   concepto: string | null;
-  valor_cliente: number;
+  sucursal_tarifa: string | null;
+  dimensiones_valores?: Record<string, string> | null;
+  dimension_fallida?: string | null;
+  valor_cliente: string;
   linea_tarifa_id: number | null;
-  valor_tarifa_original: number | null;
-  valor_tarifa_distribuidor: number | null;
-  porcentaje_agencia: number | null;
-  diferencia_cliente: number | null;
-  estado: OperacionEstado;
+  valor_tarifa_original: string | null;
+  valor_tarifa_distribuidor: string | null;
+  porcentaje_agencia: string | null;
+  diferencia_cliente: string | null;
+  estado: 'pendiente' | 'ok' | 'diferencia' | 'sin_tarifa' | 'sin_distribuidor' | 'duplicado' | 'observado' | 'excluida';
   distribuidor_id: number | null;
-  distribuidor_nombre?: string | null;
-  observacion?: string | null;
-  excluida?: boolean;
-  motivo_exclusion?: string | null;
+  excluida: boolean;
+  observaciones: string | null;
+  distribuidor?: { id: number; apellidos: string; nombres: string; patente: string };
+  linea_tarifa?: Pick<LiqLineaTarifa, 'id' | 'dimensiones_valores' | 'precio_original' | 'precio_distribuidor' | 'porcentaje_agencia'>;
 };
 
-// ------------------------------------------------------------
-// Liquidaciones por distribuidor
-// ------------------------------------------------------------
-
-export type LiquidacionDistribuidorEstado =
-  | 'generada'
-  | 'aprobada'
-  | 'pagada'
-  | 'anulada';
-
-/**
- * Liquidación individual calculada para un distribuidor en un período.
- */
-export type LiquidacionDistribuidor = {
+export type LiqLiquidacionDistribuidor = {
   id: number;
   liquidacion_cliente_id: number;
-  liquidacion_cliente?: LiquidacionCliente | null;
   distribuidor_id: number;
-  distribuidor_nombre?: string | null;
-  distribuidor_patente?: string | null;
-  distribuidor_cuit?: string | null;
   periodo_desde: string;
   periodo_hasta: string;
-  fecha_generacion: string;
+  fecha_generacion: string | null;
   cantidad_operaciones: number;
-  subtotal: number;
-  gastos_administrativos: number;
-  total_a_pagar: number;
-  estado: LiquidacionDistribuidorEstado;
-  pdf_url: string | null;
+  subtotal: string;
+  gastos_administrativos: string;
+  total_a_pagar: string;
+  estado: 'generada' | 'aprobada' | 'pagada' | 'anulada';
+  pdf_path: string | null;
+  distribuidor?: { id: number; apellidos: string; nombres: string; patente: string; cbu_alias: string | null };
 };
 
-// ------------------------------------------------------------
-// Helpers
-// ------------------------------------------------------------
+// ── UI helpers ────────────────────────────────────────────────────────────────
 
-export const OPERACION_ESTADO_LABEL: Record<OperacionEstado, string> = {
+export const ESTADO_OPERACION_LABELS: Record<LiqOperacion['estado'], string> = {
+  pendiente: 'Pendiente',
   ok: 'OK',
   diferencia: 'Diferencia',
   sin_tarifa: 'Sin tarifa',
   sin_distribuidor: 'Sin distribuidor',
   duplicado: 'Duplicado',
   observado: 'Observado',
+  excluida: 'Excluida',
 };
 
-export const OPERACION_ESTADO_COLOR: Record<OperacionEstado, string> = {
-  ok: '#2d9348',
+export const ESTADO_OPERACION_COLOR: Record<LiqOperacion['estado'], string> = {
+  pendiente: '#6b7280',
+  ok: '#16a34a',
   diferencia: '#d97706',
   sin_tarifa: '#dc2626',
   sin_distribuidor: '#7c3aed',
-  duplicado: '#0284c7',
-  observado: '#6b7280',
+  duplicado: '#db2777',
+  observado: '#0891b2',
+  excluida: '#9ca3af',
 };
 
-export const LIQ_DISTRIBUIDOR_ESTADO_LABEL: Record<LiquidacionDistribuidorEstado, string> = {
-  generada: 'Generada',
-  aprobada: 'Aprobada',
-  pagada: 'Pagada',
-  anulada: 'Anulada',
-};
-
-export const LIQ_CLIENTE_ESTADO_LABEL: Record<LiquidacionClienteEstado, string> = {
+export const ESTADO_LIQ_LABELS: Record<LiqLiquidacionCliente['estado'], string> = {
   pendiente: 'Pendiente',
   en_proceso: 'En proceso',
   auditada: 'Auditada',
   aprobada: 'Aprobada',
   rechazada: 'Rechazada',
-};
-
-export const formatPeso = (n: number): string =>
-  new Intl.NumberFormat('es-AR', {
-    style: 'currency',
-    currency: 'ARS',
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(n);
-
-export const formatFecha = (iso: string): string => {
-  const d = new Date(iso + (iso.includes('T') ? '' : 'T00:00:00'));
-  return d.toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', year: 'numeric' });
 };

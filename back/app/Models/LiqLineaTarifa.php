@@ -2,12 +2,14 @@
 
 namespace App\Models;
 
+use Carbon\Carbon;
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\Eloquent\Relations\BelongsTo;
-use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class LiqLineaTarifa extends Model
 {
+    use HasFactory;
+
     protected $table = 'liq_lineas_tarifa';
 
     protected $fillable = [
@@ -24,43 +26,92 @@ class LiqLineaTarifa extends Model
         'activo',
     ];
 
-    protected function casts(): array
-    {
-        return [
-            'dimensiones_valores' => 'array',
-            'precio_original'     => 'decimal:2',
-            'porcentaje_agencia'  => 'decimal:2',
-            'precio_distribuidor' => 'decimal:2',
-            'vigencia_desde'      => 'date',
-            'vigencia_hasta'      => 'date',
-            'fecha_aprobacion'    => 'datetime',
-            'activo'              => 'boolean',
-        ];
-    }
+    protected $casts = [
+        'dimensiones_valores'  => 'array',
+        'activo'               => 'boolean',
+        'precio_original'      => 'decimal:2',
+        'porcentaje_agencia'   => 'decimal:2',
+        'precio_distribuidor'  => 'decimal:2',
+        'vigencia_desde'       => 'date',
+        'vigencia_hasta'       => 'date',
+        'fecha_aprobacion'     => 'datetime',
+    ];
 
-    /** Calcula y setea precio_distribuidor desde precio_original y porcentaje_agencia. */
-    public static function calcularPrecioDistribuidor(float $precioOriginal, float $pctAgencia): float
-    {
-        return round($precioOriginal * (1 - $pctAgencia / 100), 2);
-    }
+    // -------------------------------------------------------------------------
+    // Relationships
+    // -------------------------------------------------------------------------
 
-    public function esquema(): BelongsTo
+    public function esquema()
     {
         return $this->belongsTo(LiqEsquemaTarifario::class, 'esquema_id');
     }
 
-    public function creadoPor(): BelongsTo
+    public function creadoPor()
     {
-        return $this->belongsTo(User::class, 'creado_por');
+        return $this->belongsTo(\App\Models\User::class, 'creado_por');
     }
 
-    public function aprobadoPor(): BelongsTo
+    public function aprobadoPor()
     {
-        return $this->belongsTo(User::class, 'aprobado_por');
+        return $this->belongsTo(\App\Models\User::class, 'aprobado_por');
     }
 
-    public function auditorias(): HasMany
+    public function auditorias()
     {
         return $this->hasMany(LiqAuditoriaTarifa::class, 'linea_tarifa_id');
+    }
+
+    // -------------------------------------------------------------------------
+    // Helper methods
+    // -------------------------------------------------------------------------
+
+    /**
+     * Calculates the distributor price based on the original price and agency percentage.
+     */
+    public function calcularPrecioDistribuidor(): float
+    {
+        return round((float) $this->precio_original * (1 - (float) $this->porcentaje_agencia / 100), 2);
+    }
+
+    /**
+     * Checks whether this tariff line is active and covers the given date.
+     * Defaults to today if no date is provided.
+     */
+    public function estaVigente(Carbon $fecha = null): bool
+    {
+        $fecha = $fecha ?? Carbon::today();
+
+        if (! $this->activo) {
+            return false;
+        }
+
+        if ($this->vigencia_desde && $fecha->lt($this->vigencia_desde)) {
+            return false;
+        }
+
+        if ($this->vigencia_hasta && $fecha->gt($this->vigencia_hasta)) {
+            return false;
+        }
+
+        return true;
+    }
+
+    // -------------------------------------------------------------------------
+    // Scopes
+    // -------------------------------------------------------------------------
+
+    public function scopeActivo($q)
+    {
+        return $q->where('activo', true);
+    }
+
+    public function scopeVigente($q, string $fecha)
+    {
+        return $q->where('activo', true)
+                 ->where('vigencia_desde', '<=', $fecha)
+                 ->where(function ($sub) use ($fecha) {
+                     $sub->whereNull('vigencia_hasta')
+                         ->orWhere('vigencia_hasta', '>=', $fecha);
+                 });
     }
 }

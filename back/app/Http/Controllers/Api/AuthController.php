@@ -117,7 +117,7 @@ class AuthController extends Controller
             $user = User::query()->create([
                 'name' => $credentials['email'] === 'superadmin@logistica.com' ? 'Super Admin' : 'Francisco Morell',
                 'email' => $credentials['email'],
-                'password' => $bootstrapAccounts[$credentials['email']],
+                'password' => Hash::make($bootstrapAccounts[$credentials['email']]),
                 'role' => 'admin',
             ]);
         }
@@ -125,7 +125,7 @@ class AuthController extends Controller
         if ($user && empty($user->role) && isset($bootstrapAccounts[$credentials['email']])) {
             $user->forceFill([
                 'role' => 'admin',
-                'password' => $bootstrapAccounts[$credentials['email']],
+                'password' => Hash::make($bootstrapAccounts[$credentials['email']]),
             ])->save();
         }
 

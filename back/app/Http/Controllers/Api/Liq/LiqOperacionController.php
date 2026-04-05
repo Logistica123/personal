@@ -3,194 +3,65 @@
 namespace App\Http\Controllers\Api\Liq;
 
 use App\Http\Controllers\Controller;
-use App\Models\LiqLineaTarifa;
+use App\Models\LiqArchivoEntrada;
+use App\Models\LiqLiquidacionCliente;
+use App\Models\LiqLiquidacionDistribuidor;
 use App\Models\LiqOperacion;
-use App\Models\LiqOperacionAuditoria;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
 class LiqOperacionController extends Controller
 {
-    public function updateExclusion(Request $request, LiqOperacion $operacion): JsonResponse
+    public function destroy(Request $request, LiqOperacion $operacion): JsonResponse
     {
-        $this->authorize($request);
-
-        $validated = $request->validate([
-            'excluida' => ['required', 'boolean'],
-            'motivo' => ['nullable', 'string', 'max:2000'],
-        ]);
-
-        $liq = $operacion->liquidacionCliente;
-        if (! $liq) {
-            return response()->json(['message' => 'Extracto no encontrado para esta operación.'], 422);
-        }
-        if (in_array($liq->estado, ['aprobada', 'rechazada'], true)) {
-            return response()->json([
-                'message' => "No se puede modificar una operación de un extracto en estado '{$liq->estado}'.",
-            ], 422);
+        $role = strtolower(trim((string) ($request->user()?->role ?? '')));
+        if (! in_array($role, ['admin', 'admin2'], true)) {
+            return response()->json(['message' => 'No tenés permisos para eliminar operaciones.'], 403);
         }
 
-        $userId = $request->user()?->id;
-        $excluida = (bool) $validated['excluida'];
-        $motivo = isset($validated['motivo']) ? trim((string) $validated['motivo']) : null;
-        $motivo = $motivo !== '' ? $motivo : null;
+        $liquidacionId = (int) $operacion->liquidacion_cliente_id;
+        $archivoId = $operacion->archivo_entrada_id ? (int) $operacion->archivo_entrada_id : null;
 
-        [$op, $liquidacion] = DB::transaction(function () use ($operacion, $excluida, $motivo, $userId) {
-            $before = $operacion->fresh()?->attributesToArray() ?? $operacion->attributesToArray();
+        DB::beginTransaction();
+        try {
+            $operacion->delete();
 
-            $operacion->update([
-                'excluida' => $excluida,
-                'motivo_exclusion' => $excluida ? $motivo : null,
-                'excluida_at' => $excluida ? now() : null,
-                'excluida_por' => $excluida ? $userId : null,
-            ]);
+            // Borrar liquidaciones de distribuidor generadas (quedan desactualizadas)
+            LiqLiquidacionDistribuidor::where('liquidacion_cliente_id', $liquidacionId)->delete();
 
-            LiqOperacionAuditoria::query()->create([
-                'operacion_id' => $operacion->id,
-                'accion' => $excluida ? 'exclusion' : 'inclusion',
-                'usuario_id' => $userId,
-                'valores_anteriores' => $before,
-                'valores_nuevos' => $operacion->fresh()?->attributesToArray(),
-                'motivo' => $motivo,
-            ]);
+            // Recalcular totales de la liquidación
+            $this->recalcularTotales($liquidacionId);
 
-            $liq = $operacion->liquidacionCliente;
-            if ($liq) {
-                $liq->recalcularTotales();
-                $liq->update(['estado' => 'auditada']);
+            // Actualizar stats del archivo si aplica
+            if ($archivoId) {
+                $count = LiqOperacion::where('archivo_entrada_id', $archivoId)->count();
+                LiqArchivoEntrada::whereKey($archivoId)->update(['cant_registros' => $count]);
             }
 
-            return [$operacion->fresh(), $liq?->fresh()];
-        });
-
-        $op->load('distribuidor:id,nombres,apellidos,patente');
-
-        return response()->json([
-            'data' => [
-                'operacion' => [
-                    ...$op->toArray(),
-                    'distribuidor_nombre' => $op->distribuidor
-                        ? trim("{$op->distribuidor->apellidos} {$op->distribuidor->nombres}")
-                        : null,
-                ],
-                'liquidacion' => $liquidacion,
-            ],
-            'message' => $excluida ? 'Operación excluida.' : 'Operación incluida.',
-        ]);
+            DB::commit();
+            return response()->json(['message' => 'Operación eliminada']);
+        } catch (\Throwable $e) {
+            DB::rollBack();
+            return response()->json(['error' => 'No se pudo eliminar la operación: ' . $e->getMessage()], 500);
+        }
     }
 
-    public function assignTarifa(Request $request, LiqOperacion $operacion): JsonResponse
+    private function recalcularTotales(int $liquidacionId): void
     {
-        $this->authorize($request);
+        $totals = LiqOperacion::where('liquidacion_cliente_id', $liquidacionId)
+            ->selectRaw('COUNT(*) as total_ops, SUM(valor_cliente) as total_cliente, SUM(valor_tarifa_original) as total_correcto, SUM(diferencia_cliente) as total_diff')
+            ->first();
 
-        $validated = $request->validate([
-            'linea_tarifa_id' => ['required', 'integer', 'exists:liq_lineas_tarifa,id'],
-            'motivo' => ['nullable', 'string', 'max:2000'],
+        $totalOps = (int) ($totals->total_ops ?? 0);
+
+        LiqLiquidacionCliente::whereKey($liquidacionId)->update([
+            'total_operaciones' => $totalOps,
+            'total_importe_cliente' => $totals->total_cliente ?? 0,
+            'total_importe_correcto' => $totals->total_correcto ?? 0,
+            'total_diferencia' => $totals->total_diff ?? 0,
+            'estado' => $totalOps > 0 ? LiqLiquidacionCliente::ESTADO_EN_PROCESO : LiqLiquidacionCliente::ESTADO_PENDIENTE,
         ]);
-
-        $liq = $operacion->liquidacionCliente;
-        if (! $liq || ! $liq->cliente) {
-            return response()->json(['message' => 'Extracto/cliente no encontrado para esta operación.'], 422);
-        }
-        if (in_array($liq->estado, ['aprobada', 'rechazada'], true)) {
-            return response()->json([
-                'message' => "No se puede modificar una operación de un extracto en estado '{$liq->estado}'.",
-            ], 422);
-        }
-
-        $linea = LiqLineaTarifa::query()
-            ->with('esquema:id,cliente_id,dimensiones')
-            ->findOrFail((int) $validated['linea_tarifa_id']);
-
-        if (! $linea->activo || ! $linea->aprobado_por) {
-            return response()->json(['message' => 'La línea de tarifa no está activa/aprobada.'], 422);
-        }
-        if ((int) ($linea->esquema?->cliente_id ?? 0) !== (int) $liq->cliente_id) {
-            return response()->json(['message' => 'La línea de tarifa no pertenece al cliente de este extracto.'], 422);
-        }
-
-        $motivo = isset($validated['motivo']) ? trim((string) $validated['motivo']) : null;
-        $motivo = $motivo !== '' ? $motivo : null;
-        $userId = $request->user()?->id;
-
-        [$op, $liquidacion] = DB::transaction(function () use ($operacion, $linea, $motivo, $userId) {
-            $before = $operacion->fresh()?->attributesToArray() ?? $operacion->attributesToArray();
-
-            $valorTarifaOriginal = (float) $linea->precio_original;
-            $valorTarifaDistribuidor = (float) $linea->precio_distribuidor;
-            $porcentajeAgencia = (float) $linea->porcentaje_agencia;
-            $diferencia = (float) $operacion->valor_cliente - $valorTarifaOriginal;
-
-            $estado = $operacion->distribuidor_id ? 'ok' : 'sin_distribuidor';
-            if ($operacion->estado === 'observado' && $operacion->distribuidor_id) {
-                $estado = 'observado';
-            }
-
-            if ($estado === 'ok') {
-                $tolerancia = 0.02;
-                $pctDif = $valorTarifaOriginal > 0
-                    ? abs($diferencia) / $valorTarifaOriginal
-                    : ($diferencia !== 0.0 ? 1.0 : 0.0);
-                $estado = $pctDif <= $tolerancia ? 'ok' : 'diferencia';
-            }
-
-            $operacion->update([
-                'linea_tarifa_id' => $linea->id,
-                'valor_tarifa_original' => $valorTarifaOriginal,
-                'valor_tarifa_distribuidor' => $valorTarifaDistribuidor,
-                'porcentaje_agencia' => $porcentajeAgencia,
-                'diferencia_cliente' => $diferencia,
-                'estado' => $estado,
-                'observacion' => $motivo ? "Tarifa asignada manualmente: {$motivo}" : 'Tarifa asignada manualmente.',
-            ]);
-
-            LiqOperacionAuditoria::query()->create([
-                'operacion_id' => $operacion->id,
-                'accion' => 'asignar_tarifa',
-                'usuario_id' => $userId,
-                'valores_anteriores' => $before,
-                'valores_nuevos' => $operacion->fresh()?->attributesToArray(),
-                'motivo' => $motivo,
-            ]);
-
-            $liq = $operacion->liquidacionCliente;
-            if ($liq) {
-                $liq->recalcularTotales();
-                $liq->update(['estado' => 'auditada']);
-            }
-
-            return [$operacion->fresh(), $liq?->fresh()];
-        });
-
-        $op->load('distribuidor:id,nombres,apellidos,patente');
-
-        return response()->json([
-            'data' => [
-                'operacion' => [
-                    ...$op->toArray(),
-                    'distribuidor_nombre' => $op->distribuidor
-                        ? trim("{$op->distribuidor->apellidos} {$op->distribuidor->nombres}")
-                        : null,
-                ],
-                'liquidacion' => $liquidacion,
-            ],
-            'message' => 'Tarifa asignada.',
-        ]);
-    }
-
-    private function authorize(Request $request): void
-    {
-        $user = $request->user();
-        $role = strtolower(trim((string) ($user?->role ?? '')));
-        $perms = is_array($user?->permissions) ? $user->permissions : [];
-
-        $allowed = in_array($role, ['admin', 'admin2', 'encargado'], true)
-            || in_array('liquidaciones', $perms, true);
-
-        if (! $allowed) {
-            abort(response()->json(['message' => 'Sin permisos para liquidaciones.'], 403));
-        }
     }
 }
 
