@@ -147,6 +147,27 @@ export function LiquidacionesClientePage({
 
   useEffect(() => { loadClientes(); }, [loadClientes]);
 
+  const selectCliente = useCallback(async (cliente: LiqCliente) => {
+    setSelectedCliente(cliente);
+    setSelectedEsquema(null);
+    setDimensiones({});
+    setLineas([]);
+    try {
+      const [esqRes, mapConRes, mapSucRes, gastosRes] = await Promise.all([
+        api.get(`/clientes/${cliente.id}/esquemas`),
+        api.get(`/clientes/${cliente.id}/mapeos-concepto`),
+        api.get(`/clientes/${cliente.id}/mapeos-sucursal`),
+        api.get(`/clientes/${cliente.id}/gastos`),
+      ]);
+      setEsquemas(esqRes.data ?? []);
+      setMapeosConcepto(mapConRes.data ?? []);
+      setMapeosSucursal(mapSucRes.data ?? []);
+      setGastos(gastosRes.data ?? []);
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Error cargando datos del cliente');
+    }
+  }, [api]);
+
   const enableCliente = useCallback(async () => {
     const id = Number(selectedBaseClienteId);
     if (!Number.isFinite(id) || id <= 0) {
@@ -171,27 +192,6 @@ export function LiquidacionesClientePage({
       setEnablingClient(false);
     }
   }, [api, loadClientes, selectCliente, selectedBaseClienteId]);
-
-  const selectCliente = useCallback(async (cliente: LiqCliente) => {
-    setSelectedCliente(cliente);
-    setSelectedEsquema(null);
-    setDimensiones({});
-    setLineas([]);
-    try {
-      const [esqRes, mapConRes, mapSucRes, gastosRes] = await Promise.all([
-        api.get(`/clientes/${cliente.id}/esquemas`),
-        api.get(`/clientes/${cliente.id}/mapeos-concepto`),
-        api.get(`/clientes/${cliente.id}/mapeos-sucursal`),
-        api.get(`/clientes/${cliente.id}/gastos`),
-      ]);
-      setEsquemas(esqRes.data ?? []);
-      setMapeosConcepto(mapConRes.data ?? []);
-      setMapeosSucursal(mapSucRes.data ?? []);
-      setGastos(gastosRes.data ?? []);
-    } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'Error cargando datos del cliente');
-    }
-  }, [api]);
 
   const refreshMapeos = useCallback(async () => {
     if (!selectedCliente) return;
