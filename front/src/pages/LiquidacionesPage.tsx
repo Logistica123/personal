@@ -2528,14 +2528,24 @@ export const LiquidacionesPage: React.FC<LiquidacionesPageProps> = ({
     const headerRow = columns.map((column) => column.header);
     const tsv = [headerRow, ...rows].map((row) => row.join('\t')).join('\n');
 
-    // Export real TSV (not .xls). Mobile Office/Excel can fail to open when the
-    // extension doesn't match the content (it tries online conversion).
+    // CSV works reliably on Android (Office/Excel/Sheets). We use ";" because
+    // most ES/AR locales use comma as decimal separator.
+    const delimiter = ';';
+    const csvEscape = (value: string) => {
+      const needsQuotes = value.includes(delimiter) || value.includes('"') || value.includes('\n') || value.includes('\r');
+      const safe = value.replace(/"/g, '""');
+      return needsQuotes ? `"${safe}"` : safe;
+    };
+    const csv = [headerRow, ...rows]
+      .map((row) => row.map((cell) => csvEscape(String(cell ?? ''))).join(delimiter))
+      .join('\n');
+
     const BOM = '\ufeff';
-    const blob = new Blob([BOM + tsv], { type: 'text/tab-separated-values;charset=utf-8' });
+    const blob = new Blob([BOM + csv], { type: 'text/csv;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `pagos-${Date.now()}.tsv`;
+    link.download = `pagos-${Date.now()}.csv`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);

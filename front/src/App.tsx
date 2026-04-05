@@ -10780,14 +10780,25 @@ const CombustibleDistribuidorPage: React.FC = () => {
       .map((row) => row.map((value) => sanitizeCell(String(value ?? ''))).join('\t'))
       .join('\n');
 
-    // Export real TSV (not .xls). Mobile Office/Excel can fail to open when the
-    // extension doesn't match the content (it tries online conversion).
+    // CSV works reliably on Android (Office/Excel/Sheets). We use ";" because
+    // most ES/AR locales use comma as decimal separator.
+    const delimiter = ';';
+    const csvEscape = (value: string) => {
+      const raw = String(value ?? '');
+      const needsQuotes = raw.includes(delimiter) || raw.includes('"') || raw.includes('\n') || raw.includes('\r');
+      const safe = raw.replace(/"/g, '""');
+      return needsQuotes ? `"${safe}"` : safe;
+    };
+    const csv = [...summaryRows, headerRow, ...dataRows]
+      .map((row) => row.map((value) => csvEscape(sanitizeCell(String(value ?? '')))).join(delimiter))
+      .join('\n');
+
     const BOM = '\ufeff';
-    const blob = new Blob([BOM + tsv], { type: 'text/tab-separated-values;charset=utf-8' });
+    const blob = new Blob([BOM + csv], { type: 'text/csv;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `combustible-distribuidor-${Date.now()}.tsv`;
+    link.download = `combustible-distribuidor-${Date.now()}.csv`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -11778,14 +11789,25 @@ const CombustibleInformePage: React.FC = () => {
       .map((row) => row.map((value) => sanitizeCell(String(value ?? ''))).join('\t'))
       .join('\n');
 
-    // Export real TSV (not .xls). Mobile Office/Excel can fail to open when the
-    // extension doesn't match the content (it tries online conversion).
+    // CSV works reliably on Android (Office/Excel/Sheets). We use ";" because
+    // most ES/AR locales use comma as decimal separator.
+    const delimiter = ';';
+    const csvEscape = (value: string) => {
+      const raw = String(value ?? '');
+      const needsQuotes = raw.includes(delimiter) || raw.includes('"') || raw.includes('\n') || raw.includes('\r');
+      const safe = raw.replace(/"/g, '""');
+      return needsQuotes ? `"${safe}"` : safe;
+    };
+    const csv = [...summaryRows, headerRow, ...dataRows]
+      .map((row) => row.map((value) => csvEscape(sanitizeCell(String(value ?? '')))).join(delimiter))
+      .join('\n');
+
     const BOM = '\ufeff';
-    const blob = new Blob([BOM + tsv], { type: 'text/tab-separated-values;charset=utf-8' });
+    const blob = new Blob([BOM + csv], { type: 'text/csv;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `informe-combustible-${reportId ?? Date.now()}.tsv`;
+    link.download = `informe-combustible-${reportId ?? Date.now()}.csv`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -13132,14 +13154,27 @@ const CombustibleReportesPage: React.FC = () => {
       .map((row) => (Array.isArray(row) ? row : [row]).join('\t'))
       .join('\n');
 
-    // Export real TSV (not .xls). Mobile Office/Excel can fail to open when the
-    // extension doesn't match the content (it tries online conversion).
+    // CSV works reliably on Android (Office/Excel/Sheets). We use ";" because
+    // most ES/AR locales use comma as decimal separator.
+    const delimiter = ';';
+    const csvEscape = (value: string) => {
+      const raw = String(value ?? '');
+      const needsQuotes = raw.includes(delimiter) || raw.includes('"') || raw.includes('\n') || raw.includes('\r');
+      const safe = raw.replace(/"/g, '""');
+      return needsQuotes ? `"${safe}"` : safe;
+    };
+    const csv = sections
+      .map((section) => (Array.isArray(section[0]) ? section : [section]))
+      .flat()
+      .map((row) => (Array.isArray(row) ? row : [row]).map((cell) => csvEscape(String(cell ?? ''))).join(delimiter))
+      .join('\n');
+
     const BOM = '\ufeff';
-    const blob = new Blob([BOM + tsv], { type: 'text/tab-separated-values;charset=utf-8' });
+    const blob = new Blob([BOM + csv], { type: 'text/csv;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `reportes-combustible-${Date.now()}.tsv`;
+    link.download = `reportes-combustible-${Date.now()}.csv`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
