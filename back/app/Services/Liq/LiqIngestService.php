@@ -274,9 +274,21 @@ class LiqIngestService
                         $pctDiff = $valorTarifaOriginal > 0 ? abs($diferencia / $valorTarifaOriginal) * 100 : 0;
                         $estado = $pctDiff <= $tolerancia ? 'ok' : 'diferencia';
                     } else {
+                        // Si existe una línea que matchea las dimensiones pero está pendiente de aprobación,
+                        // lo informamos explícitamente para evitar confusión (el cruce solo usa líneas aprobadas).
+                        $pendiente = $this->buscarLineaTarifaPendientePorDimensiones(
+                            $esquema->id,
+                            $dimensionesValores,
+                            $liquidacion->periodo_desde->toDateString()
+                        );
                         $estado = 'sin_tarifa';
-                        $dimensionFallida = 'no_match';
-                        $observaciones = 'No match para dimensiones: ' . json_encode($dimensionesValores, JSON_UNESCAPED_UNICODE);
+                        if ($pendiente) {
+                            $dimensionFallida = 'pendiente_aprobacion';
+                            $observaciones = 'Existe tarifa pendiente de aprobación para dimensiones: ' . json_encode($dimensionesValores, JSON_UNESCAPED_UNICODE);
+                        } else {
+                            $dimensionFallida = 'no_match';
+                            $observaciones = 'No match para dimensiones: ' . json_encode($dimensionesValores, JSON_UNESCAPED_UNICODE);
+                        }
                     }
                 }
             }
@@ -362,6 +374,23 @@ class LiqIngestService
         $q = LiqLineaTarifa::where('esquema_id', $esquemaId)
             ->where('activo', true)
             ->whereNotNull('aprobado_por')
+            ->where('vigencia_desde', '<=', $fecha)
+            ->where(function ($q) use ($fecha) {
+                $q->whereNull('vigencia_hasta')->orWhere('vigencia_hasta', '>=', $fecha);
+            });
+
+        foreach ($dimensionesValores as $dim => $valor) {
+            $q->where("dimensiones_valores->{$dim}", $valor);
+        }
+
+        return $q->first();
+    }
+
+    private function buscarLineaTarifaPendientePorDimensiones(int $esquemaId, array $dimensionesValores, string $fecha): ?LiqLineaTarifa
+    {
+        $q = LiqLineaTarifa::where('esquema_id', $esquemaId)
+            ->where('activo', true)
+            ->whereNull('aprobado_por')
             ->where('vigencia_desde', '<=', $fecha)
             ->where(function ($q) use ($fecha) {
                 $q->whereNull('vigencia_hasta')->orWhere('vigencia_hasta', '>=', $fecha);

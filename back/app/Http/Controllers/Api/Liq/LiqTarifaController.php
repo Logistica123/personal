@@ -465,64 +465,74 @@ class LiqTarifaController extends Controller
                 return response()->json(['error' => 'La aprobación requiere un segundo usuario (salvo Admin/Admin 2)'], 422);
             }
 
-            $dimensiones = $linea->dimensiones_valores ?? [];
-            $desde = $linea->vigencia_desde?->toDateString();
-            $hasta = $linea->vigencia_hasta?->toDateString();
-            if (!$desde) {
-                return response()->json(['error' => 'La línea no tiene vigencia_desde válida'], 422);
+            $err = $this->aprobarLineaLocked($linea, (int) $userId, (string) $data['motivo']);
+            if ($err) {
+                return response()->json(['error' => $err], 422);
             }
 
-            // Cerrar automáticamente líneas aprobadas previas que solapan vigencia para la misma combinación
-            $otras = $this->queryLineasPorDimensiones($linea->esquema_id, $dimensiones)
+            return response()->json(['data' => $linea->fresh(), 'message' => 'Línea aprobada']);
+        });
+    }
+
+    // POST /liq/esquemas/{esquema}/lineas/aprobar-todas - aprobar todas las líneas activas pendientes del esquema
+    public function aprobarTodasLineas(Request $request, LiqEsquemaTarifario $esquema): JsonResponse
+    {
+        $data = $request->validate([
+            'motivo' => 'required|string|min:3',
+        ]);
+
+        $user = $request->user();
+        $userId = $user?->id;
+        if (!$userId) {
+            return response()->json(['error' => 'Usuario no autenticado'], 401);
+        }
+        $role = strtolower(trim((string) ($user?->role ?? '')));
+        if (!in_array($role, ['admin', 'admin2'], true)) {
+            return response()->json(['error' => 'Solo Admin/Admin2 puede aprobar en lote'], 403);
+        }
+
+        return DB::transaction(function () use ($esquema, $userId, $data) {
+            $pendientes = LiqLineaTarifa::where('esquema_id', $esquema->id)
                 ->where('activo', true)
-                ->whereNotNull('aprobado_por')
-                ->where('id', '!=', $linea->id)
-                ->where($this->vigenciaSolapaCallback($desde, $hasta))
+                ->whereNull('aprobado_por')
+                ->orderBy('vigencia_desde', 'asc')
                 ->lockForUpdate()
                 ->get();
 
-            $cierreHasta = Carbon::parse($desde)->subDay()->toDateString();
-            foreach ($otras as $otra) {
-                // Si la línea anterior empieza después o igual al inicio de la nueva, no podemos cerrarla sin dejar rango inválido.
-                if (Carbon::parse($otra->vigencia_desde)->greaterThanOrEqualTo(Carbon::parse($desde))) {
-                    return response()->json(['error' => 'Existe una línea aprobada con vigencia_desde >= a la nueva. Revise el historial antes de aprobar.'], 422);
-                }
-                if (Carbon::parse($cierreHasta)->lessThan(Carbon::parse($otra->vigencia_desde))) {
-                    return response()->json(['error' => 'No se puede cerrar la línea anterior: el cierre quedaría antes de su vigencia_desde'], 422);
-                }
-
-                $anterior = $otra->toArray();
-                $otra->update([
-                    'vigencia_hasta' => $cierreHasta,
-                ]);
-
-                LiqAuditoriaTarifa::create([
-                    'linea_tarifa_id' => $otra->id,
-                    'accion' => 'modificacion',
-                    'valores_anteriores' => $anterior,
-                    'valores_nuevos' => ['vigencia_hasta' => $cierreHasta],
-                    'usuario_id' => $userId,
-                    'motivo' => $data['motivo'],
-                    'created_at' => now(),
-                ]);
+            if ($pendientes->isEmpty()) {
+                return response()->json(['message' => 'No hay líneas pendientes para aprobar']);
             }
 
-            $linea->update([
-                'aprobado_por' => $userId,
-                'fecha_aprobacion' => now(),
-            ]);
+            // Agrupar por combinación de dimensiones, para aprobar en orden cronológico por cada combinación.
+            $groups = $pendientes->groupBy(function (LiqLineaTarifa $l) {
+                $dims = (array) ($l->dimensiones_valores ?? []);
+                ksort($dims);
+                return json_encode($dims, JSON_UNESCAPED_UNICODE);
+            });
 
-            LiqAuditoriaTarifa::create([
-                'linea_tarifa_id' => $linea->id,
-                'accion' => 'aprobacion',
-                'valores_anteriores' => null,
-                'valores_nuevos' => ['aprobado_por' => $userId, 'fecha_aprobacion' => now()->toIso8601String()],
-                'usuario_id' => $userId,
-                'motivo' => $data['motivo'],
-                'created_at' => now(),
-            ]);
+            $approved = 0;
+            foreach ($groups as $key => $lines) {
+                /** @var \Illuminate\Support\Collection<int, LiqLineaTarifa> $lines */
+                $sorted = $lines->sortBy(fn (LiqLineaTarifa $l) => $l->vigencia_desde?->toDateString() ?? '9999-12-31')->values();
+                foreach ($sorted as $linea) {
+                    // Re-lock puntual por id para garantizar estado actual en caso de re-queries.
+                    $locked = LiqLineaTarifa::whereKey($linea->id)->lockForUpdate()->first();
+                    if (!$locked) continue;
+                    if (!$locked->activo || $locked->aprobado_por) continue;
 
-            return response()->json(['data' => $linea->fresh(), 'message' => 'Línea aprobada']);
+                    $err = $this->aprobarLineaLocked($locked, (int) $userId, (string) $data['motivo']);
+                    if ($err) {
+                        // Abortamos todo el lote para mantener atomicidad.
+                        return response()->json(['error' => $err], 422);
+                    }
+                    $approved++;
+                }
+            }
+
+            return response()->json([
+                'message' => "Aprobadas {$approved} líneas.",
+                'data' => ['approved' => $approved],
+            ]);
         });
     }
 
@@ -616,6 +626,67 @@ class LiqTarifaController extends Controller
                   $sub->whereNull('vigencia_hasta')->orWhere('vigencia_hasta', '>=', $desde);
               });
         };
+    }
+
+    private function aprobarLineaLocked(LiqLineaTarifa $linea, int $userId, string $motivo): ?string
+    {
+        $dimensiones = $linea->dimensiones_valores ?? [];
+        $desde = $linea->vigencia_desde?->toDateString();
+        $hasta = $linea->vigencia_hasta?->toDateString();
+        if (!$desde) {
+            return 'La línea no tiene vigencia_desde válida';
+        }
+
+        // Cerrar automáticamente líneas aprobadas previas que solapan vigencia para la misma combinación
+        $otras = $this->queryLineasPorDimensiones($linea->esquema_id, $dimensiones)
+            ->where('activo', true)
+            ->whereNotNull('aprobado_por')
+            ->where('id', '!=', $linea->id)
+            ->where($this->vigenciaSolapaCallback($desde, $hasta))
+            ->lockForUpdate()
+            ->get();
+
+        $cierreHasta = Carbon::parse($desde)->subDay()->toDateString();
+        foreach ($otras as $otra) {
+            if (Carbon::parse($otra->vigencia_desde)->greaterThanOrEqualTo(Carbon::parse($desde))) {
+                return 'Existe una línea aprobada con vigencia_desde >= a la nueva. Revise el historial antes de aprobar.';
+            }
+            if (Carbon::parse($cierreHasta)->lessThan(Carbon::parse($otra->vigencia_desde))) {
+                return 'No se puede cerrar la línea anterior: el cierre quedaría antes de su vigencia_desde';
+            }
+
+            $anterior = $otra->toArray();
+            $otra->update([
+                'vigencia_hasta' => $cierreHasta,
+            ]);
+
+            LiqAuditoriaTarifa::create([
+                'linea_tarifa_id' => $otra->id,
+                'accion' => 'modificacion',
+                'valores_anteriores' => $anterior,
+                'valores_nuevos' => ['vigencia_hasta' => $cierreHasta],
+                'usuario_id' => $userId,
+                'motivo' => $motivo,
+                'created_at' => now(),
+            ]);
+        }
+
+        $linea->update([
+            'aprobado_por' => $userId,
+            'fecha_aprobacion' => now(),
+        ]);
+
+        LiqAuditoriaTarifa::create([
+            'linea_tarifa_id' => $linea->id,
+            'accion' => 'aprobacion',
+            'valores_anteriores' => null,
+            'valores_nuevos' => ['aprobado_por' => $userId, 'fecha_aprobacion' => now()->toIso8601String()],
+            'usuario_id' => $userId,
+            'motivo' => $motivo,
+            'created_at' => now(),
+        ]);
+
+        return null;
     }
 
     private function normHeader(string $s): string

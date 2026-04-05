@@ -513,6 +513,19 @@ export function LiquidacionesClientePage({
     }
   }, [api, selectedEsquema]);
 
+  const aprobarTodasLineas = useCallback(async () => {
+    if (!selectedEsquema) return;
+    if (!window.confirm('¿Aprobar todas las líneas pendientes de este esquema?')) return;
+    try {
+      await api.post(`/esquemas/${selectedEsquema.id}/lineas/aprobar-todas`, { motivo: 'Aprobación masiva' });
+      const res = await api.get(`/esquemas/${selectedEsquema.id}/lineas`);
+      setLineas(res.data ?? []);
+      showSuccess('Líneas aprobadas');
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Error');
+    }
+  }, [api, selectedEsquema]);
+
   const desactivarLinea = useCallback(async (id: number) => {
     if (!window.confirm('¿Desactivar esta línea de tarifa?')) return;
     try {
@@ -840,7 +853,16 @@ export function LiquidacionesClientePage({
 
                   {/* Tariff lines */}
                   <div className="dashboard-card">
-                    <header className="card-header"><h3>Líneas de tarifa</h3></header>
+                    <header className="card-header">
+                      <h3>Líneas de tarifa</h3>
+                      <div className="card-header__buttons">
+                        {lineas.filter((l) => l.activo && !l.aprobado_por).length > 0 && (
+                          <button type="button" className="btn-sm btn-primary" onClick={aprobarTodasLineas}>
+                            Aprobar todas ({lineas.filter((l) => l.activo && !l.aprobado_por).length})
+                          </button>
+                        )}
+                      </div>
+                    </header>
                     <div className="card-body">
                       {/* Add line form */}
                       <div style={{ background: '#f9fafb', padding: 16, borderRadius: 8, marginBottom: 16 }}>
