@@ -12,25 +12,51 @@ use App\Models\LiqMapeoConcepto;
 use App\Models\LiqMapeoSucursal;
 use App\Models\LiqConfiguracionGastos;
 use App\Models\LiqAuditoriaTarifa;
+use Illuminate\Database\QueryException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Schema;
 
 class LiqClienteController extends Controller
 {
     // GET /liq/clientes - list clients that have liq_activo = true, include esquema count
     public function index(Request $request): JsonResponse
     {
-        $clientes = LiqCliente::where('activo', true)
-            ->withCount('esquemas')
-            ->orderBy('nombre_corto')
-            ->get(['id', 'distriapp_cliente_id', 'razon_social', 'nombre_corto', 'cuit', 'activo', 'configuracion_excel']);
-        return response()->json(['data' => $clientes]);
+        if (!Schema::hasTable('liq_clientes')) {
+            return response()->json([
+                'message' => 'Faltan migraciones del módulo de liquidaciones (tabla liq_clientes). Ejecutá `php artisan migrate --force` en el servidor.',
+            ], 500);
+        }
+
+        $query = LiqCliente::where('activo', true)
+            ->orderBy('nombre_corto');
+
+        // Si todavía no existe la tabla de esquemas, devolvemos sin conteo (graceful).
+        if (Schema::hasTable('liq_esquemas_tarifarios')) {
+            $query->withCount('esquemas');
+        }
+
+        try {
+            $clientes = $query->get(['id', 'distriapp_cliente_id', 'razon_social', 'nombre_corto', 'cuit', 'activo', 'configuracion_excel']);
+            return response()->json(['data' => $clientes]);
+        } catch (QueryException $e) {
+            return response()->json([
+                'message' => 'Error consultando clientes de liquidaciones. Probable migración pendiente o base inconsistente.',
+                'error' => $e->getMessage(),
+            ], 500);
+        }
     }
 
     // POST /liq/clientes - create/enable a liq client linked to Cliente base
     public function store(Request $request): JsonResponse
     {
+        if (!Schema::hasTable('liq_clientes')) {
+            return response()->json([
+                'message' => 'Faltan migraciones del módulo de liquidaciones (tabla liq_clientes). Ejecutá `php artisan migrate --force` en el servidor.',
+            ], 500);
+        }
+
         $data = $request->validate([
             'distriapp_cliente_id' => 'required|exists:clientes,id',
             'razon_social' => 'sometimes|string|max:255',

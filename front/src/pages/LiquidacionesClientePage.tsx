@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useLiqApi } from '../features/liquidaciones/api';
 import type {
   LiqCliente,
@@ -31,6 +31,8 @@ export function LiquidacionesClientePage({
   formatDateOnly,
 }: Props) {
   const authUser = useStoredAuthUser();
+  const authUserRef = useRef(authUser);
+  authUserRef.current = authUser;
   const api = useLiqApi({ resolveApiBaseUrl, buildActorHeaders, authUser });
 
   const [activeTab, setActiveTab] = useState<Tab>('clientes');
@@ -103,7 +105,7 @@ export function LiquidacionesClientePage({
       qs.set('limit', '30');
 
       const baseUrl = resolveApiBaseUrl();
-      const actorHeaders = buildActorHeaders(authUser);
+      const actorHeaders = buildActorHeaders(authUserRef.current);
       const r = await fetch(`${baseUrl}/api/clientes/select?${qs.toString()}`, {
         credentials: 'include',
         headers: { Accept: 'application/json', ...actorHeaders },
@@ -123,7 +125,7 @@ export function LiquidacionesClientePage({
     } finally {
       setBaseClienteLoading(false);
     }
-  }, [authUser, buildActorHeaders, resolveApiBaseUrl]);
+  }, [buildActorHeaders, resolveApiBaseUrl]);
 
   useEffect(() => {
     if (!showEnableClientForm) return;

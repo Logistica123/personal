@@ -1,4 +1,4 @@
-import { useCallback, useMemo } from 'react';
+import { useCallback, useMemo, useRef } from 'react';
 
 type ApiDeps = {
   resolveApiBaseUrl: () => string;
@@ -29,19 +29,28 @@ const extractApiErrorMessage = (payload: unknown, fallback: string): string => {
 
 export function useLiqApi(deps: ApiDeps) {
   const { resolveApiBaseUrl, buildActorHeaders, authUser } = deps;
-  const base = useMemo(() => resolveApiBaseUrl(), [resolveApiBaseUrl]);
-  const headers = useCallback(
-    () => ({
+  // Estos refs evitan re-crear callbacks en cada render si `authUser` o `buildActorHeaders`
+  // cambian de identidad (por ejemplo, si vienen de localStorage y se re-hidratan).
+  const baseRef = useRef<string | null>(null);
+  if (baseRef.current === null) baseRef.current = resolveApiBaseUrl();
+
+  const buildActorHeadersRef = useRef(buildActorHeaders);
+  buildActorHeadersRef.current = buildActorHeaders;
+
+  const authUserRef = useRef(authUser);
+  authUserRef.current = authUser;
+
+  const headers = useCallback(() => {
+    return {
       'Content-Type': 'application/json',
       Accept: 'application/json',
-      ...buildActorHeaders(authUser),
-    }),
-    [buildActorHeaders, authUser]
-  );
+      ...buildActorHeadersRef.current(authUserRef.current),
+    };
+  }, []);
 
   const get = useCallback(
     async (path: string) => {
-      const r = await fetch(`${base}/api/liq${path}`, {
+      const r = await fetch(`${baseRef.current}/api/liq${path}`, {
         credentials: 'include',
         headers: headers(),
       });
@@ -49,12 +58,12 @@ export function useLiqApi(deps: ApiDeps) {
       if (!r.ok) throw new Error(extractApiErrorMessage(json, `Error ${r.status}`));
       return json;
     },
-    [base, headers]
+    [headers]
   );
 
   const post = useCallback(
     async (path: string, body: unknown) => {
-      const r = await fetch(`${base}/api/liq${path}`, {
+      const r = await fetch(`${baseRef.current}/api/liq${path}`, {
         method: 'POST',
         credentials: 'include',
         headers: headers(),
@@ -64,13 +73,13 @@ export function useLiqApi(deps: ApiDeps) {
       if (!r.ok) throw new Error(extractApiErrorMessage(json, `Error ${r.status}`));
       return json;
     },
-    [base, headers]
+    [headers]
   );
 
   const postForm = useCallback(
     async (path: string, formData: FormData) => {
-      const actorHeaders = buildActorHeaders(authUser);
-      const r = await fetch(`${base}/api/liq${path}`, {
+      const actorHeaders = buildActorHeadersRef.current(authUserRef.current);
+      const r = await fetch(`${baseRef.current}/api/liq${path}`, {
         method: 'POST',
         credentials: 'include',
         headers: { Accept: 'application/json', ...actorHeaders },
@@ -80,12 +89,12 @@ export function useLiqApi(deps: ApiDeps) {
       if (!r.ok) throw new Error(extractApiErrorMessage(json, `Error ${r.status}`));
       return json;
     },
-    [base, buildActorHeaders, authUser]
+    []
   );
 
   const patch = useCallback(
     async (path: string, body: unknown) => {
-      const r = await fetch(`${base}/api/liq${path}`, {
+      const r = await fetch(`${baseRef.current}/api/liq${path}`, {
         method: 'PATCH',
         credentials: 'include',
         headers: headers(),
@@ -95,12 +104,12 @@ export function useLiqApi(deps: ApiDeps) {
       if (!r.ok) throw new Error(extractApiErrorMessage(json, `Error ${r.status}`));
       return json;
     },
-    [base, headers]
+    [headers]
   );
 
   const put = useCallback(
     async (path: string, body?: unknown) => {
-      const r = await fetch(`${base}/api/liq${path}`, {
+      const r = await fetch(`${baseRef.current}/api/liq${path}`, {
         method: 'PUT',
         credentials: 'include',
         headers: headers(),
@@ -110,12 +119,12 @@ export function useLiqApi(deps: ApiDeps) {
       if (!r.ok) throw new Error(extractApiErrorMessage(json, `Error ${r.status}`));
       return json;
     },
-    [base, headers]
+    [headers]
   );
 
   const del = useCallback(
     async (path: string) => {
-      const r = await fetch(`${base}/api/liq${path}`, {
+      const r = await fetch(`${baseRef.current}/api/liq${path}`, {
         method: 'DELETE',
         credentials: 'include',
         headers: headers(),
@@ -124,7 +133,7 @@ export function useLiqApi(deps: ApiDeps) {
       if (!r.ok) throw new Error(extractApiErrorMessage(json, `Error ${r.status}`));
       return json;
     },
-    [base, headers]
+    [headers]
   );
 
   return useMemo(
