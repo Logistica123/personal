@@ -20,6 +20,7 @@ type Props = {
 };
 
 type Tab = 'clientes' | 'esquema' | 'mapeos' | 'gastos';
+type BaseClienteOption = { id: number; codigo?: string | null; nombre?: string | null; documento_fiscal?: string | null };
 
 export function LiquidacionesClientePage({
   DashboardLayout,
@@ -31,6 +32,8 @@ export function LiquidacionesClientePage({
 }: Props) {
   const authUser = useStoredAuthUser();
   const api = useLiqApi({ resolveApiBaseUrl, buildActorHeaders, authUser });
+  const apiBaseUrl = resolveApiBaseUrl();
+  const actorHeaders = buildActorHeaders(authUser);
 
   const [activeTab, setActiveTab] = useState<Tab>('clientes');
   const [clientes, setClientes] = useState<LiqCliente[]>([]);
@@ -45,6 +48,12 @@ export function LiquidacionesClientePage({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
+  const [showEnableClientForm, setShowEnableClientForm] = useState(false);
+  const [baseClienteQuery, setBaseClienteQuery] = useState('');
+  const [baseClienteOptions, setBaseClienteOptions] = useState<BaseClienteOption[]>([]);
+  const [baseClienteLoading, setBaseClienteLoading] = useState(false);
+  const [selectedBaseClienteId, setSelectedBaseClienteId] = useState<string>('');
+  const [enablingClient, setEnablingClient] = useState(false);
 
   // New dimension form
   const [newDimNombre, setNewDimNombre] = useState('');
@@ -88,6 +97,42 @@ export function LiquidacionesClientePage({
     setTimeout(() => setSuccessMsg(null), 3000);
   };
 
+  const loadBaseClientes = useCallback(async (q: string) => {
+    setBaseClienteLoading(true);
+    try {
+      const qs = new URLSearchParams();
+      if (q.trim() !== '') qs.set('q', q.trim());
+      qs.set('limit', '30');
+
+      const r = await fetch(`${apiBaseUrl}/api/clientes/select?${qs.toString()}`, {
+        credentials: 'include',
+        headers: { Accept: 'application/json', ...actorHeaders },
+      });
+      const json = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        const msg = (json && typeof json === 'object' && (json.message || json.error))
+          ? String(json.message || json.error)
+          : `Error ${r.status}`;
+        throw new Error(msg);
+      }
+      const items = (json?.data ?? []) as unknown;
+      setBaseClienteOptions(Array.isArray(items) ? (items as BaseClienteOption[]) : []);
+    } catch (e: unknown) {
+      setBaseClienteOptions([]);
+      setError(e instanceof Error ? e.message : 'Error cargando clientes');
+    } finally {
+      setBaseClienteLoading(false);
+    }
+  }, [apiBaseUrl, actorHeaders]);
+
+  useEffect(() => {
+    if (!showEnableClientForm) return;
+    const handle = window.setTimeout(() => {
+      void loadBaseClientes(baseClienteQuery);
+    }, 250);
+    return () => window.clearTimeout(handle);
+  }, [showEnableClientForm, baseClienteQuery, loadBaseClientes]);
+
   const loadClientes = useCallback(async () => {
     setLoading(true);
     try {
@@ -101,6 +146,31 @@ export function LiquidacionesClientePage({
   }, [api]);
 
   useEffect(() => { loadClientes(); }, [loadClientes]);
+
+  const enableCliente = useCallback(async () => {
+    const id = Number(selectedBaseClienteId);
+    if (!Number.isFinite(id) || id <= 0) {
+      setError('Seleccioná un cliente válido.');
+      return;
+    }
+    setEnablingClient(true);
+    try {
+      const res = await api.post('/clientes', { distriapp_cliente_id: id });
+      showSuccess(res.message ?? 'Cliente habilitado');
+      setShowEnableClientForm(false);
+      setSelectedBaseClienteId('');
+      setBaseClienteQuery('');
+      await loadClientes();
+      if (res?.data?.id) {
+        await selectCliente(res.data as LiqCliente);
+        setActiveTab('esquema');
+      }
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Error habilitando cliente');
+    } finally {
+      setEnablingClient(false);
+    }
+  }, [api, loadClientes, selectCliente, selectedBaseClienteId]);
 
   const selectCliente = useCallback(async (cliente: LiqCliente) => {
     setSelectedCliente(cliente);
@@ -402,6 +472,68 @@ export function LiquidacionesClientePage({
         <div className="dashboard-card">
           <header className="card-header"><h3>Clientes habilitados</h3></header>
 	          <div className="card-body">
+              <div className="liq-client-actions">
+                <button
+                  type="button"
+                  className="btn-sm btn-primary"
+                  onClick={() => {
+                    setError(null);
+                    setShowEnableClientForm((p) => !p);
+                    if (!showEnableClientForm) {
+                      setBaseClienteQuery('');
+                      setBaseClienteOptions([]);
+                      setSelectedBaseClienteId('');
+                    }
+                  }}
+                >
+                  {showEnableClientForm ? 'Cancelar' : '+ Habilitar cliente'}
+                </button>
+              </div>
+
+              {showEnableClientForm ? (
+                <div className="liq-enable-client">
+                  <div className="liq-enable-client__row">
+                    <label>
+                      <span>Buscar cliente existente</span>
+                      <input
+                        type="text"
+                        value={baseClienteQuery}
+                        onChange={(e) => setBaseClienteQuery(e.target.value)}
+                        placeholder="Nombre / código / CUIT..."
+                      />
+                    </label>
+                    <label>
+                      <span>Cliente</span>
+                      <select
+                        value={selectedBaseClienteId}
+                        onChange={(e) => setSelectedBaseClienteId(e.target.value)}
+                        disabled={baseClienteLoading}
+                      >
+                        <option value="">Seleccionar…</option>
+                        {baseClienteOptions.map((opt) => (
+                          <option key={`base-cli-${opt.id}`} value={String(opt.id)}>
+                            {`${opt.nombre ?? 'Cliente'}${opt.codigo ? ` (${opt.codigo})` : ''}${opt.documento_fiscal ? ` - ${opt.documento_fiscal}` : ''}`}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <div className="liq-enable-client__btns">
+                      <button
+                        type="button"
+                        className="btn-sm btn-primary"
+                        onClick={() => void enableCliente()}
+                        disabled={enablingClient || !selectedBaseClienteId}
+                      >
+                        {enablingClient ? 'Habilitando...' : 'Habilitar'}
+                      </button>
+                    </div>
+                  </div>
+                  <p className="liq-enable-client__hint">
+                    Esto crea un registro en <code>liq_clientes</code> vinculado al cliente base y lo deja listo para cargar esquemas/mapeos.
+                  </p>
+                </div>
+              ) : null}
+
             {loading ? <p>Cargando…</p> : (
 	              <table className="data-table">
 	                <thead>
