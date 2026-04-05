@@ -976,12 +976,14 @@ export const ProveedoresPage: React.FC<ProveedoresPageProps> = ({
       .map((row) => row.join('\t'))
       .join('\n');
 
+    // Export real TSV (not .xls). Mobile Office/Excel can fail to open when the
+    // extension doesn't match the content (it tries online conversion).
     const BOM = '\ufeff';
-    const blob = new Blob([BOM + tsv], { type: 'application/vnd.ms-excel' });
+    const blob = new Blob([BOM + tsv], { type: 'text/tab-separated-values;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `personal-${Date.now()}.xls`;
+    link.download = `personal-${Date.now()}.tsv`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -1339,7 +1341,7 @@ export const ProveedoresPage: React.FC<ProveedoresPageProps> = ({
           Actualizar
         </button>
         <button type="button" className="secondary-action" onClick={handleExportCsv}>
-          Exportar Excel
+          Exportar Excel (TSV)
         </button>
         <button
           className="primary-action"

@@ -10780,12 +10780,14 @@ const CombustibleDistribuidorPage: React.FC = () => {
       .map((row) => row.map((value) => sanitizeCell(String(value ?? ''))).join('\t'))
       .join('\n');
 
+    // Export real TSV (not .xls). Mobile Office/Excel can fail to open when the
+    // extension doesn't match the content (it tries online conversion).
     const BOM = '\ufeff';
-    const blob = new Blob([BOM + tsv], { type: 'application/vnd.ms-excel' });
+    const blob = new Blob([BOM + tsv], { type: 'text/tab-separated-values;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `combustible-distribuidor-${Date.now()}.xls`;
+    link.download = `combustible-distribuidor-${Date.now()}.tsv`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -11776,12 +11778,14 @@ const CombustibleInformePage: React.FC = () => {
       .map((row) => row.map((value) => sanitizeCell(String(value ?? ''))).join('\t'))
       .join('\n');
 
+    // Export real TSV (not .xls). Mobile Office/Excel can fail to open when the
+    // extension doesn't match the content (it tries online conversion).
     const BOM = '\ufeff';
-    const blob = new Blob([BOM + tsv], { type: 'application/vnd.ms-excel' });
+    const blob = new Blob([BOM + tsv], { type: 'text/tab-separated-values;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `informe-combustible-${reportId ?? Date.now()}.xls`;
+    link.download = `informe-combustible-${reportId ?? Date.now()}.tsv`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -13128,12 +13132,14 @@ const CombustibleReportesPage: React.FC = () => {
       .map((row) => (Array.isArray(row) ? row : [row]).join('\t'))
       .join('\n');
 
+    // Export real TSV (not .xls). Mobile Office/Excel can fail to open when the
+    // extension doesn't match the content (it tries online conversion).
     const BOM = '\ufeff';
-    const blob = new Blob([BOM + tsv], { type: 'application/vnd.ms-excel' });
+    const blob = new Blob([BOM + tsv], { type: 'text/tab-separated-values;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `reportes-combustible-${Date.now()}.xls`;
+    link.download = `reportes-combustible-${Date.now()}.tsv`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
