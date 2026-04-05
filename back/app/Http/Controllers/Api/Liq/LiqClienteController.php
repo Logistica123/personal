@@ -17,6 +17,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Str;
 
 class LiqClienteController extends Controller
 {
@@ -67,17 +68,42 @@ class LiqClienteController extends Controller
         ]);
 
         $clienteBase = Cliente::findOrFail($data['distriapp_cliente_id']);
-        $liqCliente = LiqCliente::updateOrCreate(
-            ['distriapp_cliente_id' => $clienteBase->id],
-            [
-                'razon_social' => $data['razon_social'] ?? $clienteBase->nombre,
-                'nombre_corto' => $data['nombre_corto'] ?? ($clienteBase->codigo ?: $clienteBase->nombre),
-                'codigo_corto' => $data['codigo_corto'] ?? null,
-                'cuit' => $data['cuit'] ?? $clienteBase->documento_fiscal,
-                'activo' => true,
-                'configuracion_excel' => $data['configuracion_excel'] ?? null,
-            ]
-        );
+        $defaults = [
+            // Evitar "Data too long" si el nombre del cliente base es muy largo.
+            'razon_social' => $data['razon_social'] ?? Str::limit((string) ($clienteBase->nombre ?? ''), 255, ''),
+            'nombre_corto' => $data['nombre_corto'] ?? Str::limit((string) (($clienteBase->codigo ?: $clienteBase->nombre) ?? ''), 80, ''),
+            'codigo_corto' => $data['codigo_corto'] ?? null,
+            'cuit' => $data['cuit'] ?? Str::limit((string) ($clienteBase->documento_fiscal ?? ''), 20, ''),
+            'activo' => true,
+            'configuracion_excel' => $data['configuracion_excel'] ?? null,
+        ];
+
+        try {
+            $liqCliente = LiqCliente::updateOrCreate(
+                ['distriapp_cliente_id' => $clienteBase->id],
+                $defaults
+            );
+        } catch (QueryException $e) {
+            $msg = $e->getMessage();
+
+            // Duplicados de unique (ej: nombre_corto / codigo_corto).
+            if (Str::contains($msg, ['Duplicate entry', '1062'])) {
+                return response()->json([
+                    'message' => 'No se pudo habilitar el cliente: ya existe un cliente con el mismo nombre corto o código corto. Ajustá el cliente base o ingresá un nombre corto distinto.',
+                ], 422);
+            }
+
+            // Columnas faltantes / migración incompleta.
+            if (Str::contains($msg, ['Unknown column', 'doesn\'t exist', 'Base table', 'SQLSTATE[42S02]', 'SQLSTATE[42S22]'])) {
+                return response()->json([
+                    'message' => 'No se pudo habilitar el cliente: faltan migraciones del módulo de liquidaciones. Ejecutá `php artisan migrate --force` en el servidor.',
+                ], 500);
+            }
+
+            return response()->json([
+                'message' => 'Error habilitando el cliente para liquidaciones.',
+            ], 500);
+        }
 
         return response()->json(['data' => $liqCliente, 'message' => 'Cliente habilitado para liquidaciones'], 201);
     }
