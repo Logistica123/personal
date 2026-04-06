@@ -43,6 +43,7 @@ return [
         'Origin',
         'X-Api-Token',
         'X-Actor-Email',
+        'X-Actor-Cuil',
     ],
 
     'exposed_headers' => [],

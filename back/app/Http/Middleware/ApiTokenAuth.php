@@ -90,7 +90,9 @@ class ApiTokenAuth
         }
 
         $actorEmail = $this->resolveRequestActorEmail($request);
-        if (! $actorEmail) {
+        $actorCuil = $this->resolveRequestActorCuil($request);
+
+        if (! $actorEmail && ! $actorCuil) {
             return false;
         }
 
@@ -99,7 +101,11 @@ class ApiTokenAuth
             return false;
         }
 
-        return $this->personaMatchesEmail($persona, $actorEmail);
+        if ($actorEmail && $this->personaMatchesEmail($persona, $actorEmail)) {
+            return true;
+        }
+
+        return $actorCuil && $this->personaMatchesCuil($persona, $actorCuil);
     }
 
     private function resolveRequestActorEmail(Request $request): ?string
