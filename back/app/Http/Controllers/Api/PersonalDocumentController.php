@@ -99,6 +99,15 @@ class PersonalDocumentController extends Controller
     public function liquidaciones(Request $request, Persona $persona): JsonResponse
     {
         $rawActor = trim((string) $request->input('email', ''));
+        if ($rawActor === '') {
+            $rawActor = trim((string) $request->header('X-Actor-Email', ''));
+        }
+        if ($rawActor === '') {
+            $rawActor = trim((string) $request->input('cuil', ''));
+        }
+        if ($rawActor === '') {
+            $rawActor = trim((string) $request->header('X-Actor-Cuil', ''));
+        }
         $actorEmail = str_contains($rawActor, '@') ? $this->normalizeEmailValue($rawActor) : null;
         $actorCuil = $actorEmail ? null : $this->normalizeCuilValue($rawActor);
         $providerEmail = $this->normalizeEmailValue($persona->email);

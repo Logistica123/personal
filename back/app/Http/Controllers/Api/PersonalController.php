@@ -786,8 +786,8 @@ class PersonalController extends Controller
 
     public function personalNotifications(Request $request, Persona $persona): JsonResponse
     {
-        $email = $request->query('email');
-        if (! $this->matchesPersonaEmail($persona, $email)) {
+        [$actorEmail, $actorCuil] = $this->resolvePersonalActor($request);
+        if (! $this->matchesPersonaEmail($persona, $actorEmail) && ! $this->matchesPersonaCuil($persona, $actorCuil)) {
             return response()->json(['message' => 'No autorizado.'], 403);
         }
 
@@ -815,8 +815,8 @@ class PersonalController extends Controller
 
     public function markPersonalNotificationRead(Request $request, Persona $persona, PersonalNotification $notification): JsonResponse
     {
-        $email = $request->query('email');
-        if (! $this->matchesPersonaEmail($persona, $email)) {
+        [$actorEmail, $actorCuil] = $this->resolvePersonalActor($request);
+        if (! $this->matchesPersonaEmail($persona, $actorEmail) && ! $this->matchesPersonaCuil($persona, $actorCuil)) {
             return response()->json(['message' => 'No autorizado.'], 403);
         }
 
@@ -833,6 +833,83 @@ class PersonalController extends Controller
             'id' => $notification->id,
             'readAt' => $notification->read_at?->toIso8601String(),
         ]);
+    }
+
+    protected function resolvePersonalActor(Request $request): array
+    {
+        $raw = $request->input('email');
+        if (! is_string($raw) || trim($raw) === '') {
+            $raw = $request->header('X-Actor-Email');
+        }
+
+        $actorEmail = null;
+        $actorCuil = null;
+
+        if (is_string($raw) && trim($raw) !== '') {
+            $candidate = strtolower(trim($raw));
+            if (str_contains($candidate, '@')) {
+                $actorEmail = $candidate;
+            } else {
+                $actorCuil = $this->normalizeCuilValue($candidate);
+            }
+        }
+
+        if (! $actorCuil) {
+            $rawCuil = $request->input('cuil');
+            if (! is_string($rawCuil) || trim($rawCuil) === '') {
+                $rawCuil = $request->header('X-Actor-Cuil');
+            }
+            if (is_string($rawCuil) && trim($rawCuil) !== '') {
+                $actorCuil = $this->normalizeCuilValue($rawCuil);
+            }
+        }
+
+        return [$actorEmail, $actorCuil];
+    }
+
+    protected function matchesPersonaCuil(Persona $persona, ?string $cuil): bool
+    {
+        $normalized = $this->normalizeCuilValue($cuil);
+        if (! $normalized) {
+            return false;
+        }
+
+        $persona->loadMissing('dueno:id,persona_id,cuil,cuil_cobrador');
+
+        $candidates = [
+            $persona->cuil,
+            $persona->dueno?->cuil,
+            $persona->cobrador_cuil,
+            $persona->dueno?->cuil_cobrador,
+        ];
+
+        foreach ($candidates as $candidate) {
+            $candidateNormalized = $this->normalizeCuilValue($candidate);
+            if ($candidateNormalized && $candidateNormalized === $normalized) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    protected function normalizeCuilValue($value): ?string
+    {
+        if (! is_string($value) && ! is_numeric($value)) {
+            return null;
+        }
+
+        $digits = preg_replace('/\\D+/', '', (string) $value);
+        if (! is_string($digits)) {
+            return null;
+        }
+
+        $digits = trim($digits);
+        if ($digits === '' || strlen($digits) !== 11) {
+            return null;
+        }
+
+        return $digits;
     }
 
     public function index(Request $request): JsonResponse

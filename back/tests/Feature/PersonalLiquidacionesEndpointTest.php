@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use App\Models\Archivo;
+use App\Models\Dueno;
 use App\Models\Factura;
 use App\Models\FileType;
 use App\Models\Persona;
@@ -33,9 +34,18 @@ class PersonalLiquidacionesEndpointTest extends TestCase
                 $table->id();
                 $table->unsignedBigInteger('persona_id')->index();
                 $table->string('email')->nullable();
+                $table->string('cuil')->nullable();
+                $table->string('cuil_cobrador')->nullable();
                 $table->timestamp('deleted_at')->nullable();
                 $table->timestamps();
             });
+        } else {
+            if (! Schema::hasColumn('duenos', 'cuil')) {
+                Schema::table('duenos', fn (Blueprint $table) => $table->string('cuil')->nullable());
+            }
+            if (! Schema::hasColumn('duenos', 'cuil_cobrador')) {
+                Schema::table('duenos', fn (Blueprint $table) => $table->string('cuil_cobrador')->nullable());
+            }
         }
 
         if (! Schema::hasTable('fyle_types')) {
@@ -86,6 +96,15 @@ class PersonalLiquidacionesEndpointTest extends TestCase
                 $table->text('decision_mensaje')->nullable();
                 $table->timestamps();
             });
+        }
+
+        if (Schema::hasTable('personas')) {
+            if (! Schema::hasColumn('personas', 'cobrador_email')) {
+                Schema::table('personas', fn (Blueprint $table) => $table->string('cobrador_email')->nullable());
+            }
+            if (! Schema::hasColumn('personas', 'cobrador_cuil')) {
+                Schema::table('personas', fn (Blueprint $table) => $table->string('cobrador_cuil')->nullable());
+            }
         }
     }
 
@@ -154,5 +173,60 @@ class PersonalLiquidacionesEndpointTest extends TestCase
             ->assertJsonPath('data.0.validacionIaEstado', 'rechazada')
             ->assertJsonPath('data.0.validacionIaMotivo', 'cuil_mismatch')
             ->assertJsonPath('data.0.validacionIaMensaje', 'El CUIL del emisor no coincide con el registrado.');
+    }
+
+    public function test_liquidaciones_endpoint_honors_actor_email_header_for_recipient_filtering(): void
+    {
+        $persona = Persona::query()->create([
+            'nombres' => 'Esteban',
+            'apellidos' => 'Cortez',
+            'email' => 'proveedor@example.com',
+            'cuil' => '20-12345678-9',
+        ]);
+
+        Dueno::query()->create([
+            'persona_id' => $persona->id,
+            'email' => 'dueno@example.com',
+        ]);
+
+        $tipoLiquidacion = FileType::query()->create([
+            'nombre' => 'Liquidación',
+            'vence' => false,
+        ]);
+
+        Archivo::create([
+            'persona_id' => $persona->id,
+            'parent_document_id' => null,
+            'liquidacion_id' => null,
+            'es_pendiente' => false,
+            'tipo_archivo_id' => $tipoLiquidacion->id,
+            'carpeta' => 'personal/' . $persona->id,
+            'ruta' => 'personal/' . $persona->id . '/liquidacion-test.pdf',
+            'download_url' => null,
+            'disk' => 'public',
+            'nombre_original' => 'Liquidación test.pdf',
+            'mime' => 'application/pdf',
+            'size' => 1234,
+            'fecha_vencimiento' => '2026-03-01',
+            'fortnight_key' => 'Q1',
+            'importe_facturar' => 1000,
+            'enviada' => true,
+            'recibido' => false,
+            'pagado' => false,
+            'liquidacion_destinatario_tipo' => 'proveedor',
+            'liquidacion_destinatario_emails' => ['proveedor@example.com'],
+        ]);
+
+        $response = $this->getJson(
+            sprintf('/api/personal/%d/liquidaciones', $persona->id),
+            [
+                'Accept' => 'application/json',
+                'X-Actor-Email' => 'dueno@example.com',
+            ]
+        );
+
+        $response
+            ->assertOk()
+            ->assertJsonCount(0, 'data');
     }
 }
