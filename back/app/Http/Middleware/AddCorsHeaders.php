@@ -53,7 +53,7 @@ class AddCorsHeaders
         $headers = [
             'Access-Control-Allow-Origin' => $allowedOrigin,
             'Access-Control-Allow-Methods' => 'GET, POST, PUT, PATCH, DELETE, OPTIONS',
-            'Access-Control-Allow-Headers' => 'Content-Type, Authorization, X-Requested-With, Accept, Origin, X-Api-Token, X-Actor-Email',
+            'Access-Control-Allow-Headers' => 'Content-Type, Authorization, X-Requested-With, Accept, Origin, X-Api-Token, X-Actor-Email, X-Actor-Cuil',
             'Access-Control-Allow-Credentials' => 'true',
             'Vary' => 'Origin',
         ];

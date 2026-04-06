@@ -17,6 +17,8 @@ return [
     'allowed_origins' => [
         'https://personal.distriapp.com.ar',
         'https://app.distriapp.com.ar',
+        'capacitor://localhost',
+        'ionic://localhost',
         'http://localhost:3000',
         'http://127.0.0.1:3000',
         'http://localhost:4200',
