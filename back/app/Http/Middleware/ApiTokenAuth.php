@@ -38,7 +38,9 @@ class ApiTokenAuth
 
     private function isPublicPersonalLookup(Request $request): bool
     {
-        if (! $request->isMethod('GET')) {
+        $isLiquidacionesRequest = $this->isPersonalPath($request, 'personal/*/liquidaciones');
+
+        if (! $request->isMethod('GET') && ! ($request->isMethod('POST') && $isLiquidacionesRequest)) {
             return false;
         }
 
@@ -54,7 +56,7 @@ class ApiTokenAuth
             return (bool) $actorEmail;
         }
 
-        if (! $this->isPersonalPath($request, 'personal/*/liquidaciones')
+        if (! $isLiquidacionesRequest
             && ! $this->isPersonalPath($request, 'personal/*/combustible')
             && ! $this->isPersonalPath($request, 'personal/*/combustible-reportes')
             && ! $this->isPersonalPath($request, 'personal/*/combustible-proyeccion')
