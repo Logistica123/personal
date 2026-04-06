@@ -40,7 +40,7 @@ export const ReclamoNuevoPage: React.FC<ReclamoNuevoPageProps> = ({
   const navigate = useNavigate();
   const location = useLocation();
   const apiBaseUrl = useMemo(() => resolveApiBaseUrl(), [resolveApiBaseUrl]);
-  const descripcionMaxLength = 250;
+  const descripcionMaxLength = 500;
   const [meta, setMeta] = useState<ReclamoMeta | null>(null);
   const [metaLoading, setMetaLoading] = useState(true);
   const [metaError, setMetaError] = useState<string | null>(null);
@@ -1102,13 +1102,13 @@ export const ReclamoNuevoPage: React.FC<ReclamoNuevoPageProps> = ({
             </label>
             <label className="input-control">
               <span>Descripción (opcional)</span>
-              <textarea
-                value={formValues.detalle}
-                onChange={(event) => setFormValues((prev) => ({ ...prev, detalle: event.target.value }))}
-                rows={3}
-                maxLength={descripcionMaxLength}
-                placeholder="Breve detalle (máx. 250 caracteres)"
-              />
+	              <textarea
+	                value={formValues.detalle}
+	                onChange={(event) => setFormValues((prev) => ({ ...prev, detalle: event.target.value }))}
+	                rows={3}
+	                maxLength={descripcionMaxLength}
+	                placeholder="Breve detalle (máx. 500 caracteres)"
+	              />
               <small className="form-hint">{`${formValues.detalle.length}/${descripcionMaxLength} caracteres`}</small>
             </label>
           </div>

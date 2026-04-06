@@ -48,7 +48,7 @@ export const ReclamoDetallePage: React.FC<ReclamoDetallePageProps> = ({
   const navigate = useNavigate();
   const location = useLocation();
   const locationState = location.state as { transportistas?: ReclamoTransportistaSummary[]; from?: string } | undefined;
-  const descripcionMaxLength = 250;
+  const descripcionMaxLength = 500;
   const apiBaseUrl = useMemo(() => resolveApiBaseUrl(), [resolveApiBaseUrl]);
   const authUser = useStoredAuthUser();
   const actorHeaders = useMemo(() => buildActorHeaders(authUser), [authUser, buildActorHeaders]);
