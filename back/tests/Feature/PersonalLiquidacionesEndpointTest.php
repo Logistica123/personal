@@ -126,8 +126,8 @@ class PersonalLiquidacionesEndpointTest extends TestCase
             'enviada' => true,
             'recibido' => false,
             'pagado' => false,
-            'liquidacion_destinatario_tipo' => 'proveedor',
-            'liquidacion_destinatario_emails' => [$persona->email],
+            'liquidacion_destinatario_tipo' => 'cobrador',
+            'liquidacion_destinatario_emails' => ['cobrador@example.com'],
         ]);
 
         Factura::create([

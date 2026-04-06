@@ -99,6 +99,7 @@ class PersonalDocumentController extends Controller
     public function liquidaciones(Request $request, Persona $persona): JsonResponse
     {
         $actorEmail = strtolower(trim((string) $request->input('email', '')));
+        $providerEmail = strtolower(trim((string) ($persona->email ?? '')));
         if ($actorEmail !== '') {
             $persona->loadMissing('dueno:id,persona_id,email');
             $allowedEmails = array_filter([
@@ -156,8 +157,14 @@ class PersonalDocumentController extends Controller
             })
             ->orderByDesc('created_at')
             ->get()
-            ->filter(function (Archivo $documento) use ($actorEmail) {
+            ->filter(function (Archivo $documento) use ($actorEmail, $providerEmail) {
                 if ($actorEmail === '') {
+                    return true;
+                }
+
+                // El destinatario solo define notificaciones/envío, no visibilidad para el proveedor.
+                // Si el actor es el proveedor, siempre puede ver sus liquidaciones.
+                if ($actorEmail === $providerEmail && $providerEmail !== '') {
                     return true;
                 }
 
