@@ -208,6 +208,11 @@ Route::middleware('auth.api')->group(function () {
         Route::put('/lineas/{lineaTarifa}/aprobar', [LiqTarifaController::class, 'aprobarLinea']);
         Route::put('/lineas/{lineaTarifa}/desactivar', [LiqTarifaController::class, 'desactivarLinea']);
 
+        // Tarifa por patente (override de línea por combinación)
+        Route::get('/esquemas/{esquema}/tarifas-patente', [LiqTarifaController::class, 'tarifasPatente']);
+        Route::post('/esquemas/{esquema}/tarifas-patente', [LiqTarifaController::class, 'storeTarifaPatente']);
+        Route::put('/tarifas-patente/{tarifaPatente}/desactivar', [LiqTarifaController::class, 'desactivarTarifaPatente']);
+
         // Mapeos de concepto
         Route::get('/clientes/{cliente}/mapeos-concepto', [LiqClienteController::class, 'mapeosConcepto']);
         Route::post('/clientes/{cliente}/mapeos-concepto', [LiqClienteController::class, 'storeMapeosConcepto']);

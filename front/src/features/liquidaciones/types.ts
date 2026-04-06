@@ -51,6 +51,21 @@ export type LiqLineaTarifa = {
   aprobado_por_user?: { id: number; name: string; email: string };
 };
 
+export type LiqTarifaPatente = {
+  id: number;
+  esquema_id: number;
+  patente_norm: string;
+  dimensiones_valores: Record<string, string>;
+  linea_tarifa_id: number;
+  vigencia_desde: string;
+  vigencia_hasta: string | null;
+  creado_por: number | null;
+  activo: boolean;
+  created_at: string;
+  updated_at: string;
+  linea_tarifa?: Pick<LiqLineaTarifa, 'id' | 'dimensiones_valores' | 'precio_original' | 'porcentaje_agencia' | 'precio_distribuidor' | 'vigencia_desde' | 'vigencia_hasta' | 'activo' | 'aprobado_por'>;
+};
+
 export type LiqMapeoConcepto = {
   id: number;
   cliente_id: number;

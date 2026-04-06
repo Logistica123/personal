@@ -416,7 +416,7 @@ class ReclamoController extends Controller
         $canViewImportes = $this->canViewReclamoImportes($request);
 
         $validated = $request->validate([
-            'detalle' => ['nullable', 'string'],
+            'detalle' => ['nullable', 'string', 'max:250'],
             'agenteId' => ['nullable', 'integer', 'exists:users,id'],
             'creatorId' => ['nullable', 'integer', 'exists:users,id'],
             'transportistaId' => ['nullable', 'integer', 'exists:personas,id'],
@@ -603,7 +603,7 @@ class ReclamoController extends Controller
         $canViewImportes = $this->canViewReclamoImportes($request);
 
         $validated = $request->validate([
-            'detalle' => ['nullable', 'string'],
+            'detalle' => ['nullable', 'string', 'max:250'],
             'agenteId' => ['nullable', 'integer', 'exists:users,id'],
             'creatorId' => ['nullable', 'integer', 'exists:users,id'],
             'transportistaId' => ['required', 'integer', 'exists:personas,id'],

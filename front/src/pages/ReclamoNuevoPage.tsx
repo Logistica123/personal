@@ -40,6 +40,7 @@ export const ReclamoNuevoPage: React.FC<ReclamoNuevoPageProps> = ({
   const navigate = useNavigate();
   const location = useLocation();
   const apiBaseUrl = useMemo(() => resolveApiBaseUrl(), [resolveApiBaseUrl]);
+  const descripcionMaxLength = 250;
   const [meta, setMeta] = useState<ReclamoMeta | null>(null);
   const [metaLoading, setMetaLoading] = useState(true);
   const [metaError, setMetaError] = useState<string | null>(null);
@@ -62,6 +63,7 @@ export const ReclamoNuevoPage: React.FC<ReclamoNuevoPageProps> = ({
     concepto: '',
     fechaCompromisoPago: '',
   });
+  const [adelantoCategoria, setAdelantoCategoria] = useState<'adelanto' | 'pago'>('adelanto');
   const authUser = useStoredAuthUser();
   const normalizedUserName = useMemo(
     () => authUser?.name?.trim().toLowerCase() ?? authUser?.email?.trim().toLowerCase() ?? '',
@@ -71,6 +73,19 @@ export const ReclamoNuevoPage: React.FC<ReclamoNuevoPageProps> = ({
   const shouldAutoselectAdelantoTipo =
     requestedTipoParam === 'adelanto' || requestedTipoParam === 'reclamos-y-adelantos';
   const isAdelantoQuickCreateMode = shouldAutoselectAdelantoTipo;
+  const navigateBackToList = () => {
+    try {
+      const stored = sessionStorage.getItem('reclamos:lastListLocation') ?? '';
+      if (stored.trim()) {
+        navigate(stored);
+        return;
+      }
+    } catch {
+      // ignore storage failures
+    }
+
+    navigate(shouldAutoselectAdelantoTipo ? '/reclamos?tipo=adelanto' : '/reclamos');
+  };
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -209,6 +224,16 @@ export const ReclamoNuevoPage: React.FC<ReclamoNuevoPageProps> = ({
     [meta?.tipos, formValues.tipoId]
   );
   const isReclamoAdelantoSelected = useMemo(() => isReclamoAdelantoType(selectedTipo), [selectedTipo]);
+
+  useEffect(() => {
+    if (!isReclamoAdelantoSelected && !isAdelantoQuickCreateMode) {
+      setFormValues((prev) => (prev.concepto ? { ...prev, concepto: '' } : prev));
+      return;
+    }
+
+    const nextConcepto = adelantoCategoria === 'pago' ? 'Reclamo de pago' : 'Solicitud de adelanto';
+    setFormValues((prev) => (prev.concepto === nextConcepto ? prev : { ...prev, concepto: nextConcepto }));
+  }, [adelantoCategoria, isAdelantoQuickCreateMode, isReclamoAdelantoSelected]);
 
   const transportistaOptions = useMemo(() => {
     if (!meta) {
@@ -532,6 +557,13 @@ export const ReclamoNuevoPage: React.FC<ReclamoNuevoPageProps> = ({
           ? [mapTransportistaForPayload(transportistaDetail)]
           : transportistaIds.map((id) => ({ id, agenteId: null }));
 
+      const conceptoValue =
+        isReclamoAdelantoSelected || isAdelantoQuickCreateMode
+          ? adelantoCategoria === 'pago'
+            ? 'Reclamo de pago'
+            : 'Solicitud de adelanto'
+          : formValues.concepto.trim() || null;
+
       const requestBody: Record<string, unknown> = {
         detalle: formValues.detalle.trim() || null,
         agenteId: formValues.agenteId ? Number(formValues.agenteId) : null,
@@ -547,7 +579,7 @@ export const ReclamoNuevoPage: React.FC<ReclamoNuevoPageProps> = ({
         importeSolicitado: formValues.importeSolicitado.trim() || null,
         cuitCobrador: formValues.cuitCobrador.trim() || null,
         medioPago: formValues.medioPago.trim() || null,
-        concepto: formValues.concepto.trim() || null,
+        concepto: conceptoValue,
         fechaCompromisoPago: formValues.fechaCompromisoPago || null,
       };
 
@@ -623,7 +655,7 @@ export const ReclamoNuevoPage: React.FC<ReclamoNuevoPageProps> = ({
         if (!newReclamoId) {
           setSubmitError('El reclamo se creó, pero no fue posible adjuntar los archivos automáticamente.');
           window.dispatchEvent(new CustomEvent('notifications:updated'));
-          navigate('/reclamos');
+          navigateBackToList();
           return;
         }
 
@@ -731,8 +763,9 @@ export const ReclamoNuevoPage: React.FC<ReclamoNuevoPageProps> = ({
       if (fileInputRef.current) {
         fileInputRef.current.value = '';
       }
+      setAdelantoCategoria('adelanto');
       window.dispatchEvent(new CustomEvent('notifications:updated'));
-      navigate('/reclamos');
+      navigateBackToList();
     } catch (err) {
       setSubmitError((err as Error).message ?? 'No se pudo registrar el reclamo.');
     } finally {
@@ -742,7 +775,7 @@ export const ReclamoNuevoPage: React.FC<ReclamoNuevoPageProps> = ({
 
   const headerContent = (
     <div className="card-header card-header--compact">
-      <button type="button" className="secondary-action" onClick={() => navigate('/reclamos')}>
+      <button type="button" className="secondary-action" onClick={navigateBackToList}>
         ← Volver a reclamos
       </button>
     </div>
@@ -989,10 +1022,19 @@ export const ReclamoNuevoPage: React.FC<ReclamoNuevoPageProps> = ({
               </label>
             </div>
 
-            <label className="input-control">
-              <span>Detalle del reclamo</span>
-              <textarea value={formValues.detalle} onChange={(event) => setFormValues((prev) => ({ ...prev, detalle: event.target.value }))} placeholder="Describe qué sucedió" rows={4} />
-            </label>
+            {!isReclamoAdelantoSelected ? (
+              <label className="input-control">
+                <span>Detalle del reclamo</span>
+                <textarea
+                  value={formValues.detalle}
+                  onChange={(event) => setFormValues((prev) => ({ ...prev, detalle: event.target.value }))}
+                  placeholder="Describe qué sucedió"
+                  rows={4}
+                  maxLength={descripcionMaxLength}
+                />
+                <small className="form-hint">{`${formValues.detalle.length}/${descripcionMaxLength} caracteres`}</small>
+              </label>
+            ) : null}
           </div>
         ) : null}
 
@@ -1052,8 +1094,22 @@ export const ReclamoNuevoPage: React.FC<ReclamoNuevoPageProps> = ({
               </label>
             </div>
             <label className="input-control">
-              <span>Concepto</span>
-              <textarea value={formValues.concepto} onChange={(event) => setFormValues((prev) => ({ ...prev, concepto: event.target.value }))} rows={3} required />
+              <span>Tipo</span>
+              <select value={adelantoCategoria} onChange={(event) => setAdelantoCategoria(event.target.value as 'adelanto' | 'pago')}>
+                <option value="adelanto">Solicitud de adelanto</option>
+                <option value="pago">Reclamo de pago</option>
+              </select>
+            </label>
+            <label className="input-control">
+              <span>Descripción (opcional)</span>
+              <textarea
+                value={formValues.detalle}
+                onChange={(event) => setFormValues((prev) => ({ ...prev, detalle: event.target.value }))}
+                rows={3}
+                maxLength={descripcionMaxLength}
+                placeholder="Breve detalle (máx. 250 caracteres)"
+              />
+              <small className="form-hint">{`${formValues.detalle.length}/${descripcionMaxLength} caracteres`}</small>
             </label>
           </div>
         ) : null}
@@ -1099,7 +1155,7 @@ export const ReclamoNuevoPage: React.FC<ReclamoNuevoPageProps> = ({
         {successMessage ? <p className="form-info form-info--success">{successMessage}</p> : null}
 
         <div className="form-actions">
-          <button type="button" className="secondary-action" onClick={() => navigate('/reclamos')}>
+          <button type="button" className="secondary-action" onClick={navigateBackToList}>
             Cancelar
           </button>
           <button type="submit" className="primary-action" disabled={saving}>

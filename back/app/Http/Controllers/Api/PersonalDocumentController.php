@@ -168,7 +168,28 @@ class PersonalDocumentController extends Controller
 
                 return in_array($actorEmail, $recipientEmails, true);
             })
-            ->map(function (Archivo $documento) use ($persona) {
+            ->values();
+
+        $facturasPorDocumento = Factura::query()
+            ->whereIn('liquidacion_id', $documentos->pluck('id')->all())
+            ->orderByDesc('id')
+            ->get()
+            ->groupBy('liquidacion_id');
+
+        $documentos = $documentos
+            ->map(function (Archivo $documento) use ($persona, $facturasPorDocumento) {
+                $date = $this->resolveDocumentDate($documento);
+                $monthKey = $date ? $date->format('Y-m') : 'unknown';
+                $fortnightKey = $date ? $this->determineFortnightKey($documento, $date) : 'NO_DATE';
+
+                $factura = $facturasPorDocumento->get((int) $documento->id)?->first();
+                if (! $factura && ($documento->children?->isNotEmpty() ?? false)) {
+                    $factura = $documento->children
+                        ->map(fn (Archivo $child) => $facturasPorDocumento->get((int) $child->id)?->first())
+                        ->filter()
+                        ->first();
+                }
+
                 $relativeDownloadUrl = route('personal.documentos.descargar', [
                     'persona' => $persona->id,
                     'documento' => $documento->id,
@@ -209,6 +230,7 @@ class PersonalDocumentController extends Controller
                     'parentDocumentId' => $documento->parent_document_id,
                     'isAttachment' => $documento->parent_document_id !== null,
                     'nombre' => $nombre,
+                    'sourceDownloadUrl' => $documento->download_url,
                     'downloadUrl' => $relativeDownloadUrl,
                     'absoluteDownloadUrl' => $absoluteDownloadUrl,
                     'mime' => $documento->mime,
@@ -217,6 +239,8 @@ class PersonalDocumentController extends Controller
                     'fechaCarga' => optional($documento->created_at)->format('Y-m-d'),
                     'fechaCargaIso' => optional($documento->created_at)->toIso8601String(),
                     'fechaVencimiento' => $this->formatFechaVencimiento($documento->fecha_vencimiento),
+                    'monthKey' => $monthKey,
+                    'fortnightKey' => $fortnightKey,
                     'tipoId' => $documento->tipo_archivo_id,
                     'tipoNombre' => $documento->tipo?->nombre,
                     'requiereVencimiento' => (bool) $documento->tipo?->vence,
@@ -229,6 +253,9 @@ class PersonalDocumentController extends Controller
                     'enviada' => (bool) $documento->enviada,
                     'recibido' => (bool) $documento->recibido || $hasAttachments,
                     'pagado' => (bool) $documento->pagado,
+                    'validacionIaEstado' => $factura?->estado,
+                    'validacionIaMotivo' => $factura?->decision_motivo,
+                    'validacionIaMensaje' => $factura?->decision_mensaje,
                     'destinatarioTipo' => $documento->liquidacion_destinatario_tipo,
                     'destinatarioEmails' => $this->extractLiquidacionRecipientEmails($documento),
                 ];
@@ -1496,6 +1523,42 @@ class PersonalDocumentController extends Controller
         }
 
         return $this->parseFuelAmount($nombre);
+    }
+
+    protected function resolveDocumentDate(Archivo $document): ?Carbon
+    {
+        if ($document->fecha_vencimiento) {
+            return $document->fecha_vencimiento instanceof Carbon
+                ? $document->fecha_vencimiento
+                : Carbon::parse($document->fecha_vencimiento);
+        }
+
+        if ($document->created_at instanceof Carbon) {
+            return $document->created_at;
+        }
+
+        return $document->created_at ? Carbon::parse($document->created_at) : null;
+    }
+
+    protected function determineFortnightKey(Archivo $document, Carbon $date): string
+    {
+        if (in_array($document->fortnight_key ?? null, ['Q1', 'Q2', 'MONTHLY'], true)) {
+            return (string) $document->fortnight_key;
+        }
+
+        if ($this->isMonthlyDocument($document)) {
+            return 'MONTHLY';
+        }
+
+        return $date->day <= 15 ? 'Q1' : 'Q2';
+    }
+
+    protected function isMonthlyDocument(Archivo $document): bool
+    {
+        $descriptor = trim(($document->tipo?->nombre ?? '') . ' ' . ($document->nombre_original ?? ''));
+        $normalized = Str::lower($descriptor);
+
+        return Str::contains($normalized, 'mensual') || Str::contains($normalized, 'mes completo');
     }
 
     protected function streamExternalFile(?string $url, string $fileName, ?string $mime = null, bool $inline = false)

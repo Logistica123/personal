@@ -8,6 +8,7 @@ use App\Models\LiqDimensionValor;
 use App\Models\LiqLineaTarifa;
 use App\Models\LiqAuditoriaTarifa;
 use App\Models\LiqOperacion;
+use App\Models\LiqTarifaPatente;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
@@ -132,6 +133,103 @@ class LiqTarifaController extends Controller
         }
         $lineas = $query->get();
         return response()->json(['data' => $lineas]);
+    }
+
+    // GET /liq/esquemas/{esquema}/tarifas-patente
+    public function tarifasPatente(Request $request, LiqEsquemaTarifario $esquema): JsonResponse
+    {
+        $query = LiqTarifaPatente::where('esquema_id', $esquema->id)
+            ->with([
+                'lineaTarifa:id,esquema_id,dimensiones_valores,precio_original,porcentaje_agencia,precio_distribuidor,vigencia_desde,vigencia_hasta,activo,aprobado_por',
+            ])
+            ->orderBy('activo', 'desc')
+            ->orderBy('vigencia_desde', 'desc');
+
+        if ($request->boolean('solo_activas')) {
+            $query->where('activo', true);
+        }
+
+        return response()->json(['data' => $query->get()]);
+    }
+
+    // POST /liq/esquemas/{esquema}/tarifas-patente
+    public function storeTarifaPatente(Request $request, LiqEsquemaTarifario $esquema): JsonResponse
+    {
+        $role = strtolower(trim((string) ($request->user()?->role ?? '')));
+        if (! in_array($role, ['admin', 'admin2'], true)) {
+            return response()->json(['message' => 'No tenés permisos para crear tarifas por patente.'], 403);
+        }
+
+        $data = $request->validate([
+            'patente' => 'required|string|max:40',
+            'dimensiones_valores' => 'required|array',
+            'linea_tarifa_id' => 'required|integer',
+            'vigencia_desde' => 'required|date',
+            'vigencia_hasta' => 'nullable|date|after_or_equal:vigencia_desde',
+            'motivo' => 'nullable|string|min:3',
+        ]);
+
+        $patenteNorm = $this->normalizarPatente((string) $data['patente']);
+        if ($patenteNorm === '') {
+            return response()->json(['error' => 'Patente inválida'], 422);
+        }
+
+        $dimMatch = $this->filtrarDimensionesValoresParaMatch($esquema, (array) $data['dimensiones_valores']);
+        if (isset($dimMatch['error'])) {
+            return response()->json(['error' => $dimMatch['error']], 422);
+        }
+
+        /** @var LiqLineaTarifa|null $lineaDestino */
+        $lineaDestino = LiqLineaTarifa::where('id', (int) $data['linea_tarifa_id'])
+            ->where('esquema_id', $esquema->id)
+            ->where('activo', true)
+            ->first();
+
+        if (! $lineaDestino) {
+            return response()->json(['error' => 'La línea destino no existe, no pertenece al esquema o está inactiva'], 422);
+        }
+        if (! $lineaDestino->aprobado_por) {
+            return response()->json(['error' => 'La línea destino debe estar aprobada para poder usarse por patente'], 422);
+        }
+
+        $vigDesde = Carbon::parse($data['vigencia_desde'])->toDateString();
+        $vigHasta = isset($data['vigencia_hasta']) ? Carbon::parse($data['vigencia_hasta'])->toDateString() : null;
+
+        $exists = LiqTarifaPatente::where('esquema_id', $esquema->id)
+            ->where('patente_norm', $patenteNorm)
+            ->where('activo', true)
+            ->where($this->tarifaPatenteDimensionesCallback($dimMatch))
+            ->where($this->vigenciaSolapaCallback($vigDesde, $vigHasta))
+            ->exists();
+        if ($exists) {
+            return response()->json(['error' => 'Ya existe una tarifa por patente activa con esas dimensiones y vigencia superpuesta'], 422);
+        }
+
+        $tp = LiqTarifaPatente::create([
+            'esquema_id' => $esquema->id,
+            'patente_norm' => $patenteNorm,
+            'dimensiones_valores' => $dimMatch,
+            'linea_tarifa_id' => $lineaDestino->id,
+            'vigencia_desde' => $vigDesde,
+            'vigencia_hasta' => $vigHasta,
+            'creado_por' => $request->user()?->id,
+            'activo' => true,
+        ]);
+
+        return response()->json(['data' => $tp->load([
+            'lineaTarifa:id,esquema_id,dimensiones_valores,precio_original,porcentaje_agencia,precio_distribuidor,vigencia_desde,vigencia_hasta,activo,aprobado_por',
+        ]), 'message' => 'Tarifa por patente creada'], 201);
+    }
+
+    // PUT /liq/tarifas-patente/{tarifaPatente}/desactivar
+    public function desactivarTarifaPatente(Request $request, LiqTarifaPatente $tarifaPatente): JsonResponse
+    {
+        $role = strtolower(trim((string) ($request->user()?->role ?? '')));
+        if (! in_array($role, ['admin', 'admin2'], true)) {
+            return response()->json(['message' => 'No tenés permisos para desactivar tarifas por patente.'], 403);
+        }
+        $tarifaPatente->update(['activo' => false]);
+        return response()->json(['message' => 'Tarifa por patente desactivada']);
     }
 
     // POST /liq/esquemas/{esquema}/lineas - create tariff line
@@ -606,6 +704,77 @@ class LiqTarifaController extends Controller
         }
 
         return $filtered;
+    }
+
+    private function filtrarDimensionesValoresParaMatch(LiqEsquemaTarifario $esquema, array $dimensionesValores): array
+    {
+        $dimensionesRequeridas = $esquema->dimensiones ?? [];
+
+        $keysExtra = array_diff(array_keys($dimensionesValores), $dimensionesRequeridas);
+        if (count($keysExtra) > 0) {
+            return ['error' => 'Dimensiones inválidas para el esquema: ' . implode(', ', $keysExtra)];
+        }
+
+        $filtered = [];
+        foreach ($dimensionesRequeridas as $dim) {
+            $valor = $dimensionesValores[$dim] ?? null;
+            $valor = is_string($valor) ? trim($valor) : $valor;
+            if ($valor === null || $valor === '') {
+                return ['error' => "Falta la dimensión: {$dim}"];
+            }
+            $filtered[$dim] = $this->canonicalizarDimensionValorMatch($esquema->id, (string) $dim, (string) $valor);
+        }
+
+        return $filtered;
+    }
+
+    private function canonicalizarDimensionValorMatch(int $esquemaId, string $nombreDimension, string $raw): string
+    {
+        $rawNorm = $this->normalizarTextoMatch($raw);
+        if ($rawNorm === '') {
+            return '';
+        }
+
+        $valores = LiqDimensionValor::where('esquema_id', $esquemaId)
+            ->where('nombre_dimension', $nombreDimension)
+            ->where('activo', true)
+            ->get(['valor']);
+
+        foreach ($valores as $v) {
+            if ($this->normalizarTextoMatch((string) $v->valor) === $rawNorm) {
+                return (string) $v->valor;
+            }
+        }
+
+        return $rawNorm;
+    }
+
+    private function normalizarTextoMatch(string $value): string
+    {
+        $value = trim($value);
+        if ($value === '') {
+            return '';
+        }
+        $value = Str::upper($value);
+        $value = preg_replace('/[^\pL\pN]+/u', ' ', $value) ?? $value;
+        $value = preg_replace('/\s+/u', ' ', $value) ?? $value;
+        return trim($value);
+    }
+
+    private function normalizarPatente(string $raw): string
+    {
+        $raw = trim($raw);
+        if ($raw === '') return '';
+        return strtoupper(preg_replace('/[\s\-]/', '', $raw) ?? $raw);
+    }
+
+    private function tarifaPatenteDimensionesCallback(array $dimensionesValores): \Closure
+    {
+        return function ($q) use ($dimensionesValores) {
+            foreach ($dimensionesValores as $dim => $valor) {
+                $q->where("dimensiones_valores->{$dim}", $valor);
+            }
+        };
     }
 
     private function queryLineasPorDimensiones(int $esquemaId, array $dimensionesValores)

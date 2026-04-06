@@ -10,6 +10,7 @@ use App\Models\LiqMapeoConcepto;
 use App\Models\LiqMapeoSucursal;
 use App\Models\LiqLineaTarifa;
 use App\Models\LiqDimensionValor;
+use App\Models\LiqTarifaPatente;
 use App\Models\Persona;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
@@ -284,11 +285,31 @@ class LiqIngestService
                 if ($dimensionFallida) {
                     $estado = 'sin_tarifa';
                 } else {
-                    $linea = $this->buscarLineaTarifaPorDimensiones(
-                        $esquema->id,
-                        $dimensionesValores,
-                        $liquidacion->periodo_desde->toDateString()
-                    );
+                    $linea = null;
+
+                    // Override por patente: si existe una tarifa especial para esta patente + dimensiones,
+                    // usamos esa línea destino antes que la general.
+                    if ($dominio !== '') {
+                        $tpLinea = $this->buscarLineaTarifaPorPatenteYDimensiones(
+                            $esquema->id,
+                            $dominio,
+                            $dimensionesValores,
+                            $liquidacion->periodo_desde->toDateString()
+                        );
+                        if ($tpLinea) {
+                            $linea = $tpLinea;
+                            $dimensionesValores = (array) ($tpLinea->dimensiones_valores ?? $dimensionesValores);
+                            $observaciones = $observaciones ?: 'Tarifa aplicada por patente (override).';
+                        }
+                    }
+
+                    if (! $linea) {
+                        $linea = $this->buscarLineaTarifaPorDimensiones(
+                            $esquema->id,
+                            $dimensionesValores,
+                            $liquidacion->periodo_desde->toDateString()
+                        );
+                    }
 
                     // Fallback específico para "Valor Viaje": si no hay match, intentamos mapear a un concepto existente
                     // (por ejemplo, Ut. Corto AM / Chasis) usando CategoriaVehiculo si está disponible.
@@ -458,6 +479,38 @@ class LiqIngestService
         }
 
         return $q->first();
+    }
+
+    private function buscarLineaTarifaPorPatenteYDimensiones(int $esquemaId, string $patenteNorm, array $dimensionesValores, string $fecha): ?LiqLineaTarifa
+    {
+        $q = LiqTarifaPatente::where('esquema_id', $esquemaId)
+            ->where('activo', true)
+            ->where('patente_norm', $patenteNorm)
+            ->where('vigencia_desde', '<=', $fecha)
+            ->where(function ($q) use ($fecha) {
+                $q->whereNull('vigencia_hasta')->orWhere('vigencia_hasta', '>=', $fecha);
+            })
+            ->whereHas('lineaTarifa', function ($q) use ($fecha, $esquemaId) {
+                $q->where('esquema_id', $esquemaId)
+                    ->where('activo', true)
+                    ->whereNotNull('aprobado_por')
+                    ->where('vigencia_desde', '<=', $fecha)
+                    ->where(function ($q) use ($fecha) {
+                        $q->whereNull('vigencia_hasta')->orWhere('vigencia_hasta', '>=', $fecha);
+                    });
+            })
+            ->with(['lineaTarifa']);
+
+        foreach ($dimensionesValores as $dim => $valor) {
+            $q->where("dimensiones_valores->{$dim}", $valor);
+        }
+
+        $tp = $q->first();
+        if (! $tp) {
+            return null;
+        }
+        $linea = $tp->lineaTarifa;
+        return $linea instanceof LiqLineaTarifa ? $linea : null;
     }
 
     private function buscarLineaTarifaPendientePorDimensiones(int $esquemaId, array $dimensionesValores, string $fecha): ?LiqLineaTarifa

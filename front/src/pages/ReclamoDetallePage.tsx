@@ -47,7 +47,8 @@ export const ReclamoDetallePage: React.FC<ReclamoDetallePageProps> = ({
   const { reclamoId } = useParams<{ reclamoId: string }>();
   const navigate = useNavigate();
   const location = useLocation();
-  const locationState = location.state as { transportistas?: ReclamoTransportistaSummary[] } | undefined;
+  const locationState = location.state as { transportistas?: ReclamoTransportistaSummary[]; from?: string } | undefined;
+  const descripcionMaxLength = 250;
   const apiBaseUrl = useMemo(() => resolveApiBaseUrl(), [resolveApiBaseUrl]);
   const authUser = useStoredAuthUser();
   const actorHeaders = useMemo(() => buildActorHeaders(authUser), [authUser, buildActorHeaders]);
@@ -728,7 +729,29 @@ export const ReclamoDetallePage: React.FC<ReclamoDetallePageProps> = ({
 
   const headerContent = (
     <div className="card-header card-header--compact">
-      <button type="button" className="secondary-action" onClick={() => navigate('/reclamos')}>
+      <button
+        type="button"
+        className="secondary-action"
+        onClick={() => {
+          const from = typeof locationState?.from === 'string' ? locationState.from.trim() : '';
+          if (from) {
+            navigate(from);
+            return;
+          }
+
+          try {
+            const stored = sessionStorage.getItem('reclamos:lastListLocation') ?? '';
+            if (stored.trim()) {
+              navigate(stored);
+              return;
+            }
+          } catch {
+            // ignore storage failures
+          }
+
+          navigate('/reclamos');
+        }}
+      >
         ← Volver a reclamos
       </button>
     </div>
@@ -823,8 +846,10 @@ export const ReclamoDetallePage: React.FC<ReclamoDetallePageProps> = ({
                 value={formValues.detalle}
                 onChange={(event) => setFormValues((prev) => ({ ...prev, detalle: event.target.value }))}
                 rows={4}
+                maxLength={descripcionMaxLength}
                 disabled={isReclamoLocked}
               />
+              <small className="form-hint">{`${formValues.detalle.length}/${descripcionMaxLength} caracteres`}</small>
             </label>
           </section>
 
@@ -1085,4 +1110,3 @@ export const ReclamoDetallePage: React.FC<ReclamoDetallePageProps> = ({
     </DashboardLayout>
   );
 };
-

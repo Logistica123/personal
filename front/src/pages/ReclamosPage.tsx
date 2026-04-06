@@ -56,7 +56,7 @@ export const ReclamosPage: React.FC<ReclamosPageProps> = ({
     () => isElevatedRole(userRole) && userRole !== 'asesor',
     [isElevatedRole, userRole]
   );
-  const reclamosColumnCount = canViewReclamoImportes ? 16 : 14;
+  const reclamosColumnCount = canViewReclamoImportes ? 17 : 15;
   const [reclamos, setReclamos] = useState<ReclamoRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -83,6 +83,155 @@ export const ReclamosPage: React.FC<ReclamosPageProps> = ({
   );
   const isAdelantoListMode = reclamosTipoParam === 'adelanto' || reclamosTipoParam === 'reclamos-y-adelantos';
   const reclamosPageTitle = isAdelantoListMode ? 'Gestión de reclamos y adelantos' : 'Gestión de reclamos';
+  const filtersStorageKey = useMemo(
+    () => `reclamos-list-filters:${reclamosTipoParam || 'reclamos'}`,
+    [reclamosTipoParam]
+  );
+  const [hydratedFiltersKey, setHydratedFiltersKey] = useState<string | null>(null);
+
+  useEffect(() => {
+    try {
+      sessionStorage.setItem('reclamos:lastListLocation', `${location.pathname}${location.search}`);
+    } catch {
+      // ignore storage failures
+    }
+  }, [location.pathname, location.search]);
+
+  useEffect(() => {
+    try {
+      const raw = sessionStorage.getItem(filtersStorageKey);
+      if (!raw) {
+        setSearchTerm('');
+        setAgenteFilter([]);
+        setCreatorFilter([]);
+        setTransportistaFilter('');
+        setClienteFilter('');
+        setStatusFilter('');
+        setTipoFilter('');
+        setCreationWeekFilter('all');
+        setDateFrom('');
+        setDateTo('');
+        setSortField('fecha');
+        setSortDir('desc');
+        setHydratedFiltersKey(filtersStorageKey);
+        return;
+      }
+
+      const parsed = JSON.parse(raw) as Partial<{
+        searchTerm: string;
+        agenteFilter: string[];
+        creatorFilter: string[];
+        transportistaFilter: string;
+        clienteFilter: string;
+        statusFilter: string;
+        tipoFilter: string;
+        creationWeekFilter: 'all' | 'current' | 'previous';
+        dateFrom: string;
+        dateTo: string;
+        sortField: 'fecha' | 'codigo';
+        sortDir: 'asc' | 'desc';
+      }>;
+
+      if (typeof parsed.searchTerm === 'string') {
+        setSearchTerm(parsed.searchTerm);
+      }
+      if (Array.isArray(parsed.agenteFilter)) {
+        setAgenteFilter(parsed.agenteFilter.filter((value): value is string => typeof value === 'string'));
+      }
+      if (Array.isArray(parsed.creatorFilter)) {
+        setCreatorFilter(parsed.creatorFilter.filter((value): value is string => typeof value === 'string'));
+      }
+      if (typeof parsed.transportistaFilter === 'string') {
+        setTransportistaFilter(parsed.transportistaFilter);
+      }
+      if (typeof parsed.clienteFilter === 'string') {
+        setClienteFilter(parsed.clienteFilter);
+      }
+      if (typeof parsed.statusFilter === 'string') {
+        setStatusFilter(parsed.statusFilter);
+      }
+      if (typeof parsed.tipoFilter === 'string') {
+        setTipoFilter(parsed.tipoFilter);
+      }
+      if (
+        parsed.creationWeekFilter === 'all' ||
+        parsed.creationWeekFilter === 'current' ||
+        parsed.creationWeekFilter === 'previous'
+      ) {
+        setCreationWeekFilter(parsed.creationWeekFilter);
+      }
+      if (typeof parsed.dateFrom === 'string') {
+        setDateFrom(parsed.dateFrom);
+      }
+      if (typeof parsed.dateTo === 'string') {
+        setDateTo(parsed.dateTo);
+      }
+      if (parsed.sortField === 'fecha' || parsed.sortField === 'codigo') {
+        setSortField(parsed.sortField);
+      }
+      if (parsed.sortDir === 'asc' || parsed.sortDir === 'desc') {
+        setSortDir(parsed.sortDir);
+      }
+    } catch {
+      sessionStorage.removeItem(filtersStorageKey);
+      setSearchTerm('');
+      setAgenteFilter([]);
+      setCreatorFilter([]);
+      setTransportistaFilter('');
+      setClienteFilter('');
+      setStatusFilter('');
+      setTipoFilter('');
+      setCreationWeekFilter('all');
+      setDateFrom('');
+      setDateTo('');
+      setSortField('fecha');
+      setSortDir('desc');
+    } finally {
+      setHydratedFiltersKey(filtersStorageKey);
+    }
+  }, [filtersStorageKey]);
+
+  useEffect(() => {
+    if (hydratedFiltersKey !== filtersStorageKey) {
+      return;
+    }
+
+    const payload = {
+      searchTerm,
+      agenteFilter,
+      creatorFilter,
+      transportistaFilter,
+      clienteFilter,
+      statusFilter,
+      tipoFilter,
+      creationWeekFilter,
+      dateFrom,
+      dateTo,
+      sortField,
+      sortDir,
+    };
+
+    try {
+      sessionStorage.setItem(filtersStorageKey, JSON.stringify(payload));
+    } catch {
+      // ignore storage failures
+    }
+  }, [
+    hydratedFiltersKey,
+    filtersStorageKey,
+    searchTerm,
+    agenteFilter,
+    creatorFilter,
+    transportistaFilter,
+    clienteFilter,
+    statusFilter,
+    tipoFilter,
+    creationWeekFilter,
+    dateFrom,
+    dateTo,
+    sortField,
+    sortDir,
+  ]);
 
   const getTransportistaEntries = useCallback((record: ReclamoRecord): ReclamoTransportistaSummary[] => {
     if (Array.isArray(record.transportistas) && record.transportistas.length > 0) {
@@ -181,7 +330,13 @@ export const ReclamosPage: React.FC<ReclamosPageProps> = ({
     return formatElapsedTime(reclamo.createdAt, endIso);
   }, []);
 
-  const resolveReclamoDescripcion = useCallback((reclamo: ReclamoRecord): string | null => reclamo.detalle ?? reclamo.concepto ?? null, []);
+  const resolveReclamoDescripcion = useCallback((reclamo: ReclamoRecord): string | null => {
+    const isAdelanto = Boolean(reclamo.isReclamoAdelanto) || isReclamoAdelantoTypeName(reclamo.tipo);
+    if (isAdelanto) {
+      return reclamo.concepto ?? reclamo.detalle ?? null;
+    }
+    return reclamo.detalle ?? reclamo.concepto ?? null;
+  }, []);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -367,29 +522,37 @@ export const ReclamosPage: React.FC<ReclamosPageProps> = ({
   const filteredReclamos = useMemo(() => {
     const term = searchTerm.trim().toLowerCase();
     const now = new Date();
-    const currentCutoffStart = (() => {
-      const boundary = new Date(now);
-      boundary.setHours(11, 0, 0, 0);
-      const diffToThursday = (boundary.getDay() - 4 + 7) % 7;
-      boundary.setDate(boundary.getDate() - diffToThursday);
-      if (now.getTime() < boundary.getTime()) {
-        boundary.setDate(boundary.getDate() - 7);
-      }
-      return boundary;
-    })();
     const oneWeekMs = 7 * 24 * 60 * 60 * 1000;
-    const currentCutoffStartMs = currentCutoffStart.getTime();
+
+    const cutoffThisWeek = (() => {
+      const mondayIndex = (now.getDay() + 6) % 7; // Monday = 0, Sunday = 6
+      const monday = new Date(now);
+      monday.setDate(now.getDate() - mondayIndex);
+      monday.setHours(0, 0, 0, 0);
+
+      const thursday = new Date(monday);
+      thursday.setDate(monday.getDate() + 3);
+      thursday.setHours(11, 0, 0, 0);
+      return thursday;
+    })();
+
+    const cutoffThisWeekMs = cutoffThisWeek.getTime();
+    const currentWindowFromMs = cutoffThisWeekMs - oneWeekMs;
+    const currentWindowToMs = Math.min(now.getTime(), cutoffThisWeekMs);
+    const previousWindowFromMs = cutoffThisWeekMs - oneWeekMs * 2;
+    const previousWindowToMs = cutoffThisWeekMs - oneWeekMs;
+
     const creationFilterFromMs =
       creationWeekFilter === 'current'
-        ? currentCutoffStartMs
+        ? currentWindowFromMs
         : creationWeekFilter === 'previous'
-        ? currentCutoffStartMs - oneWeekMs
+        ? previousWindowFromMs
         : null;
     const creationFilterToMs =
       creationWeekFilter === 'current'
-        ? currentCutoffStartMs + oneWeekMs
+        ? currentWindowToMs
         : creationWeekFilter === 'previous'
-        ? currentCutoffStartMs
+        ? previousWindowToMs
         : null;
 
     return scopedReclamos.filter((reclamo) => {
@@ -446,6 +609,7 @@ export const ReclamosPage: React.FC<ReclamosPageProps> = ({
       const fields = [
         reclamo.codigo,
         reclamo.detalle,
+        reclamo.concepto,
         reclamo.creator,
         responsable,
         reclamo.agente,
@@ -536,7 +700,9 @@ export const ReclamosPage: React.FC<ReclamosPageProps> = ({
       'Fecha compromiso pago',
       'Aprobación',
       'Motivo aprobación',
-      ...(canViewReclamoImportes ? ['Pagado', 'Importe pagado', 'Importe facturado'] : ['Pagado']),
+      'Pagado',
+      'Importe solicitado',
+      ...(canViewReclamoImportes ? ['Importe pagado', 'Importe facturado'] : []),
       'Demora',
     ];
 
@@ -563,6 +729,7 @@ export const ReclamosPage: React.FC<ReclamosPageProps> = ({
           reclamo.aprobacionEstadoLabel ?? '',
           reclamo.aprobacionMotivo ?? '',
           reclamo.pagado ? 'Sí' : 'No',
+          reclamo.importeSolicitadoLabel ?? formatCurrency(reclamo.importeSolicitado),
           ...(canViewReclamoImportes
             ? [
                 reclamo.pagado ? reclamo.importePagadoLabel ?? formatCurrency(reclamo.importePagado) : '',
@@ -619,6 +786,12 @@ export const ReclamosPage: React.FC<ReclamosPageProps> = ({
     setCreationWeekFilter('all');
     setDateFrom('');
     setDateTo('');
+
+    try {
+      sessionStorage.removeItem(filtersStorageKey);
+    } catch {
+      // ignore storage failures
+    }
   };
 
   const applyReclamoListUpdate = useCallback((updatedReclamo: ReclamoRecord) => {
@@ -811,7 +984,7 @@ export const ReclamosPage: React.FC<ReclamosPageProps> = ({
             <span>Fecha creación (corte jueves 11:00)</span>
             <select value={creationWeekFilter} onChange={(event) => setCreationWeekFilter(event.target.value as 'all' | 'current' | 'previous')}>
               <option value="all">Todas</option>
-              <option value="current">Semana actual</option>
+              <option value="current">Última semana</option>
               <option value="previous">Semana anterior</option>
             </select>
           </label>
@@ -858,7 +1031,10 @@ export const ReclamosPage: React.FC<ReclamosPageProps> = ({
   const handleEditReclamo = (reclamo: ReclamoRecord) => {
     const transportistas = getTransportistaEntries(reclamo);
     navigate(`/reclamos/${reclamo.id}`, {
-      state: transportistas.length > 0 ? { transportistas } : undefined,
+      state: {
+        ...(transportistas.length > 0 ? { transportistas } : null),
+        from: `${location.pathname}${location.search}`,
+      },
     });
   };
 
@@ -949,6 +1125,7 @@ export const ReclamosPage: React.FC<ReclamosPageProps> = ({
               <th>Aprobación</th>
               <th>Motivo</th>
               <th>Pagado</th>
+              <th>Importe solicitado</th>
               {canViewReclamoImportes ? (
                 <>
                   <th>Importe pagado</th>
@@ -1041,6 +1218,7 @@ export const ReclamosPage: React.FC<ReclamosPageProps> = ({
                         {reclamo.pagadoLabel ?? (reclamo.pagado ? 'Sí' : 'No')}
                       </span>
                     </td>
+                    <td>{reclamo.importeSolicitadoLabel ?? formatCurrency(reclamo.importeSolicitado)}</td>
                     {canViewReclamoImportes ? (
                       <>
                         <td>{reclamo.pagado ? reclamo.importePagadoLabel ?? formatCurrency(reclamo.importePagado) : '—'}</td>
@@ -1110,4 +1288,3 @@ export const ReclamosPage: React.FC<ReclamosPageProps> = ({
     </DashboardLayout>
   );
 };
-

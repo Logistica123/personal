@@ -5,6 +5,7 @@ import type {
   LiqEsquemaTarifario,
   LiqDimensionValor,
   LiqLineaTarifa,
+  LiqTarifaPatente,
   LiqMapeoConcepto,
   LiqMapeoSucursal,
   LiqConfiguracionGastos,
@@ -42,6 +43,7 @@ export function LiquidacionesClientePage({
   const [selectedEsquema, setSelectedEsquema] = useState<LiqEsquemaTarifario | null>(null);
   const [dimensiones, setDimensiones] = useState<Record<string, LiqDimensionValor[]>>({});
   const [lineas, setLineas] = useState<LiqLineaTarifa[]>([]);
+  const [tarifasPatente, setTarifasPatente] = useState<LiqTarifaPatente[]>([]);
   const [mapeosConcepto, setMapeosConcepto] = useState<LiqMapeoConcepto[]>([]);
   const [mapeosSucursal, setMapeosSucursal] = useState<LiqMapeoSucursal[]>([]);
   const [gastos, setGastos] = useState<LiqConfiguracionGastos[]>([]);
@@ -70,6 +72,13 @@ export function LiquidacionesClientePage({
   const [newLineaVigDesde, setNewLineaVigDesde] = useState('');
   const [newLineaVigHasta, setNewLineaVigHasta] = useState('');
   const [newLineaMotivo, setNewLineaMotivo] = useState('Carga inicial');
+
+  // Tarifa por patente (override)
+  const [newTPPatente, setNewTPPatente] = useState('');
+  const [newTPDims, setNewTPDims] = useState<Record<string, string>>({});
+  const [newTPLineaId, setNewTPLineaId] = useState<string>('');
+  const [newTPVigDesde, setNewTPVigDesde] = useState('');
+  const [newTPVigHasta, setNewTPVigHasta] = useState('');
 
   // Import tariff excel
   const [importTarifaFile, setImportTarifaFile] = useState<File | null>(null);
@@ -333,16 +342,79 @@ export function LiquidacionesClientePage({
   const selectEsquema = useCallback(async (esquema: LiqEsquemaTarifario) => {
     setSelectedEsquema(esquema);
     try {
-      const [dimRes, lineasRes] = await Promise.all([
+      const [dimRes, lineasRes, tpRes] = await Promise.all([
         api.get(`/esquemas/${esquema.id}/dimensiones`),
         api.get(`/esquemas/${esquema.id}/lineas`),
+        api.get(`/esquemas/${esquema.id}/tarifas-patente`),
       ]);
       setDimensiones(dimRes.data ?? {});
       setLineas(lineasRes.data ?? []);
+      setTarifasPatente(tpRes.data ?? []);
+      setNewTPPatente('');
+      setNewTPLineaId('');
+      setNewTPVigDesde('');
+      setNewTPVigHasta('');
+      setNewTPDims({});
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Error cargando esquema');
     }
   }, [api]);
+
+  const refreshTarifasPatente = useCallback(async () => {
+    if (!selectedEsquema) return;
+    try {
+      const r = await api.get(`/esquemas/${selectedEsquema.id}/tarifas-patente`);
+      setTarifasPatente(r.data ?? []);
+    } catch {
+      // silent
+    }
+  }, [api, selectedEsquema]);
+
+  const guardarTarifaPatente = useCallback(async () => {
+    if (!selectedEsquema) return;
+    const patente = newTPPatente.trim();
+    const lineaId = Number(newTPLineaId);
+    if (!patente) { setError('Patente es obligatoria'); return; }
+    if (!Number.isFinite(lineaId) || lineaId <= 0) { setError('Seleccioná una línea destino'); return; }
+    if (!newTPVigDesde) { setError('Vigencia desde es obligatoria'); return; }
+
+    const dims: Record<string, string> = {};
+    for (const d of selectedEsquema.dimensiones) {
+      const v = (newTPDims[d] ?? '').trim();
+      if (!v) { setError(`Falta la dimensión: ${d}`); return; }
+      dims[d] = v;
+    }
+
+    try {
+      await api.post(`/esquemas/${selectedEsquema.id}/tarifas-patente`, {
+        patente,
+        dimensiones_valores: dims,
+        linea_tarifa_id: lineaId,
+        vigencia_desde: newTPVigDesde,
+        vigencia_hasta: newTPVigHasta || null,
+      });
+      setNewTPPatente('');
+      setNewTPLineaId('');
+      setNewTPVigDesde('');
+      setNewTPVigHasta('');
+      setNewTPDims({});
+      await refreshTarifasPatente();
+      showSuccess('Tarifa por patente guardada');
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Error guardando tarifa por patente');
+    }
+  }, [api, newTPDims, newTPLineaId, newTPPatente, newTPVigDesde, newTPVigHasta, refreshTarifasPatente, selectedEsquema]);
+
+  const desactivarTarifaPatente = useCallback(async (id: number) => {
+    if (!window.confirm('¿Desactivar esta tarifa por patente?')) return;
+    try {
+      await api.put(`/tarifas-patente/${id}/desactivar`, {});
+      await refreshTarifasPatente();
+      showSuccess('Tarifa por patente desactivada');
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Error desactivando');
+    }
+  }, [api, refreshTarifasPatente]);
 
   const refreshEsquemas = useCallback(async () => {
     if (!selectedCliente) return;
@@ -969,6 +1041,158 @@ export function LiquidacionesClientePage({
                               </tr>
                             ))}
                             {lineas.length === 0 && <tr><td colSpan={selectedEsquema.dimensiones.length + 6} style={{ textAlign: 'center', color: '#6b7280' }}>Sin líneas</td></tr>}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Tarifa por patente (override) */}
+                  <div className="dashboard-card">
+                    <header className="card-header">
+                      <h3>Tarifa por patente</h3>
+                    </header>
+                    <div className="card-body">
+                      <div style={{ background: '#f9fafb', padding: 16, borderRadius: 8, marginBottom: 16 }}>
+                        <h4 style={{ marginTop: 0, marginBottom: 12 }}>Nueva vinculación</h4>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1.2fr 1fr', gap: 12, marginBottom: 12, alignItems: 'end' }}>
+                          <div>
+                            <label style={{ display: 'block', fontSize: 12, marginBottom: 4 }}>Patente</label>
+                            <input
+                              type="text"
+                              className="form-input"
+                              placeholder="Ej: AE998QN"
+                              value={newTPPatente}
+                              onChange={(e) => setNewTPPatente(e.target.value)}
+                            />
+                          </div>
+                          <div>
+                            <label style={{ display: 'block', fontSize: 12, marginBottom: 4 }}>Línea destino (aprobada)</label>
+                            <select
+                              className="form-input"
+                              value={newTPLineaId}
+                              onChange={(e) => {
+                                const val = e.target.value;
+                                setNewTPLineaId(val);
+                                const id = Number(val);
+                                const l = lineas.find((x) => x.id === id);
+                                if (l && selectedEsquema) {
+                                  setNewTPDims((prev) => {
+                                    const next = { ...prev };
+                                    for (const d of selectedEsquema.dimensiones) {
+                                      if (!next[d] || next[d].trim() === '') {
+                                        next[d] = l.dimensiones_valores[d] ?? '';
+                                      }
+                                    }
+                                    return next;
+                                  });
+                                }
+                              }}
+                            >
+                              <option value="">— Seleccionar —</option>
+                              {lineas
+                                .filter((l) => l.activo && !!l.aprobado_por)
+                                .map((l) => {
+                                  const dimsLabel = (selectedEsquema?.dimensiones ?? []).map((d) => l.dimensiones_valores[d]).filter(Boolean).join(' | ');
+                                  return (
+                                    <option key={l.id} value={String(l.id)}>
+                                      #{l.id} — {dimsLabel} — {fmt(Number(l.precio_original))} — {l.porcentaje_agencia}%
+                                    </option>
+                                  );
+                                })}
+                            </select>
+                          </div>
+                          <div>
+                            <label style={{ display: 'block', fontSize: 12, marginBottom: 4 }}>Vigencia desde</label>
+                            <input type="date" className="form-input" value={newTPVigDesde} onChange={(e) => setNewTPVigDesde(e.target.value)} />
+                          </div>
+                          <div>
+                            <label style={{ display: 'block', fontSize: 12, marginBottom: 4 }}>Vigencia hasta</label>
+                            <input type="date" className="form-input" value={newTPVigHasta} onChange={(e) => setNewTPVigHasta(e.target.value)} />
+                          </div>
+                        </div>
+
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 12, marginBottom: 12 }}>
+                          {(selectedEsquema?.dimensiones ?? []).map((d) => {
+                            const safeId = `tp-dim-${d.replace(/[^a-zA-Z0-9_-]/g, '-')}`;
+                            const opts = (dimensiones[d] ?? []).filter((x) => x.activo).map((x) => x.valor);
+                            return (
+                              <div key={d}>
+                                <label style={{ display: 'block', fontSize: 12, marginBottom: 4 }}>
+                                  Dimensión (match): {d}
+                                </label>
+                                <input
+                                  type="text"
+                                  className="form-input"
+                                  list={safeId}
+                                  placeholder={d}
+                                  value={newTPDims[d] ?? ''}
+                                  onChange={(e) => setNewTPDims((prev) => ({ ...prev, [d]: e.target.value }))}
+                                />
+                                <datalist id={safeId}>
+                                  {opts.map((v) => (
+                                    <option key={v} value={v} />
+                                  ))}
+                                </datalist>
+                              </div>
+                            );
+                          })}
+                        </div>
+
+                        <button type="button" className="btn-primary" onClick={guardarTarifaPatente}>
+                          Guardar vinculación
+                        </button>
+                        <p style={{ marginTop: 8, fontSize: 12, color: '#6b7280' }}>
+                          Se usa primero la coincidencia por <strong>patente + dimensiones</strong> y luego la tarifa general. Útil para casos donde el concepto depende de la patente.
+                        </p>
+                      </div>
+
+                      <div style={{ overflowX: 'auto' }}>
+                        <table className="data-table">
+                          <thead>
+                            <tr>
+                              <th>Patente</th>
+                              {(selectedEsquema?.dimensiones ?? []).map((d) => (
+                                <th key={d} style={{ textTransform: 'capitalize' }}>{d}</th>
+                              ))}
+                              <th>Línea destino</th>
+                              <th>Vigencia</th>
+                              <th>Activo</th>
+                              <th></th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {tarifasPatente.map((tp) => {
+                              const dest = tp.linea_tarifa;
+                              const destDims = dest ? (selectedEsquema?.dimensiones ?? []).map((d) => dest.dimensiones_valores?.[d]).filter(Boolean).join(' | ') : `#${tp.linea_tarifa_id}`;
+                              return (
+                                <tr key={tp.id} style={{ opacity: tp.activo ? 1 : 0.5 }}>
+                                  <td><strong>{tp.patente_norm}</strong></td>
+                                  {(selectedEsquema?.dimensiones ?? []).map((d) => (
+                                    <td key={d}>{tp.dimensiones_valores?.[d] ?? '—'}</td>
+                                  ))}
+                                  <td style={{ fontSize: 12 }}>{destDims}</td>
+                                  <td style={{ fontSize: 12 }}>
+                                    {fmtDate(tp.vigencia_desde)}{tp.vigencia_hasta ? ` → ${fmtDate(tp.vigencia_hasta)}` : ' →'}
+                                  </td>
+                                  <td>{tp.activo ? '✓' : '—'}</td>
+                                  <td style={{ textAlign: 'right' }}>
+                                    {tp.activo && (
+                                      <button type="button" className="btn-sm btn-danger" onClick={() => desactivarTarifaPatente(tp.id)}>
+                                        Desactivar
+                                      </button>
+                                    )}
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                            {tarifasPatente.length === 0 && (
+                              <tr>
+                                <td colSpan={(selectedEsquema?.dimensiones ?? []).length + 5} style={{ textAlign: 'center', color: '#6b7280' }}>
+                                  Sin vinculaciones por patente
+                                </td>
+                              </tr>
+                            )}
                           </tbody>
                         </table>
                       </div>
