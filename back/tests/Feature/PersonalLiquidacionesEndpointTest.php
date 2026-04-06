@@ -95,6 +95,7 @@ class PersonalLiquidacionesEndpointTest extends TestCase
             'nombres' => 'Esteban',
             'apellidos' => 'Cortez',
             'email' => 'esteban@example.com',
+            'cuil' => '20-12345678-9',
         ]);
 
         $tipoLiquidacion = FileType::query()->create([
@@ -138,8 +139,9 @@ class PersonalLiquidacionesEndpointTest extends TestCase
             'decision_mensaje' => 'El CUIL del emisor no coincide con el registrado.',
         ]);
 
+        $actorCuil = '20123456789';
         $response = $this->getJson(
-            sprintf('/api/personal/%d/liquidaciones?email=%s', $persona->id, urlencode($persona->email)),
+            sprintf('/api/personal/%d/liquidaciones?email=%s', $persona->id, urlencode($actorCuil)),
             ['Accept' => 'application/json']
         );
 

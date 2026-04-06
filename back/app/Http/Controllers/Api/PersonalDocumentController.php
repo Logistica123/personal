@@ -98,23 +98,41 @@ class PersonalDocumentController extends Controller
 
     public function liquidaciones(Request $request, Persona $persona): JsonResponse
     {
-        $actorEmail = strtolower(trim((string) $request->input('email', '')));
-        $providerEmail = strtolower(trim((string) ($persona->email ?? '')));
-        if ($actorEmail !== '') {
-            $persona->loadMissing('dueno:id,persona_id,email');
-            $allowedEmails = array_filter([
-                $persona->email,
-                $persona->cobrador_email,
-                $persona->dueno?->email,
-            ]);
-            $allowedEmails = array_map(
-                fn ($email) => strtolower(trim((string) $email)),
-                $allowedEmails
-            );
-            if (! in_array($actorEmail, $allowedEmails, true)) {
-                return response()->json([
-                    'message' => 'No tenés permisos para ver estas liquidaciones.',
-                ], 403);
+        $rawActor = trim((string) $request->input('email', ''));
+        $actorEmail = str_contains($rawActor, '@') ? $this->normalizeEmailValue($rawActor) : null;
+        $actorCuil = $actorEmail ? null : $this->normalizeCuilValue($rawActor);
+        $providerEmail = $this->normalizeEmailValue($persona->email);
+
+        if ($actorEmail || $actorCuil) {
+            $persona->loadMissing('dueno:id,persona_id,email,cuil,cuil_cobrador');
+
+            if ($actorEmail) {
+                $allowedEmails = array_filter([
+                    $persona->email,
+                    $persona->cobrador_email,
+                    $persona->dueno?->email,
+                ]);
+                $allowedEmails = array_map(
+                    fn ($email) => strtolower(trim((string) $email)),
+                    $allowedEmails
+                );
+                if (! in_array($actorEmail, $allowedEmails, true)) {
+                    return response()->json([
+                        'message' => 'No tenés permisos para ver estas liquidaciones.',
+                    ], 403);
+                }
+            } elseif ($actorCuil) {
+                $allowedCuils = array_filter([
+                    $this->normalizeCuilValue($persona->cuil),
+                    $this->normalizeCuilValue($persona->cobrador_cuil),
+                    $this->normalizeCuilValue($persona->dueno?->cuil),
+                    $this->normalizeCuilValue($persona->dueno?->cuil_cobrador),
+                ]);
+                if (! in_array($actorCuil, $allowedCuils, true)) {
+                    return response()->json([
+                        'message' => 'No tenés permisos para ver estas liquidaciones.',
+                    ], 403);
+                }
             }
         }
 
@@ -158,13 +176,13 @@ class PersonalDocumentController extends Controller
             ->orderByDesc('created_at')
             ->get()
             ->filter(function (Archivo $documento) use ($actorEmail, $providerEmail) {
-                if ($actorEmail === '') {
+                if (! $actorEmail) {
                     return true;
                 }
 
                 // El destinatario solo define notificaciones/envío, no visibilidad para el proveedor.
                 // Si el actor es el proveedor, siempre puede ver sus liquidaciones.
-                if ($actorEmail === $providerEmail && $providerEmail !== '') {
+                if ($providerEmail && $actorEmail === $providerEmail) {
                     return true;
                 }
 
@@ -1884,6 +1902,25 @@ class PersonalDocumentController extends Controller
         $normalized = strtolower(trim((string) $value));
 
         return $normalized !== '' ? $normalized : null;
+    }
+
+    protected function normalizeCuilValue($value): ?string
+    {
+        if (! is_string($value) && ! is_numeric($value)) {
+            return null;
+        }
+
+        $digits = preg_replace('/\\D+/', '', (string) $value);
+        if (! is_string($digits)) {
+            return null;
+        }
+
+        $digits = trim($digits);
+        if ($digits === '' || strlen($digits) !== 11) {
+            return null;
+        }
+
+        return $digits;
     }
 
     protected function extractLiquidacionRecipientEmails(Archivo $documento): array

@@ -19,10 +19,6 @@ class ApiTokenAuth
             return $next($request);
         }
 
-        if ($this->isPersonalDownloadWithAuthToken($request, $token)) {
-            return $next($request);
-        }
-
         if (! $token) {
             return response()->json(['message' => 'No autenticado.'], 401);
         }
@@ -46,13 +42,16 @@ class ApiTokenAuth
             return false;
         }
 
-        $email = $this->resolveRequestEmail($request);
-        if (! $email) {
+        $actorEmail = $this->resolveRequestActorEmail($request);
+        $actorCuil = $this->resolveRequestActorCuil($request);
+
+        if (! $actorEmail && ! $actorCuil) {
             return false;
         }
 
         if ($this->isPersonalPath($request, 'personal') || $this->isPersonalPath($request, 'personal/')) {
-            return true;
+            // Por compatibilidad, el lookup público global sigue siendo solo por email.
+            return (bool) $actorEmail;
         }
 
         if (! $this->isPersonalPath($request, 'personal/*/liquidaciones')
@@ -71,7 +70,11 @@ class ApiTokenAuth
             return false;
         }
 
-        return $this->personaMatchesEmail($persona, $email);
+        if ($actorEmail && $this->personaMatchesEmail($persona, $actorEmail)) {
+            return true;
+        }
+
+        return $actorCuil && $this->personaMatchesCuil($persona, $actorCuil);
     }
 
     private function isPublicPersonalUpload(Request $request): bool
@@ -86,8 +89,8 @@ class ApiTokenAuth
             }
         }
 
-        $email = $this->resolveRequestEmail($request);
-        if (! $email) {
+        $actorEmail = $this->resolveRequestActorEmail($request);
+        if (! $actorEmail) {
             return false;
         }
 
@@ -96,24 +99,10 @@ class ApiTokenAuth
             return false;
         }
 
-        return $this->personaMatchesEmail($persona, $email);
+        return $this->personaMatchesEmail($persona, $actorEmail);
     }
 
-    private function isPersonalDownloadWithAuthToken(Request $request, ?string $token): bool
-    {
-        if (! $request->isMethod('GET')) {
-            return false;
-        }
-
-        if (! $this->isPersonalPath($request, 'personal/*/documentos/*/descargar')
-            && ! $this->isPersonalPath($request, 'personal/*/documentos/*/preview')) {
-            return false;
-        }
-
-        return (bool) $token;
-    }
-
-    private function resolveRequestEmail(Request $request): ?string
+    private function resolveRequestActorEmail(Request $request): ?string
     {
         $candidate = $request->input('email');
         if (! is_string($candidate) || trim($candidate) === '') {
@@ -125,8 +114,32 @@ class ApiTokenAuth
         }
 
         $normalized = strtolower(trim($candidate));
+        if ($normalized === '' || ! str_contains($normalized, '@')) {
+            return null;
+        }
 
-        return $normalized !== '' ? $normalized : null;
+        return $normalized;
+    }
+
+    private function resolveRequestActorCuil(Request $request): ?string
+    {
+        $candidate = $request->input('cuil');
+        if (! is_string($candidate) || trim($candidate) === '') {
+            $candidate = $request->header('X-Actor-Cuil');
+        }
+
+        if (! is_string($candidate) || trim($candidate) === '') {
+            $candidate = $request->input('email');
+            if (! is_string($candidate) || trim($candidate) === '') {
+                $candidate = $request->header('X-Actor-Email');
+            }
+        }
+
+        if (! is_string($candidate)) {
+            return null;
+        }
+
+        return $this->normalizeCuil($candidate);
     }
 
     private function resolvePersonaFromRequest(Request $request): ?Persona
@@ -145,8 +158,8 @@ class ApiTokenAuth
         }
 
         return Persona::query()
-            ->select('id', 'email', 'cobrador_email')
-            ->with(['dueno:id,persona_id,email'])
+            ->select('id', 'email', 'cobrador_email', 'cuil', 'cobrador_cuil')
+            ->with(['dueno:id,persona_id,email,cuil,cuil_cobrador'])
             ->find($personaId);
     }
 
@@ -165,6 +178,47 @@ class ApiTokenAuth
         $duenoEmail = $persona->dueno?->email ? strtolower(trim($persona->dueno->email)) : null;
 
         return $duenoEmail && $duenoEmail === $email;
+    }
+
+    private function personaMatchesCuil(Persona $persona, string $cuil): bool
+    {
+        $personaCuil = $this->normalizeCuil($persona->cuil);
+        if ($personaCuil && $personaCuil === $cuil) {
+            return true;
+        }
+
+        $cobradorCuil = $this->normalizeCuil($persona->cobrador_cuil);
+        if ($cobradorCuil && $cobradorCuil === $cuil) {
+            return true;
+        }
+
+        $duenoCuil = $this->normalizeCuil($persona->dueno?->cuil);
+        if ($duenoCuil && $duenoCuil === $cuil) {
+            return true;
+        }
+
+        $duenoCuilCobrador = $this->normalizeCuil($persona->dueno?->cuil_cobrador);
+
+        return $duenoCuilCobrador && $duenoCuilCobrador === $cuil;
+    }
+
+    private function normalizeCuil($value): ?string
+    {
+        if (! is_string($value) && ! is_numeric($value)) {
+            return null;
+        }
+
+        $digits = preg_replace('/\\D+/', '', (string) $value);
+        if (! is_string($digits)) {
+            return null;
+        }
+
+        $digits = trim($digits);
+        if ($digits === '' || strlen($digits) !== 11) {
+            return null;
+        }
+
+        return $digits;
     }
 
     private function extractToken(Request $request): ?string
