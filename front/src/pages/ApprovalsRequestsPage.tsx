@@ -5136,13 +5136,60 @@ const sucursalOptions = useMemo(() => {
 
   const solicitudesSucursalOptions = useMemo(() => {
     const labels = new Set<string>();
-    combinedSolicitudes.forEach((registro) => {
-      if (registro.sucursal) {
-        labels.add(registro.sucursal);
+
+    const addLabel = (value: string | null | undefined) => {
+      const normalized = (value ?? '').trim();
+      if (normalized) {
+        labels.add(normalized);
       }
+    };
+
+    if (solicitudesClienteFilter && meta) {
+      const selected = solicitudesClienteFilter.trim().toLowerCase();
+      const exactMatch = meta.clientes.find(
+        (cliente) => (cliente.nombre ?? '').trim().toLowerCase() === selected
+      );
+      const matchedCliente =
+        exactMatch ??
+        (() => {
+          const candidates = meta.clientes.filter((cliente) => {
+            const name = (cliente.nombre ?? '').trim().toLowerCase();
+            if (!name) {
+              return false;
+            }
+            return name.includes(selected) || selected.includes(name);
+          });
+          return candidates.length === 1 ? candidates[0] : null;
+        })();
+
+      if (matchedCliente) {
+        meta.sucursales.forEach((sucursal) => {
+          if (sucursal.cliente_id === matchedCliente.id) {
+            addLabel(sucursal.nombre);
+          }
+        });
+      }
+    }
+
+    combinedSolicitudes.forEach((registro) => {
+      if (solicitudesClienteFilter && registro.cliente !== solicitudesClienteFilter) {
+        return;
+      }
+      addLabel(registro.sucursal);
     });
-    return Array.from(labels).sort((a, b) => a.localeCompare(b));
-  }, [combinedSolicitudes]);
+
+    return Array.from(labels).sort((a, b) => a.localeCompare(b, 'es-AR'));
+  }, [combinedSolicitudes, meta, solicitudesClienteFilter]);
+
+  useEffect(() => {
+    if (!solicitudesSucursalFilter) {
+      return;
+    }
+    if (solicitudesSucursalOptions.includes(solicitudesSucursalFilter)) {
+      return;
+    }
+    setSolicitudesSucursalFilter('');
+  }, [solicitudesClienteFilter, solicitudesSucursalFilter, solicitudesSucursalOptions]);
 
   const resolveSolicitudCreated = useCallback((registro: PersonalRecord): string | null => {
     const data = registro.solicitudData as any;

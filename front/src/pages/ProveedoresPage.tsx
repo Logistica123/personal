@@ -721,9 +721,16 @@ export const ProveedoresPage: React.FC<ProveedoresPageProps> = ({
     [personal]
   );
   const sucursalOptions = useMemo(
-    () =>
-      Array.from(new Set(personal.map((registro) => registro.sucursal).filter((value): value is string => Boolean(value)))).sort(),
-    [personal]
+    () => {
+      const source = clienteFilter
+        ? personal.filter((registro) => registro.cliente === clienteFilter)
+        : personal;
+
+      return Array.from(
+        new Set(source.map((registro) => registro.sucursal).filter((value): value is string => Boolean(value)))
+      ).sort();
+    },
+    [personal, clienteFilter]
   );
   const perfilOptions = useMemo(() => {
     const namesFromData = personal
@@ -779,6 +786,18 @@ export const ProveedoresPage: React.FC<ProveedoresPageProps> = ({
       setEstadoFilter(mapped);
     }
   }, [estadoFilter, estadoOptions, location.search, mapEstadoParamToFilter, noCitadoFilterValue, sinEstadoFilterValue]);
+
+  useEffect(() => {
+    if (!sucursalFilter) {
+      return;
+    }
+
+    if (sucursalOptions.includes(sucursalFilter)) {
+      return;
+    }
+
+    setSucursalFilter('');
+  }, [sucursalFilter, sucursalOptions]);
 
 
   const clearFilters = () => {
@@ -1175,7 +1194,13 @@ export const ProveedoresPage: React.FC<ProveedoresPageProps> = ({
       <div className="filters-grid">
         <label className="filter-field">
           <span>Cliente</span>
-          <select value={clienteFilter} onChange={(event) => setClienteFilter(event.target.value)}>
+          <select
+            value={clienteFilter}
+            onChange={(event) => {
+              setClienteFilter(event.target.value);
+              setSucursalFilter('');
+            }}
+          >
             <option value="">Cliente</option>
             {clienteOptions.map((option) => (
               <option key={option} value={option}>
