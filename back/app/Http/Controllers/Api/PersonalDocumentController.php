@@ -31,6 +31,39 @@ use App\Services\AuditLogger;
 
 class PersonalDocumentController extends Controller
 {
+    public function liquidacionesByActor(Request $request): JsonResponse
+    {
+        $rawActor = trim((string) $request->input('email', ''));
+        if ($rawActor === '') {
+            $rawActor = trim((string) $request->header('X-Actor-Email', ''));
+        }
+        if ($rawActor === '') {
+            $rawActor = trim((string) $request->input('cuil', ''));
+        }
+        if ($rawActor === '') {
+            $rawActor = trim((string) $request->header('X-Actor-Cuil', ''));
+        }
+
+        $actorEmail = str_contains($rawActor, '@') ? $this->normalizeEmailValue($rawActor) : null;
+        $actorCuil = $actorEmail ? null : $this->normalizeCuilValue($rawActor);
+
+        if (! $actorEmail && ! $actorCuil) {
+            return response()->json([
+                'message' => 'Falta identificar al usuario (email/CUIL).',
+            ], 422);
+        }
+
+        $persona = $this->resolvePersonaByActor($actorEmail, $actorCuil);
+
+        if (! $persona) {
+            return response()->json([
+                'message' => 'No se encontró el usuario solicitado.',
+            ], 404);
+        }
+
+        return $this->liquidaciones($request, $persona);
+    }
+
     public function index(Request $request, Persona $persona): JsonResponse
     {
         $includePending = $request->boolean('includePending');
@@ -299,6 +332,50 @@ class PersonalDocumentController extends Controller
         return response()->json([
             'data' => $documentos,
         ]);
+    }
+
+    protected function resolvePersonaByActor(?string $actorEmail, ?string $actorCuil): ?Persona
+    {
+        $actorEmail = is_string($actorEmail) ? $this->normalizeEmailValue($actorEmail) : null;
+        $actorCuil = $this->normalizeCuilValue($actorCuil);
+
+        if (! $actorEmail && ! $actorCuil) {
+            return null;
+        }
+
+        $query = Persona::query()->with(['dueno:id,persona_id,email,cuil,cuil_cobrador']);
+
+        if ($actorEmail) {
+            $query->where(function ($inner) use ($actorEmail) {
+                $inner
+                    ->whereRaw('LOWER(email) = ?', [$actorEmail])
+                    ->orWhereRaw('LOWER(cobrador_email) = ?', [$actorEmail])
+                    ->orWhereHas('dueno', function ($ownerQuery) use ($actorEmail) {
+                        $ownerQuery->whereRaw('LOWER(email) = ?', [$actorEmail]);
+                    });
+            });
+        }
+
+        if ($actorCuil) {
+            $normalizeSql = "REPLACE(REPLACE(REPLACE(REPLACE(%s, '-', ''), ' ', ''), '.', ''), '/', '')";
+            $personaCuilSql = sprintf($normalizeSql, 'cuil');
+            $cobradorCuilSql = sprintf($normalizeSql, 'cobrador_cuil');
+
+            $query->where(function ($inner) use ($actorCuil, $personaCuilSql, $cobradorCuilSql, $normalizeSql) {
+                $inner
+                    ->orWhereRaw($personaCuilSql . ' = ?', [$actorCuil])
+                    ->orWhereRaw($cobradorCuilSql . ' = ?', [$actorCuil])
+                    ->orWhereHas('dueno', function ($ownerQuery) use ($actorCuil, $normalizeSql) {
+                        $ownerCuilSql = sprintf($normalizeSql, 'cuil');
+                        $ownerCuilCobradorSql = sprintf($normalizeSql, 'cuil_cobrador');
+                        $ownerQuery
+                            ->whereRaw($ownerCuilSql . ' = ?', [$actorCuil])
+                            ->orWhereRaw($ownerCuilCobradorSql . ' = ?', [$actorCuil]);
+                    });
+            });
+        }
+
+        return $query->orderByDesc('id')->first();
     }
 
     public function storeType(Request $request): JsonResponse

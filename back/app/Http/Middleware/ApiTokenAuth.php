@@ -38,7 +38,8 @@ class ApiTokenAuth
 
     private function isPublicPersonalLookup(Request $request): bool
     {
-        $isLiquidacionesRequest = $this->isPersonalPath($request, 'personal/*/liquidaciones');
+        $isLiquidacionesRequest = $this->isPersonalPath($request, 'personal/*/liquidaciones')
+            || $this->isPersonalPath($request, 'personal/liquidaciones');
 
         if (! $request->isMethod('GET') && ! ($request->isMethod('POST') && $isLiquidacionesRequest)) {
             return false;
@@ -54,6 +55,10 @@ class ApiTokenAuth
         if ($this->isPersonalPath($request, 'personal') || $this->isPersonalPath($request, 'personal/')) {
             // Por compatibilidad, el lookup público global sigue siendo solo por email.
             return (bool) $actorEmail;
+        }
+
+        if ($this->isPersonalPath($request, 'personal/liquidaciones')) {
+            return true;
         }
 
         if (! $isLiquidacionesRequest

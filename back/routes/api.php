@@ -53,6 +53,7 @@ Route::middleware('auth.api')->group(function () {
     Route::get('/personal/documentos/tipos/{tipo}', [PersonalDocumentController::class, 'show']);
     Route::put('/personal/documentos/tipos/{tipo}', [PersonalDocumentController::class, 'update']);
     Route::match(['GET', 'POST'], '/personal/{persona}/liquidaciones', [PersonalDocumentController::class, 'liquidaciones']);
+    Route::match(['GET', 'POST'], '/personal/liquidaciones', [PersonalDocumentController::class, 'liquidacionesByActor']);
     Route::get('/personal/{persona}/documentos', [PersonalDocumentController::class, 'index']);
     Route::post('/personal/{persona}/documentos', [PersonalDocumentController::class, 'store']);
     Route::post('/personal/{persona}/documentos/publicar', [PersonalDocumentController::class, 'publishPending']);
@@ -241,7 +242,12 @@ Route::middleware('auth.api')->group(function () {
         Route::get('/liquidaciones/{liquidacionCliente}/operaciones', [LiqExtractosController::class, 'operaciones']);
         Route::delete('/liquidaciones/{liquidacionCliente}/operaciones', [LiqExtractosController::class, 'destroyOperaciones']);
         Route::get('/liquidaciones/{liquidacionCliente}/distribuidores', [LiqExtractosController::class, 'distribuidores']);
+        Route::get('/liquidaciones/{liquidacionCliente}/auditoria', [LiqExtractosController::class, 'auditoria']);
         Route::delete('/operaciones/{operacion}', [\App\Http\Controllers\Api\Liq\LiqOperacionController::class, 'destroy']);
+        Route::patch('/liquidaciones/{liquidacionCliente}/estado', [LiqExtractosController::class, 'cambiarEstado']);
+        Route::put('/operaciones/{operacion}/excluir', [\App\Http\Controllers\Api\Liq\LiqOperacionController::class, 'excluir']);
+        Route::put('/operaciones/{operacion}/incluir', [\App\Http\Controllers\Api\Liq\LiqOperacionController::class, 'incluir']);
+        Route::put('/gastos/{gasto}/desactivar', [LiqClienteController::class, 'desactivarGasto']);
 
         // Archivos de entrada
         Route::get('/liquidaciones/{liquidacionCliente}/archivos', [LiqArchivoEntradaController::class, 'index']);

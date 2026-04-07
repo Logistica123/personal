@@ -194,7 +194,7 @@ class PersonalLiquidacionesEndpointTest extends TestCase
             'vence' => false,
         ]);
 
-        Archivo::create([
+        $doc = Archivo::create([
             'persona_id' => $persona->id,
             'parent_document_id' => null,
             'liquidacion_id' => null,
@@ -244,7 +244,7 @@ class PersonalLiquidacionesEndpointTest extends TestCase
             'vence' => false,
         ]);
 
-        Archivo::create([
+        $doc = Archivo::create([
             'persona_id' => $persona->id,
             'parent_document_id' => null,
             'liquidacion_id' => null,
@@ -273,5 +273,48 @@ class PersonalLiquidacionesEndpointTest extends TestCase
         $response
             ->assertOk()
             ->assertJsonCount(1, 'data');
+    }
+
+    public function test_liquidaciones_by_actor_endpoint_resolves_persona_by_cuil(): void
+    {
+        $persona = Persona::query()->create([
+            'nombres' => 'Esteban',
+            'apellidos' => 'Cortez',
+            'email' => null,
+            'cuil' => '20-12345678-9',
+        ]);
+
+        $tipoLiquidacion = FileType::query()->create([
+            'nombre' => 'Liquidación',
+            'vence' => false,
+        ]);
+
+        $doc = Archivo::create([
+            'persona_id' => $persona->id,
+            'parent_document_id' => null,
+            'liquidacion_id' => null,
+            'es_pendiente' => false,
+            'tipo_archivo_id' => $tipoLiquidacion->id,
+            'carpeta' => 'personal/' . $persona->id,
+            'ruta' => 'personal/' . $persona->id . '/liquidacion-test.pdf',
+            'download_url' => null,
+            'disk' => 'public',
+            'nombre_original' => 'Liquidación test.pdf',
+            'mime' => 'application/pdf',
+            'size' => 1234,
+            'fecha_vencimiento' => '2026-03-01',
+            'fortnight_key' => 'Q1',
+            'importe_facturar' => 1000,
+            'enviada' => true,
+            'recibido' => false,
+            'pagado' => false,
+        ]);
+
+        $response = $this->getJson('/api/personal/liquidaciones?email=20123456789');
+
+        $response
+            ->assertOk()
+            ->assertJsonCount(1, 'data')
+            ->assertJsonPath('data.0.id', $doc->id);
     }
 }

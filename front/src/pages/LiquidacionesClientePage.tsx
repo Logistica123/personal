@@ -20,7 +20,7 @@ type Props = {
   formatDateOnly?: (s: string) => string;
 };
 
-type Tab = 'clientes' | 'esquema' | 'mapeos' | 'gastos';
+type Tab = 'clientes' | 'esquema' | 'mapeos' | 'gastos' | 'historial';
 type BaseClienteOption = { id: number; codigo?: string | null; nombre?: string | null; documento_fiscal?: string | null };
 
 export function LiquidacionesClientePage({
@@ -47,10 +47,34 @@ export function LiquidacionesClientePage({
   const [mapeosConcepto, setMapeosConcepto] = useState<LiqMapeoConcepto[]>([]);
   const [mapeosSucursal, setMapeosSucursal] = useState<LiqMapeoSucursal[]>([]);
   const [gastos, setGastos] = useState<LiqConfiguracionGastos[]>([]);
+  const [historial, setHistorial] = useState<Array<{
+    id: number;
+    accion: string;
+    motivo: string | null;
+    created_at: string;
+    usuario?: { id: number; name: string; email: string } | null;
+    linea_tarifa?: {
+      id: number;
+      dimensiones_valores: Record<string, string>;
+      precio_original: string;
+      precio_distribuidor: string;
+      esquema?: { nombre: string; dimensiones: string[] } | null;
+    } | null;
+    valores_anteriores: Record<string, unknown> | null;
+    valores_nuevos: Record<string, unknown> | null;
+  }>>([]);
+  const [historialPage, setHistorialPage] = useState({ current: 1, last: 1 });
+  const [historialLoading, setHistorialLoading] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [showEnableClientForm, setShowEnableClientForm] = useState(false);
+  const [editingClienteId, setEditingClienteId] = useState<number | null>(null);
+  const [editNombreCorto, setEditNombreCorto] = useState('');
+  const [editCuit, setEditCuit] = useState('');
+  const [editTolerancia, setEditTolerancia] = useState('');
+  const [editHoja, setEditHoja] = useState('');
+  const [savingCliente, setSavingCliente] = useState(false);
   const [baseClienteQuery, setBaseClienteQuery] = useState('');
   const [baseClienteOptions, setBaseClienteOptions] = useState<BaseClienteOption[]>([]);
   const [baseClienteLoading, setBaseClienteLoading] = useState(false);
@@ -59,6 +83,7 @@ export function LiquidacionesClientePage({
 
   // New schema form
   const [newEsqNombre, setNewEsqNombre] = useState('');
+  const [newEsqDescripcion, setNewEsqDescripcion] = useState('');
   const [newEsqDims, setNewEsqDims] = useState('sucursal, concepto');
 
   // New dimension form
@@ -92,6 +117,7 @@ export function LiquidacionesClientePage({
   const [newGastoMonto, setNewGastoMonto] = useState('');
   const [newGastoTipo, setNewGastoTipo] = useState<'fijo' | 'porcentual'>('fijo');
   const [newGastoVigDesde, setNewGastoVigDesde] = useState('');
+  const [newGastoVigHasta, setNewGastoVigHasta] = useState('');
 
   // New mapeo concepto form
   const [newMapExcel, setNewMapExcel] = useState('');
@@ -202,6 +228,41 @@ export function LiquidacionesClientePage({
     }, 250);
     return () => window.clearTimeout(handle);
   }, [showEnableClientForm, baseClienteQuery, loadBaseClientes]);
+
+  const startEditCliente = useCallback((c: LiqCliente) => {
+    setEditingClienteId(c.id);
+    setEditNombreCorto(c.nombre_corto ?? '');
+    setEditCuit(c.cuit ?? '');
+    const cfg = c.configuracion_excel as Record<string, unknown> | null;
+    setEditTolerancia(cfg?.tolerancia_porcentaje != null ? String(cfg.tolerancia_porcentaje) : '');
+    setEditHoja(typeof cfg?.hoja === 'string' ? cfg.hoja : '');
+  }, []);
+
+  const saveCliente = useCallback(async () => {
+    if (editingClienteId == null) return;
+    const nombreCorto = editNombreCorto.trim();
+    if (!nombreCorto) { setError('Nombre corto es obligatorio'); return; }
+    setSavingCliente(true);
+    try {
+      const toleranciaNum = editTolerancia.trim() !== '' ? parseFloat(editTolerancia.replace(',', '.')) : null;
+      const body: Record<string, unknown> = { nombre_corto: nombreCorto, cuit: editCuit.trim() || null };
+      // Merge configuracion_excel preserving existing keys
+      const existingCfg = (clientes.find((c) => c.id === editingClienteId)?.configuracion_excel ?? {}) as Record<string, unknown>;
+      const newCfg: Record<string, unknown> = { ...existingCfg };
+      if (toleranciaNum != null && !isNaN(toleranciaNum)) newCfg.tolerancia_porcentaje = toleranciaNum;
+      if (editHoja.trim()) newCfg.hoja = editHoja.trim();
+      body.configuracion_excel = newCfg;
+      const res = await api.patch(`/clientes/${editingClienteId}`, body);
+      setClientes((prev) => prev.map((c) => c.id === editingClienteId ? { ...c, ...(res.data ?? {}) } : c));
+      if (selectedCliente?.id === editingClienteId) setSelectedCliente((prev) => prev ? { ...prev, ...(res.data ?? {}) } : prev);
+      setEditingClienteId(null);
+      showSuccess('Configuración guardada');
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Error guardando configuración');
+    } finally {
+      setSavingCliente(false);
+    }
+  }, [api, clientes, editingClienteId, editNombreCorto, editCuit, editTolerancia, editHoja, selectedCliente]);
 
   const loadClientes = useCallback(async () => {
     setLoading(true);
@@ -441,8 +502,9 @@ export function LiquidacionesClientePage({
       return;
     }
     try {
-      const res = await api.post(`/clientes/${selectedCliente.id}/esquemas`, { nombre, dimensiones: uniqDims });
+      const res = await api.post(`/clientes/${selectedCliente.id}/esquemas`, { nombre, descripcion: newEsqDescripcion.trim() || null, dimensiones: uniqDims });
       setNewEsqNombre('');
+      setNewEsqDescripcion('');
       showSuccess('Esquema creado');
       await refreshEsquemas();
       if (res?.data?.id) {
@@ -451,7 +513,7 @@ export function LiquidacionesClientePage({
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Error creando esquema');
     }
-  }, [api, newEsqNombre, newEsqDims, refreshEsquemas, selectEsquema, selectedCliente]);
+  }, [api, newEsqNombre, newEsqDescripcion, newEsqDims, refreshEsquemas, selectEsquema, selectedCliente]);
 
   const importarTarifaExcel = useCallback(async () => {
     if (!selectedEsquema) return;
@@ -573,8 +635,10 @@ export function LiquidacionesClientePage({
   }, [api, selectedEsquema, newLineaDims, newLineaPrecio, newLineaPctAg, newLineaVigDesde, newLineaVigHasta, newLineaMotivo]);
 
   const aprobarLinea = useCallback(async (id: number) => {
+    const motivo = window.prompt('Motivo de aprobación:', 'Aprobación manual');
+    if (motivo === null) return;
     try {
-      await api.put(`/lineas/${id}/aprobar`, { motivo: 'Aprobación manual' });
+      await api.put(`/lineas/${id}/aprobar`, { motivo: motivo.trim() || 'Aprobación manual' });
       if (selectedEsquema) {
         const res = await api.get(`/esquemas/${selectedEsquema.id}/lineas`);
         setLineas(res.data ?? []);
@@ -620,15 +684,46 @@ export function LiquidacionesClientePage({
         monto: parseFloat(newGastoMonto),
         tipo: newGastoTipo,
         vigencia_desde: newGastoVigDesde,
+        vigencia_hasta: newGastoVigHasta || null,
       });
       setNewGastoMonto('');
+      setNewGastoVigHasta('');
       const res = await api.get(`/clientes/${selectedCliente.id}/gastos`);
       setGastos(res.data ?? []);
       showSuccess('Gasto guardado');
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Error');
     }
-  }, [api, selectedCliente, newGastoConcepto, newGastoMonto, newGastoTipo, newGastoVigDesde]);
+  }, [api, selectedCliente, newGastoConcepto, newGastoMonto, newGastoTipo, newGastoVigDesde, newGastoVigHasta]);
+
+  const desactivarGasto = useCallback(async (id: number) => {
+    if (!window.confirm('¿Desactivar este gasto?')) return;
+    try {
+      await api.put(`/gastos/${id}/desactivar`, {});
+      if (selectedCliente) {
+        const res = await api.get(`/clientes/${selectedCliente.id}/gastos`);
+        setGastos(res.data ?? []);
+      }
+      showSuccess('Gasto desactivado');
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Error desactivando gasto');
+    }
+  }, [api, selectedCliente]);
+
+  const loadHistorial = useCallback(async (page = 1) => {
+    if (!selectedCliente) return;
+    setHistorialLoading(true);
+    try {
+      const res = await api.get(`/clientes/${selectedCliente.id}/tarifa/historial?page=${page}`);
+      const paged = res.data;
+      setHistorial(paged.data ?? []);
+      setHistorialPage({ current: paged.current_page ?? 1, last: paged.last_page ?? 1 });
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Error cargando historial');
+    } finally {
+      setHistorialLoading(false);
+    }
+  }, [api, selectedCliente]);
 
   const precioDistribuidor = () => {
     const p = parseMoneyInput(newLineaPrecio);
@@ -655,16 +750,16 @@ export function LiquidacionesClientePage({
 
       {/* Tab bar */}
       <div className="liq-tabbar" role="tablist" aria-label="Configuración de liquidaciones" style={{ marginBottom: 16 }}>
-        {(['clientes', 'esquema', 'mapeos', 'gastos'] as Tab[]).map((t) => (
+        {(['clientes', 'esquema', 'mapeos', 'gastos', 'historial'] as Tab[]).map((t) => (
           <button
             key={t}
             type="button"
-            onClick={() => setActiveTab(t)}
+            onClick={() => { setActiveTab(t); if (t === 'historial') void loadHistorial(1); }}
             role="tab"
             aria-selected={activeTab === t}
             className={`tab-btn${activeTab === t ? ' is-active' : ''}`}
           >
-            {{ clientes: 'Clientes', esquema: 'Esquema Tarifario', mapeos: 'Mapeos', gastos: 'Gastos' }[t]}
+            {{ clientes: 'Clientes', esquema: 'Esquema Tarifario', mapeos: 'Mapeos', gastos: 'Gastos', historial: 'Historial Tarifa' }[t]}
           </button>
         ))}
       </div>
@@ -745,19 +840,54 @@ export function LiquidacionesClientePage({
 	                </thead>
 	                <tbody>
 	                  {clientes.map((c) => (
-	                    <tr key={c.id} style={{ cursor: 'pointer', background: selectedCliente?.id === c.id ? '#eff6ff' : undefined }}>
-	                      <td>{c.id}</td>
-	                      <td><strong>{c.nombre_corto}</strong></td>
-	                      <td style={{ fontSize: 12 }}>{c.razon_social}</td>
-	                      <td>{c.cuit ?? '—'}</td>
-	                      <td>{getTolerancia(c)}</td>
-	                      <td>{c.esquemas_count ?? 0}</td>
-	                      <td>
-	                        <button type="button" className="btn-sm btn-primary" onClick={() => { selectCliente(c); setActiveTab('esquema'); }}>
-	                          Configurar
-	                        </button>
-	                      </td>
-	                    </tr>
+	                    <React.Fragment key={c.id}>
+	                      <tr style={{ background: selectedCliente?.id === c.id ? '#eff6ff' : undefined }}>
+	                        <td>{c.id}</td>
+	                        <td><strong>{c.nombre_corto}</strong></td>
+	                        <td style={{ fontSize: 12 }}>{c.razon_social}</td>
+	                        <td>{c.cuit ?? '—'}</td>
+	                        <td>{getTolerancia(c)}</td>
+	                        <td>{c.esquemas_count ?? 0}</td>
+	                        <td style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
+	                          <button type="button" className="btn-sm" onClick={() => editingClienteId === c.id ? setEditingClienteId(null) : startEditCliente(c)}>
+	                            {editingClienteId === c.id ? 'Cancelar' : 'Editar'}
+	                          </button>
+	                          <button type="button" className="btn-sm btn-primary" onClick={() => { void selectCliente(c); setActiveTab('esquema'); }}>
+	                            Configurar
+	                          </button>
+	                        </td>
+	                      </tr>
+	                      {editingClienteId === c.id && (
+	                        <tr>
+	                          <td colSpan={7} style={{ padding: 0 }}>
+	                            <div style={{ background: '#f0f9ff', border: '1px solid #bae6fd', borderRadius: 6, margin: '0 8px 8px', padding: 16 }}>
+	                              <h4 style={{ margin: '0 0 12px 0', fontSize: 13 }}>Editar configuración — {c.nombre_corto}</h4>
+	                              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 12, marginBottom: 12 }}>
+	                                <div>
+	                                  <label style={{ display: 'block', fontSize: 12, marginBottom: 4 }}>Nombre corto</label>
+	                                  <input type="text" className="form-input" value={editNombreCorto} onChange={(e) => setEditNombreCorto(e.target.value)} />
+	                                </div>
+	                                <div>
+	                                  <label style={{ display: 'block', fontSize: 12, marginBottom: 4 }}>CUIT</label>
+	                                  <input type="text" className="form-input" value={editCuit} onChange={(e) => setEditCuit(e.target.value)} placeholder="20-12345678-9" />
+	                                </div>
+	                                <div>
+	                                  <label style={{ display: 'block', fontSize: 12, marginBottom: 4 }}>Tolerancia diferencia (%)</label>
+	                                  <input type="text" className="form-input" value={editTolerancia} onChange={(e) => setEditTolerancia(e.target.value)} placeholder="2" />
+	                                </div>
+	                                <div>
+	                                  <label style={{ display: 'block', fontSize: 12, marginBottom: 4 }}>Hoja Excel (nombre)</label>
+	                                  <input type="text" className="form-input" value={editHoja} onChange={(e) => setEditHoja(e.target.value)} placeholder="Detalle" />
+	                                </div>
+	                              </div>
+	                              <button type="button" className="btn-primary" onClick={() => void saveCliente()} disabled={savingCliente}>
+	                                {savingCliente ? 'Guardando…' : 'Guardar'}
+	                              </button>
+	                            </div>
+	                          </td>
+	                        </tr>
+	                      )}
+	                    </React.Fragment>
 	                  ))}
 	                  {clientes.length === 0 && <tr><td colSpan={7} style={{ textAlign: 'center', color: '#6b7280' }}>Sin clientes habilitados</td></tr>}
 	                </tbody>
@@ -788,6 +918,16 @@ export function LiquidacionesClientePage({
                         placeholder="Tarifa Loginter 2026"
                         value={newEsqNombre}
                         onChange={(e) => setNewEsqNombre(e.target.value)}
+                      />
+                    </div>
+                    <div>
+                      <label style={{ display: 'block', fontSize: 12, marginBottom: 4 }}>Descripción (opcional)</label>
+                      <input
+                        type="text"
+                        className="form-input"
+                        placeholder="Ej: Tarifa Loginter vigente desde Ene 2026"
+                        value={newEsqDescripcion}
+                        onChange={(e) => setNewEsqDescripcion(e.target.value)}
                       />
                     </div>
                     <div>
@@ -1341,12 +1481,16 @@ export function LiquidacionesClientePage({
                       <label style={{ display: 'block', fontSize: 12, marginBottom: 4 }}>Vigencia desde</label>
                       <input type="date" className="form-input" value={newGastoVigDesde} onChange={(e) => setNewGastoVigDesde(e.target.value)} />
                     </div>
+                    <div>
+                      <label style={{ display: 'block', fontSize: 12, marginBottom: 4 }}>Vigencia hasta (opcional)</label>
+                      <input type="date" className="form-input" value={newGastoVigHasta} onChange={(e) => setNewGastoVigHasta(e.target.value)} />
+                    </div>
                   </div>
                   <button type="button" className="btn-primary" onClick={addGasto}>Guardar gasto</button>
                 </div>
 
                 <table className="data-table">
-                  <thead><tr><th>Concepto</th><th>Monto</th><th>Tipo</th><th>Vigencia desde</th><th>Vigencia hasta</th><th>Activo</th></tr></thead>
+                  <thead><tr><th>Concepto</th><th>Monto</th><th>Tipo</th><th>Vigencia desde</th><th>Vigencia hasta</th><th>Activo</th><th></th></tr></thead>
                   <tbody>
                     {gastos.map((g) => (
                       <tr key={g.id} style={{ opacity: g.activo ? 1 : 0.5 }}>
@@ -1356,11 +1500,104 @@ export function LiquidacionesClientePage({
                         <td>{fmtDate(g.vigencia_desde)}</td>
                         <td>{g.vigencia_hasta ? fmtDate(g.vigencia_hasta) : '—'}</td>
                         <td>{g.activo ? '✓' : '—'}</td>
+                        <td style={{ textAlign: 'right' }}>
+                          {g.activo && (
+                            <button type="button" className="btn-sm btn-danger" onClick={() => desactivarGasto(g.id)}>
+                              Desactivar
+                            </button>
+                          )}
+                        </td>
                       </tr>
                     ))}
-                    {gastos.length === 0 && <tr><td colSpan={6} style={{ textAlign: 'center', color: '#6b7280' }}>Sin gastos configurados</td></tr>}
+                    {gastos.length === 0 && <tr><td colSpan={7} style={{ textAlign: 'center', color: '#6b7280' }}>Sin gastos configurados</td></tr>}
                   </tbody>
                 </table>
+              </div>
+            </>
+          )}
+        </div>
+      )}
+      {/* Tab: Historial Tarifa */}
+      {activeTab === 'historial' && (
+        <div className="dashboard-card">
+          {!selectedCliente ? (
+            <div className="card-body" style={{ color: '#6b7280' }}>Seleccioná un cliente primero.</div>
+          ) : (
+            <>
+              <header className="card-header">
+                <h3>Historial de cambios de tarifa — {selectedCliente.nombre_corto}</h3>
+                <button type="button" className="btn-sm btn-primary" onClick={() => void loadHistorial(historialPage.current)}>
+                  Actualizar
+                </button>
+              </header>
+              <div className="card-body" style={{ overflowX: 'auto' }}>
+                {historialLoading ? (
+                  <p>Cargando…</p>
+                ) : (
+                  <>
+                    <table className="data-table">
+                      <thead>
+                        <tr>
+                          <th>Fecha</th>
+                          <th>Acción</th>
+                          <th>Usuario</th>
+                          <th>Esquema</th>
+                          <th>Línea</th>
+                          <th>Motivo</th>
+                          <th>Valores anteriores</th>
+                          <th>Valores nuevos</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {historial.map((h) => {
+                          const dims = h.linea_tarifa?.esquema?.dimensiones ?? [];
+                          const dimsLabel = dims.length > 0
+                            ? dims.map((d: string) => h.linea_tarifa?.dimensiones_valores?.[d]).filter(Boolean).join(' | ')
+                            : `#${h.linea_tarifa?.id ?? '—'}`;
+                          return (
+                            <tr key={h.id}>
+                              <td style={{ fontSize: 12, whiteSpace: 'nowrap' }}>{h.created_at?.slice(0, 16).replace('T', ' ')}</td>
+                              <td>
+                                <span style={{
+                                  padding: '1px 8px', borderRadius: 8, fontSize: 11, fontWeight: 600,
+                                  background: h.accion === 'aprobacion' ? '#dcfce7' : h.accion === 'desactivacion' ? '#fee2e2' : '#e0f2fe',
+                                  color: h.accion === 'aprobacion' ? '#166534' : h.accion === 'desactivacion' ? '#991b1b' : '#0369a1',
+                                }}>
+                                  {h.accion}
+                                </span>
+                              </td>
+                              <td style={{ fontSize: 12 }}>{h.usuario?.name ?? h.usuario?.email ?? '—'}</td>
+                              <td style={{ fontSize: 12 }}>{h.linea_tarifa?.esquema?.nombre ?? '—'}</td>
+                              <td style={{ fontSize: 12 }}>
+                                {dimsLabel}
+                                {h.linea_tarifa?.precio_original ? ` — ${fmt(parseFloat(h.linea_tarifa.precio_original))}` : ''}
+                              </td>
+                              <td style={{ fontSize: 12, maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                {h.motivo ?? '—'}
+                              </td>
+                              <td style={{ fontSize: 11, maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: '#6b7280' }}>
+                                {h.valores_anteriores ? JSON.stringify(h.valores_anteriores).slice(0, 80) : '—'}
+                              </td>
+                              <td style={{ fontSize: 11, maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: '#374151' }}>
+                                {h.valores_nuevos ? JSON.stringify(h.valores_nuevos).slice(0, 80) : '—'}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                        {historial.length === 0 && (
+                          <tr><td colSpan={8} style={{ textAlign: 'center', color: '#6b7280' }}>Sin cambios registrados</td></tr>
+                        )}
+                      </tbody>
+                    </table>
+                    {historialPage.last > 1 && (
+                      <div style={{ display: 'flex', justifyContent: 'center', gap: 8, marginTop: 12 }}>
+                        <button type="button" className="btn-sm" disabled={historialPage.current === 1} onClick={() => void loadHistorial(historialPage.current - 1)}>←</button>
+                        <span style={{ fontSize: 13, alignSelf: 'center' }}>Página {historialPage.current} de {historialPage.last}</span>
+                        <button type="button" className="btn-sm" disabled={historialPage.current === historialPage.last} onClick={() => void loadHistorial(historialPage.current + 1)}>→</button>
+                      </div>
+                    )}
+                  </>
+                )}
               </div>
             </>
           )}

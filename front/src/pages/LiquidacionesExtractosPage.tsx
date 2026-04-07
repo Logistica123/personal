@@ -57,6 +57,31 @@ export function LiquidacionesExtractosPage({
   const [selectedLiqIds, setSelectedLiqIds] = useState<Record<number, boolean>>({});
   const [selectedArchivoIds, setSelectedArchivoIds] = useState<Record<number, boolean>>({});
   const [selectedOpIds, setSelectedOpIds] = useState<Record<number, boolean>>({});
+  const [pdfGenerating, setPdfGenerating] = useState<Record<number, boolean>>({});
+  const [hotMapOp, setHotMapOp] = useState<LiqOperacion | null>(null);
+  const [hotMapValorTarifa, setHotMapValorTarifa] = useState('');
+  const [hotMapDim, setHotMapDim] = useState('concepto');
+
+  type AuditoriaData = {
+    resumen: {
+      total_operaciones: number;
+      estados: Record<string, { cantidad: number; total_cliente: number; total_correcto: number; total_diferencia: number }>;
+      total_importe_cliente: number;
+      total_diferencia: number;
+      total_margen_agencia: number;
+      total_importe_distribuidor: number;
+    };
+    diferencias: Array<{ id: number; dominio: string | null; concepto: string | null; sucursal_tarifa: string | null; valor_cliente: string; valor_tarifa_original: string | null; diferencia_cliente: string | null; distribuidor?: { apellidos: string; nombres: string; patente: string } | null }>;
+    sin_tarifa_agrupado: Array<{ concepto: string | null; dimension_fallida: string | null; sucursal_tarifa: string | null; cantidad: number; total_cliente: number }>;
+    sin_distribuidor_agrupado: Array<{ dominio: string | null; cantidad: number; total_cliente: number }>;
+    duplicados: Array<{ id: number; dominio: string | null; concepto: string | null; valor_cliente: string; distribuidor?: { apellidos: string; nombres: string; patente: string } | null }>;
+    por_distribuidor: Array<{ distribuidor_id: number; nombre: string; patente: string; cantidad: number; total_cliente: number; total_correcto: number; total_distribuidor: number; total_diferencia: number; margen_agencia: number }>;
+    por_sucursal: Array<{ sucursal: string; total: number; ok: number; diferencia: number; sin_tarifa: number; sin_distribuidor: number; total_cliente: number; total_correcto: number; total_diferencia: number }>;
+  };
+  const [auditoria, setAuditoria] = useState<AuditoriaData | null>(null);
+  const [auditoriaLoading, setAuditoriaLoading] = useState(false);
+  const [showAuditoria, setShowAuditoria] = useState(false);
+  const [auditoriaSecciones, setAuditoriaSecciones] = useState<Record<string, boolean>>({});
 
   // New liq form
   const [newLiqClienteId, setNewLiqClienteId] = useState('');
@@ -454,6 +479,99 @@ export function LiquidacionesExtractosPage({
     }
   }, [api, selectedLiq, openLiq, navigate]);
 
+  const cambiarEstado = useCallback(async (nuevoEstado: LiqLiquidacionCliente['estado']) => {
+    if (!selectedLiq) return;
+    if (!window.confirm(`¿Cambiar estado a "${nuevoEstado}"?`)) return;
+    try {
+      const res = await api.patch(`/liquidaciones/${selectedLiq.id}/estado`, { estado: nuevoEstado });
+      const updated = (res.data ?? {}) as LiqLiquidacionCliente;
+      setSelectedLiq((prev) => prev ? { ...prev, ...updated } : prev);
+      setLiquidaciones((prev) => prev.map((l) => l.id === selectedLiq.id ? { ...l, estado: nuevoEstado } : l));
+      showSuccess(res.message ?? 'Estado actualizado');
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Error cambiando estado');
+    }
+  }, [api, selectedLiq]);
+
+  const excluirOperacion = useCallback(async (opId: number) => {
+    if (!selectedLiq) return;
+    const motivo = window.prompt('Motivo de exclusión (opcional):', 'Excluida manualmente');
+    if (motivo === null) return;
+    try {
+      const res = await api.put(`/operaciones/${opId}/excluir`, { motivo: motivo.trim() || 'Excluida manualmente' });
+      showSuccess(res.message ?? 'Operación excluida');
+      await openLiq(selectedLiq);
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Error excluyendo operación');
+    }
+  }, [api, selectedLiq, openLiq]);
+
+  const incluirOperacion = useCallback(async (opId: number) => {
+    if (!selectedLiq) return;
+    if (!window.confirm('¿Incluir nuevamente esta operación?')) return;
+    try {
+      const res = await api.put(`/operaciones/${opId}/incluir`);
+      showSuccess(res.message ?? 'Operación incluida');
+      await openLiq(selectedLiq);
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Error incluyendo operación');
+    }
+  }, [api, selectedLiq, openLiq]);
+
+  const guardarHotMapeo = useCallback(async () => {
+    if (!selectedLiq || !hotMapOp) return;
+    const concepto = (hotMapOp.concepto ?? '').trim();
+    const valorTarifa = hotMapValorTarifa.trim();
+    const dim = hotMapDim.trim();
+    if (!concepto) { setError('El concepto no puede ser vacío'); return; }
+    if (!valorTarifa) { setError('El valor tarifa es obligatorio'); return; }
+    if (!dim) { setError('La dimensión es obligatoria'); return; }
+    try {
+      await api.post(`/clientes/${selectedLiq.cliente_id}/mapeos-concepto`, {
+        mapeos: [{ valor_excel: concepto, dimension_destino: dim, valor_tarifa: valorTarifa }],
+      });
+      setHotMapOp(null);
+      setHotMapValorTarifa('');
+      showSuccess('Mapeo guardado. Reprocesá el archivo para aplicarlo.');
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Error guardando mapeo');
+    }
+  }, [api, selectedLiq, hotMapOp, hotMapValorTarifa, hotMapDim]);
+
+  const generarPdf = useCallback(async (liqDistId: number) => {
+    setPdfGenerating((prev) => ({ ...prev, [liqDistId]: true }));
+    try {
+      const res = await api.post(`/liquidaciones-distribuidor/${liqDistId}/documento`, {});
+      showSuccess(res.message ?? 'PDF generado');
+      // Refresh distributor list to get updated pdf_path
+      if (selectedLiq) {
+        const distRes = await api.get(`/liquidaciones/${selectedLiq.id}/distribuidores`);
+        setDistribuidores(distRes.data ?? []);
+      }
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Error generando PDF');
+    } finally {
+      setPdfGenerating((prev) => ({ ...prev, [liqDistId]: false }));
+    }
+  }, [api, selectedLiq]);
+
+  const loadAuditoria = useCallback(async () => {
+    if (!selectedLiq) return;
+    setAuditoriaLoading(true);
+    try {
+      const res = await api.get(`/liquidaciones/${selectedLiq.id}/auditoria`);
+      setAuditoria(res.data ?? null);
+      setShowAuditoria(true);
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Error cargando auditoría');
+    } finally {
+      setAuditoriaLoading(false);
+    }
+  }, [api, selectedLiq]);
+
+  const toggleSeccion = (key: string) =>
+    setAuditoriaSecciones((prev) => ({ ...prev, [key]: !prev[key] }));
+
   const fmt = (n: string | number | null) => {
     if (n == null) return '—';
     const num = typeof n === 'string' ? parseFloat(n) : n;
@@ -621,7 +739,49 @@ export function LiquidacionesExtractosPage({
 	            <span style={{ padding: '2px 10px', borderRadius: 10, fontSize: 12, background: '#e5e7eb' }}>
 	              {ESTADO_LIQ_LABELS[selectedLiq.estado]}
 	            </span>
+            {selectedLiq.estado === 'pendiente' && (
+              <button type="button" className="btn-sm" style={{ background: '#dbeafe', color: '#1d4ed8', border: '1px solid #93c5fd' }} onClick={() => void cambiarEstado('en_proceso')}>
+                → En proceso
+              </button>
+            )}
+            {selectedLiq.estado === 'en_proceso' && (
+              <>
+                <button type="button" className="btn-sm" style={{ background: '#dcfce7', color: '#166534', border: '1px solid #86efac' }} onClick={() => void cambiarEstado('auditada')}>
+                  → Auditada
+                </button>
+                <button type="button" className="btn-sm" style={{ background: '#fee2e2', color: '#991b1b', border: '1px solid #fca5a5' }} onClick={() => void cambiarEstado('rechazada')}>
+                  Rechazar
+                </button>
+              </>
+            )}
+            {selectedLiq.estado === 'auditada' && (
+              <>
+                <button type="button" className="btn-sm" style={{ background: '#dcfce7', color: '#166534', border: '1px solid #86efac', fontWeight: 700 }} onClick={() => void cambiarEstado('aprobada')}>
+                  ✓ Aprobar
+                </button>
+                <button type="button" className="btn-sm" style={{ background: '#fee2e2', color: '#991b1b', border: '1px solid #fca5a5' }} onClick={() => void cambiarEstado('rechazada')}>
+                  Rechazar
+                </button>
+                <button type="button" className="btn-sm" onClick={() => void cambiarEstado('en_proceso')}>
+                  ← Volver a proceso
+                </button>
+              </>
+            )}
+            {selectedLiq.estado === 'rechazada' && (
+              <button type="button" className="btn-sm" onClick={() => void cambiarEstado('en_proceso')}>
+                ← Reabrir
+              </button>
+            )}
               <span style={{ marginLeft: 'auto', display: 'flex', gap: 8, alignItems: 'center' }}>
+                <button
+                  type="button"
+                  className="btn-sm"
+                  style={{ background: '#e0f2fe', color: '#0369a1', border: '1px solid #7dd3fc' }}
+                  onClick={() => { if (showAuditoria) { setShowAuditoria(false); } else { void loadAuditoria(); } }}
+                  disabled={auditoriaLoading}
+                >
+                  {auditoriaLoading ? 'Cargando…' : showAuditoria ? 'Ocultar auditoría' : 'Ver auditoría'}
+                </button>
                 <button type="button" className="btn-sm btn-danger" onClick={eliminarLiquidacionDesdeDetalle}>
                   Eliminar liquidación
                 </button>
@@ -668,6 +828,200 @@ export function LiquidacionesExtractosPage({
               </div>
             ))}
           </div>
+
+          {/* Auditoría panel */}
+          {showAuditoria && auditoria && (
+            <div style={{ display: 'grid', gap: 12, marginBottom: 16 }}>
+              {/* Resumen ejecutivo */}
+              <div className="dashboard-card">
+                <header className="card-header"><h3>Resumen de auditoría</h3></header>
+                <div className="card-body">
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: 10, marginBottom: 16 }}>
+                    {[
+                      { label: 'Total operaciones', value: auditoria.resumen.total_operaciones, color: '#374151' },
+                      { label: 'Importe cliente', value: fmt(auditoria.resumen.total_importe_cliente), color: '#1d4ed8' },
+                      { label: 'Importe distribuidor', value: fmt(auditoria.resumen.total_importe_distribuidor), color: '#0369a1' },
+                      { label: 'Margen agencia', value: fmt(auditoria.resumen.total_margen_agencia), color: '#16a34a' },
+                      { label: 'Diferencia total', value: fmt(auditoria.resumen.total_diferencia), color: auditoria.resumen.total_diferencia !== 0 ? '#d97706' : '#16a34a' },
+                    ].map((c) => (
+                      <div key={c.label} style={{ background: '#f9fafb', borderRadius: 8, padding: '10px 14px' }}>
+                        <div style={{ fontSize: 11, color: '#6b7280', marginBottom: 4 }}>{c.label}</div>
+                        <div style={{ fontSize: 18, fontWeight: 700, color: c.color }}>{c.value}</div>
+                      </div>
+                    ))}
+                  </div>
+                  {/* Por sucursal */}
+                  {auditoria.por_sucursal.length > 0 && (
+                    <>
+                      <h4 style={{ margin: '0 0 8px 0', fontSize: 13, cursor: 'pointer', userSelect: 'none' }} onClick={() => toggleSeccion('sucursal')}>
+                        {auditoriaSecciones['sucursal'] ? '▾' : '▸'} Resumen por sucursal ({auditoria.por_sucursal.length})
+                      </h4>
+                      {auditoriaSecciones['sucursal'] && (
+                        <div style={{ overflowX: 'auto' }}>
+                          <table className="data-table">
+                            <thead><tr><th>Sucursal</th><th>Total</th><th>OK</th><th>Diferencia</th><th>Sin tarifa</th><th>Sin distrib.</th><th>Importe cliente</th><th>Importe correcto</th><th>Diferencia $</th></tr></thead>
+                            <tbody>
+                              {auditoria.por_sucursal.map((s) => (
+                                <tr key={s.sucursal}>
+                                  <td><strong>{s.sucursal}</strong></td>
+                                  <td>{s.total}</td>
+                                  <td style={{ color: '#16a34a' }}>{s.ok}</td>
+                                  <td style={{ color: s.diferencia > 0 ? '#d97706' : '#6b7280' }}>{s.diferencia}</td>
+                                  <td style={{ color: s.sin_tarifa > 0 ? '#dc2626' : '#6b7280' }}>{s.sin_tarifa}</td>
+                                  <td style={{ color: s.sin_distribuidor > 0 ? '#7c3aed' : '#6b7280' }}>{s.sin_distribuidor}</td>
+                                  <td>{fmt(s.total_cliente)}</td>
+                                  <td>{fmt(s.total_correcto)}</td>
+                                  <td style={{ color: s.total_diferencia !== 0 ? '#d97706' : '#16a34a' }}>{fmt(s.total_diferencia)}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+                    </>
+                  )}
+                </div>
+              </div>
+
+              {/* Por distribuidor */}
+              {auditoria.por_distribuidor.length > 0 && (
+                <div className="dashboard-card">
+                  <header className="card-header" style={{ cursor: 'pointer' }} onClick={() => toggleSeccion('distribuidor')}>
+                    <h3>{auditoriaSecciones['distribuidor'] ? '▾' : '▸'} Resumen por distribuidor ({auditoria.por_distribuidor.length})</h3>
+                  </header>
+                  {auditoriaSecciones['distribuidor'] && (
+                    <div className="card-body" style={{ overflowX: 'auto' }}>
+                      <table className="data-table">
+                        <thead><tr><th>Distribuidor</th><th>Patente</th><th>Ops</th><th>Importe cliente</th><th>Importe correcto</th><th>Importe distrib.</th><th>Margen agencia</th><th>Diferencia</th></tr></thead>
+                        <tbody>
+                          {auditoria.por_distribuidor.map((d) => (
+                            <tr key={d.distribuidor_id}>
+                              <td><strong>{d.nombre}</strong></td>
+                              <td><code>{d.patente}</code></td>
+                              <td>{d.cantidad}</td>
+                              <td>{fmt(d.total_cliente)}</td>
+                              <td>{fmt(d.total_correcto)}</td>
+                              <td>{fmt(d.total_distribuidor)}</td>
+                              <td style={{ color: '#16a34a' }}>{fmt(d.margen_agencia)}</td>
+                              <td style={{ color: d.total_diferencia !== 0 ? '#d97706' : '#16a34a' }}>{fmt(d.total_diferencia)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Diferencias */}
+              {auditoria.diferencias.length > 0 && (
+                <div className="dashboard-card">
+                  <header className="card-header" style={{ cursor: 'pointer' }} onClick={() => toggleSeccion('diferencias')}>
+                    <h3 style={{ color: '#d97706' }}>{auditoriaSecciones['diferencias'] ? '▾' : '▸'} Diferencias fuera de tolerancia ({auditoria.diferencias.length})</h3>
+                  </header>
+                  {auditoriaSecciones['diferencias'] && (
+                    <div className="card-body" style={{ overflowX: 'auto' }}>
+                      <table className="data-table">
+                        <thead><tr><th>Dominio</th><th>Distribuidor</th><th>Concepto</th><th>Sucursal</th><th>Valor cliente</th><th>Tarifa correcta</th><th>Diferencia</th></tr></thead>
+                        <tbody>
+                          {auditoria.diferencias.map((op) => (
+                            <tr key={op.id}>
+                              <td><code>{op.dominio ?? '—'}</code></td>
+                              <td style={{ fontSize: 12 }}>{op.distribuidor ? `${op.distribuidor.apellidos}, ${op.distribuidor.nombres}` : '—'}</td>
+                              <td style={{ fontSize: 12 }}>{op.concepto ?? '—'}</td>
+                              <td style={{ fontSize: 12 }}>{op.sucursal_tarifa ?? '—'}</td>
+                              <td>{fmt(op.valor_cliente)}</td>
+                              <td>{op.valor_tarifa_original ? fmt(op.valor_tarifa_original) : '—'}</td>
+                              <td style={{ color: '#d97706', fontWeight: 600 }}>{op.diferencia_cliente ? fmt(op.diferencia_cliente) : '—'}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Sin tarifa agrupado */}
+              {auditoria.sin_tarifa_agrupado.length > 0 && (
+                <div className="dashboard-card">
+                  <header className="card-header" style={{ cursor: 'pointer' }} onClick={() => toggleSeccion('sinTarifa')}>
+                    <h3 style={{ color: '#dc2626' }}>{auditoriaSecciones['sinTarifa'] ? '▾' : '▸'} Sin tarifa ({auditoria.sin_tarifa_agrupado.reduce((s, x) => s + x.cantidad, 0)} ops · {auditoria.sin_tarifa_agrupado.length} conceptos únicos)</h3>
+                  </header>
+                  {auditoriaSecciones['sinTarifa'] && (
+                    <div className="card-body">
+                      <table className="data-table">
+                        <thead><tr><th>Concepto (Excel)</th><th>Dimensión fallida</th><th>Sucursal</th><th>Cantidad</th><th>Total cliente</th></tr></thead>
+                        <tbody>
+                          {auditoria.sin_tarifa_agrupado.map((s, i) => (
+                            <tr key={i}>
+                              <td><code>{s.concepto ?? '—'}</code></td>
+                              <td style={{ color: '#dc2626', fontSize: 12 }}>{s.dimension_fallida ?? '—'}</td>
+                              <td style={{ fontSize: 12 }}>{s.sucursal_tarifa ?? '—'}</td>
+                              <td>{s.cantidad}</td>
+                              <td>{fmt(s.total_cliente)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Sin distribuidor agrupado */}
+              {auditoria.sin_distribuidor_agrupado.length > 0 && (
+                <div className="dashboard-card">
+                  <header className="card-header" style={{ cursor: 'pointer' }} onClick={() => toggleSeccion('sinDistrib')}>
+                    <h3 style={{ color: '#7c3aed' }}>{auditoriaSecciones['sinDistrib'] ? '▾' : '▸'} Sin distribuidor ({auditoria.sin_distribuidor_agrupado.reduce((s, x) => s + x.cantidad, 0)} ops · {auditoria.sin_distribuidor_agrupado.length} patentes únicas)</h3>
+                  </header>
+                  {auditoriaSecciones['sinDistrib'] && (
+                    <div className="card-body">
+                      <table className="data-table">
+                        <thead><tr><th>Dominio / Patente</th><th>Cantidad</th><th>Total cliente</th></tr></thead>
+                        <tbody>
+                          {auditoria.sin_distribuidor_agrupado.map((s, i) => (
+                            <tr key={i}>
+                              <td><code>{s.dominio ?? '—'}</code></td>
+                              <td>{s.cantidad}</td>
+                              <td>{fmt(s.total_cliente)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Duplicados */}
+              {auditoria.duplicados.length > 0 && (
+                <div className="dashboard-card">
+                  <header className="card-header" style={{ cursor: 'pointer' }} onClick={() => toggleSeccion('duplicados')}>
+                    <h3 style={{ color: '#db2777' }}>{auditoriaSecciones['duplicados'] ? '▾' : '▸'} Duplicados detectados ({auditoria.duplicados.length})</h3>
+                  </header>
+                  {auditoriaSecciones['duplicados'] && (
+                    <div className="card-body" style={{ overflowX: 'auto' }}>
+                      <table className="data-table">
+                        <thead><tr><th>ID Op.</th><th>Dominio</th><th>Concepto</th><th>Valor cliente</th><th>Distribuidor</th></tr></thead>
+                        <tbody>
+                          {auditoria.duplicados.map((op) => (
+                            <tr key={op.id}>
+                              <td>{op.id}</td>
+                              <td><code>{op.dominio ?? '—'}</code></td>
+                              <td style={{ fontSize: 12 }}>{op.concepto ?? '—'}</td>
+                              <td>{fmt(op.valor_cliente)}</td>
+                              <td style={{ fontSize: 12 }}>{op.distribuidor ? `${op.distribuidor.apellidos}, ${op.distribuidor.nombres}` : '—'}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Upload file */}
           <div className="dashboard-card" style={{ marginBottom: 16 }}>
@@ -860,16 +1214,59 @@ export function LiquidacionesExtractosPage({
                           {op.estado === 'sin_tarifa' && op.dimension_fallida ? ` (${op.dimension_fallida})` : ''}
                         </span>
                       </td>
-	                      <td style={{ textAlign: 'right' }}>
-	                        <button type="button" className="btn-sm btn-danger" onClick={() => eliminarOperacion(op.id)}>
-	                          Eliminar
-	                        </button>
-	                      </td>
+                      <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
+                        {op.estado === 'sin_tarifa' && !op.excluida && (
+                          <button type="button" className="btn-sm" style={{ marginRight: 4, background: '#fef3c7', color: '#92400e', border: '1px solid #fcd34d' }}
+                            onClick={() => { setHotMapOp(op); setHotMapValorTarifa(''); setHotMapDim('concepto'); }}>
+                            + Mapeo
+                          </button>
+                        )}
+                        {!op.excluida ? (
+                          <button type="button" className="btn-sm" style={{ marginRight: 4 }} onClick={() => excluirOperacion(op.id)}>
+                            Excluir
+                          </button>
+                        ) : (
+                          <button type="button" className="btn-sm" style={{ marginRight: 4, background: '#dcfce7', color: '#166534', border: '1px solid #86efac' }} onClick={() => incluirOperacion(op.id)}>
+                            Incluir
+                          </button>
+                        )}
+                        <button type="button" className="btn-sm btn-danger" onClick={() => eliminarOperacion(op.id)}>
+                          Eliminar
+                        </button>
+                      </td>
 	                    </tr>
 	                  ))}
 	                  {operaciones.length === 0 && <tr><td colSpan={11} style={{ textAlign: 'center', color: '#6b7280' }}>Sin operaciones</td></tr>}
 	                </tbody>
 	              </table>
+              {hotMapOp && (
+                <div style={{ margin: '12px 0', background: '#fffbeb', border: '1px solid #fcd34d', borderRadius: 8, padding: 16 }}>
+                  <h4 style={{ margin: '0 0 12px 0', color: '#92400e' }}>Crear mapeo para: <code>{hotMapOp.concepto}</code></h4>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr 1.5fr auto auto', gap: 10, alignItems: 'end' }}>
+                    <div>
+                      <label style={{ display: 'block', fontSize: 12, marginBottom: 4 }}>Valor en Excel (concepto)</label>
+                      <input type="text" className="form-input" value={hotMapOp.concepto ?? ''} readOnly style={{ background: '#f3f4f6' }} />
+                    </div>
+                    <div>
+                      <label style={{ display: 'block', fontSize: 12, marginBottom: 4 }}>Dimensión destino</label>
+                      <input type="text" className="form-input" value={hotMapDim} onChange={(e) => setHotMapDim(e.target.value)} placeholder="concepto" />
+                    </div>
+                    <div>
+                      <label style={{ display: 'block', fontSize: 12, marginBottom: 4 }}>Valor tarifa (destino)</label>
+                      <input type="text" className="form-input" value={hotMapValorTarifa} onChange={(e) => setHotMapValorTarifa(e.target.value)} placeholder="Ej: Ut. Corto AM" autoFocus />
+                    </div>
+                    <button type="button" className="btn-primary" onClick={() => void guardarHotMapeo()}>
+                      Guardar mapeo
+                    </button>
+                    <button type="button" className="btn-sm" onClick={() => setHotMapOp(null)}>
+                      Cancelar
+                    </button>
+                  </div>
+                  <p style={{ margin: '8px 0 0 0', fontSize: 12, color: '#92400e' }}>
+                    Después de guardar, usá el botón <strong>Reprocesar</strong> en el archivo correspondiente para re-calcular las operaciones con el nuevo mapeo.
+                  </p>
+                </div>
+              )}
               {opPage.last > 1 && (
                 <div style={{ display: 'flex', justifyContent: 'center', gap: 8, marginTop: 12 }}>
                   <button type="button" className="btn-sm" disabled={opPage.current === 1} onClick={() => { const p = opPage.current - 1; setOpPage((prev) => ({ ...prev, current: p })); if (selectedLiq) loadOps(selectedLiq.id, opFiltroEstado, p); }}>←</button>
@@ -903,7 +1300,27 @@ export function LiquidacionesExtractosPage({
                       <td style={{ color: '#dc2626' }}>{fmt(d.gastos_administrativos)}</td>
                       <td><strong>{fmt(d.total_a_pagar)}</strong></td>
                       <td style={{ fontSize: 12 }}>{d.estado}</td>
-                      <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
+                      <td style={{ textAlign: 'right', whiteSpace: 'nowrap', display: 'flex', gap: 4, justifyContent: 'flex-end' }}>
+                        <button
+                          type="button"
+                          className="btn-sm"
+                          style={{ background: '#f3f4f6' }}
+                          onClick={() => void generarPdf(d.id)}
+                          disabled={pdfGenerating[d.id]}
+                        >
+                          {pdfGenerating[d.id] ? 'Generando…' : d.pdf_path ? 'Regenerar PDF' : 'Generar PDF'}
+                        </button>
+                        {d.pdf_path && (
+                          <a
+                            href={`${resolveApiBaseUrl()}/storage/${d.pdf_path}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="btn-sm btn-primary"
+                            style={{ textDecoration: 'none' }}
+                          >
+                            Ver PDF
+                          </a>
+                        )}
                         <button type="button" className="btn-sm btn-primary" onClick={() => navigate(`/liquidaciones/${d.distribuidor_id}`)}>
                           Ir a proveedor
                         </button>

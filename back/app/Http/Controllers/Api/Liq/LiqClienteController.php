@@ -327,4 +327,11 @@ class LiqClienteController extends Controller
         $historial = $query->paginate(50);
         return response()->json(['data' => $historial]);
     }
+
+    // PUT /liq/gastos/{gasto}/desactivar
+    public function desactivarGasto(Request $request, \App\Models\LiqConfiguracionGastos $gasto): JsonResponse
+    {
+        $gasto->update(['activo' => false]);
+        return response()->json(['message' => 'Gasto desactivado']);
+    }
 }

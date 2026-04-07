@@ -63,5 +63,40 @@ class LiqOperacionController extends Controller
             'estado' => $totalOps > 0 ? LiqLiquidacionCliente::ESTADO_EN_PROCESO : LiqLiquidacionCliente::ESTADO_PENDIENTE,
         ]);
     }
+
+    // PUT /liq/operaciones/{operacion}/excluir
+    public function excluir(Request $request, LiqOperacion $operacion): JsonResponse
+    {
+        $motivo = $request->input('motivo', 'Excluida manualmente');
+        $operacion->update([
+            'excluida'         => true,
+            'estado'           => 'excluida',
+            'motivo_exclusion' => $motivo,
+        ]);
+        LiqLiquidacionDistribuidor::where('liquidacion_cliente_id', $operacion->liquidacion_cliente_id)->delete();
+        return response()->json(['message' => 'Operación excluida', 'data' => $operacion->fresh()]);
+    }
+
+    // PUT /liq/operaciones/{operacion}/incluir
+    public function incluir(LiqOperacion $operacion): JsonResponse
+    {
+        // Re-derive estado from existing data
+        $estado = 'ok';
+        if ($operacion->linea_tarifa_id === null) {
+            $estado = 'sin_tarifa';
+        } elseif ($operacion->distribuidor_id === null) {
+            $estado = 'sin_distribuidor';
+        } elseif ($operacion->diferencia_cliente !== null && abs((float) $operacion->diferencia_cliente) > 0.01) {
+            $estado = 'diferencia';
+        }
+
+        $operacion->update([
+            'excluida'         => false,
+            'estado'           => $estado,
+            'motivo_exclusion' => null,
+        ]);
+        LiqLiquidacionDistribuidor::where('liquidacion_cliente_id', $operacion->liquidacion_cliente_id)->delete();
+        return response()->json(['message' => 'Operación incluida', 'data' => $operacion->fresh()]);
+    }
 }
 

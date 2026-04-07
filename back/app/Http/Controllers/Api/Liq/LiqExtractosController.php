@@ -286,4 +286,186 @@ class LiqExtractosController extends Controller
             ->get();
         return response()->json(['data' => $liqDist]);
     }
+
+    // GET /liq/liquidaciones/{liquidacionCliente}/auditoria - full audit report
+    public function auditoria(LiqLiquidacionCliente $liquidacionCliente): JsonResponse
+    {
+        $liqId = $liquidacionCliente->id;
+
+        // ── 1. Resumen por estado ─────────────────────────────────────────────
+        $countsPorEstado = LiqOperacion::where('liquidacion_cliente_id', $liqId)
+            ->selectRaw('estado, COUNT(*) as cantidad, SUM(valor_cliente) as total_cliente, SUM(valor_tarifa_original) as total_correcto, SUM(diferencia_cliente) as total_diferencia')
+            ->groupBy('estado')
+            ->get()
+            ->keyBy('estado');
+
+        $resumen = [
+            'total_operaciones'     => LiqOperacion::where('liquidacion_cliente_id', $liqId)->count(),
+            'estados'               => $countsPorEstado,
+            'total_importe_cliente' => (float) ($liquidacionCliente->total_importe_cliente ?? 0),
+            'total_diferencia'      => (float) ($liquidacionCliente->total_diferencia ?? 0),
+        ];
+
+        // Margen: sólo sobre operaciones válidas (ok + diferencia, no excluidas)
+        $margenData = LiqOperacion::where('liquidacion_cliente_id', $liqId)
+            ->whereIn('estado', ['ok', 'diferencia'])
+            ->where('excluida', false)
+            ->selectRaw('SUM(valor_tarifa_original) as sum_original, SUM(valor_tarifa_distribuidor) as sum_distribuidor')
+            ->first();
+        $resumen['total_margen_agencia'] = round(
+            (float) ($margenData->sum_original ?? 0) - (float) ($margenData->sum_distribuidor ?? 0),
+            2
+        );
+        $resumen['total_importe_distribuidor'] = round((float) ($margenData->sum_distribuidor ?? 0), 2);
+
+        // ── 2. Operaciones con diferencia (fuera de tolerancia) ───────────────
+        $diferencias = LiqOperacion::where('liquidacion_cliente_id', $liqId)
+            ->where('estado', 'diferencia')
+            ->with('distribuidor:id,apellidos,nombres,patente')
+            ->orderByRaw('ABS(diferencia_cliente) DESC')
+            ->limit(200)
+            ->get(['id', 'dominio', 'concepto', 'sucursal_tarifa', 'valor_cliente', 'valor_tarifa_original', 'diferencia_cliente', 'distribuidor_id', 'campos_originales']);
+
+        // ── 3. Sin tarifa ─────────────────────────────────────────────────────
+        $sinTarifa = LiqOperacion::where('liquidacion_cliente_id', $liqId)
+            ->where('estado', 'sin_tarifa')
+            ->orderBy('concepto')
+            ->limit(200)
+            ->get(['id', 'dominio', 'concepto', 'sucursal_tarifa', 'valor_cliente', 'dimension_fallida', 'campos_originales']);
+
+        // Agrupar sin_tarifa por concepto único para facilitar mapeo
+        $sinTarifaAgrupado = $sinTarifa->groupBy('concepto')
+            ->map(fn($ops) => [
+                'concepto'         => $ops->first()->concepto,
+                'dimension_fallida' => $ops->first()->dimension_fallida,
+                'sucursal_tarifa'  => $ops->first()->sucursal_tarifa,
+                'cantidad'         => $ops->count(),
+                'total_cliente'    => round($ops->sum(fn($o) => (float) $o->valor_cliente), 2),
+            ])
+            ->values();
+
+        // ── 4. Sin distribuidor ───────────────────────────────────────────────
+        $sinDistribuidor = LiqOperacion::where('liquidacion_cliente_id', $liqId)
+            ->where('estado', 'sin_distribuidor')
+            ->orderBy('dominio')
+            ->limit(200)
+            ->get(['id', 'dominio', 'concepto', 'sucursal_tarifa', 'valor_cliente']);
+
+        $sinDistribuidorAgrupado = $sinDistribuidor->groupBy('dominio')
+            ->map(fn($ops) => [
+                'dominio'       => $ops->first()->dominio,
+                'cantidad'      => $ops->count(),
+                'total_cliente' => round($ops->sum(fn($o) => (float) $o->valor_cliente), 2),
+            ])
+            ->values();
+
+        // ── 5. Duplicados ─────────────────────────────────────────────────────
+        $duplicados = LiqOperacion::where('liquidacion_cliente_id', $liqId)
+            ->where('estado', 'duplicado')
+            ->with('distribuidor:id,apellidos,nombres,patente')
+            ->limit(100)
+            ->get(['id', 'dominio', 'concepto', 'valor_cliente', 'distribuidor_id', 'campos_originales']);
+
+        // ── 6. Resumen por distribuidor ───────────────────────────────────────
+        $porDistribuidor = LiqOperacion::where('liquidacion_cliente_id', $liqId)
+            ->whereIn('estado', ['ok', 'diferencia'])
+            ->where('excluida', false)
+            ->whereNotNull('distribuidor_id')
+            ->selectRaw('
+                distribuidor_id,
+                COUNT(*) as cantidad,
+                SUM(valor_cliente) as total_cliente,
+                SUM(valor_tarifa_original) as total_correcto,
+                SUM(valor_tarifa_distribuidor) as total_distribuidor,
+                SUM(diferencia_cliente) as total_diferencia
+            ')
+            ->groupBy('distribuidor_id')
+            ->with('distribuidor:id,apellidos,nombres,patente')
+            ->orderByRaw('SUM(valor_tarifa_distribuidor) DESC')
+            ->get()
+            ->map(fn($row) => [
+                'distribuidor_id'    => $row->distribuidor_id,
+                'nombre'             => $row->distribuidor ? trim($row->distribuidor->apellidos . ', ' . $row->distribuidor->nombres) : "ID {$row->distribuidor_id}",
+                'patente'            => $row->distribuidor?->patente ?? '—',
+                'cantidad'           => (int) $row->cantidad,
+                'total_cliente'      => round((float) $row->total_cliente, 2),
+                'total_correcto'     => round((float) $row->total_correcto, 2),
+                'total_distribuidor' => round((float) $row->total_distribuidor, 2),
+                'total_diferencia'   => round((float) $row->total_diferencia, 2),
+                'margen_agencia'     => round((float) $row->total_correcto - (float) $row->total_distribuidor, 2),
+            ]);
+
+        // ── 7. Resumen por sucursal ───────────────────────────────────────────
+        $porSucursal = LiqOperacion::where('liquidacion_cliente_id', $liqId)
+            ->selectRaw('
+                sucursal_tarifa,
+                estado,
+                COUNT(*) as cantidad,
+                SUM(valor_cliente) as total_cliente,
+                SUM(valor_tarifa_original) as total_correcto,
+                SUM(diferencia_cliente) as total_diferencia
+            ')
+            ->groupBy('sucursal_tarifa', 'estado')
+            ->orderBy('sucursal_tarifa')
+            ->get()
+            ->groupBy('sucursal_tarifa')
+            ->map(fn($rows, $sucursal) => [
+                'sucursal'        => $sucursal ?? '(sin sucursal)',
+                'total'           => (int) $rows->sum('cantidad'),
+                'ok'              => (int) ($rows->firstWhere('estado', 'ok')?->cantidad ?? 0),
+                'diferencia'      => (int) ($rows->firstWhere('estado', 'diferencia')?->cantidad ?? 0),
+                'sin_tarifa'      => (int) ($rows->firstWhere('estado', 'sin_tarifa')?->cantidad ?? 0),
+                'sin_distribuidor' => (int) ($rows->firstWhere('estado', 'sin_distribuidor')?->cantidad ?? 0),
+                'total_cliente'   => round((float) $rows->sum('total_cliente'), 2),
+                'total_correcto'  => round((float) $rows->sum('total_correcto'), 2),
+                'total_diferencia' => round((float) $rows->sum('total_diferencia'), 2),
+            ])
+            ->values();
+
+        return response()->json([
+            'data' => [
+                'liquidacion'          => $liquidacionCliente->only(['id', 'cliente_id', 'periodo_desde', 'periodo_hasta', 'estado']),
+                'resumen'              => $resumen,
+                'diferencias'          => $diferencias,
+                'sin_tarifa_agrupado'  => $sinTarifaAgrupado,
+                'sin_distribuidor_agrupado' => $sinDistribuidorAgrupado,
+                'duplicados'           => $duplicados,
+                'por_distribuidor'     => $porDistribuidor,
+                'por_sucursal'         => $porSucursal,
+            ],
+        ]);
+    }
+
+    // PATCH /liq/liquidaciones/{liquidacionCliente}/estado
+    public function cambiarEstado(Request $request, LiqLiquidacionCliente $liquidacionCliente): JsonResponse
+    {
+        $data = $request->validate([
+            'estado' => 'required|in:pendiente,en_proceso,auditada,aprobada,rechazada',
+            'motivo' => 'nullable|string|max:500',
+        ]);
+
+        $transiciones = [
+            'pendiente'   => ['en_proceso'],
+            'en_proceso'  => ['auditada', 'rechazada'],
+            'auditada'    => ['aprobada', 'rechazada', 'en_proceso'],
+            'aprobada'    => ['rechazada'],
+            'rechazada'   => ['en_proceso'],
+        ];
+
+        $actual = $liquidacionCliente->estado;
+        $nuevo  = $data['estado'];
+
+        if (! in_array($nuevo, $transiciones[$actual] ?? [], true)) {
+            return response()->json([
+                'error' => "Transición no permitida: '{$actual}' → '{$nuevo}'"
+            ], 422);
+        }
+
+        $liquidacionCliente->update(['estado' => $nuevo]);
+
+        return response()->json([
+            'data'    => $liquidacionCliente->fresh(['cliente:id,nombre_corto,razon_social']),
+            'message' => "Estado actualizado a {$nuevo}",
+        ]);
+    }
 }
