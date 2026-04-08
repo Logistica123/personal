@@ -84,7 +84,7 @@ class LiquidacionReciboController extends Controller
             'totalImputado' => ['nullable', 'numeric'],
         ]);
 
-        $draft = is_array($validated['draft']) ? $validated['draft'] : [];
+        $draft = is_array($request->input('draft')) ? $request->input('draft') : [];
         $puntoVenta = $this->normalizeSerialComponent((string) ($draft['puntoVenta'] ?? ''));
         $numeroRecibo = $this->normalizeSerialComponent((string) ($draft['numeroRecibo'] ?? ''));
 

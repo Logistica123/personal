@@ -152,10 +152,10 @@ const createReciboComprobante = (seed?: Partial<ReciboComprobante>): ReciboCompr
 
 const createDefaultReciboDraft = (): ReciboDraft => ({
   puntoVenta: '0001',
-  numeroRecibo: '00000005',
+  numeroRecibo: '00000001',
   autoNumeroRecibo: true,
   autoNumeroFactura: true,
-  fecha: '2025-10-01',
+  fecha: new Date().toISOString().slice(0, 10),
   empresaNombre: 'LOGISTICA ARGENTINA SRL',
   empresaDireccion1: 'SAN CAYETANO 3470',
   empresaDireccion2: 'SAN CAYETANO - CORRIENTES',
@@ -168,20 +168,13 @@ const createDefaultReciboDraft = (): ReciboDraft => ({
   clienteDireccion2: '',
   clienteCuit: '',
   clienteIva: '',
-  fechaCobro: '2025-07-15',
-  detalleCobro: 'ECHEQ BANCO SUPERVIELLE',
-  importeRecibido: '8406974,86',
+  fechaCobro: '',
+  detalleCobro: '',
+  importeRecibido: '',
   retencionesIva: '',
-  retencionesIibb: '288033,40',
-  retencionesGanancias: '18002,09',
-  comprobantes: [
-    createReciboComprobante({
-      fecha: '2025-05-31',
-      numeroFactura: '00002-00000167',
-      totalFactura: '8713010,35',
-      imputado: '8713010,35',
-    }),
-  ],
+  retencionesIibb: '',
+  retencionesGanancias: '',
+  comprobantes: [createReciboComprobante()],
 });
 
 const parseLocalizedDecimal = (value: string | number | null | undefined): number | null => {
