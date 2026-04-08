@@ -24,6 +24,7 @@ type Props = {
 };
 
 type Step = 'lista' | 'detalle';
+const SUPPORTED_UPLOAD_TYPES = ['DATA_CLIENTE', 'DETALLE_SUCURSAL', 'TARIFARIO', 'BASE_DISTRIB', 'VARIABLES'] as const;
 
 export function LiquidacionesExtractosPage({
   DashboardLayout,
@@ -112,7 +113,12 @@ export function LiquidacionesExtractosPage({
 
     const cfg = clientes.find((c) => c.id === selectedLiq?.cliente_id)?.configuracion_excel;
     const extraRaw = (cfg as any)?.allowed_tipos_archivo ?? (cfg as any)?.tipos_archivo ?? [];
-    const extra = Array.isArray(extraRaw) ? extraRaw.filter((v) => typeof v === 'string' && v.trim()) as string[] : [];
+    const extra = Array.isArray(extraRaw)
+      ? extraRaw
+          .filter((v): v is string => typeof v === 'string' && v.trim() !== '')
+          .map((v) => v.trim().toUpperCase())
+          .filter((v) => SUPPORTED_UPLOAD_TYPES.includes(v as typeof SUPPORTED_UPLOAD_TYPES[number]))
+      : [];
 
     const seen = new Set(base.map((b) => b.value));
     const merged = [...base];
@@ -1025,7 +1031,7 @@ export function LiquidacionesExtractosPage({
 
           {/* Upload file */}
           <div className="dashboard-card" style={{ marginBottom: 16 }}>
-            <header className="card-header"><h3>Cargar archivo Excel</h3></header>
+            <header className="card-header"><h3>Cargar archivo de entrada</h3></header>
             <div className="card-body">
               <datalist id="liq-sucursal-options">
                 {sucursalTarifaOptions.map((s) => (
@@ -1035,7 +1041,7 @@ export function LiquidacionesExtractosPage({
               <div style={{ display: 'flex', gap: 12, alignItems: 'flex-end', flexWrap: 'wrap' }}>
                 <div>
                   <label style={{ display: 'block', fontSize: 12, marginBottom: 4 }}>Archivo</label>
-                  <input type="file" accept=".xlsx,.xls" onChange={(e) => setUploadFile(e.target.files?.[0] ?? null)} />
+                  <input type="file" accept=".xlsx,.xls,.pdf" onChange={(e) => setUploadFile(e.target.files?.[0] ?? null)} />
                 </div>
                 <div>
 	                  <label style={{ display: 'block', fontSize: 12, marginBottom: 4 }}>Sucursal (opcional)</label>
@@ -1058,6 +1064,9 @@ export function LiquidacionesExtractosPage({
                       ))}
 	                  </select>
 	                </div>
+                  <div style={{ fontSize: 11, color: '#6b7280', minWidth: 220 }}>
+                    Soporta Excel y PDF. Para PDF, el cliente debe tener configurado `pdf_operacion_regex`.
+                  </div>
                 <button type="button" className="btn-primary" onClick={subirArchivo} disabled={!uploadFile || uploading}>
                   {uploading ? 'Procesando…' : 'Subir y procesar'}
                 </button>

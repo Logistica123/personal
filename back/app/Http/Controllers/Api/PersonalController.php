@@ -22,6 +22,7 @@ use App\Models\PersonalMonthlySummary;
 use App\Models\PersonalNotification;
 use App\Models\ContactReveal;
 use App\Models\TransportistaQrAccessLog;
+use App\Support\Personal\PersonaPatenteHelper;
 use App\Support\Requerimientos\ClienteRequerimientoSync;
 use App\Services\AuditLogger;
 use Illuminate\Http\JsonResponse;
@@ -129,14 +130,15 @@ class PersonalController extends Controller
 
     protected function normalizeDomain(?string $domain): ?string
     {
-        if (! is_string($domain)) {
-            return null;
-        }
+        return PersonaPatenteHelper::normalize($domain);
+    }
 
-        $normalized = strtoupper(trim($domain));
-        $normalized = preg_replace('/[\s\.\-]+/', '', $normalized);
-
-        return $normalized !== '' ? $normalized : null;
+    /**
+     * @return string[]
+     */
+    protected function getPersonaDomains(Persona $persona): array
+    {
+        return PersonaPatenteHelper::normalizedDomainsForPersona($persona);
     }
 
     protected function resolveDefaultApprovedEstadoId(): ?int
@@ -457,9 +459,10 @@ class PersonalController extends Controller
 
     public function combustible(Request $request, Persona $persona): JsonResponse
     {
-        $domain = $this->normalizeDomain($persona->patente);
+        $domains = $this->getPersonaDomains($persona);
+        $primaryDomain = $domains[0] ?? null;
 
-        if (! $domain) {
+        if ($domains === []) {
             return response()->json([
                 'data' => [],
                 'totals' => [
@@ -468,7 +471,8 @@ class PersonalController extends Controller
                     'amount' => 0,
                 ],
                 'domain' => null,
-                'message' => 'No hay patente asociada al distribuidor.',
+                'domains' => [],
+                'message' => 'No hay patentes asociadas al distribuidor.',
             ]);
         }
 
@@ -480,7 +484,7 @@ class PersonalController extends Controller
         $onlyImputed = $request->boolean('only_imputed');
 
         $query = FuelMovement::query()
-            ->where('domain_norm', $domain)
+            ->whereIn('domain_norm', $domains)
             ->whereNotIn('status', ['DUPLICATE'])
             ->orderByDesc('occurred_at');
 
@@ -533,19 +537,22 @@ class PersonalController extends Controller
         return response()->json([
             'data' => $rows,
             'totals' => $totals,
-            'domain' => $domain,
+            'domain' => $primaryDomain,
+            'domains' => $domains,
         ]);
     }
 
     public function combustibleReports(Request $request, Persona $persona): JsonResponse
     {
-        $domain = $this->normalizeDomain($persona->patente);
+        $domains = $this->getPersonaDomains($persona);
+        $primaryDomain = $domains[0] ?? null;
 
-        if (! $domain) {
+        if ($domains === []) {
             return response()->json([
                 'data' => [],
                 'domain' => null,
-                'message' => 'No hay patente asociada al distribuidor.',
+                'domains' => [],
+                'message' => 'No hay patentes asociadas al distribuidor.',
             ]);
         }
 
@@ -554,8 +561,8 @@ class PersonalController extends Controller
 
         $query = FuelReport::query()
             ->where('status', 'APPLIED')
-            ->whereHas('items.movement', function ($movementQuery) use ($domain) {
-                $movementQuery->where('domain_norm', $domain);
+            ->whereHas('items.movement', function ($movementQuery) use ($domains) {
+                $movementQuery->whereIn('domain_norm', $domains);
             })
             ->with(['items.movement'])
             ->orderByDesc('applied_at')
@@ -600,7 +607,8 @@ class PersonalController extends Controller
 
         return response()->json([
             'data' => $reports,
-            'domain' => $domain,
+            'domain' => $primaryDomain,
+            'domains' => $domains,
         ]);
     }
 
@@ -740,9 +748,10 @@ class PersonalController extends Controller
 
     public function combustibleProjection(Request $request, Persona $persona): JsonResponse
     {
-        $domain = $this->normalizeDomain($persona->patente);
+        $domains = $this->getPersonaDomains($persona);
+        $primaryDomain = $domains[0] ?? null;
 
-        if (! $domain) {
+        if ($domains === []) {
             return response()->json([
                 'totals' => [
                     'movements' => 0,
@@ -750,7 +759,8 @@ class PersonalController extends Controller
                     'amount' => 0,
                 ],
                 'domain' => null,
-                'message' => 'No hay patente asociada al distribuidor.',
+                'domains' => [],
+                'message' => 'No hay patentes asociadas al distribuidor.',
             ]);
         }
 
@@ -758,7 +768,7 @@ class PersonalController extends Controller
         $dateTo = $request->query('date_to');
 
         $query = FuelMovement::query()
-            ->where('domain_norm', $domain)
+            ->whereIn('domain_norm', $domains)
             ->where('discounted', false)
             ->whereNotIn('status', ['DUPLICATE'])
             ->orderByDesc('occurred_at');
@@ -780,7 +790,8 @@ class PersonalController extends Controller
 
         return response()->json([
             'totals' => $totals,
-            'domain' => $domain,
+            'domain' => $primaryDomain,
+            'domains' => $domains,
         ]);
     }
 
@@ -930,6 +941,7 @@ class PersonalController extends Controller
                 'agente:id,name',
                 'agenteResponsable:id,name',
                 'estado:id,nombre',
+                'patentesAdicionales:id,persona_id,patente,patente_norm,activo',
                 'dueno:id,persona_id,nombreapellido,fecha_nacimiento,email,telefono,cuil,cuil_cobrador,cbu_alias,observaciones',
                 'aprobadoPor:id,name',
                 'documentosVencimientos' => function ($documentsQuery) use ($includePending) {
@@ -1081,6 +1093,7 @@ class PersonalController extends Controller
             'agente:id,name',
             'agenteResponsable:id,name',
             'estado:id,nombre',
+            'patentesAdicionales:id,persona_id,patente,patente_norm,activo',
             'dueno:id,persona_id,nombreapellido,fecha_nacimiento,email,telefono,cuil,cuil_cobrador,cbu_alias,observaciones',
             'documentos' => fn ($query) => $query
                 ->with([
@@ -1208,6 +1221,8 @@ class PersonalController extends Controller
             'pago' => ['nullable', 'numeric'],
             'cbuAlias' => ['nullable', 'string', 'max:255'],
             'patente' => ['nullable', 'string', 'max:100'],
+            'patentesAdicionales' => ['nullable', 'array'],
+            'patentesAdicionales.*' => ['nullable', 'string', 'max:100'],
             'fechaAlta' => ['nullable', 'date'],
             'fechaAltaVinculacion' => ['nullable', 'date'],
             'fechaBaja' => ['nullable', 'date'],
@@ -1429,6 +1444,9 @@ class PersonalController extends Controller
         }
 
         $persona->save();
+        if (array_key_exists('patentesAdicionales', $validated) || $request->has('patentesAdicionales')) {
+            PersonaPatenteHelper::syncPersonaPatentes($persona, $validated['patentesAdicionales'] ?? []);
+        }
 
         ClienteRequerimientoSync::syncFromPersonaSolicitud($persona);
 
@@ -1567,6 +1585,7 @@ class PersonalController extends Controller
             'agente:id,name',
             'agenteResponsable:id,name',
             'estado:id,nombre',
+            'patentesAdicionales:id,persona_id,patente,patente_norm,activo',
             'documentos' => fn ($query) => $query->with('tipo:id,nombre,vence')->orderByDesc('created_at'),
             'comments.user:id,name',
             'histories.user:id,name',
@@ -1657,6 +1676,8 @@ class PersonalController extends Controller
             'pago' => ['nullable', 'numeric'],
             'cbuAlias' => ['nullable', 'string', 'max:255'],
             'patente' => ['nullable', 'string', 'max:100'],
+            'patentesAdicionales' => ['nullable', 'array'],
+            'patentesAdicionales.*' => ['nullable', 'string', 'max:100'],
             'fechaAlta' => ['nullable', 'date'],
             'fechaAltaVinculacion' => ['nullable', 'date'],
             'fechaBaja' => ['nullable', 'date'],
@@ -1765,6 +1786,8 @@ class PersonalController extends Controller
             'cobrador_cbu_alias' => $validated['esCobrador'] ? ($validated['cobradorCbuAlias'] ?? null) : null,
             'es_solicitud' => ! $autoApprove,
         ]);
+
+        PersonaPatenteHelper::syncPersonaPatentes($persona, $validated['patentesAdicionales'] ?? []);
 
         $ownerPayload = [
             'nombreapellido' => $validated['duenoNombre'] ?? null,
@@ -2284,6 +2307,8 @@ class PersonalController extends Controller
         $duenoCbuAlias = $persona->dueno?->cbu_alias;
         $combustibleEstado = $persona->combustible_estado;
         $fechaBaja = $this->formatFechaAlta($persona->fecha_baja);
+        $patentes = PersonaPatenteHelper::rawDomainsForPersona($persona);
+        $patentesAdicionales = collect($patentes)->skip($persona->patente ? 1 : 0)->values()->all();
 
         $hasExplicitCobrador = (
             $persona->cobrador_nombre
@@ -2343,6 +2368,8 @@ class PersonalController extends Controller
             'pago' => $persona->pago !== null ? (string) $persona->pago : null,
             'cbuAlias' => $persona->cbu_alias,
             'patente' => $persona->patente,
+            'patentes' => $patentes,
+            'patentesAdicionales' => $patentesAdicionales,
             'observacionTarifa' => $persona->observaciontarifa,
             'observaciones' => $persona->observaciones,
             'esCobrador' => $esCobrador,
@@ -2539,6 +2566,8 @@ class PersonalController extends Controller
         $duenoCbuAlias = $persona->dueno?->cbu_alias;
         $combustibleEstado = $persona->combustible_estado;
         $fechaBaja = $this->formatFechaAlta($persona->fecha_baja);
+        $patentes = PersonaPatenteHelper::rawDomainsForPersona($persona);
+        $patentesAdicionales = collect($patentes)->skip($persona->patente ? 1 : 0)->values()->all();
 
         $hasExplicitCobrador = (
             $persona->cobrador_nombre
@@ -2594,6 +2623,8 @@ class PersonalController extends Controller
             'pago' => $persona->pago !== null ? (string) $persona->pago : null,
             'cbuAlias' => $persona->cbu_alias,
             'patente' => $persona->patente,
+            'patentes' => $patentes,
+            'patentesAdicionales' => $patentesAdicionales,
             'observacionTarifa' => $persona->observaciontarifa,
             'observaciones' => $persona->observaciones,
             'esCobrador' => $esCobrador,

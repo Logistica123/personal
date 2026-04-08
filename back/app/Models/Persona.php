@@ -14,6 +14,7 @@ use App\Models\Archivo;
 use App\Models\Dueno;
 use App\Models\PersonaComment;
 use App\Models\PersonaHistory;
+use App\Models\PersonaPatente;
 use App\Models\TransportistaQrAccessLog;
 
 class Persona extends Model
@@ -141,6 +142,13 @@ class Persona extends Model
         return $this
             ->hasMany(TransportistaQrAccessLog::class, 'persona_id')
             ->orderByDesc('created_at');
+    }
+
+    public function patentesAdicionales()
+    {
+        return $this->hasMany(PersonaPatente::class, 'persona_id')
+            ->where('activo', true)
+            ->orderBy('patente');
     }
 
     public function taxProfile()

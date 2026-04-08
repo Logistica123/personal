@@ -10,6 +10,7 @@ use App\Models\FuelReport;
 use App\Models\Persona;
 use App\Models\PersonalNotification;
 use App\Services\AuditLogger;
+use App\Support\Personal\PersonaPatenteHelper;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
@@ -308,21 +309,15 @@ class FuelExtractController extends Controller
         }
 
         $personas = Persona::query()
-            ->select('id', 'patente')
-            ->whereNotNull('patente')
+            ->select('id', 'patente', 'nombres', 'apellidos', 'email')
+            ->with('patentesAdicionales:id,persona_id,patente,patente_norm,activo')
             ->get();
 
         if ($personas->isEmpty()) {
             return;
         }
 
-        $personaByDomain = [];
-        foreach ($personas as $persona) {
-            $normalized = $this->normalizeDomain((string) $persona->patente);
-            if ($normalized !== '') {
-                $personaByDomain[$normalized] = $persona;
-            }
-        }
+        $personaByDomain = PersonaPatenteHelper::personaByDomainMap($personas);
 
         foreach ($consumptionByDomain as $domain => $stats) {
             $persona = $personaByDomain[$domain] ?? null;

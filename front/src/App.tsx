@@ -376,6 +376,8 @@ type PersonalDetail = {
   unidadId: number | null;
   unidadDetalle: string | null;
   patente: string | null;
+  patentes?: string[] | null;
+  patentesAdicionales?: string[] | null;
   estado: string | null;
   estadoId: number | null;
   combustible?: string | null;

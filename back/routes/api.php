@@ -11,6 +11,7 @@ use App\Http\Controllers\Api\ClienteRequerimientoController;
 use App\Http\Controllers\Api\ClientesFacturacionController;
 use App\Http\Controllers\Api\FacturaController;
 use App\Http\Controllers\Api\FacturaCobranzaController;
+use App\Http\Controllers\Api\LiquidacionReciboController;
 use App\Http\Controllers\Api\UnidadController;
 use App\Http\Controllers\Api\UserController;
 use App\Http\Controllers\Api\PersonalController;
@@ -169,6 +170,9 @@ Route::middleware('auth.api')->group(function () {
     Route::get('/clientes-facturacion/grupo/{grupoId}', [ClientesFacturacionController::class, 'grupo']);
     Route::get('/facturacion/clientes', [ClientesFacturacionController::class, 'resumen']);
     Route::get('/facturacion/clientes/{cliente}/facturas', [ClientesFacturacionController::class, 'facturasCliente']);
+    Route::get('/liquidaciones/recibos', [LiquidacionReciboController::class, 'index']);
+    Route::post('/liquidaciones/recibos', [LiquidacionReciboController::class, 'store']);
+    Route::post('/liquidaciones/recibos/{recibo}/anular', [LiquidacionReciboController::class, 'anular']);
 
     Route::get('/cierres-diarios', [CierreDiarioController::class, 'index']);
     Route::get('/cierres-diarios/fechas', [CierreDiarioController::class, 'fechas']);

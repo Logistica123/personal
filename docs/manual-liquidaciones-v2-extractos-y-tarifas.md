@@ -17,6 +17,64 @@ Este módulo (Liquidaciones v2) sirve para:
 
 ---
 
+## 2) Cómo se comunica con la plataforma (visión general)
+
+En términos de “plataforma”, el flujo es:
+
+1. **Frontend (browser)**: pantallas `/liquidaciones/extractos` y `/liquidaciones/cliente`.
+2. **API Backend (Laravel)**: endpoints bajo `/api/liq/*` (ver “Mapa de endpoints” más abajo).
+3. **Base de datos**: guarda configuración (clientes/esquemas/mapeos/gastos) y los resultados del procesamiento (archivos/operaciones/liquidaciones).
+4. **Storage**:
+   - Excels subidos: `disk=local` por defecto y ruta tipo `liq/{cliente_id}/archivos/{uuid}.xlsx`.
+   - PDFs generados: se guardan en storage y se exponen vía `/storage/{pdf_path}`.
+5. **Integración “módulo viejo” (Documentos/Archivos)**:
+   - Al generar un PDF se crea (o reactiva) un registro en la tabla de documentos (modelo `Archivo`) para habilitar el flujo legacy de “Subir liquidaciones”.
+
+### 2.1) Autenticación / headers (cómo viaja la sesión)
+
+- El frontend llama a la API con `fetch()` usando `credentials: 'include'` (cookies/sesión).
+- Para endpoints v2 se usa el helper `useLiqApi()` que arma URLs como: `{apiBaseUrl}/api/liq{path}`.
+- Además se envían “actor headers” (según usuario/rol) con `buildActorHeaders(authUser)`.
+
+### 2.2) Qué procesa el backend cuando subís un Excel
+
+Cuando subís un Excel en Extractos (nuevo), el backend:
+
+- Persiste el binario en storage (por defecto `disk=local`).
+- Crea un registro `liq_archivos_entrada`.
+- Lee el Excel con PhpSpreadsheet y genera `liq_operaciones` (una por fila relevante).
+- Calcula totales en `liq_liquidaciones_cliente` (ops, importes, diferencia).
+
+Configuración usada durante el procesamiento (vive en `liq_clientes.configuracion_excel`):
+- `hoja`: nombre de hoja (por defecto `Detalle`).
+- `fila_datos`: fila donde están los headers (por defecto 1).
+- `mapeo_columnas`: override manual del auto-detect (patente/concepto/valor/etc.).
+- `tolerancia_porcentaje`: umbral para clasificar `ok` vs `diferencia` (por defecto 2%).
+- `conceptos_valor_variable`: lista de conceptos cuyo “precio original” se toma del Excel (ej: `Valor Viaje`).
+- `allowed_tipos_archivo`: lista extra de tipos de archivo habilitados para subir (además de los base).
+
+### 2.3) Cómo se obtiene “Sucursal” para matchear tarifa
+
+En el procesamiento de operaciones, la sucursal se resuelve así:
+
+1. Si al subir el archivo completaste **Sucursal**, se guarda en `liq_archivos_entrada.sucursal` y se usa en las dimensiones.
+2. Si no, se intenta deducir desde el **nombre del archivo** usando `mapeos_sucursal` (patrón contenido en el nombre).
+3. Si la dimensión de tarifa requiere `sucursal` y no se pudo resolver, la operación queda `sin_tarifa` con `dimension_fallida='sucursal'`.
+
+### 2.4) Cómo se matchea una tarifa (y por qué a veces “no hay tarifa”)
+
+Para cada operación, el backend construye `dimensiones_valores` y busca una línea de tarifa:
+
+- Solo se consideran líneas **activas** y **aprobadas**.
+- La **vigencia** se evalúa contra el **`periodo_desde`** de la liquidación (no contra la fecha de cada fila).
+- Se intenta primero el **override por patente** (si existe) y luego la tarifa general.
+
+Si no encuentra tarifa:
+- Si existe una línea que matchea pero está **pendiente de aprobación**, la operación queda `sin_tarifa` con una observación explícita.
+- Si faltan dimensiones (por ejemplo sucursal), también queda `sin_tarifa`.
+
+---
+
 ## 2) Roles y permisos (práctico)
 
 En v2 hay acciones que suelen estar restringidas a `admin` / `admin2`:
@@ -386,3 +444,66 @@ Acciones:
 7. Configurar **mapeos de sucursal** (para deducción automática desde nombre de archivo).
 8. Configurar **gastos** (si aplica).
 9. Recién ahí: ir a **Extractos (nuevo)**, crear liquidación, subir Excel, auditar y generar liquidaciones por distribuidor.
+
+---
+
+## 7) Mapa de endpoints (qué llama cada pantalla)
+
+Todos los endpoints v2 viven bajo `/api/liq/*`.
+
+### 7.1) Clientes/Tarifas (nuevo) — `/liquidaciones/cliente`
+
+- Listar clientes habilitados: `GET /api/liq/clientes`
+- Habilitar cliente: `POST /api/liq/clientes` `{ distriapp_cliente_id }`
+- Editar config del cliente: `PATCH /api/liq/clientes/{cliente}` `{ nombre_corto, cuit, configuracion_excel, ... }`
+- Esquemas (listado): `GET /api/liq/clientes/{cliente}/esquemas`
+- Crear esquema: `POST /api/liq/clientes/{cliente}/esquemas`
+- Activar/Desactivar esquema: `PUT /api/liq/esquemas/{esquema}/activar` / `PUT /api/liq/esquemas/{esquema}/desactivar`
+- Eliminar esquema: `DELETE /api/liq/esquemas/{esquema}`
+- Dimensiones (catálogo): `GET /api/liq/esquemas/{esquema}/dimensiones`
+- Agregar valor de dimensión: `POST /api/liq/esquemas/{esquema}/dimensiones`
+- Líneas: `GET /api/liq/esquemas/{esquema}/lineas`
+- Crear línea: `POST /api/liq/esquemas/{esquema}/lineas`
+- Aprobar línea: `PUT /api/liq/lineas/{linea}/aprobar` `{ motivo }`
+- Aprobar todas: `POST /api/liq/esquemas/{esquema}/lineas/aprobar-todas` `{ motivo }`
+- Desactivar línea: `PUT /api/liq/lineas/{linea}/desactivar` `{ motivo }`
+- Importar tarifas Excel: `POST /api/liq/esquemas/{esquema}/importar-excel` (multipart/form-data)
+- Tarifas por patente: `GET /api/liq/esquemas/{esquema}/tarifas-patente`
+- Crear tarifa por patente: `POST /api/liq/esquemas/{esquema}/tarifas-patente`
+- Desactivar tarifa por patente: `PUT /api/liq/tarifas-patente/{id}/desactivar`
+- Mapeos concepto: `GET /api/liq/clientes/{cliente}/mapeos-concepto` / `POST /api/liq/clientes/{cliente}/mapeos-concepto`
+- Mapeos sucursal: `GET /api/liq/clientes/{cliente}/mapeos-sucursal` / `POST /api/liq/clientes/{cliente}/mapeos-sucursal`
+- Desactivar mapeos: `PUT /api/liq/mapeos-concepto/{id}/desactivar` / `PUT /api/liq/mapeos-sucursal/{id}/desactivar`
+- Gastos: `GET /api/liq/clientes/{cliente}/gastos` / `POST /api/liq/clientes/{cliente}/gastos`
+- Desactivar gasto: `PUT /api/liq/gastos/{gasto}/desactivar`
+- Historial de auditoría de tarifa: `GET /api/liq/clientes/{cliente}/tarifa/historial?page=N`
+
+Además, para “buscar cliente base” se usa el endpoint general (fuera de v2):
+- `GET /api/clientes/select?q=...&limit=...`
+
+### 7.2) Extractos (nuevo) — `/liquidaciones/extractos`
+
+- Listar liquidaciones: `GET /api/liq/liquidaciones`
+- Crear liquidación: `POST /api/liq/liquidaciones` `{ cliente_id, periodo_desde, periodo_hasta }`
+- Ver detalle/estados: `GET /api/liq/liquidaciones/{liq}`
+- Cambiar estado: `PATCH /api/liq/liquidaciones/{liq}/estado` `{ estado }`
+- Eliminar liquidación: `DELETE /api/liq/liquidaciones/{liq}`
+
+Archivos:
+- Listar archivos: `GET /api/liq/liquidaciones/{liq}/archivos`
+- Subir/procesar Excel: `POST /api/liq/liquidaciones/upload` (multipart/form-data)
+- Guardar sucursal manual: `PATCH /api/liq/archivos/{archivo}/sucursal` `{ sucursal }`
+- Reprocesar archivo: `POST /api/liq/archivos/{archivo}/reprocesar`
+- Eliminar archivo: `DELETE /api/liq/archivos/{archivo}`
+
+Operaciones:
+- Listar operaciones: `GET /api/liq/liquidaciones/{liq}/operaciones?estado=...&page=...`
+- Eliminar todas (de la cabecera): `DELETE /api/liq/liquidaciones/{liq}/operaciones`
+- Eliminar una operación: `DELETE /api/liq/operaciones/{op}`
+- Excluir/Incluir: `PUT /api/liq/operaciones/{op}/excluir` / `PUT /api/liq/operaciones/{op}/incluir`
+
+Auditoría y generación:
+- Auditoría: `GET /api/liq/liquidaciones/{liq}/auditoria`
+- Liquidaciones por distribuidor: `GET /api/liq/liquidaciones/{liq}/distribuidores`
+- Generar liquidaciones por distribuidor: `POST /api/liq/liquidaciones/{liq}/generar`
+- Generar documento/PDF (integración legacy): `POST /api/liq/liquidaciones-distribuidor/{liqDist}/documento`

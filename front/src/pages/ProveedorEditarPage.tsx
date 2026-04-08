@@ -286,6 +286,7 @@ export const ProveedorEditarPage: React.FC<ProveedorEditarPageProps> = ({
     pago: '',
     cbuAlias: '',
     patente: '',
+    patentesAdicionales: '',
     observacionTarifa: '',
     observaciones: '',
     combustible: false,
@@ -1013,6 +1014,9 @@ export const ProveedorEditarPage: React.FC<ProveedorEditarPageProps> = ({
         pago: normalizePagoValue(payload.data.pago ?? solicitudAltaForm?.pago ?? ''),
         cbuAlias: payload.data.cbuAlias ?? solicitudAltaForm?.cbuAlias ?? '',
         patente: payload.data.patente ?? '',
+        patentesAdicionales: Array.isArray(payload.data.patentesAdicionales)
+          ? payload.data.patentesAdicionales.filter((value: unknown): value is string => typeof value === 'string' && value.trim() !== '').join(', ')
+          : '',
         observacionTarifa: payload.data.observacionTarifa ?? '',
         observaciones: payload.data.observaciones ?? '',
         esCobrador,
@@ -1575,6 +1579,10 @@ export const ProveedorEditarPage: React.FC<ProveedorEditarPageProps> = ({
           pago: serializePagoValue(formValues.pago),
           cbuAlias,
           patente: formValues.patente.trim() || null,
+          patentesAdicionales: formValues.patentesAdicionales
+            .split(/[\n,]/)
+            .map((value) => value.trim())
+            .filter((value, index, array) => value !== '' && array.indexOf(value) === index),
           observacionTarifa: formValues.observacionTarifa.trim() || null,
           observaciones: formValues.observaciones.trim() || null,
           combustible: formValues.combustible,
@@ -1740,6 +1748,9 @@ export const ProveedorEditarPage: React.FC<ProveedorEditarPageProps> = ({
           pago: normalizePagoValue(payload.data.pago ?? ''),
           cbuAlias: payload.data.cbuAlias ?? '',
           patente: payload.data.patente ?? '',
+          patentesAdicionales: Array.isArray(payload.data.patentesAdicionales)
+            ? payload.data.patentesAdicionales.filter((value: unknown): value is string => typeof value === 'string' && value.trim() !== '').join(', ')
+            : '',
           observacionTarifa: payload.data.observacionTarifa ?? '',
           observaciones: payload.data.observaciones ?? '',
           esCobrador,
@@ -2143,6 +2154,15 @@ export const ProveedorEditarPage: React.FC<ProveedorEditarPageProps> = ({
               value={formValues.patente}
               onChange={(event) => setFormValues((prev) => ({ ...prev, patente: event.target.value }))}
               placeholder="Ingresar"
+            />
+          </label>
+          <label className="input-control">
+            <span>Patentes adicionales</span>
+            <textarea
+              rows={2}
+              value={formValues.patentesAdicionales}
+              onChange={(event) => setFormValues((prev) => ({ ...prev, patentesAdicionales: event.target.value }))}
+              placeholder="Ej: AA123BB, AC456DE"
             />
           </label>
           <label className="input-control">

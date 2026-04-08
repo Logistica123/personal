@@ -3,102 +3,255 @@
 namespace App\Services\Liq;
 
 use App\Models\LiqArchivoEntrada;
+use App\Models\LiqCliente;
+use App\Models\LiqDimensionValor;
 use App\Models\LiqEsquemaTarifario;
+use App\Models\LiqLineaTarifa;
 use App\Models\LiqLiquidacionCliente;
-use App\Models\LiqOperacion;
 use App\Models\LiqMapeoConcepto;
 use App\Models\LiqMapeoSucursal;
-use App\Models\LiqLineaTarifa;
-use App\Models\LiqDimensionValor;
+use App\Models\LiqOperacion;
 use App\Models\LiqTarifaPatente;
 use App\Models\Persona;
+use App\Services\FacturaAi\PdfTextExtractor;
+use App\Support\Personal\PersonaPatenteHelper;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use PhpOffice\PhpSpreadsheet\IOFactory;
+use RuntimeException;
 
 class LiqIngestService
 {
+    private const DEFAULT_PDF_SKIP_PATTERNS = [
+        'TOTAL',
+        'SUBTOTAL',
+        'PAGINA ',
+        'PÁGINA ',
+    ];
+
+    private const SUPPORTED_MATCHING_STRATEGIES = [
+        'patente',
+        'cuil',
+        'legajo',
+        'nombre_exacto',
+        'nombre_fuzzy',
+    ];
+
+    public function __construct(
+        private readonly PdfTextExtractor $pdfTextExtractor,
+    ) {}
+
     /**
-     * Process an uploaded Excel file and create LiqOperacion records.
+     * Process an uploaded file and create LiqOperacion records.
      */
     public function procesarArchivo(LiqArchivoEntrada $archivo, LiqLiquidacionCliente $liquidacion): array
     {
-        if (!class_exists(IOFactory::class)) {
-            throw new \RuntimeException(
-                "No se encontró PhpSpreadsheet (IOFactory). Ejecutá `composer install` en `back/` " .
-                "o instalá `phpoffice/phpspreadsheet`."
-            );
-        }
-        if (!class_exists(\ZipArchive::class)) {
-            throw new \RuntimeException(
-                "Falta la extensión PHP `zip` (ZipArchive) para leer archivos .xlsx. " .
-                "Instalá/activá `php-zip` y reiniciá PHP."
-            );
-        }
-
         $disk = $archivo->disk ?: 'local';
         $ruta = $archivo->ruta_storage;
-        if (!$ruta || !Storage::disk($disk)->exists($ruta)) {
-            throw new \RuntimeException("Archivo no encontrado: {$ruta}");
+        if (! $ruta || ! Storage::disk($disk)->exists($ruta)) {
+            throw new RuntimeException("Archivo no encontrado: {$ruta}");
         }
-        $path = Storage::disk($disk)->path($ruta);
 
+        $path = Storage::disk($disk)->path($ruta);
         $cliente = $liquidacion->cliente;
-        $config = $cliente->configuracion_excel ?? [];
+        $config = is_array($cliente?->configuracion_excel) ? $cliente->configuracion_excel : [];
 
         $esquema = LiqEsquemaTarifario::where('cliente_id', $liquidacion->cliente_id)
             ->where('activo', true)
             ->latest()
             ->first();
-        if (!$esquema) {
-            throw new \RuntimeException('No hay un esquema tarifario activo para este cliente');
+        if (! $esquema) {
+            throw new RuntimeException('No hay un esquema tarifario activo para este cliente');
         }
 
-        // Load spreadsheet
+        $records = $this->isPdfPath($path)
+            ? $this->extractPdfRecords($path, $cliente, $config)
+            : $this->extractSpreadsheetRecords($path, $config, $esquema);
+
+        return $this->procesarRegistros($archivo, $liquidacion, $esquema, $config, $records);
+    }
+
+    /**
+     * @return array<int, array{campos_originales: array<string, mixed>, field_values: array<string, mixed>, row_number: int|null}>
+     */
+    private function extractSpreadsheetRecords(string $path, array $config, LiqEsquemaTarifario $esquema): array
+    {
+        if (! class_exists(IOFactory::class)) {
+            throw new RuntimeException(
+                "No se encontró PhpSpreadsheet (IOFactory). Ejecutá `composer install` en `back/` " .
+                "o instalá `phpoffice/phpspreadsheet`."
+            );
+        }
+        if (! class_exists(\ZipArchive::class)) {
+            throw new RuntimeException(
+                "Falta la extensión PHP `zip` (ZipArchive) para leer archivos .xlsx. " .
+                "Instalá/activá `php-zip` y reiniciá PHP."
+            );
+        }
+
         $spreadsheet = IOFactory::load($path);
         $sheetName = $config['hoja'] ?? 'Detalle';
 
         try {
             $sheet = $spreadsheet->getSheetByName($sheetName) ?? $spreadsheet->getActiveSheet();
         } catch (\Throwable $e) {
-            throw new \RuntimeException("Hoja '{$sheetName}' no encontrada en el archivo");
+            throw new RuntimeException("Hoja '{$sheetName}' no encontrada en el archivo");
         }
 
         $rows = $sheet->toArray(null, true, true, false);
-
         if (empty($rows)) {
-            throw new \RuntimeException("El archivo está vacío");
+            throw new RuntimeException('El archivo está vacío');
         }
 
-        // Get headers from first row
-        $headerRow = (int) ($config['fila_datos'] ?? 1) - 1; // 0-indexed
+        $headerRow = max(0, (int) ($config['fila_datos'] ?? 1) - 1);
         $dataStartRow = $headerRow + 1;
-        $headers = array_map(fn($h) => trim((string)($h ?? '')), $rows[$headerRow] ?? []);
+        $headers = array_map(fn ($h) => trim((string) ($h ?? '')), $rows[$headerRow] ?? []);
+        $columnMap = is_array($config['mapeo_columnas'] ?? null)
+            ? $config['mapeo_columnas']
+            : $this->autoDetectColumns($headers);
 
-        // Column mapping from config or auto-detect
-        $columnMap = $config['mapeo_columnas'] ?? $this->autoDetectColumns($headers);
-
-        // Validate required columns
         $required = ['patente', 'valor'];
-        if (in_array('concepto', $esquema->dimensiones ?? []) || isset($columnMap['concepto'])) {
+        if (in_array('concepto', $esquema->dimensiones ?? [], true) || isset($columnMap['concepto'])) {
             $required[] = 'concepto';
         }
         foreach ($required as $col) {
-            if (!isset($columnMap[$col])) {
-                throw new \RuntimeException("Columna requerida no encontrada: {$col}. Headers disponibles: " . implode(', ', $headers));
+            if (! isset($columnMap[$col])) {
+                throw new RuntimeException(
+                    "Columna requerida no encontrada: {$col}. Headers disponibles: " . implode(', ', $headers)
+                );
             }
         }
 
-        // Load mapeos for this client
+        $records = [];
+        foreach (array_slice($rows, $dataStartRow) as $offset => $row) {
+            $camposOriginales = [];
+            foreach ($headers as $idx => $header) {
+                if ($header !== '') {
+                    $camposOriginales[$header] = $row[$idx] ?? null;
+                }
+            }
+
+            $fieldValues = [];
+            foreach ($columnMap as $field => $idx) {
+                if (! is_string($field) || ! is_numeric($idx)) {
+                    continue;
+                }
+                $fieldValues[$this->normalizarClaveCampo($field)] = $row[(int) $idx] ?? null;
+            }
+            foreach ($camposOriginales as $header => $value) {
+                $normalizedHeader = $this->normalizarClaveCampo($header);
+                if ($normalizedHeader !== '' && ! array_key_exists($normalizedHeader, $fieldValues)) {
+                    $fieldValues[$normalizedHeader] = $value;
+                }
+            }
+
+            $records[] = [
+                'campos_originales' => $camposOriginales,
+                'field_values' => $fieldValues,
+                'row_number' => $dataStartRow + $offset + 1,
+            ];
+        }
+
+        return $records;
+    }
+
+    /**
+     * @return array<int, array{campos_originales: array<string, mixed>, field_values: array<string, mixed>, row_number: int|null}>
+     */
+    private function extractPdfRecords(string $path, LiqCliente $cliente, array $config): array
+    {
+        $text = $this->pdfTextExtractor->extract($path);
+        $patterns = $this->resolvePdfOperationPatterns($cliente, $config);
+        $skipPatterns = $this->resolvePdfSkipPatterns($config);
+        $maxLineSpan = max(1, min(3, (int) ($config['pdf_max_line_span'] ?? 1)));
+        $defaultConcepto = trim((string) ($config['pdf_concepto_default'] ?? ''));
+        $lines = preg_split('/\R/u', $text) ?: [];
+
+        $records = [];
+        $totalLines = count($lines);
+        for ($lineIndex = 0; $lineIndex < $totalLines; $lineIndex++) {
+            $matched = false;
+
+            for ($span = min($maxLineSpan, $totalLines - $lineIndex); $span >= 1; $span--) {
+                $chunkLines = array_map(
+                    static fn ($line) => trim((string) $line),
+                    array_slice($lines, $lineIndex, $span)
+                );
+                $chunk = trim(implode(' ', array_filter($chunkLines, static fn ($line) => $line !== '')));
+                if ($chunk === '' || $this->shouldSkipPdfChunk($chunk, $skipPatterns)) {
+                    continue;
+                }
+
+                foreach ($patterns as $pattern) {
+                    if (preg_match($pattern, $chunk, $matches) !== 1) {
+                        continue;
+                    }
+
+                    $fieldValues = [];
+                    foreach ($matches as $key => $value) {
+                        if (! is_string($key)) {
+                            continue;
+                        }
+                        $normalizedKey = $this->normalizarClaveCampo($key);
+                        if ($normalizedKey === '') {
+                            continue;
+                        }
+                        $fieldValues[$normalizedKey] = is_string($value) ? trim($value) : $value;
+                    }
+
+                    if (! isset($fieldValues['concepto']) && $defaultConcepto !== '') {
+                        $fieldValues['concepto'] = $defaultConcepto;
+                    }
+
+                    if (! isset($fieldValues['patente']) && isset($fieldValues['dominio'])) {
+                        $fieldValues['patente'] = $fieldValues['dominio'];
+                    }
+
+                    $camposOriginales = $fieldValues;
+                    $camposOriginales['linea_fuente'] = $chunk;
+                    $camposOriginales['linea_numero'] = $lineIndex + 1;
+
+                    $records[] = [
+                        'campos_originales' => $camposOriginales,
+                        'field_values' => $fieldValues,
+                        'row_number' => $lineIndex + 1,
+                    ];
+
+                    $lineIndex += $span - 1;
+                    $matched = true;
+                    break 2;
+                }
+            }
+        }
+
+        if ($records === []) {
+            throw new RuntimeException(
+                'No se detectaron operaciones en el PDF. Configurá `pdf_operacion_regex` o `pdf_operacion_regexes` ' .
+                'en el cliente usando grupos con nombre como `patente`, `concepto`, `valor`, `cuil`, `legajo` o `nombre`.'
+            );
+        }
+
+        return $records;
+    }
+
+    /**
+     * @param array<int, array{campos_originales: array<string, mixed>, field_values: array<string, mixed>, row_number: int|null}> $records
+     */
+    private function procesarRegistros(
+        LiqArchivoEntrada $archivo,
+        LiqLiquidacionCliente $liquidacion,
+        LiqEsquemaTarifario $esquema,
+        array $config,
+        array $records
+    ): array {
         $mapeosConcepto = LiqMapeoConcepto::where('cliente_id', $liquidacion->cliente_id)
             ->where('activo', true)
             ->get()
-            ->groupBy(fn($m) => $this->normalizarTexto((string) $m->valor_excel))
+            ->groupBy(fn ($m) => $this->normalizarTexto((string) $m->valor_excel))
             ->map(function ($items) {
                 return $items->keyBy('dimension_destino');
             });
 
-        // Catálogo de valores por dimensión (para canonizar y evitar diferencias de formato)
         $catalogoDimensiones = [];
         $dimensionValores = LiqDimensionValor::where('esquema_id', $esquema->id)
             ->where('activo', true)
@@ -113,37 +266,30 @@ class LiqIngestService
             return $catalogoDimensiones[$dim][$norm] ?? $raw;
         };
 
-        // Determine sucursal tarifa for this file
         $sucursalTarifa = $archivo->sucursal;
-        if (!$sucursalTarifa) {
+        if (! $sucursalTarifa) {
             $sucursalTarifa = $this->resolverSucursalDesdeNombre($archivo->nombre_original, $liquidacion->cliente_id);
             if ($sucursalTarifa) {
                 $archivo->update(['sucursal' => $sucursalTarifa]);
             }
         }
         if ($sucursalTarifa && in_array('sucursal', $esquema->dimensiones ?? [], true)) {
-            $canonical = $canon('sucursal', (string) $sucursalTarifa);
-            $sucursalTarifa = $canonical;
-            $archivo->update(['sucursal' => $canonical]);
+            $sucursalTarifa = $canon('sucursal', (string) $sucursalTarifa);
+            $archivo->update(['sucursal' => $sucursalTarifa]);
         }
 
-        // Load distributor lookup cache (patente -> persona_id)
-        $distribuidores = Persona::whereNotNull('patente')
-            ->get(['id', 'patente', 'estado_id'])
-            ->keyBy(fn($p) => strtoupper(preg_replace('/[\s\-]/', '', $p->patente)));
+        $matchingStrategies = $this->resolveMatchingStrategies($liquidacion->cliente);
+        $distribuidoresLookup = $this->buildDistribuidoresLookup();
 
-        // Conceptos cuyo "precio original" se toma desde el Excel (valor variable por viaje).
-        // Ej: Loginter Colecta suele venir con Concepto = "Valor Viaje" y el importe está en la columna Valor.
         $conceptosValorVariable = $config['conceptos_valor_variable'] ?? [];
         $conceptosValorVariableNorm = [];
         if (is_array($conceptosValorVariable)) {
-            foreach ($conceptosValorVariable as $c) {
-                if (is_string($c) && trim($c) !== '') {
-                    $conceptosValorVariableNorm[] = $this->normalizarTexto($c);
+            foreach ($conceptosValorVariable as $conceptoValorVariable) {
+                if (is_string($conceptoValorVariable) && trim($conceptoValorVariable) !== '') {
+                    $conceptosValorVariableNorm[] = $this->normalizarTexto($conceptoValorVariable);
                 }
             }
         }
-        // Default defensivo (si no está configurado) para el caso típico.
         $conceptosValorVariableNorm[] = $this->normalizarTexto('Valor Viaje');
         $conceptosValorVariableNorm = array_values(array_unique(array_filter($conceptosValorVariableNorm)));
         $isValorVariable = function (string $conceptoKey, array $dimensionesValores) use ($conceptosValorVariableNorm): bool {
@@ -158,67 +304,62 @@ class LiqIngestService
         };
 
         $operacionesCreadas = 0;
-        $errores = [];
-        $idsVistos = []; // for duplicate detection
+        $idsVistos = [];
 
-        $dataRows = array_slice($rows, $dataStartRow);
+        foreach ($records as $record) {
+            $fieldValues = $record['field_values'];
+            $rawPatente = $this->firstFieldValue($fieldValues, ['patente', 'dominio']);
+            $rawConcepto = $this->firstFieldValue($fieldValues, ['concepto']);
+            $rawValor = $this->firstFieldValue($fieldValues, ['valor', 'importe', 'monto', 'precio']);
+            $rawCategoriaVehiculo = $this->firstFieldValue($fieldValues, ['categoria_vehiculo', 'tipo_vehiculo', 'vehiculo']);
 
-        foreach ($dataRows as $rowIndex => $row) {
-            // Skip empty rows
-            $rawPatente = $row[$columnMap['patente']] ?? null;
-            $rawConcepto = isset($columnMap['concepto']) ? ($row[$columnMap['concepto']] ?? null) : null;
-            $rawValor = $row[$columnMap['valor']] ?? null;
-            $rawCategoriaVehiculo = isset($columnMap['categoria_vehiculo']) ? ($row[$columnMap['categoria_vehiculo']] ?? null) : null;
-
-            if (empty($rawPatente) && empty($rawConcepto) && empty($rawValor)) {
+            if ($this->isRecordEmpty($rawPatente, $rawConcepto, $rawValor)) {
                 continue;
             }
-            // Skip TOTAL / subtotals rows commonly present in client spreadsheets
+
             $rawPatenteTxt = strtoupper(trim((string) ($rawPatente ?? '')));
             $rawConceptoTxt = strtoupper(trim((string) ($rawConcepto ?? '')));
             if ($rawPatenteTxt === 'TOTAL' || $rawConceptoTxt === 'TOTAL') {
                 continue;
             }
 
-            // Build campos_originales with all columns
-            $camposOriginales = [];
-            foreach ($headers as $idx => $header) {
-                if ($header !== '') {
-                    $camposOriginales[$header] = $row[$idx] ?? null;
-                }
-            }
-
-            // Normalize patente
-            $dominio = strtoupper(preg_replace('/[\s\-]/', '', (string)($rawPatente ?? '')));
-            $concepto = trim((string)($rawConcepto ?? ''));
+            $dominio = $this->normalizarPatente((string) ($rawPatente ?? ''));
+            $concepto = trim((string) ($rawConcepto ?? ''));
             $conceptoKey = $this->normalizarTexto($concepto);
             $valor = $this->parseDecimal($rawValor ?? 0);
             $categoriaVehiculoKey = $this->normalizarTexto(trim((string) ($rawCategoriaVehiculo ?? '')));
+            $camposOriginales = $record['campos_originales'];
 
-            // Detect duplicate by idViaje if available
-            $idViaje = isset($columnMap['id_viaje']) ? ($row[$columnMap['id_viaje']] ?? null) : null;
+            $idViaje = $this->firstFieldValue($fieldValues, ['id_viaje', 'viaje_id', 'idviaje']);
+            $idViajeNorm = trim((string) ($idViaje ?? ''));
             $estado = 'pendiente';
-            if ($idViaje && isset($idsVistos[$idViaje])) {
+            if ($idViajeNorm !== '' && isset($idsVistos[$idViajeNorm])) {
                 $estado = 'duplicado';
-            } elseif ($idViaje) {
-                $idsVistos[$idViaje] = true;
+            } elseif ($idViajeNorm !== '') {
+                $idsVistos[$idViajeNorm] = true;
             }
 
-            // Resolve distributor
             $distribuidorId = null;
+            $observaciones = null;
             if ($estado !== 'duplicado') {
-                $persona = $distribuidores->get($dominio);
-                if ($persona) {
-                    $distribuidorId = $persona->id;
-                    // Check if active (estado_id != baja). Simple check: estado_id is null or state needs lookup
-                    // We'll mark observado if we can't confirm activo - for now assign and mark ok pending tariff
+                $matchDistribuidor = $this->resolverDistribuidor($fieldValues, $distribuidoresLookup, $matchingStrategies);
+                if ($matchDistribuidor['persona'] instanceof Persona) {
+                    $distribuidorId = $matchDistribuidor['persona']->id;
                     $estado = 'pendiente';
+                    if ($matchDistribuidor['strategy'] !== 'patente') {
+                        $observaciones = $this->appendObservacion(
+                            $observaciones,
+                            'Distribuidor identificado por ' . $matchDistribuidor['strategy'] . '.'
+                        );
+                    }
                 } else {
                     $estado = 'sin_distribuidor';
+                    if ($matchDistribuidor['reason'] !== null) {
+                        $observaciones = $this->appendObservacion($observaciones, $matchDistribuidor['reason']);
+                    }
                 }
             }
 
-            // Resolve tariff
             $lineaTarifaId = null;
             $valorTarifaOriginal = null;
             $valorTarifaDistribuidor = null;
@@ -226,14 +367,13 @@ class LiqIngestService
             $diferencia = null;
             $dimensionesValores = [];
             $dimensionFallida = null;
-            $observaciones = null;
 
             if ($estado === 'pendiente') {
-                $dimensionesRequeridas = $esquema->dimensiones ?? [];
+                foreach ($esquema->dimensiones ?? [] as $dim) {
+                    $dimKey = $this->normalizarClaveCampo($dim);
 
-                foreach ($dimensionesRequeridas as $dim) {
                     if ($dim === 'sucursal') {
-                        if (!$sucursalTarifa) {
+                        if (! $sucursalTarifa) {
                             $dimensionFallida = 'sucursal';
                             break;
                         }
@@ -241,39 +381,24 @@ class LiqIngestService
                         continue;
                     }
 
-                    // Heurística: si la dimensión contiene "sucursal", usar la sucursal del archivo
                     if ($sucursalTarifa && str_contains(Str::lower((string) $dim), 'sucursal')) {
                         $dimensionesValores[$dim] = $canon($dim, (string) $sucursalTarifa);
                         continue;
                     }
 
-                    // 1) Intentar resolver por mapeo desde el Concepto (si existe)
                     $mapeosParaConcepto = $mapeosConcepto->get($conceptoKey);
                     if ($mapeosParaConcepto && $mapeosParaConcepto->has($dim)) {
                         $dimensionesValores[$dim] = $canon($dim, (string) $mapeosParaConcepto->get($dim)->valor_tarifa);
                         continue;
                     }
 
-                    // 2) Fallback: si la dimensión es "concepto", usar el valor crudo del Excel
-                    if ($dim === 'concepto') {
+                    if ($dim === 'concepto' || str_contains(Str::lower((string) $dim), 'concepto')) {
                         $dimensionesValores[$dim] = $canon($dim, $concepto);
                         continue;
                     }
 
-                    // Heurística: si la dimensión contiene "concepto", usar el valor crudo del Excel
-                    if (str_contains(Str::lower((string) $dim), 'concepto')) {
-                        $dimensionesValores[$dim] = $canon($dim, $concepto);
-                        continue;
-                    }
-
-                    // 3) Fallback: tomar de una columna mapeada con el mismo nombre de la dimensión
-                    if (isset($columnMap[$dim])) {
-                        $rawDim = $row[$columnMap[$dim]] ?? null;
-                        $rawDim = is_string($rawDim) ? trim($rawDim) : $rawDim;
-                        if ($rawDim === null || $rawDim === '') {
-                            $dimensionFallida = $dim;
-                            break;
-                        }
+                    $rawDim = $this->firstFieldValue($fieldValues, [$dimKey, $dim]);
+                    if ($rawDim !== null && trim((string) $rawDim) !== '') {
                         $dimensionesValores[$dim] = (string) $rawDim;
                         continue;
                     }
@@ -287,8 +412,6 @@ class LiqIngestService
                 } else {
                     $linea = null;
 
-                    // Override por patente: si existe una tarifa especial para esta patente + dimensiones,
-                    // usamos esa línea destino antes que la general.
                     if ($dominio !== '') {
                         $tpLinea = $this->buscarLineaTarifaPorPatenteYDimensiones(
                             $esquema->id,
@@ -299,7 +422,7 @@ class LiqIngestService
                         if ($tpLinea) {
                             $linea = $tpLinea;
                             $dimensionesValores = (array) ($tpLinea->dimensiones_valores ?? $dimensionesValores);
-                            $observaciones = $observaciones ?: 'Tarifa aplicada por patente (override).';
+                            $observaciones = $this->appendObservacion($observaciones, 'Tarifa aplicada por patente (override).');
                         }
                     }
 
@@ -311,25 +434,18 @@ class LiqIngestService
                         );
                     }
 
-                    // Fallback específico para "Valor Viaje": si no hay match, intentamos mapear a un concepto existente
-                    // (por ejemplo, Ut. Corto AM / Chasis) usando CategoriaVehiculo si está disponible.
                     if (
-                        !$linea
+                        ! $linea
                         && $isValorVariable($conceptoKey, $dimensionesValores)
                         && array_key_exists('concepto', $dimensionesValores)
                     ) {
-                        $candidatos = [];
-                        if (str_contains($categoriaVehiculoKey, 'chasis')) {
-                            $candidatos = ['Chasis'];
-                        } elseif ($categoriaVehiculoKey !== '') {
-                            $candidatos = ['Ut. Corto AM'];
-                        } else {
-                            $candidatos = ['Ut. Corto AM'];
-                        }
+                        $candidatos = str_contains($categoriaVehiculoKey, 'chasis')
+                            ? ['Chasis']
+                            : ['Ut. Corto AM'];
 
-                        foreach ($candidatos as $cand) {
+                        foreach ($candidatos as $candidato) {
                             $tryDims = $dimensionesValores;
-                            $tryDims['concepto'] = $canon('concepto', $cand);
+                            $tryDims['concepto'] = $canon('concepto', $candidato);
                             $tryLinea = $this->buscarLineaTarifaPorDimensiones(
                                 $esquema->id,
                                 $tryDims,
@@ -338,7 +454,10 @@ class LiqIngestService
                             if ($tryLinea) {
                                 $dimensionesValores = $tryDims;
                                 $linea = $tryLinea;
-                                $observaciones = $observaciones ?: "Concepto '{$concepto}' mapeado automáticamente a '{$cand}' para poder aplicar % agencia.";
+                                $observaciones = $this->appendObservacion(
+                                    $observaciones,
+                                    "Concepto '{$concepto}' mapeado automáticamente a '{$candidato}' para poder aplicar % agencia."
+                                );
                                 break;
                             }
                         }
@@ -348,13 +467,15 @@ class LiqIngestService
                         $lineaTarifaId = $linea->id;
                         $porcentajeAgencia = (float) $linea->porcentaje_agencia;
 
-                        // Caso especial: el precio original se toma del Excel (valor variable).
                         if ($isValorVariable($conceptoKey, $dimensionesValores)) {
                             $valorTarifaOriginal = round($valor, 2);
                             $valorTarifaDistribuidor = round($valor * (1 - $porcentajeAgencia / 100), 2);
                             $diferencia = 0.0;
                             $estado = 'ok';
-                            $observaciones = $observaciones ?: 'Tarifa variable: precio original tomado del Excel.';
+                            $observaciones = $this->appendObservacion(
+                                $observaciones,
+                                'Tarifa variable: precio original tomado del Excel/PDF.'
+                            );
                         } else {
                             $valorTarifaOriginal = (float) $linea->precio_original;
                             $valorTarifaDistribuidor = (float) $linea->precio_distribuidor;
@@ -365,8 +486,6 @@ class LiqIngestService
                             $estado = $pctDiff <= $tolerancia ? 'ok' : 'diferencia';
                         }
                     } else {
-                        // Si existe una línea que matchea las dimensiones pero está pendiente de aprobación,
-                        // lo informamos explícitamente para evitar confusión (el cruce solo usa líneas aprobadas).
                         $pendiente = $this->buscarLineaTarifaPendientePorDimensiones(
                             $esquema->id,
                             $dimensionesValores,
@@ -375,13 +494,25 @@ class LiqIngestService
                         $estado = 'sin_tarifa';
                         if ($pendiente) {
                             $dimensionFallida = 'pendiente_aprobacion';
-                            $observaciones = 'Existe tarifa pendiente de aprobación para dimensiones: ' . json_encode($dimensionesValores, JSON_UNESCAPED_UNICODE);
+                            $observaciones = $this->appendObservacion(
+                                $observaciones,
+                                'Existe tarifa pendiente de aprobación para dimensiones: ' .
+                                json_encode($dimensionesValores, JSON_UNESCAPED_UNICODE)
+                            );
                         } elseif ($isValorVariable($conceptoKey, $dimensionesValores)) {
                             $dimensionFallida = 'valor_viaje_sin_match';
-                            $observaciones = 'Concepto con valor variable: falta una línea de tarifa aprobada que matchee (sucursal+concepto) para aplicar % agencia. Dimensiones: ' . json_encode($dimensionesValores, JSON_UNESCAPED_UNICODE);
+                            $observaciones = $this->appendObservacion(
+                                $observaciones,
+                                'Concepto con valor variable: falta una línea de tarifa aprobada que matchee ' .
+                                '(sucursal+concepto) para aplicar % agencia. Dimensiones: ' .
+                                json_encode($dimensionesValores, JSON_UNESCAPED_UNICODE)
+                            );
                         } else {
                             $dimensionFallida = 'no_match';
-                            $observaciones = 'No match para dimensiones: ' . json_encode($dimensionesValores, JSON_UNESCAPED_UNICODE);
+                            $observaciones = $this->appendObservacion(
+                                $observaciones,
+                                'No match para dimensiones: ' . json_encode($dimensionesValores, JSON_UNESCAPED_UNICODE)
+                            );
                         }
                     }
                 }
@@ -391,10 +522,10 @@ class LiqIngestService
                 'liquidacion_cliente_id' => $liquidacion->id,
                 'archivo_entrada_id' => $archivo->id,
                 'campos_originales' => $camposOriginales,
-                'dominio' => $dominio ?: null,
-                'concepto' => $concepto ?: null,
+                'dominio' => $dominio !== '' ? $dominio : null,
+                'concepto' => $concepto !== '' ? $concepto : null,
                 'sucursal_tarifa' => $sucursalTarifa,
-                'dimensiones_valores' => !empty($dimensionesValores) ? $dimensionesValores : null,
+                'dimensiones_valores' => $dimensionesValores !== [] ? $dimensionesValores : null,
                 'dimension_fallida' => $dimensionFallida,
                 'valor_cliente' => $valor,
                 'linea_tarifa_id' => $lineaTarifaId,
@@ -410,12 +541,10 @@ class LiqIngestService
             $operacionesCreadas++;
         }
 
-        // Update archivo stats
         $archivo->update([
             'cant_registros' => $operacionesCreadas,
         ]);
 
-        // Update liquidacion totals
         $this->recalcularTotales($liquidacion);
 
         return [
@@ -438,11 +567,14 @@ class LiqIngestService
             'categoria_vehiculo' => ['categoriavehiculo', 'categoria_vehiculo', 'tipo_vehiculo', 'vehiculo', 'vehículo'],
             'id_viaje' => ['idviaje', 'id_viaje', 'viaje_id', 'id viaje'],
             'fecha' => ['fechaviaje', 'fecha_viaje', 'fecha'],
+            'cuil' => ['cuil', 'cuit', 'cuil_cuit'],
+            'legajo' => ['legajo', 'nlegajo', 'n_legajo', 'numero_legajo'],
+            'nombre' => ['nombre', 'transportista', 'distribuidor', 'chofer', 'proveedor'],
         ];
         foreach ($headers as $idx => $header) {
-            $normalized = strtolower(trim(preg_replace('/\s+/', '', $header)));
+            $normalized = strtolower(trim(preg_replace('/\s+/', '', (string) $header)));
             foreach ($patterns as $field => $aliases) {
-                if (!isset($map[$field]) && in_array($normalized, $aliases)) {
+                if (! isset($map[$field]) && in_array($normalized, $aliases, true)) {
                     $map[$field] = $idx;
                 }
             }
@@ -509,6 +641,7 @@ class LiqIngestService
         if (! $tp) {
             return null;
         }
+
         $linea = $tp->lineaTarifa;
         return $linea instanceof LiqLineaTarifa ? $linea : null;
     }
@@ -530,28 +663,12 @@ class LiqIngestService
         return $q->first();
     }
 
-    private function canonicalizarDimensionValor(int $esquemaId, string $nombreDimension, string $raw): string
-    {
-        $rawNorm = $this->normalizarTexto($raw);
-        $valores = LiqDimensionValor::where('esquema_id', $esquemaId)
-            ->where('nombre_dimension', $nombreDimension)
-            ->where('activo', true)
-            ->get(['valor']);
-
-        foreach ($valores as $v) {
-            if ($this->normalizarTexto((string) $v->valor) === $rawNorm) {
-                return (string) $v->valor;
-            }
-        }
-        // Fallback: normalizar (upper + colapsar espacios) para maximizar chance de match.
-        return $rawNorm;
-    }
-
     private function recalcularTotales(LiqLiquidacionCliente $liquidacion): void
     {
         $totals = LiqOperacion::where('liquidacion_cliente_id', $liquidacion->id)
             ->selectRaw('COUNT(*) as total_ops, SUM(valor_cliente) as total_cliente, SUM(valor_tarifa_original) as total_correcto, SUM(diferencia_cliente) as total_diff')
             ->first();
+
         $liquidacion->update([
             'total_operaciones' => $totals->total_ops ?? 0,
             'total_importe_cliente' => $totals->total_cliente ?? 0,
@@ -561,42 +678,443 @@ class LiqIngestService
         ]);
     }
 
+    private function resolvePdfOperationPatterns(LiqCliente $cliente, array $config): array
+    {
+        $rawPatterns = [];
+        if (is_string($config['pdf_operacion_regex'] ?? null) && trim((string) $config['pdf_operacion_regex']) !== '') {
+            $rawPatterns[] = (string) $config['pdf_operacion_regex'];
+        }
+        if (is_array($config['pdf_operacion_regexes'] ?? null)) {
+            foreach ($config['pdf_operacion_regexes'] as $pattern) {
+                if (is_string($pattern) && trim($pattern) !== '') {
+                    $rawPatterns[] = $pattern;
+                }
+            }
+        }
+
+        if ($rawPatterns === []) {
+            throw new RuntimeException(
+                "El cliente '{$cliente->nombre_corto}' no tiene configurado `pdf_operacion_regex` para procesar PDFs."
+            );
+        }
+
+        $flags = trim((string) ($config['pdf_regex_flags'] ?? 'iu'));
+        $patterns = [];
+        foreach ($rawPatterns as $pattern) {
+            $patterns[] = $this->ensurePregPattern($pattern, $flags);
+        }
+
+        return array_values(array_unique($patterns));
+    }
+
+    private function resolvePdfSkipPatterns(array $config): array
+    {
+        $patterns = self::DEFAULT_PDF_SKIP_PATTERNS;
+        $raw = $config['pdf_skip_line_patterns'] ?? null;
+        if (is_string($raw) && trim($raw) !== '') {
+            $patterns[] = trim($raw);
+        } elseif (is_array($raw)) {
+            foreach ($raw as $item) {
+                if (is_string($item) && trim($item) !== '') {
+                    $patterns[] = trim($item);
+                }
+            }
+        }
+
+        return array_values(array_unique($patterns));
+    }
+
+    private function shouldSkipPdfChunk(string $chunk, array $patterns): bool
+    {
+        $upperChunk = Str::upper($chunk);
+        foreach ($patterns as $pattern) {
+            $trimmed = trim((string) $pattern);
+            if ($trimmed === '') {
+                continue;
+            }
+            if ($this->looksLikePregPattern($trimmed)) {
+                if (@preg_match($trimmed, $chunk) === 1) {
+                    return true;
+                }
+                continue;
+            }
+            if (str_contains($upperChunk, Str::upper($trimmed))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private function ensurePregPattern(string $pattern, string $flags): string
+    {
+        $trimmed = trim($pattern);
+        if ($this->looksLikePregPattern($trimmed)) {
+            return $trimmed;
+        }
+
+        return '~' . str_replace('~', '\~', $trimmed) . '~' . $flags;
+    }
+
+    private function looksLikePregPattern(string $value): bool
+    {
+        if ($value === '' || mb_strlen($value) < 3) {
+            return false;
+        }
+
+        $delimiter = $value[0];
+        if (! in_array($delimiter, ['/', '#', '~'], true)) {
+            return false;
+        }
+
+        $lastPos = strrpos($value, $delimiter);
+        return $lastPos !== false && $lastPos > 0;
+    }
+
+    private function resolveMatchingStrategies(LiqCliente $cliente): array
+    {
+        $config = is_array($cliente->configuracion_excel) ? $cliente->configuracion_excel : [];
+        $raw = $config['matching_distribuidor'] ?? $config['matching_fallbacks'] ?? null;
+
+        $strategies = [];
+        if (is_string($raw) && trim($raw) !== '') {
+            $strategies = [trim($raw)];
+        } elseif (is_array($raw)) {
+            foreach ($raw as $strategy) {
+                if (is_string($strategy) && trim($strategy) !== '') {
+                    $strategies[] = trim($strategy);
+                }
+            }
+        }
+
+        $strategies = array_values(array_unique(array_map(
+            fn ($strategy) => Str::lower(trim((string) $strategy)),
+            $strategies
+        )));
+        $strategies = array_values(array_filter(
+            $strategies,
+            fn ($strategy) => in_array($strategy, self::SUPPORTED_MATCHING_STRATEGIES, true)
+        ));
+
+        if ($strategies !== []) {
+            return $strategies;
+        }
+
+        $clienteKeys = [
+            Str::upper((string) ($cliente->codigo_corto ?? '')),
+            Str::upper((string) ($cliente->nombre_corto ?? '')),
+            Str::upper((string) ($cliente->razon_social ?? '')),
+        ];
+        $clienteKey = implode(' ', array_filter($clienteKeys));
+
+        if (str_contains($clienteKey, 'URB')) {
+            return ['patente', 'legajo', 'cuil', 'nombre_fuzzy'];
+        }
+        if (str_contains($clienteKey, 'OCASA')) {
+            return ['patente', 'cuil', 'nombre_fuzzy'];
+        }
+        if (str_contains($clienteKey, 'OCA')) {
+            return ['patente', 'cuil', 'nombre_fuzzy'];
+        }
+
+        return ['patente'];
+    }
+
+    private function buildDistribuidoresLookup(): array
+    {
+        $lookup = [
+            'by_patente' => [],
+            'by_cuil' => [],
+            'by_legajo' => [],
+            'by_nombre' => [],
+            'nombre_candidatos' => [],
+        ];
+
+        $personas = Persona::with('patentesAdicionales:id,persona_id,patente,patente_norm,activo')
+            ->get(['id', 'patente', 'cuil', 'legajo', 'nombres', 'apellidos']);
+        foreach ($personas as $persona) {
+            foreach (PersonaPatenteHelper::normalizedDomainsForPersona($persona) as $patente) {
+                if ($patente === '') {
+                    continue;
+                }
+                $lookup['by_patente'][$patente][] = $persona;
+            }
+
+            $cuil = $this->normalizarDocumento((string) ($persona->cuil ?? ''));
+            if ($cuil !== '') {
+                $lookup['by_cuil'][$cuil][] = $persona;
+            }
+
+            $legajo = $this->normalizarLegajo((string) ($persona->legajo ?? ''));
+            if ($legajo !== '') {
+                $lookup['by_legajo'][$legajo][] = $persona;
+                $digitsLegajo = preg_replace('/\D+/', '', $legajo) ?? '';
+                if ($digitsLegajo !== '' && $digitsLegajo !== $legajo) {
+                    $lookup['by_legajo'][$digitsLegajo][] = $persona;
+                }
+            }
+
+            $nombreCompleto = trim(
+                preg_replace('/\s+/', ' ', trim((string) ($persona->apellidos ?? '')) . ' ' . trim((string) ($persona->nombres ?? '')))
+                ?? ''
+            );
+            $nombreInvertido = trim(
+                preg_replace('/\s+/', ' ', trim((string) ($persona->nombres ?? '')) . ' ' . trim((string) ($persona->apellidos ?? '')))
+                ?? ''
+            );
+
+            foreach ([$nombreCompleto, $nombreInvertido] as $nombre) {
+                $norm = $this->normalizarTexto($nombre);
+                if ($norm === '') {
+                    continue;
+                }
+                $lookup['by_nombre'][$norm][] = $persona;
+                $lookup['nombre_candidatos'][] = [
+                    'persona' => $persona,
+                    'nombre_norm' => $norm,
+                ];
+            }
+        }
+
+        return $lookup;
+    }
+
+    private function resolverDistribuidor(array $fieldValues, array $lookup, array $strategies): array
+    {
+        foreach ($strategies as $strategy) {
+            if ($strategy === 'patente') {
+                $patente = $this->normalizarPatente((string) ($this->firstFieldValue($fieldValues, ['patente', 'dominio']) ?? ''));
+                if ($patente === '') {
+                    continue;
+                }
+                $persona = $this->pickUniquePersona($lookup['by_patente'][$patente] ?? []);
+                if ($persona) {
+                    return ['persona' => $persona, 'strategy' => 'patente', 'reason' => null];
+                }
+                if (($lookup['by_patente'][$patente] ?? []) !== []) {
+                    return ['persona' => null, 'strategy' => null, 'reason' => 'Patente duplicada en maestro de distribuidores.'];
+                }
+                continue;
+            }
+
+            if ($strategy === 'cuil') {
+                $cuil = $this->normalizarDocumento((string) ($this->firstFieldValue($fieldValues, ['cuil', 'cuit']) ?? ''));
+                if ($cuil === '') {
+                    continue;
+                }
+                $persona = $this->pickUniquePersona($lookup['by_cuil'][$cuil] ?? []);
+                if ($persona) {
+                    return ['persona' => $persona, 'strategy' => 'cuil', 'reason' => null];
+                }
+                if (($lookup['by_cuil'][$cuil] ?? []) !== []) {
+                    return ['persona' => null, 'strategy' => null, 'reason' => 'CUIL/CUIT duplicado en maestro de distribuidores.'];
+                }
+                continue;
+            }
+
+            if ($strategy === 'legajo') {
+                $legajo = $this->normalizarLegajo((string) ($this->firstFieldValue(
+                    $fieldValues,
+                    ['legajo', 'n_legajo', 'nro_legajo', 'numero_legajo']
+                ) ?? ''));
+                if ($legajo === '') {
+                    continue;
+                }
+                $persona = $this->pickUniquePersona($lookup['by_legajo'][$legajo] ?? []);
+                if ($persona) {
+                    return ['persona' => $persona, 'strategy' => 'legajo', 'reason' => null];
+                }
+                if (($lookup['by_legajo'][$legajo] ?? []) !== []) {
+                    return ['persona' => null, 'strategy' => null, 'reason' => 'Legajo duplicado en maestro de distribuidores.'];
+                }
+                continue;
+            }
+
+            if ($strategy === 'nombre_exacto') {
+                $nombre = $this->normalizarTexto((string) ($this->firstFieldValue(
+                    $fieldValues,
+                    ['nombre', 'transportista', 'distribuidor', 'chofer', 'proveedor']
+                ) ?? ''));
+                if ($nombre === '') {
+                    continue;
+                }
+                $persona = $this->pickUniquePersona($lookup['by_nombre'][$nombre] ?? []);
+                if ($persona) {
+                    return ['persona' => $persona, 'strategy' => 'nombre_exacto', 'reason' => null];
+                }
+                if (($lookup['by_nombre'][$nombre] ?? []) !== []) {
+                    return ['persona' => null, 'strategy' => null, 'reason' => 'Nombre exacto ambiguo en maestro de distribuidores.'];
+                }
+                continue;
+            }
+
+            if ($strategy === 'nombre_fuzzy') {
+                $nombre = $this->normalizarTexto((string) ($this->firstFieldValue(
+                    $fieldValues,
+                    ['nombre', 'transportista', 'distribuidor', 'chofer', 'proveedor']
+                ) ?? ''));
+                if ($nombre === '') {
+                    continue;
+                }
+                $persona = $this->buscarPersonaPorNombreFuzzy($nombre, $lookup['nombre_candidatos']);
+                if ($persona) {
+                    return ['persona' => $persona, 'strategy' => 'nombre_fuzzy', 'reason' => null];
+                }
+            }
+        }
+
+        return ['persona' => null, 'strategy' => null, 'reason' => 'No se encontró distribuidor con las estrategias configuradas.'];
+    }
+
+    private function pickUniquePersona(array $candidates): ?Persona
+    {
+        $unique = [];
+        foreach ($candidates as $candidate) {
+            if (! $candidate instanceof Persona) {
+                continue;
+            }
+            $unique[$candidate->id] = $candidate;
+        }
+
+        return count($unique) === 1 ? array_values($unique)[0] : null;
+    }
+
+    private function buscarPersonaPorNombreFuzzy(string $targetName, array $candidates): ?Persona
+    {
+        $bestPersona = null;
+        $bestScore = 0.0;
+        $secondBestScore = 0.0;
+
+        foreach ($candidates as $candidate) {
+            $candidateName = $candidate['nombre_norm'] ?? '';
+            $persona = $candidate['persona'] ?? null;
+            if (! is_string($candidateName) || ! $persona instanceof Persona || $candidateName === '') {
+                continue;
+            }
+
+            similar_text($targetName, $candidateName, $similarity);
+            if (str_contains($candidateName, $targetName) || str_contains($targetName, $candidateName)) {
+                $similarity = max($similarity, 96.0);
+            }
+
+            if ($similarity > $bestScore) {
+                $secondBestScore = $bestScore;
+                $bestScore = $similarity;
+                $bestPersona = $persona;
+            } elseif ($similarity > $secondBestScore) {
+                $secondBestScore = $similarity;
+            }
+        }
+
+        if ($bestPersona instanceof Persona && $bestScore >= 88.0 && ($bestScore - $secondBestScore) >= 3.0) {
+            return $bestPersona;
+        }
+
+        return null;
+    }
+
+    private function appendObservacion(?string $base, string $fragment): string
+    {
+        $fragment = trim($fragment);
+        if ($fragment === '') {
+            return trim((string) $base);
+        }
+        if (! is_string($base) || trim($base) === '') {
+            return $fragment;
+        }
+
+        return trim($base) . ' ' . $fragment;
+    }
+
+    private function isPdfPath(string $path): bool
+    {
+        return Str::lower(pathinfo($path, PATHINFO_EXTENSION)) === 'pdf';
+    }
+
+    private function isRecordEmpty(mixed $rawPatente, mixed $rawConcepto, mixed $rawValor): bool
+    {
+        return $this->isBlankValue($rawPatente) && $this->isBlankValue($rawConcepto) && $this->isBlankValue($rawValor);
+    }
+
+    private function isBlankValue(mixed $value): bool
+    {
+        if ($value === null) {
+            return true;
+        }
+        if (is_string($value)) {
+            return trim($value) === '';
+        }
+        return false;
+    }
+
+    private function firstFieldValue(array $fieldValues, array $keys): mixed
+    {
+        foreach ($keys as $key) {
+            $normalized = $this->normalizarClaveCampo((string) $key);
+            if ($normalized !== '' && array_key_exists($normalized, $fieldValues)) {
+                return $fieldValues[$normalized];
+            }
+        }
+        return null;
+    }
+
+    private function normalizarPatente(string $value): string
+    {
+        return strtoupper(preg_replace('/[\s\-]/', '', trim($value)) ?? '');
+    }
+
+    private function normalizarDocumento(string $value): string
+    {
+        return preg_replace('/\D+/', '', trim($value)) ?? '';
+    }
+
+    private function normalizarLegajo(string $value): string
+    {
+        $value = Str::upper(trim($value));
+        if ($value === '') {
+            return '';
+        }
+
+        $value = preg_replace('/[^A-Z0-9]+/', '', $value) ?? $value;
+        return trim($value);
+    }
+
+    private function normalizarClaveCampo(string $value): string
+    {
+        $value = trim($value);
+        if ($value === '') {
+            return '';
+        }
+
+        $value = Str::ascii(Str::lower($value));
+        $value = preg_replace('/[^a-z0-9]+/', '_', $value) ?? $value;
+        return trim($value, '_');
+    }
+
     private function parseDecimal(mixed $raw): float
     {
         if (is_int($raw) || is_float($raw)) {
             return (float) $raw;
         }
 
-        $original = (string) $raw;
-        $value = trim($original);
+        $value = trim((string) $raw);
         if ($value === '') {
             return 0.0;
         }
 
         $isNegative = false;
-        // Soportar negativos con "-" o "(123,45)"
-        if (str_contains($value, '-')) {
-            $isNegative = true;
-        }
-        if (str_contains($value, '(') && str_contains($value, ')')) {
+        if (str_contains($value, '-') || (str_contains($value, '(') && str_contains($value, ')'))) {
             $isNegative = true;
         }
 
-        // Remove currency symbols and non-numeric separators except dot/comma/minus
         $value = preg_replace('/[^\d\.,]/u', '', $value) ?? $value;
         $value = trim($value);
         if ($value === '') {
             return 0.0;
         }
 
-        $hasDot = str_contains($value, '.');
-        $hasComma = str_contains($value, ',');
-
-        // Detectar decimales por patrón "...[.,]dd" (1-2 dígitos)
         if (preg_match('/[.,]\d{1,2}$/', $value) === 1) {
             $decimalSep = substr($value, -3, 1);
             if ($decimalSep !== '.' && $decimalSep !== ',') {
-                // fallback: buscar el último separador real
                 $lastDot = strrpos($value, '.');
                 $lastComma = strrpos($value, ',');
                 $decimalSep = ($lastDot !== false && $lastComma !== false)
@@ -612,22 +1130,13 @@ class LiqIngestService
                 $intDigits = preg_replace('/\D/u', '', $intPart) ?? $intPart;
                 $decDigits = preg_replace('/\D/u', '', $decPart) ?? $decPart;
 
-                if ($intDigits === '') {
-                    $intDigits = '0';
-                }
-                if ($decDigits === '') {
-                    $decDigits = '0';
-                }
-
-                $normalized = $intDigits . '.' . $decDigits;
+                $normalized = ($intDigits === '' ? '0' : $intDigits) . '.' . ($decDigits === '' ? '0' : $decDigits);
                 $num = (float) $normalized;
                 return $isNegative ? -$num : $num;
             }
         }
 
-        // Sin decimales explícitos: remover separadores de miles (.,)
-        if ($hasDot || $hasComma) {
-            // Casos tipo "211.082" o "211,082" (miles) sin decimales
+        if (str_contains($value, '.') || str_contains($value, ',')) {
             $digits = preg_replace('/\D/u', '', $value) ?? $value;
             if ($digits === '') {
                 return 0.0;
@@ -646,7 +1155,7 @@ class LiqIngestService
         if ($value === '') {
             return '';
         }
-        // Normalizar: uppercase + quitar separadores/puntuación a espacios + colapsar espacios.
+
         $value = Str::upper($value);
         $value = preg_replace('/[^\pL\pN]+/u', ' ', $value) ?? $value;
         $value = preg_replace('/\s+/u', ' ', $value) ?? $value;

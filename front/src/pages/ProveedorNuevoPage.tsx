@@ -200,6 +200,7 @@ export const ProveedorNuevoPage: React.FC<ProveedorNuevoPageProps> = ({
     pago: '',
     cbuAlias: '',
     patente: '',
+    patentesAdicionales: '',
     clienteId: '',
     sucursalId: '',
     agenteId: '',
@@ -503,6 +504,10 @@ export const ProveedorNuevoPage: React.FC<ProveedorNuevoPageProps> = ({
           pago: serializePagoValue(formValues.pago),
           cbuAlias: formValues.cbuAlias.trim() || null,
           patente: formValues.patente.trim() || null,
+          patentesAdicionales: formValues.patentesAdicionales
+            .split(/[\n,]/)
+            .map((value) => value.trim())
+            .filter((value, index, array) => value !== '' && array.indexOf(value) === index),
           clienteId: formValues.clienteId ? Number(formValues.clienteId) : null,
           sucursalId: formValues.sucursalId ? Number(formValues.sucursalId) : null,
           agenteId: formValues.agenteId ? Number(formValues.agenteId) : null,
@@ -613,6 +618,7 @@ export const ProveedorNuevoPage: React.FC<ProveedorNuevoPageProps> = ({
               ) : null}
               {renderInput('Fecha de alta', 'fechaAlta', false, 'date')}
               {renderInput('Patente', 'patente')}
+              {renderInput('Patentes adicionales', 'patentesAdicionales')}
             </div>
 
             <div className="personal-subsection" style={{ marginTop: '1rem' }}>
@@ -665,6 +671,7 @@ export const ProveedorNuevoPage: React.FC<ProveedorNuevoPageProps> = ({
               ) : null}
               {renderInput('Fecha de alta', 'fechaAlta', false, 'date')}
               {renderInput('Patente', 'patente')}
+              {renderInput('Patentes adicionales', 'patentesAdicionales')}
             </div>
 
             <h3>Dueño de la unidad</h3>
@@ -718,6 +725,7 @@ export const ProveedorNuevoPage: React.FC<ProveedorNuevoPageProps> = ({
               {renderInput('Observación tarifa', 'observacionTarifa')}
               {renderInput('Fecha de alta', 'fechaAlta', false, 'date')}
               {renderInput('Patente', 'patente')}
+              {renderInput('Patentes adicionales', 'patentesAdicionales')}
             </div>
 
             <div className="placeholder-grid">

@@ -19,6 +19,9 @@ use Illuminate\Support\Str;
 
 class LiqExtractosController extends Controller
 {
+    private const BASE_UPLOAD_TYPES = ['DATA_CLIENTE', 'DETALLE_SUCURSAL'];
+    private const SUPPORTED_UPLOAD_TYPES = ['DATA_CLIENTE', 'DETALLE_SUCURSAL', 'TARIFARIO', 'BASE_DISTRIB', 'VARIABLES'];
+
     public function __construct(
         private readonly LiqIngestService $ingestService,
     ) {}
@@ -67,13 +70,20 @@ class LiqExtractosController extends Controller
     {
         $data = $request->validate([
             'liquidacion_cliente_id' => 'required|exists:liq_liquidaciones_cliente,id',
-            'archivo' => 'required|file|mimes:xlsx,xls',
+            'archivo' => 'required|file|mimes:xlsx,xls,pdf',
             'sucursal' => 'nullable|string|max:255',
             'sucursal_tarifa' => 'nullable|string|max:255',
-            'tipo_archivo' => 'nullable|in:DATA_CLIENTE,DETALLE_SUCURSAL,TARIFARIO,BASE_DISTRIB,VARIABLES',
+            'tipo_archivo' => 'nullable|string|max:80',
         ]);
 
         $liquidacion = LiqLiquidacionCliente::with('cliente')->findOrFail($data['liquidacion_cliente_id']);
+        $allowedTipos = $this->allowedUploadTypesForCliente($liquidacion->cliente);
+        $tipoArchivo = strtoupper(trim((string) ($data['tipo_archivo'] ?? 'DATA_CLIENTE')));
+        if (! in_array($tipoArchivo, $allowedTipos, true)) {
+            return response()->json([
+                'error' => 'Tipo de archivo no permitido para este cliente. Permitidos: ' . implode(', ', $allowedTipos),
+            ], 422);
+        }
         $file = $request->file('archivo');
 
         $disk = 'local';
@@ -84,7 +94,7 @@ class LiqExtractosController extends Controller
 
         $archivo = LiqArchivoEntrada::create([
             'liquidacion_cliente_id' => $liquidacion->id,
-            'tipo_archivo' => $data['tipo_archivo'] ?? 'DATA_CLIENTE',
+            'tipo_archivo' => $tipoArchivo,
             'nombre_original' => $nombreOriginal,
             'nombre_interno' => $nombreInterno,
             'disk' => $disk,
@@ -233,7 +243,6 @@ class LiqExtractosController extends Controller
                     $q->whereNull('vigencia_hasta')->orWhere('vigencia_hasta', '>=', $liquidacionCliente->periodo_desde);
                 })
                 ->first();
-            $montoGasto = $gasto ? (float) $gasto->monto : 0;
 
             // Group valid operations by distribuidor
             $operaciones = LiqOperacion::where('liquidacion_cliente_id', $liquidacionCliente->id)
@@ -247,6 +256,7 @@ class LiqExtractosController extends Controller
 
             foreach ($porDistribuidor as $distribuidorId => $ops) {
                 $subtotal = $ops->sum(fn($op) => (float) $op->valor_tarifa_distribuidor);
+                $montoGasto = $this->resolveGastoAmount($gasto, (float) $subtotal);
                 $total = $subtotal - $montoGasto;
 
                 $liqDist = LiqLiquidacionDistribuidor::create([
@@ -467,5 +477,46 @@ class LiqExtractosController extends Controller
             'data'    => $liquidacionCliente->fresh(['cliente:id,nombre_corto,razon_social']),
             'message' => "Estado actualizado a {$nuevo}",
         ]);
+    }
+
+    private function allowedUploadTypesForCliente(?LiqCliente $cliente): array
+    {
+        $cfg = $cliente?->configuracion_excel;
+        $extra = [];
+
+        if (is_array($cfg)) {
+            $raw = $cfg['allowed_tipos_archivo'] ?? $cfg['tipos_archivo'] ?? [];
+            if (is_array($raw)) {
+                foreach ($raw as $value) {
+                    if (! is_string($value)) {
+                        continue;
+                    }
+                    $candidate = strtoupper(trim($value));
+                    if ($candidate !== '' && in_array($candidate, self::SUPPORTED_UPLOAD_TYPES, true)) {
+                        $extra[] = $candidate;
+                    }
+                }
+            }
+        }
+
+        return array_values(array_unique(array_merge(self::BASE_UPLOAD_TYPES, $extra)));
+    }
+
+    private function resolveGastoAmount(?LiqConfiguracionGastos $gasto, float $subtotal): float
+    {
+        if (! $gasto) {
+            return 0.0;
+        }
+
+        $monto = (float) $gasto->monto;
+        if ($monto <= 0) {
+            return 0.0;
+        }
+
+        if ($gasto->tipo === 'porcentual') {
+            return round($subtotal * ($monto / 100), 2);
+        }
+
+        return round($monto, 2);
     }
 }

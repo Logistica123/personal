@@ -14,6 +14,7 @@ use App\Models\Persona;
 use App\Models\PersonalNotification;
 use App\Services\AuditLogger;
 use App\Services\Fuel\FuelDiscountPdfService;
+use App\Support\Personal\PersonaPatenteHelper;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
@@ -808,20 +809,14 @@ class FuelReportController extends Controller
 
         $personas = Persona::query()
             ->select('id', 'patente')
-            ->whereNotNull('patente')
+            ->with('patentesAdicionales:id,persona_id,patente,patente_norm,activo')
             ->get();
 
         if ($personas->isEmpty()) {
             return;
         }
 
-        $personaByDomain = [];
-        foreach ($personas as $persona) {
-            $normalized = strtoupper(preg_replace('/[\\s\\.\\-]+/', '', (string) $persona->patente));
-            if ($normalized !== '') {
-                $personaByDomain[$normalized] = $persona;
-            }
-        }
+        $personaByDomain = PersonaPatenteHelper::personaByDomainMap($personas);
 
         foreach ($domains as $domain) {
             $persona = $personaByDomain[$domain] ?? null;

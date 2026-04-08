@@ -22,6 +22,8 @@ type Props = {
 
 type Tab = 'clientes' | 'esquema' | 'mapeos' | 'gastos' | 'historial';
 type BaseClienteOption = { id: number; codigo?: string | null; nombre?: string | null; documento_fiscal?: string | null };
+const SUPPORTED_EXTRA_UPLOAD_TYPES = ['TARIFARIO', 'BASE_DISTRIB', 'VARIABLES'] as const;
+const SUPPORTED_DISTRIBUTOR_MATCHING = ['patente', 'cuil', 'legajo', 'nombre_exacto', 'nombre_fuzzy'] as const;
 
 export function LiquidacionesClientePage({
   DashboardLayout,
@@ -74,6 +76,15 @@ export function LiquidacionesClientePage({
   const [editCuit, setEditCuit] = useState('');
   const [editTolerancia, setEditTolerancia] = useState('');
   const [editHoja, setEditHoja] = useState('');
+  const [editFilaDatos, setEditFilaDatos] = useState('');
+  const [editMapeoColumnas, setEditMapeoColumnas] = useState('');
+  const [editConceptosValorVariable, setEditConceptosValorVariable] = useState('');
+  const [editAllowedTiposArchivo, setEditAllowedTiposArchivo] = useState<string[]>([]);
+  const [editPdfRegex, setEditPdfRegex] = useState('');
+  const [editPdfSkipPatterns, setEditPdfSkipPatterns] = useState('');
+  const [editPdfMaxLineSpan, setEditPdfMaxLineSpan] = useState('');
+  const [editPdfConceptoDefault, setEditPdfConceptoDefault] = useState('');
+  const [editMatchingDistribuidor, setEditMatchingDistribuidor] = useState<string[]>([]);
   const [savingCliente, setSavingCliente] = useState(false);
   const [baseClienteQuery, setBaseClienteQuery] = useState('');
   const [baseClienteOptions, setBaseClienteOptions] = useState<BaseClienteOption[]>([]);
@@ -138,7 +149,7 @@ export function LiquidacionesClientePage({
     s = s.replace(/ars|ar\$|\$/g, '');
     s = s.replace(/\s+/g, '');
     // keep digits, separators and sign
-    s = s.replace(/[^0-9,.\-]/g, '');
+    s = s.replace(/[^0-9,.-]/g, '');
     if (s === '' || s === '-' || s === '.' || s === ',') return null;
 
     const lastComma = s.lastIndexOf(',');
@@ -173,7 +184,7 @@ export function LiquidacionesClientePage({
     let s = (raw ?? '').trim();
     if (s === '') return null;
     s = s.replace('%', '').replace(',', '.');
-    s = s.replace(/[^0-9.\-]/g, '');
+    s = s.replace(/[^0-9.-]/g, '');
     if (s === '' || s === '.' || s === '-') return null;
     const v = Number(s);
     if (!Number.isFinite(v)) return null;
@@ -234,8 +245,39 @@ export function LiquidacionesClientePage({
     setEditNombreCorto(c.nombre_corto ?? '');
     setEditCuit(c.cuit ?? '');
     const cfg = c.configuracion_excel as Record<string, unknown> | null;
+    const conceptosValorVariable: unknown[] = Array.isArray(cfg?.conceptos_valor_variable) ? (cfg?.conceptos_valor_variable ?? []) : [];
+    const allowedTiposArchivo: unknown[] = Array.isArray(cfg?.allowed_tipos_archivo) ? (cfg?.allowed_tipos_archivo ?? []) : [];
+    const pdfSkipPatterns: unknown[] = Array.isArray(cfg?.pdf_skip_line_patterns) ? (cfg?.pdf_skip_line_patterns ?? []) : [];
+    const matchingDistribuidor: unknown[] = Array.isArray(cfg?.matching_distribuidor) ? (cfg?.matching_distribuidor ?? []) : [];
     setEditTolerancia(cfg?.tolerancia_porcentaje != null ? String(cfg.tolerancia_porcentaje) : '');
     setEditHoja(typeof cfg?.hoja === 'string' ? cfg.hoja : '');
+    setEditFilaDatos(cfg?.fila_datos != null ? String(cfg.fila_datos) : '');
+    setEditMapeoColumnas(
+      cfg?.mapeo_columnas && typeof cfg.mapeo_columnas === 'object'
+        ? JSON.stringify(cfg.mapeo_columnas, null, 2)
+        : ''
+    );
+    setEditConceptosValorVariable(
+      conceptosValorVariable.filter((v): v is string => typeof v === 'string' && v.trim() !== '').join(', ')
+    );
+    setEditAllowedTiposArchivo(
+      allowedTiposArchivo
+        .filter((v): v is string => typeof v === 'string')
+        .map((v) => v.trim().toUpperCase())
+        .filter((v) => SUPPORTED_EXTRA_UPLOAD_TYPES.includes(v as typeof SUPPORTED_EXTRA_UPLOAD_TYPES[number]))
+    );
+    setEditPdfRegex(typeof cfg?.pdf_operacion_regex === 'string' ? cfg.pdf_operacion_regex : '');
+    setEditPdfSkipPatterns(
+      pdfSkipPatterns.filter((v): v is string => typeof v === 'string' && v.trim() !== '').join(', ')
+    );
+    setEditPdfMaxLineSpan(cfg?.pdf_max_line_span != null ? String(cfg.pdf_max_line_span) : '');
+    setEditPdfConceptoDefault(typeof cfg?.pdf_concepto_default === 'string' ? cfg.pdf_concepto_default : '');
+    setEditMatchingDistribuidor(
+      matchingDistribuidor
+        .filter((v): v is string => typeof v === 'string')
+        .map((v) => v.trim().toLowerCase())
+        .filter((v) => SUPPORTED_DISTRIBUTOR_MATCHING.includes(v as typeof SUPPORTED_DISTRIBUTOR_MATCHING[number]))
+    );
   }, []);
 
   const saveCliente = useCallback(async () => {
@@ -245,12 +287,98 @@ export function LiquidacionesClientePage({
     setSavingCliente(true);
     try {
       const toleranciaNum = editTolerancia.trim() !== '' ? parseFloat(editTolerancia.replace(',', '.')) : null;
+      if (editTolerancia.trim() !== '' && (toleranciaNum == null || Number.isNaN(toleranciaNum))) {
+        setError('Tolerancia inválida');
+        return;
+      }
+      const filaDatosNum = editFilaDatos.trim() !== '' ? parseInt(editFilaDatos, 10) : null;
+      if (editFilaDatos.trim() !== '' && (!Number.isFinite(filaDatosNum) || (filaDatosNum ?? 0) < 1)) {
+        setError('Fila de datos inválida');
+        return;
+      }
+      const pdfMaxLineSpanNum = editPdfMaxLineSpan.trim() !== '' ? parseInt(editPdfMaxLineSpan, 10) : null;
+      if (editPdfMaxLineSpan.trim() !== '' && (!Number.isFinite(pdfMaxLineSpanNum) || (pdfMaxLineSpanNum ?? 0) < 1 || (pdfMaxLineSpanNum ?? 0) > 3)) {
+        setError('pdf_max_line_span debe estar entre 1 y 3');
+        return;
+      }
       const body: Record<string, unknown> = { nombre_corto: nombreCorto, cuit: editCuit.trim() || null };
       // Merge configuracion_excel preserving existing keys
       const existingCfg = (clientes.find((c) => c.id === editingClienteId)?.configuracion_excel ?? {}) as Record<string, unknown>;
       const newCfg: Record<string, unknown> = { ...existingCfg };
-      if (toleranciaNum != null && !isNaN(toleranciaNum)) newCfg.tolerancia_porcentaje = toleranciaNum;
-      if (editHoja.trim()) newCfg.hoja = editHoja.trim();
+      if (toleranciaNum != null && !Number.isNaN(toleranciaNum)) {
+        newCfg.tolerancia_porcentaje = toleranciaNum;
+      } else {
+        delete newCfg.tolerancia_porcentaje;
+      }
+      if (editHoja.trim()) {
+        newCfg.hoja = editHoja.trim();
+      } else {
+        delete newCfg.hoja;
+      }
+      if (filaDatosNum != null && Number.isFinite(filaDatosNum) && filaDatosNum >= 1) {
+        newCfg.fila_datos = filaDatosNum;
+      } else {
+        delete newCfg.fila_datos;
+      }
+      if (editMapeoColumnas.trim()) {
+        let parsedMapeoColumnas: unknown;
+        try {
+          parsedMapeoColumnas = JSON.parse(editMapeoColumnas);
+        } catch {
+          setError('mapeo_columnas debe ser un JSON válido');
+          return;
+        }
+        if (!parsedMapeoColumnas || typeof parsedMapeoColumnas !== 'object' || Array.isArray(parsedMapeoColumnas)) {
+          setError('mapeo_columnas debe ser un objeto JSON');
+          return;
+        }
+        newCfg.mapeo_columnas = parsedMapeoColumnas;
+      } else {
+        delete newCfg.mapeo_columnas;
+      }
+      const conceptosValorVariable = editConceptosValorVariable
+        .split(/[\n,]/)
+        .map((s) => s.trim())
+        .filter((s) => s !== '');
+      if (conceptosValorVariable.length > 0) {
+        newCfg.conceptos_valor_variable = Array.from(new Set(conceptosValorVariable));
+      } else {
+        delete newCfg.conceptos_valor_variable;
+      }
+      if (editAllowedTiposArchivo.length > 0) {
+        newCfg.allowed_tipos_archivo = editAllowedTiposArchivo;
+      } else {
+        delete newCfg.allowed_tipos_archivo;
+      }
+      if (editPdfRegex.trim()) {
+        newCfg.pdf_operacion_regex = editPdfRegex.trim();
+      } else {
+        delete newCfg.pdf_operacion_regex;
+      }
+      const pdfSkipPatterns = editPdfSkipPatterns
+        .split(/[\n,]/)
+        .map((s) => s.trim())
+        .filter((s) => s !== '');
+      if (pdfSkipPatterns.length > 0) {
+        newCfg.pdf_skip_line_patterns = Array.from(new Set(pdfSkipPatterns));
+      } else {
+        delete newCfg.pdf_skip_line_patterns;
+      }
+      if (pdfMaxLineSpanNum != null && Number.isFinite(pdfMaxLineSpanNum) && pdfMaxLineSpanNum >= 1 && pdfMaxLineSpanNum <= 3) {
+        newCfg.pdf_max_line_span = pdfMaxLineSpanNum;
+      } else {
+        delete newCfg.pdf_max_line_span;
+      }
+      if (editPdfConceptoDefault.trim()) {
+        newCfg.pdf_concepto_default = editPdfConceptoDefault.trim();
+      } else {
+        delete newCfg.pdf_concepto_default;
+      }
+      if (editMatchingDistribuidor.length > 0) {
+        newCfg.matching_distribuidor = editMatchingDistribuidor;
+      } else {
+        delete newCfg.matching_distribuidor;
+      }
       body.configuracion_excel = newCfg;
       const res = await api.patch(`/clientes/${editingClienteId}`, body);
       setClientes((prev) => prev.map((c) => c.id === editingClienteId ? { ...c, ...(res.data ?? {}) } : c));
@@ -262,7 +390,23 @@ export function LiquidacionesClientePage({
     } finally {
       setSavingCliente(false);
     }
-  }, [api, clientes, editingClienteId, editNombreCorto, editCuit, editTolerancia, editHoja, selectedCliente]);
+  }, [api, clientes, editingClienteId, editAllowedTiposArchivo, editConceptosValorVariable, editCuit, editFilaDatos, editHoja, editMapeoColumnas, editMatchingDistribuidor, editNombreCorto, editPdfConceptoDefault, editPdfMaxLineSpan, editPdfRegex, editPdfSkipPatterns, editTolerancia, selectedCliente]);
+
+  const toggleAllowedTipoArchivo = useCallback((tipo: string) => {
+    setEditAllowedTiposArchivo((prev) => (
+      prev.includes(tipo)
+        ? prev.filter((item) => item !== tipo)
+        : [...prev, tipo]
+    ));
+  }, []);
+
+  const toggleMatchingDistribuidor = useCallback((strategy: string) => {
+    setEditMatchingDistribuidor((prev) => (
+      prev.includes(strategy)
+        ? prev.filter((item) => item !== strategy)
+        : [...prev, strategy]
+    ));
+  }, []);
 
   const loadClientes = useCallback(async () => {
     setLoading(true);
@@ -862,9 +1006,9 @@ export function LiquidacionesClientePage({
 	                          <td colSpan={7} style={{ padding: 0 }}>
 	                            <div style={{ background: '#f0f9ff', border: '1px solid #bae6fd', borderRadius: 6, margin: '0 8px 8px', padding: 16 }}>
 	                              <h4 style={{ margin: '0 0 12px 0', fontSize: 13 }}>Editar configuración — {c.nombre_corto}</h4>
-	                              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 12, marginBottom: 12 }}>
-	                                <div>
-	                                  <label style={{ display: 'block', fontSize: 12, marginBottom: 4 }}>Nombre corto</label>
+		                              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 12, marginBottom: 12 }}>
+		                                <div>
+		                                  <label style={{ display: 'block', fontSize: 12, marginBottom: 4 }}>Nombre corto</label>
 	                                  <input type="text" className="form-input" value={editNombreCorto} onChange={(e) => setEditNombreCorto(e.target.value)} />
 	                                </div>
 	                                <div>
@@ -875,14 +1019,137 @@ export function LiquidacionesClientePage({
 	                                  <label style={{ display: 'block', fontSize: 12, marginBottom: 4 }}>Tolerancia diferencia (%)</label>
 	                                  <input type="text" className="form-input" value={editTolerancia} onChange={(e) => setEditTolerancia(e.target.value)} placeholder="2" />
 	                                </div>
-	                                <div>
-	                                  <label style={{ display: 'block', fontSize: 12, marginBottom: 4 }}>Hoja Excel (nombre)</label>
-	                                  <input type="text" className="form-input" value={editHoja} onChange={(e) => setEditHoja(e.target.value)} placeholder="Detalle" />
-	                                </div>
-	                              </div>
-	                              <button type="button" className="btn-primary" onClick={() => void saveCliente()} disabled={savingCliente}>
-	                                {savingCliente ? 'Guardando…' : 'Guardar'}
-	                              </button>
+		                                <div>
+		                                  <label style={{ display: 'block', fontSize: 12, marginBottom: 4 }}>Hoja Excel (nombre)</label>
+		                                  <input type="text" className="form-input" value={editHoja} onChange={(e) => setEditHoja(e.target.value)} placeholder="Detalle" />
+		                                </div>
+		                                <div>
+		                                  <label style={{ display: 'block', fontSize: 12, marginBottom: 4 }}>Fila de datos</label>
+		                                  <input type="number" min="1" className="form-input" value={editFilaDatos} onChange={(e) => setEditFilaDatos(e.target.value)} placeholder="1" />
+		                                </div>
+		                              </div>
+                                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 12, marginBottom: 12 }}>
+                                    <div>
+                                      <label style={{ display: 'block', fontSize: 12, marginBottom: 4 }}>Conceptos valor variable</label>
+                                      <input
+                                        type="text"
+                                        className="form-input"
+                                        value={editConceptosValorVariable}
+                                        onChange={(e) => setEditConceptosValorVariable(e.target.value)}
+                                        placeholder="Ej: Valor Viaje, Colecta"
+                                      />
+                                      <div style={{ fontSize: 11, color: '#6b7280', marginTop: 4 }}>
+                                        Separar por coma.
+                                      </div>
+                                    </div>
+                                    <div>
+                                      <label style={{ display: 'block', fontSize: 12, marginBottom: 4 }}>Mapeo de columnas (JSON)</label>
+                                      <textarea
+                                        className="form-input"
+                                        value={editMapeoColumnas}
+                                        onChange={(e) => setEditMapeoColumnas(e.target.value)}
+                                        placeholder={'{\n  "patente": 0,\n  "concepto": 3,\n  "valor": 7\n}'}
+                                        rows={5}
+                                        style={{ width: '100%', resize: 'vertical' }}
+                                      />
+                                    </div>
+                                  </div>
+                                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 12, marginBottom: 12 }}>
+                                    <div>
+                                      <label style={{ display: 'block', fontSize: 12, marginBottom: 4 }}>Regex PDF operaciones</label>
+                                      <textarea
+                                        className="form-input"
+                                        value={editPdfRegex}
+                                        onChange={(e) => setEditPdfRegex(e.target.value)}
+                                        placeholder={'/(?<patente>[A-Z]{2}\\d{3}[A-Z]{2}|[A-Z]{3}\\d{3}).*?(?<concepto>.*?)\\s+(?<valor>\\d[\\d\\.,]*)/iu'}
+                                        rows={5}
+                                        style={{ width: '100%', resize: 'vertical' }}
+                                      />
+                                      <div style={{ fontSize: 11, color: '#6b7280', marginTop: 4 }}>
+                                        Debe capturar al menos `patente` y `valor`. Opcionales: `concepto`, `cuil`, `legajo`, `nombre`, `id_viaje`.
+                                      </div>
+                                    </div>
+                                    <div>
+                                      <label style={{ display: 'block', fontSize: 12, marginBottom: 4 }}>PDF: líneas a ignorar</label>
+                                      <input
+                                        type="text"
+                                        className="form-input"
+                                        value={editPdfSkipPatterns}
+                                        onChange={(e) => setEditPdfSkipPatterns(e.target.value)}
+                                        placeholder="Ej: TOTAL, SUBTOTAL, RESUMEN"
+                                      />
+                                      <div style={{ fontSize: 11, color: '#6b7280', marginTop: 4 }}>
+                                        Separar por coma. Se aplican además los defaults `TOTAL`, `SUBTOTAL`, `PAGINA`.
+                                      </div>
+                                    </div>
+                                    <div>
+                                      <label style={{ display: 'block', fontSize: 12, marginBottom: 4 }}>PDF: span máximo de líneas</label>
+                                      <input
+                                        type="number"
+                                        min="1"
+                                        max="3"
+                                        className="form-input"
+                                        value={editPdfMaxLineSpan}
+                                        onChange={(e) => setEditPdfMaxLineSpan(e.target.value)}
+                                        placeholder="1"
+                                      />
+                                      <div style={{ fontSize: 11, color: '#6b7280', marginTop: 4 }}>
+                                        Usa 2 o 3 si una operación se parte en varias líneas del PDF.
+                                      </div>
+                                    </div>
+                                    <div>
+                                      <label style={{ display: 'block', fontSize: 12, marginBottom: 4 }}>PDF: concepto default</label>
+                                      <input
+                                        type="text"
+                                        className="form-input"
+                                        value={editPdfConceptoDefault}
+                                        onChange={(e) => setEditPdfConceptoDefault(e.target.value)}
+                                        placeholder="Ej: Distribución"
+                                      />
+                                      <div style={{ fontSize: 11, color: '#6b7280', marginTop: 4 }}>
+                                        Se usa solo si el regex no captura `concepto`.
+                                      </div>
+                                    </div>
+                                  </div>
+                                  <div style={{ marginBottom: 12 }}>
+                                    <label style={{ display: 'block', fontSize: 12, marginBottom: 6 }}>Tipos de archivo extra permitidos</label>
+                                    <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+                                      {SUPPORTED_EXTRA_UPLOAD_TYPES.map((tipo) => (
+                                        <label key={tipo} style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 13 }}>
+                                          <input
+                                            type="checkbox"
+                                            checked={editAllowedTiposArchivo.includes(tipo)}
+                                            onChange={() => toggleAllowedTipoArchivo(tipo)}
+                                          />
+                                          <span>{tipo}</span>
+                                        </label>
+                                      ))}
+                                    </div>
+                                    <div style={{ fontSize: 11, color: '#6b7280', marginTop: 4 }}>
+                                      Los tipos base `DATA_CLIENTE` y `DETALLE_SUCURSAL` siempre están habilitados.
+                                    </div>
+                                  </div>
+                                  <div style={{ marginBottom: 12 }}>
+                                    <label style={{ display: 'block', fontSize: 12, marginBottom: 6 }}>Matching de distribuidor</label>
+                                    <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+                                      {SUPPORTED_DISTRIBUTOR_MATCHING.map((strategy) => (
+                                        <label key={strategy} style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 13 }}>
+                                          <input
+                                            type="checkbox"
+                                            checked={editMatchingDistribuidor.includes(strategy)}
+                                            onChange={() => toggleMatchingDistribuidor(strategy)}
+                                          />
+                                          <span>{strategy}</span>
+                                        </label>
+                                      ))}
+                                    </div>
+                                    <div style={{ fontSize: 11, color: '#6b7280', marginTop: 4 }}>
+                                      Si no definís nada, el backend usa defaults por cliente y siempre intenta primero por patente.
+                                    </div>
+                                  </div>
+		                              <button type="button" className="btn-primary" onClick={() => void saveCliente()} disabled={savingCliente}>
+		                                {savingCliente ? 'Guardando…' : 'Guardar'}
+		                              </button>
 	                            </div>
 	                          </td>
 	                        </tr>
