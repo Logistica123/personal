@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { downloadCsv } from '../lib/csv';
 import type { ReclamoMeta, ReclamoRecord, ReclamoTransportistaSummary } from '../features/reclamos/types';
 import {
@@ -1249,14 +1249,27 @@ export const ReclamosPage: React.FC<ReclamosPageProps> = ({
                             />
                           </label>
                         ) : null}
-                        <button
-                          type="button"
-                          aria-label={`Editar reclamo ${reclamo.codigo ?? ''}`}
-                          onClick={() => handleEditReclamo(reclamo)}
-                          disabled={isRevisionActive || isRevisionUpdating || isStatusUpdating}
-                        >
-                          ✏️
-                        </button>
+                        {!(isRevisionActive || isRevisionUpdating || isStatusUpdating) ? (
+                          <Link
+                            to={`/reclamos/${reclamo.id}`}
+                            state={{
+                              ...(getTransportistaEntries(reclamo).length > 0 ? { transportistas: getTransportistaEntries(reclamo) } : null),
+                              from: `${location.pathname}${location.search}`,
+                            }}
+                            aria-label={`Editar reclamo ${reclamo.codigo ?? ''}`}
+                            title="Editar (clic derecho para abrir en nueva pestaña)"
+                          >
+                            ✏️
+                          </Link>
+                        ) : (
+                          <button
+                            type="button"
+                            aria-label={`Editar reclamo ${reclamo.codigo ?? ''}`}
+                            disabled
+                          >
+                            ✏️
+                          </button>
+                        )}
                         <button
                           type="button"
                           aria-label={`Eliminar reclamo ${reclamo.codigo ?? ''}`}
