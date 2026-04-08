@@ -179,6 +179,7 @@ Route::middleware('auth.api')->group(function () {
     Route::post('/cierres-diarios/import', [CierreDiarioController::class, 'import']);
     Route::post('/cierres-diarios/debug', [CierreDiarioController::class, 'debug']);
     Route::delete('/cierres-diarios/fecha/{fecha}', [CierreDiarioController::class, 'destroyByFecha']);
+    Route::get('/cierres-diarios/informes/no-citados', [CierreDiarioController::class, 'informeNoCitados']);
 
     Route::get('/bdd-activos-asesores', [ActivoAsesorComercialController::class, 'index']);
     Route::post('/bdd-activos-asesores', [ActivoAsesorComercialController::class, 'store']);

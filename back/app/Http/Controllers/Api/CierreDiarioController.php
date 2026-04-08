@@ -238,6 +238,50 @@ class CierreDiarioController extends Controller
         ], 201);
     }
 
+    public function informeNoCitados(Request $request): JsonResponse
+    {
+        $this->ensureAuthorized($request);
+
+        $validated = $request->validate([
+            'fecha' => ['required', 'date'],
+        ]);
+
+        $fecha = Carbon::parse($validated['fecha'])->toDateString();
+
+        $query = CierreDiario::query()
+            ->whereDate('fecha_importacion', $fecha)
+            ->where('estatus_lead', 'no Citado');
+
+        $total = (clone $query)->count();
+
+        $porSucursal = (clone $query)
+            ->select('sucursal', DB::raw('COUNT(*) as cantidad'))
+            ->groupBy('sucursal')
+            ->orderByDesc('cantidad')
+            ->get()
+            ->map(fn ($row) => [
+                'sucursal' => $row->sucursal ?: '(sin sucursal)',
+                'cantidad' => (int) $row->cantidad,
+            ]);
+
+        $porAsesor = (clone $query)
+            ->select('asesor_comercial', DB::raw('COUNT(*) as cantidad'))
+            ->groupBy('asesor_comercial')
+            ->orderByDesc('cantidad')
+            ->get()
+            ->map(fn ($row) => [
+                'asesor_comercial' => $row->asesor_comercial ?: '(sin asesor)',
+                'cantidad' => (int) $row->cantidad,
+            ]);
+
+        return response()->json([
+            'fecha' => $fecha,
+            'total_no_citados' => $total,
+            'por_sucursal' => $porSucursal,
+            'por_asesor' => $porAsesor,
+        ]);
+    }
+
     public function destroyByFecha(Request $request, string $fecha): JsonResponse
     {
         $this->ensureAuthorized($request);

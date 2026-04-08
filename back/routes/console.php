@@ -2,7 +2,15 @@
 
 use Illuminate\Foundation\Inspiring;
 use Illuminate\Support\Facades\Artisan;
+use Illuminate\Support\Facades\Schedule;
 use App\Models\User;
+
+// ─── Cierre Diario: sync desde Kommo API todos los días a las 16:40 ─────────
+Schedule::command('cierre:sync-kommo')
+    ->dailyAt('16:40')
+    ->timezone('America/Argentina/Buenos_Aires')
+    ->withoutOverlapping()
+    ->appendOutputTo(storage_path('logs/cierre-sync.log'));
 
 Artisan::command('inspire', function () {
     $this->comment(Inspiring::quote());

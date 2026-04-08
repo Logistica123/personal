@@ -19166,7 +19166,16 @@ const CierresDiariosPage: React.FC = () => {
   const [deleting, setDeleting] = useState(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [totalRecords, setTotalRecords] = useState(0);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [lastPage, setLastPage] = useState(1);
   const [debugResult, setDebugResult] = useState<string | null>(null);
+  const [informe, setInforme] = useState<{
+    total_no_citados: number;
+    por_sucursal: { sucursal: string; cantidad: number }[];
+    por_asesor: { asesor_comercial: string; cantidad: number }[];
+  } | null>(null);
+  const [loadingInforme, setLoadingInforme] = useState(false);
+  const perPage = 250;
 
   const loadFechas = useCallback(async () => {
     setLoadingFechas(true);
@@ -19187,21 +19196,38 @@ const CierresDiariosPage: React.FC = () => {
     }
   }, [apiBaseUrl]);
 
-  const loadRecords = useCallback(async (fecha: string) => {
+  const loadRecords = useCallback(async (fecha: string, page: number = 1) => {
     if (!fecha) return;
     setLoadingRecords(true);
     setLoadError(null);
     try {
-      const params = new URLSearchParams({ fecha, per_page: '500' });
+      const params = new URLSearchParams({ fecha, per_page: String(perPage), page: String(page) });
       const res = await fetch(`${apiBaseUrl}/api/cierres-diarios?${params}`);
       if (!res.ok) throw new Error(`Error ${res.status}`);
       const json = await res.json();
       setRecords(json.data ?? []);
       setTotalRecords(json.meta?.total ?? (json.data ?? []).length);
+      setCurrentPage(json.meta?.current_page ?? 1);
+      setLastPage(json.meta?.last_page ?? 1);
     } catch (err) {
       setLoadError((err as Error).message ?? 'Error al cargar registros.');
     } finally {
       setLoadingRecords(false);
+    }
+  }, [apiBaseUrl]);
+
+  const loadInforme = useCallback(async (fecha: string) => {
+    if (!fecha) return;
+    setLoadingInforme(true);
+    try {
+      const res = await fetch(`${apiBaseUrl}/api/cierres-diarios/informes/no-citados?fecha=${fecha}`);
+      if (!res.ok) { setInforme(null); return; }
+      const json = await res.json();
+      setInforme(json);
+    } catch {
+      setInforme(null);
+    } finally {
+      setLoadingInforme(false);
     }
   }, [apiBaseUrl]);
 
@@ -19211,9 +19237,11 @@ const CierresDiariosPage: React.FC = () => {
 
   useEffect(() => {
     if (selectedFecha) {
-      loadRecords(selectedFecha);
+      setCurrentPage(1);
+      loadRecords(selectedFecha, 1);
+      loadInforme(selectedFecha);
     }
-  }, [selectedFecha, loadRecords]);
+  }, [selectedFecha, loadRecords, loadInforme]);
 
   const handleImport = async () => {
     if (!selectedFile) return;
@@ -19344,6 +19372,79 @@ const CierresDiariosPage: React.FC = () => {
         </div>
       </div>
 
+      {informe && !loadingInforme ? (
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '16px', marginTop: '24px' }}>
+          {/* Alerta de No Citados */}
+          <div className="page-section" style={{ margin: 0 }}>
+            <div className="page-section__header">
+              <h2 className="page-section__title">Alerta de No Citados</h2>
+            </div>
+            <div className="page-section__body" style={{ textAlign: 'center', padding: '24px 16px' }}>
+              <div style={{ fontSize: '2.5rem', fontWeight: 700, color: informe.total_no_citados > 0 ? 'var(--color-danger, #e53e3e)' : 'var(--color-success, #38a169)' }}>
+                {informe.total_no_citados}
+              </div>
+              <div style={{ fontSize: '0.9rem', color: 'var(--color-text-muted, #666)', marginTop: '4px' }}>
+                leads no citados
+              </div>
+            </div>
+          </div>
+
+          {/* No citados por Sucursal */}
+          <div className="page-section" style={{ margin: 0 }}>
+            <div className="page-section__header">
+              <h2 className="page-section__title">No Citados por Sucursal</h2>
+            </div>
+            <div className="page-section__body" style={{ padding: '8px 0' }}>
+              {informe.por_sucursal.length === 0 ? (
+                <p className="form-info" style={{ padding: '16px' }}>Sin datos</p>
+              ) : (
+                <table className="data-table" style={{ fontSize: '0.85rem' }}>
+                  <thead>
+                    <tr><th>Sucursal</th><th style={{ textAlign: 'right' }}>Cantidad</th></tr>
+                  </thead>
+                  <tbody>
+                    {informe.por_sucursal.map((r) => (
+                      <tr key={r.sucursal}>
+                        <td>{r.sucursal}</td>
+                        <td style={{ textAlign: 'right', fontWeight: 600 }}>{r.cantidad}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </div>
+
+          {/* No citados por Asesor Comercial */}
+          <div className="page-section" style={{ margin: 0 }}>
+            <div className="page-section__header">
+              <h2 className="page-section__title">No Citados por Asesor Comercial</h2>
+            </div>
+            <div className="page-section__body" style={{ padding: '8px 0' }}>
+              {informe.por_asesor.length === 0 ? (
+                <p className="form-info" style={{ padding: '16px' }}>Sin datos</p>
+              ) : (
+                <table className="data-table" style={{ fontSize: '0.85rem' }}>
+                  <thead>
+                    <tr><th>Asesor Comercial</th><th style={{ textAlign: 'right' }}>Cantidad</th></tr>
+                  </thead>
+                  <tbody>
+                    {informe.por_asesor.map((r) => (
+                      <tr key={r.asesor_comercial}>
+                        <td>{r.asesor_comercial}</td>
+                        <td style={{ textAlign: 'right', fontWeight: 600 }}>{r.cantidad}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </div>
+        </div>
+      ) : loadingInforme ? (
+        <p className="form-info" style={{ marginTop: '24px' }}>Cargando informes...</p>
+      ) : null}
+
       <div className="page-section" style={{ marginTop: '24px' }}>
         <div className="page-section__header">
           <h2 className="page-section__title">Registros por fecha</h2>
@@ -19389,7 +19490,7 @@ const CierresDiariosPage: React.FC = () => {
             <p className="form-info">Cargando...</p>
           ) : records.length === 0 && selectedFecha ? (
             <p className="form-info">No hay registros para esta fecha.</p>
-          ) : records.length > 0 ? (
+          ) : records.length > 0 ? (<>
             <div style={{ overflowX: 'auto' }}>
               <table className="data-table" style={{ minWidth: '1200px', fontSize: '0.82rem' }}>
                 <thead>
@@ -19432,7 +19533,30 @@ const CierresDiariosPage: React.FC = () => {
                 </tbody>
               </table>
             </div>
-          ) : null}
+            {lastPage > 1 ? (
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '12px', marginTop: '16px' }}>
+                <button
+                  type="button"
+                  className="secondary-action"
+                  disabled={currentPage <= 1 || loadingRecords}
+                  onClick={() => { const p = currentPage - 1; setCurrentPage(p); loadRecords(selectedFecha, p); }}
+                >
+                  ← Anterior
+                </button>
+                <span style={{ fontSize: '0.85rem', color: 'var(--color-text-muted, #666)' }}>
+                  Página {currentPage} de {lastPage} · {totalRecords} registros ({perPage} por página)
+                </span>
+                <button
+                  type="button"
+                  className="secondary-action"
+                  disabled={currentPage >= lastPage || loadingRecords}
+                  onClick={() => { const p = currentPage + 1; setCurrentPage(p); loadRecords(selectedFecha, p); }}
+                >
+                  Siguiente →
+                </button>
+              </div>
+            ) : null}
+          </>) : null}
         </div>
       </div>
     </DashboardLayout>
