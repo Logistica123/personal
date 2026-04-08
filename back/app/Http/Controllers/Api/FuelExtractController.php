@@ -767,6 +767,11 @@ class FuelExtractController extends Controller
     private function applyFormatColumnOverrides(array $columns, array $rows, array $indexMap, ?string $format): array
     {
         $normalizedFormat = strtolower(trim((string) $format));
+
+        if ($normalizedFormat === 'axion') {
+            return $this->applyAxionColumnOverrides($columns, $rows, $indexMap);
+        }
+
         if ($normalizedFormat !== 'custom') {
             return $indexMap;
         }
@@ -782,6 +787,42 @@ class FuelExtractController extends Controller
         }
 
         $indexMap['Producto'] = $productColumnIndex;
+
+        return $indexMap;
+    }
+
+    private function applyAxionColumnOverrides(array $columns, array $rows, array $indexMap): array
+    {
+        $headerIndex = [];
+        foreach ($columns as $index => $header) {
+            $normalized = strtolower(trim(str_replace(' ', '', $this->normalizeHeader((string) $header))));
+            $headerIndex[$normalized] = $index;
+        }
+
+        // TotalDetalle → Importe (override generic 'Total' match)
+        if (isset($headerIndex['totaldetalle'])) {
+            $indexMap['Importe'] = $headerIndex['totaldetalle'];
+        }
+
+        // PrecioDetalle → Precio/Litro
+        if (isset($headerIndex['preciodetalle'])) {
+            $indexMap['Precio/Litro'] = $headerIndex['preciodetalle'];
+        }
+
+        // Articulo → Producto
+        if (isset($headerIndex['articulo'])) {
+            $indexMap['Producto'] = $headerIndex['articulo'];
+        }
+
+        // RazonSocial → Estación
+        if (isset($headerIndex['razonsocial'])) {
+            $indexMap['Estación'] = $headerIndex['razonsocial'];
+        }
+
+        // Numero → Nro. Factura (remito number for dedup)
+        if (isset($headerIndex['numero'])) {
+            $indexMap['Nro. Factura'] = $headerIndex['numero'];
+        }
 
         return $indexMap;
     }
@@ -948,7 +989,7 @@ class FuelExtractController extends Controller
         if (strpos($normalized, 'conductor') !== false || strpos($normalized, 'chofer') !== false) {
             return 'Conductor';
         }
-        if (strpos($normalized, 'producto') !== false || strpos($normalized, 'combustible') !== false) {
+        if (strpos($normalized, 'producto') !== false || strpos($normalized, 'combustible') !== false || strpos($normalized, 'articulo') !== false) {
             return 'Producto';
         }
         if (
@@ -971,7 +1012,8 @@ class FuelExtractController extends Controller
         if (
             strpos($normalized, 'factura') !== false ||
             strpos($normalized, 'comprobante') !== false ||
-            strpos($normalized, 'ticket') !== false
+            strpos($normalized, 'ticket') !== false ||
+            strpos($normalized, 'remito') !== false
         ) {
             return 'Nro. Factura';
         }

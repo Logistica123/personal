@@ -9598,6 +9598,7 @@ const CombustibleCargaPage: React.FC = () => {
               <select value={format} onChange={(event) => setFormat(event.target.value)}>
                 <option value="">Seleccionar</option>
                 <option value="default">Formato general</option>
+                <option value="axion">AXION</option>
                 <option value="custom">Formato personalizado</option>
               </select>
             </label>
