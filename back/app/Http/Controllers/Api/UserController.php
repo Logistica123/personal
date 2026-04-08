@@ -40,6 +40,7 @@ class UserController extends Controller
         'tarifas',
         'bases',
         'bdd-activos-asesores',
+        'asesoria-cierres',
         'documentos',
         'configuracion',
     ];
