@@ -958,7 +958,31 @@ export const RecibosPage: React.FC<RecibosPageProps> = ({
     win.document.write(html);
     win.document.close();
     win.focus();
-    win.print();
+
+    const images = win.document.images;
+    if (images.length > 0) {
+      let loaded = 0;
+      const tryPrint = () => {
+        loaded++;
+        if (loaded >= images.length) {
+          win.print();
+        }
+      };
+      Array.from(images).forEach((img) => {
+        if (img.complete) {
+          loaded++;
+        } else {
+          img.addEventListener('load', tryPrint);
+          img.addEventListener('error', tryPrint);
+        }
+      });
+      if (loaded >= images.length) {
+        win.print();
+      }
+    } else {
+      win.print();
+    }
+
     return true;
   }, []);
 
