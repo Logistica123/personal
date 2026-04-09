@@ -1,4 +1,7 @@
-"""FastAPI microservicio para procesamiento de PDFs OCA."""
+"""FastAPI microservicio para procesamiento de PDFs OCA.
+
+Usa las funciones probadas de procesar_oca.py como motor principal.
+"""
 
 from __future__ import annotations
 
@@ -6,22 +9,25 @@ import os
 import shutil
 import tempfile
 import uuid
+from collections import defaultdict
 from pathlib import Path
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.matching.engine import procesar_desde_archivos, procesar_sucursal
-from app.models.schemas import (
-    FormatoDistribuidor,
-    ProcesarResponse,
-    ResultadoVinculacion,
+from app.procesar_oca import (
+    parse_main_pdf,
+    parse_distributor_pdf,
+    parse_combined_distributor_pdf,
+    find_best_partition,
+    build_excel,
+    detect_files,
 )
 
 app = FastAPI(
     title="OCA PDF Processor",
-    description="Microservicio para parseo y vinculación de PDFs OCA",
-    version="1.0.0",
+    description="Microservicio para parseo y vinculacion de PDFs OCA",
+    version="2.0.0",
 )
 
 app.add_middleware(
@@ -31,7 +37,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Directorio temporal para archivos subidos
 UPLOAD_DIR = Path(tempfile.gettempdir()) / "oca_uploads"
 UPLOAD_DIR.mkdir(exist_ok=True)
 
@@ -46,43 +51,29 @@ def health():
 
 
 # ---------------------------------------------------------------------------
-# Endpoint 1: Procesar carpeta local (para desarrollo/testing)
+# Procesar carpeta local (dev/testing)
 # ---------------------------------------------------------------------------
 
-@app.post("/api/oca/procesar-carpeta", response_model=ProcesarResponse)
+@app.post("/api/oca/procesar-carpeta")
 def procesar_carpeta(carpeta: str = Form(...)):
-    """Procesa una carpeta local con PDFs OCA.
-
-    Útil para testing y desarrollo. Detecta automáticamente
-    los archivos y el formato de distribuidores.
-    """
+    """Procesa una carpeta local con PDFs OCA."""
     try:
-        resultado = procesar_sucursal(carpeta)
-        return ProcesarResponse(success=True, resultado=resultado)
-    except ValueError as e:
-        return ProcesarResponse(success=False, mensaje=str(e))
+        return _procesar_carpeta(carpeta)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
 # ---------------------------------------------------------------------------
-# Endpoint 2: Upload y procesar (para producción desde Laravel)
+# Upload y procesar (produccion, llamado desde Laravel)
 # ---------------------------------------------------------------------------
 
-@app.post("/api/oca/procesar", response_model=ProcesarResponse)
+@app.post("/api/oca/procesar")
 async def procesar_pdfs(
     sucursal: str = Form(...),
     main_pdf: UploadFile = File(...),
     distrib_pdfs: list[UploadFile] = File(default=[]),
 ):
-    """Recibe PDFs subidos y ejecuta el pipeline completo.
-
-    Args:
-        sucursal: Código de sucursal (ej: GUILLON, PQO, TUC).
-        main_pdf: PDF principal de la sucursal.
-        distrib_pdfs: PDFs de distribuidores (individuales o combinado).
-    """
-    # Crear carpeta temporal para este proceso
+    """Recibe PDFs subidos y ejecuta el pipeline completo."""
     proceso_id = str(uuid.uuid4())[:8]
     carpeta = UPLOAD_DIR / proceso_id
     carpeta.mkdir(parents=True, exist_ok=True)
@@ -95,110 +86,181 @@ async def procesar_pdfs(
             f.write(content)
 
         # Guardar PDFs de distribuidores
-        distrib_paths: dict[str, str] = {}
-        combinado_path: str | None = None
-
         for pdf in distrib_pdfs:
             dest = carpeta / pdf.filename
             with open(dest, "wb") as f:
                 content = await pdf.read()
                 f.write(content)
 
-            nombre = Path(pdf.filename).stem
+        # Procesar usando la logica probada de procesar_oca.py
+        return _procesar_carpeta(str(carpeta))
 
-            # Detectar si es combinado (desglose)
-            if "desglose" in nombre.lower():
-                combinado_path = str(dest)
-            else:
-                # Extraer nombre de distribuidor (quitar prefijo sucursal)
-                prefijo = sucursal.upper()
-                if nombre.upper().startswith(prefijo + " "):
-                    nombre_distrib = nombre[len(prefijo) + 1:].strip()
-                else:
-                    nombre_distrib = nombre
-                distrib_paths[nombre_distrib] = str(dest)
-
-        # Procesar
-        resultado = procesar_desde_archivos(
-            main_pdf_path=str(main_path),
-            distrib_paths=distrib_paths if distrib_paths else None,
-            combinado_path=combinado_path,
-            sucursal=sucursal,
-        )
-
-        return ProcesarResponse(success=True, resultado=resultado)
-
-    except ValueError as e:
-        return ProcesarResponse(success=False, mensaje=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
     finally:
-        # Limpiar archivos temporales
         shutil.rmtree(carpeta, ignore_errors=True)
 
 
 # ---------------------------------------------------------------------------
-# Endpoint 3: Solo parsear PDF principal (debug)
+# Parsear solo PDF principal (debug)
 # ---------------------------------------------------------------------------
 
 @app.post("/api/oca/parsear-principal")
 async def parsear_principal(pdf: UploadFile = File(...)):
-    """Parsea solo el PDF principal y devuelve las planillas extraídas."""
-    from app.parsers.pdf_principal import parsear_pdf_principal
-
+    """Parsea solo el PDF principal y devuelve las planillas."""
     with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
         content = await pdf.read()
         tmp.write(content)
         tmp_path = tmp.name
 
     try:
-        planillas = parsear_pdf_principal(tmp_path)
+        planillas = parse_main_pdf(tmp_path)
         return {
             "total": len(planillas),
-            "planillas": [p.model_dump(mode="json") for p in planillas],
+            "planillas": planillas,
         }
     finally:
         os.unlink(tmp_path)
 
 
 # ---------------------------------------------------------------------------
-# Endpoint 4: Solo parsear PDFs distribuidores (debug)
+# Logica principal: usa funciones de procesar_oca.py
 # ---------------------------------------------------------------------------
 
-@app.post("/api/oca/parsear-distribuidores")
-async def parsear_distribuidores(
-    sucursal: str = Form(...),
-    pdfs: list[UploadFile] = File(...),
-):
-    """Parsea PDFs de distribuidores y devuelve los totales diarios."""
-    from app.parsers.pdf_distribuidor import parsear_pdf_combinado, parsear_pdf_individual
+def _procesar_carpeta(folder: str) -> dict:
+    """Ejecuta el pipeline completo de procesamiento OCA."""
+    main_pdf_name, dist_pdfs_or_combined, sucursal = detect_files(folder)
 
-    proceso_id = str(uuid.uuid4())[:8]
-    carpeta = UPLOAD_DIR / proceso_id
-    carpeta.mkdir(parents=True, exist_ok=True)
+    if not main_pdf_name:
+        return {"success": False, "mensaje": "No se encontro PDF principal"}
 
-    try:
-        distribuidores = []
-        for pdf in pdfs:
-            dest = carpeta / pdf.filename
-            with open(dest, "wb") as f:
-                content = await pdf.read()
-                f.write(content)
+    # Parsear PDF principal
+    planillas = parse_main_pdf(os.path.join(folder, main_pdf_name))
 
-            nombre = Path(pdf.filename).stem
-            if "desglose" in nombre.lower():
-                distribuidores.extend(parsear_pdf_combinado(str(dest)))
-            else:
-                prefijo = sucursal.upper()
-                if nombre.upper().startswith(prefijo + " "):
-                    nombre_distrib = nombre[len(prefijo) + 1:].strip()
-                else:
-                    nombre_distrib = nombre
-                distribuidores.append(parsear_pdf_individual(str(dest), nombre_distrib))
+    by_date = defaultdict(list)
+    for p in planillas:
+        by_date[p['fecha']].append(p)
 
-        return {
-            "total": len(distribuidores),
-            "distribuidores": [d.model_dump(mode="json") for d in distribuidores],
-        }
-    finally:
-        shutil.rmtree(carpeta, ignore_errors=True)
+    # Parsear distribuidores
+    is_combined = isinstance(dist_pdfs_or_combined, str)
+    distributors = {}
+
+    if is_combined:
+        combined_path = os.path.join(folder, dist_pdfs_or_combined)
+        distributors = parse_combined_distributor_pdf(combined_path)
+        dist_names = sorted(distributors.keys())
+        formato = "COMBINADO"
+    else:
+        dist_names = sorted(dist_pdfs_or_combined.keys())
+        for name in dist_names:
+            filepath = os.path.join(folder, dist_pdfs_or_combined[name])
+            distributors[name] = parse_distributor_pdf(filepath)
+        formato = "INDIVIDUAL"
+
+    # Matching dia por dia
+    all_dates = sorted(by_date.keys())
+    all_matches = {}
+    exact_days = 0
+
+    for date in all_dates:
+        day_items = by_date[date]
+        targets = [
+            (name, distributors[name][date]['qty'], distributors[name][date]['amount'])
+            for name in dist_names if date in distributors[name]
+        ]
+        if not targets:
+            continue
+        result, score = find_best_partition(day_items, targets)
+        if result:
+            all_matches[date] = result
+            if score < 1:
+                exact_days += 1
+
+    # Construir planilla_distributor
+    planilla_distributor = {}
+    for date, partition in all_matches.items():
+        day_items = by_date[date]
+        for name, indices in partition.items():
+            for idx in indices:
+                p = day_items[idx]
+                key = (p['fecha'], p['nro_planilla'], p['cod_contrato'])
+                planilla_distributor[key] = name
+
+    # Generar Excel
+    output_path = os.path.join(folder, f"{sucursal}_Vinculacion_Planillas.xlsx")
+    build_excel(planillas, by_date, distributors, dist_names, all_matches,
+                planilla_distributor, output_path, sucursal)
+
+    # Construir respuesta para Laravel
+    dias_resultado = []
+    for date in all_dates:
+        day_items = by_date[date]
+        asignaciones = []
+        sin_asignar_list = []
+
+        if date in all_matches:
+            assigned_indices = set()
+            for name, indices in all_matches[date].items():
+                for idx in indices:
+                    assigned_indices.add(idx)
+                    p = day_items[idx]
+                    asignaciones.append({
+                        "planilla": {
+                            "fecha": p['fecha'],
+                            "nro_planilla": p['nro_planilla'],
+                            "cod_contrato": p['cod_contrato'],
+                            "descripcion": p['desc'],
+                            "precio_unitario": p['precio'],
+                            "cantidad": p['qty'],
+                            "importe_total": p['total'],
+                        },
+                        "distribuidor_nombre": name,
+                        "score": 0.0,
+                        "estado": "EXACTO",
+                    })
+            # Sin asignar
+            for idx in range(len(day_items)):
+                if idx not in assigned_indices:
+                    p = day_items[idx]
+                    sin_asignar_list.append({
+                        "fecha": p['fecha'],
+                        "nro_planilla": p['nro_planilla'],
+                        "cod_contrato": p['cod_contrato'],
+                        "descripcion": p['desc'],
+                        "precio_unitario": p['precio'],
+                        "cantidad": p['qty'],
+                        "importe_total": p['total'],
+                    })
+        else:
+            for p in day_items:
+                sin_asignar_list.append({
+                    "fecha": p['fecha'],
+                    "nro_planilla": p['nro_planilla'],
+                    "cod_contrato": p['cod_contrato'],
+                    "descripcion": p['desc'],
+                    "precio_unitario": p['precio'],
+                    "cantidad": p['qty'],
+                    "importe_total": p['total'],
+                })
+
+        estado_dia = "EXACTO" if date in all_matches and not sin_asignar_list else "SIN_ASIGNAR"
+        dias_resultado.append({
+            "fecha": date,
+            "estado": estado_dia,
+            "diff_importe": 0.0,
+            "asignaciones": asignaciones,
+            "sin_asignar": sin_asignar_list,
+        })
+
+    return {
+        "success": True,
+        "resultado": {
+            "sucursal": sucursal,
+            "formato_distribuidor": formato,
+            "total_planillas": len(planillas),
+            "total_distribuidores": len(dist_names),
+            "dias_exactos": exact_days,
+            "dias_totales": len(all_dates),
+            "dias": dias_resultado,
+        },
+    }
