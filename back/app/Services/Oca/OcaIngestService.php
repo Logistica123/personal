@@ -8,6 +8,7 @@ use App\Models\LiqVinculacionOca;
 use App\Models\Persona;
 use App\Support\Personal\PersonaPatenteHelper;
 use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Carbon;
 use RuntimeException;
 
 /**
@@ -103,7 +104,7 @@ class OcaIngestService
 
                 LiqVinculacionOca::create([
                     'liquidacion_cliente_id' => $liquidacion->id,
-                    'fecha' => $planilla['fecha'],
+                    'fecha' => $this->parseFecha((string) ($planilla['fecha'] ?? '')),
                     'nro_planilla' => $planilla['nro_planilla'],
                     'cod_contrato' => $planilla['cod_contrato'],
                     'descripcion' => $planilla['descripcion'] ?? null,
@@ -130,7 +131,7 @@ class OcaIngestService
             foreach ($dia['sin_asignar'] ?? [] as $planilla) {
                 LiqVinculacionOca::create([
                     'liquidacion_cliente_id' => $liquidacion->id,
-                    'fecha' => $planilla['fecha'],
+                    'fecha' => $this->parseFecha((string) ($planilla['fecha'] ?? '')),
                     'nro_planilla' => $planilla['nro_planilla'],
                     'cod_contrato' => $planilla['cod_contrato'],
                     'descripcion' => $planilla['descripcion'] ?? null,
@@ -148,6 +149,18 @@ class OcaIngestService
         }
 
         return $stats;
+    }
+
+    /**
+     * Parsea fecha DD/MM/YYYY a Y-m-d.
+     */
+    private function parseFecha(string $fecha): string
+    {
+        $fecha = trim($fecha);
+        if (preg_match('#^(\d{2})/(\d{2})/(\d{4})$#', $fecha, $m)) {
+            return "{$m[3]}-{$m[2]}-{$m[1]}";
+        }
+        return Carbon::parse($fecha)->toDateString();
     }
 
     /**
