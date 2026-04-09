@@ -19,6 +19,7 @@ class DatabaseSeeder extends Seeder
         $this->call([
             ArcaFacturacionSeeder::class,
             LoginterSeeder::class,
+            OcaSeeder::class,
         ]);
 
         User::query()->updateOrCreate(

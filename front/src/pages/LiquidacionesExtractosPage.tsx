@@ -9,11 +9,15 @@ import type {
   LiqLiquidacionDistribuidor,
   LiqEsquemaTarifario,
   LiqMapeoSucursal,
+  LiqVinculacionOca,
+  OcaResumen,
 } from '../features/liquidaciones/types';
 import {
   ESTADO_OPERACION_LABELS,
   ESTADO_OPERACION_COLOR,
   ESTADO_LIQ_LABELS,
+  ESTADO_OCA_LABELS,
+  ESTADO_OCA_COLOR,
 } from '../features/liquidaciones/types';
 
 type Props = {
@@ -94,6 +98,31 @@ export function LiquidacionesExtractosPage({
   const [uploadFile, setUploadFile] = useState<File | null>(null);
   const [uploadSucursal, setUploadSucursal] = useState('');
   const [uploadTipo, setUploadTipo] = useState('');
+
+  // OCA state
+  const [ocaMainPdf, setOcaMainPdf] = useState<File | null>(null);
+  const [ocaDistribPdfs, setOcaDistribPdfs] = useState<File[]>([]);
+  const [ocaSucursal, setOcaSucursal] = useState('');
+  const [ocaVinculaciones, setOcaVinculaciones] = useState<LiqVinculacionOca[]>([]);
+  const [ocaResumen, setOcaResumen] = useState<OcaResumen | null>(null);
+  const [ocaHealth, setOcaHealth] = useState<boolean | null>(null);
+  const [ocaVincPage, setOcaVincPage] = useState<{ current: number; last: number }>({ current: 1, last: 1 });
+  const [ocaVincFiltro, setOcaVincFiltro] = useState('');
+
+  // OCA: detectar si el cliente seleccionado es OCA (formato PDF_DUAL)
+  const isOcaClient = useMemo(() => {
+    if (!selectedLiq) return false;
+    const cfg = clientes.find((c) => c.id === selectedLiq.cliente_id)?.configuracion_excel;
+    return (cfg as any)?.formato_entrada === 'PDF_DUAL';
+  }, [selectedLiq, clientes]);
+
+  const ocaSucursalOptions = useMemo(() => {
+    if (!selectedLiq) return [];
+    const cfg = clientes.find((c) => c.id === selectedLiq.cliente_id)?.configuracion_excel;
+    const sucursales = (cfg as any)?.sucursales;
+    if (!Array.isArray(sucursales)) return [];
+    return sucursales.map((s: any) => ({ codigo: s.codigo as string, nombre: s.nombre as string }));
+  }, [selectedLiq, clientes]);
 
   const sucursalTarifaOptions = useMemo(() => {
     const values = mapeosSucursal
@@ -221,6 +250,38 @@ export function LiquidacionesExtractosPage({
     } catch { /* silent */ }
   }, [api]);
 
+  // ── OCA load functions (declared before openLiq so they can be referenced) ──
+  const checkOcaHealth = useCallback(async () => {
+    try {
+      const res = await api.get('/oca/health');
+      setOcaHealth(res.available === true);
+    } catch {
+      setOcaHealth(false);
+    }
+  }, [api]);
+
+  const loadOcaVinculaciones = useCallback(async (liqId: number, page = 1, estado = '') => {
+    try {
+      let path = `/oca/${liqId}/vinculaciones?page=${page}`;
+      if (estado) path += `&estado=${estado}`;
+      const res = await api.get(path);
+      const paginated = res.data ?? {};
+      setOcaVinculaciones(paginated.data ?? []);
+      setOcaVincPage({ current: paginated.current_page ?? 1, last: paginated.last_page ?? 1 });
+    } catch {
+      setOcaVinculaciones([]);
+    }
+  }, [api]);
+
+  const loadOcaResumen = useCallback(async (liqId: number) => {
+    try {
+      const res = await api.get(`/oca/${liqId}/resumen`);
+      setOcaResumen(res);
+    } catch {
+      setOcaResumen(null);
+    }
+  }, [api]);
+
   useEffect(() => {
     loadLiquidaciones();
     loadClientes();
@@ -262,10 +323,23 @@ export function LiquidacionesExtractosPage({
       });
       setEsquemas(esqRes.data ?? []);
       setMapeosSucursal(mapSucRes.data ?? []);
+
+      // OCA: cargar vinculaciones y resumen si es cliente OCA
+      const cfg = (detRes.data?.cliente as any)?.configuracion_excel ?? {};
+      const clienteCfg = clientes.find((c) => c.id === liq.cliente_id)?.configuracion_excel;
+      const esOca = (cfg as any)?.formato_entrada === 'PDF_DUAL' || (clienteCfg as any)?.formato_entrada === 'PDF_DUAL';
+      if (esOca) {
+        loadOcaVinculaciones(liq.id).catch(() => {});
+        loadOcaResumen(liq.id).catch(() => {});
+        checkOcaHealth().catch(() => {});
+      } else {
+        setOcaVinculaciones([]);
+        setOcaResumen(null);
+      }
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Error cargando detalle');
     }
-  }, [api]);
+  }, [api, clientes, loadOcaVinculaciones, loadOcaResumen, checkOcaHealth]);
 
   useEffect(() => {
     if (!autoOpenLiqId) return;
@@ -463,6 +537,36 @@ export function LiquidacionesExtractosPage({
       setUploading(false);
     }
   }, [api, uploadFile, selectedLiq, uploadSucursal, uploadTipo, openLiq]);
+
+  // ── OCA upload function ──────────────────────────────────────────────────
+  const subirArchivosOca = useCallback(async () => {
+    if (!ocaMainPdf || ocaDistribPdfs.length === 0 || !selectedLiq || !ocaSucursal) return;
+    setUploading(true);
+    try {
+      const fd = new FormData();
+      fd.append('liquidacion_cliente_id', String(selectedLiq.id));
+      fd.append('sucursal', ocaSucursal);
+      fd.append('main_pdf', ocaMainPdf);
+      for (const pdf of ocaDistribPdfs) {
+        fd.append('distrib_pdfs[]', pdf);
+      }
+      const res = await api.postForm('/oca/upload', fd);
+      setOcaMainPdf(null);
+      setOcaDistribPdfs([]);
+      showSuccess(
+        `OCA procesado: ${res.data?.total_planillas ?? 0} planillas, ` +
+        `${res.data?.total_distribuidores ?? 0} distribuidores, ` +
+        `${res.data?.exactos ?? 0} exactos`
+      );
+      await openLiq(selectedLiq);
+      await loadOcaVinculaciones(selectedLiq.id);
+      await loadOcaResumen(selectedLiq.id);
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Error procesando PDFs OCA');
+    } finally {
+      setUploading(false);
+    }
+  }, [api, ocaMainPdf, ocaDistribPdfs, selectedLiq, ocaSucursal, openLiq, loadOcaVinculaciones, loadOcaResumen]);
 
   const generarLiquidaciones = useCallback(async () => {
     if (!selectedLiq) return;
@@ -1029,23 +1133,76 @@ export function LiquidacionesExtractosPage({
             </div>
           )}
 
-          {/* Upload file */}
-          <div className="dashboard-card" style={{ marginBottom: 16 }}>
-            <header className="card-header"><h3>Cargar archivo de entrada</h3></header>
-            <div className="card-body">
-              <datalist id="liq-sucursal-options">
-                {sucursalTarifaOptions.map((s) => (
-                  <option key={s} value={s} />
-                ))}
-              </datalist>
-              <div style={{ display: 'flex', gap: 12, alignItems: 'flex-end', flexWrap: 'wrap' }}>
-                <div>
-                  <label style={{ display: 'block', fontSize: 12, marginBottom: 4 }}>Archivo</label>
-                  <input type="file" accept=".xlsx,.xls,.pdf" onChange={(e) => setUploadFile(e.target.files?.[0] ?? null)} />
+          {/* Upload file - condicional: OCA (dual PDF) vs genérico */}
+          {isOcaClient ? (
+            <div className="dashboard-card" style={{ marginBottom: 16 }}>
+              <header className="card-header">
+                <h3>Cargar PDFs OCA</h3>
+                {ocaHealth !== null && (
+                  <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 8, background: ocaHealth ? '#dcfce7' : '#fee2e2', color: ocaHealth ? '#16a34a' : '#dc2626' }}>
+                    Motor Python: {ocaHealth ? 'Conectado' : 'No disponible'}
+                  </span>
+                )}
+              </header>
+              <div className="card-body">
+                <div style={{ display: 'flex', gap: 12, alignItems: 'flex-end', flexWrap: 'wrap' }}>
+                  <div>
+                    <label style={{ display: 'block', fontSize: 12, marginBottom: 4, fontWeight: 600 }}>Sucursal</label>
+                    <select className="form-input" value={ocaSucursal} onChange={(e) => setOcaSucursal(e.target.value)} style={{ width: 200 }}>
+                      <option value="">Seleccionar...</option>
+                      {ocaSucursalOptions.map((s) => (
+                        <option key={s.codigo} value={s.codigo}>{s.codigo} - {s.nombre}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label style={{ display: 'block', fontSize: 12, marginBottom: 4, fontWeight: 600 }}>PDF Principal ({ocaSucursal || 'SUCURSAL'}.pdf)</label>
+                    <input type="file" accept=".pdf" onChange={(e) => setOcaMainPdf(e.target.files?.[0] ?? null)} />
+                  </div>
+                  <div>
+                    <label style={{ display: 'block', fontSize: 12, marginBottom: 4, fontWeight: 600 }}>PDFs Distribuidores (individuales o desglose)</label>
+                    <input type="file" accept=".pdf" multiple onChange={(e) => setOcaDistribPdfs(Array.from(e.target.files ?? []))} />
+                  </div>
                 </div>
-                <div>
-	                  <label style={{ display: 'block', fontSize: 12, marginBottom: 4 }}>Sucursal (opcional)</label>
-	                  <input
+                {ocaDistribPdfs.length > 0 && (
+                  <div style={{ marginTop: 8, fontSize: 11, color: '#6b7280' }}>
+                    {ocaDistribPdfs.length} archivo(s) seleccionado(s): {ocaDistribPdfs.map(f => f.name).join(', ')}
+                  </div>
+                )}
+                <div style={{ marginTop: 12 }}>
+                  <button
+                    type="button"
+                    className="btn-primary"
+                    onClick={subirArchivosOca}
+                    disabled={!ocaMainPdf || ocaDistribPdfs.length === 0 || !ocaSucursal || uploading || ocaHealth === false}
+                  >
+                    {uploading ? 'Procesando PDFs…' : 'Subir y vincular'}
+                  </button>
+                  {ocaHealth === false && (
+                    <span style={{ marginLeft: 12, fontSize: 12, color: '#dc2626' }}>
+                      El motor Python no está disponible. Inicialo con: cd python && uvicorn app.main:app --port 8100
+                    </span>
+                  )}
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="dashboard-card" style={{ marginBottom: 16 }}>
+              <header className="card-header"><h3>Cargar archivo de entrada</h3></header>
+              <div className="card-body">
+                <datalist id="liq-sucursal-options">
+                  {sucursalTarifaOptions.map((s) => (
+                    <option key={s} value={s} />
+                  ))}
+                </datalist>
+                <div style={{ display: 'flex', gap: 12, alignItems: 'flex-end', flexWrap: 'wrap' }}>
+                  <div>
+                    <label style={{ display: 'block', fontSize: 12, marginBottom: 4 }}>Archivo</label>
+                    <input type="file" accept=".xlsx,.xls,.pdf" onChange={(e) => setUploadFile(e.target.files?.[0] ?? null)} />
+                  </div>
+                  <div>
+                    <label style={{ display: 'block', fontSize: 12, marginBottom: 4 }}>Sucursal (opcional)</label>
+                    <input
                       type="text"
                       list="liq-sucursal-options"
                       className="form-input"
@@ -1054,25 +1211,26 @@ export function LiquidacionesExtractosPage({
                       placeholder="ej: AMBA"
                       style={{ width: 180 }}
                     />
-	                </div>
-	                <div>
-	                  <label style={{ display: 'block', fontSize: 12, marginBottom: 4 }}>Tipo archivo (opcional)</label>
-	                  <select className="form-input" value={uploadTipo} onChange={(e) => setUploadTipo(e.target.value)} style={{ width: 180 }}>
-	                    <option value="">—</option>
+                  </div>
+                  <div>
+                    <label style={{ display: 'block', fontSize: 12, marginBottom: 4 }}>Tipo archivo (opcional)</label>
+                    <select className="form-input" value={uploadTipo} onChange={(e) => setUploadTipo(e.target.value)} style={{ width: 180 }}>
+                      <option value="">—</option>
                       {uploadTipoOptions.map((opt) => (
                         <option key={opt.value} value={opt.value}>{opt.label}</option>
                       ))}
-	                  </select>
-	                </div>
+                    </select>
+                  </div>
                   <div style={{ fontSize: 11, color: '#6b7280', minWidth: 220 }}>
                     Soporta Excel y PDF. Para PDF, el cliente debe tener configurado `pdf_operacion_regex`.
                   </div>
-                <button type="button" className="btn-primary" onClick={subirArchivo} disabled={!uploadFile || uploading}>
-                  {uploading ? 'Procesando…' : 'Subir y procesar'}
-                </button>
+                  <button type="button" className="btn-primary" onClick={subirArchivo} disabled={!uploadFile || uploading}>
+                    {uploading ? 'Procesando…' : 'Subir y procesar'}
+                  </button>
+                </div>
               </div>
             </div>
-          </div>
+          )}
 
           {/* Files uploaded */}
 	          {archivos.length > 0 && (
@@ -1152,6 +1310,118 @@ export function LiquidacionesExtractosPage({
 	            </div>
 	          )}
 
+          {/* OCA Vinculaciones */}
+          {isOcaClient && (ocaResumen || ocaVinculaciones.length > 0) && (
+            <div className="dashboard-card" style={{ marginBottom: 16 }}>
+              <header className="card-header">
+                <h3>Vinculaciones OCA (subset-sum)</h3>
+              </header>
+              <div className="card-body">
+                {/* Resumen OCA */}
+                {ocaResumen && (
+                  <div style={{ marginBottom: 16 }}>
+                    <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 12 }}>
+                      {ocaResumen.por_estado.map((e) => (
+                        <div key={e.estado} style={{ padding: '6px 14px', borderRadius: 8, background: ESTADO_OCA_COLOR[e.estado as keyof typeof ESTADO_OCA_COLOR] ?? '#6b7280', color: '#fff', fontSize: 13, fontWeight: 600 }}>
+                          {ESTADO_OCA_LABELS[e.estado as keyof typeof ESTADO_OCA_LABELS] ?? e.estado}: {e.cantidad} planillas (${Number(e.total_importe).toLocaleString('es-AR', { minimumFractionDigits: 2 })})
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* Por distribuidor */}
+                    {ocaResumen.por_distribuidor.length > 0 && (
+                      <div style={{ marginBottom: 12 }}>
+                        <h4 style={{ fontSize: 13, fontWeight: 600, marginBottom: 6 }}>Por distribuidor</h4>
+                        <table className="table-sm" style={{ width: '100%', fontSize: 12 }}>
+                          <thead>
+                            <tr><th>Distribuidor</th><th style={{ textAlign: 'right' }}>Planillas</th><th style={{ textAlign: 'right' }}>Cantidad</th><th style={{ textAlign: 'right' }}>Importe</th></tr>
+                          </thead>
+                          <tbody>
+                            {ocaResumen.por_distribuidor.map((d, i) => (
+                              <tr key={i}>
+                                <td>{d.distribuidor_nombre}</td>
+                                <td style={{ textAlign: 'right' }}>{d.planillas}</td>
+                                <td style={{ textAlign: 'right' }}>{Number(d.total_qty).toLocaleString('es-AR', { minimumFractionDigits: 0, maximumFractionDigits: 3 })}</td>
+                                <td style={{ textAlign: 'right' }}>${Number(d.total_importe).toLocaleString('es-AR', { minimumFractionDigits: 2 })}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Tabla de vinculaciones */}
+                {ocaVinculaciones.length > 0 && (
+                  <div>
+                    <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 8 }}>
+                      <h4 style={{ fontSize: 13, fontWeight: 600, margin: 0 }}>Detalle planillas</h4>
+                      <select
+                        className="form-input"
+                        value={ocaVincFiltro}
+                        onChange={(e) => {
+                          setOcaVincFiltro(e.target.value);
+                          if (selectedLiq) loadOcaVinculaciones(selectedLiq.id, 1, e.target.value);
+                        }}
+                        style={{ width: 160, fontSize: 12 }}
+                      >
+                        <option value="">Todos los estados</option>
+                        <option value="EXACTO">Exacto</option>
+                        <option value="APROXIMADO">Aproximado</option>
+                        <option value="SIN_ASIGNAR">Sin asignar</option>
+                      </select>
+                    </div>
+                    <div style={{ overflowX: 'auto' }}>
+                      <table className="table-sm" style={{ width: '100%', fontSize: 12 }}>
+                        <thead>
+                          <tr>
+                            <th>Fecha</th>
+                            <th>Planilla</th>
+                            <th>Contrato</th>
+                            <th>Descripcion</th>
+                            <th style={{ textAlign: 'right' }}>Cantidad</th>
+                            <th style={{ textAlign: 'right' }}>Precio orig.</th>
+                            <th style={{ textAlign: 'right' }}>Importe</th>
+                            <th>Distribuidor</th>
+                            <th>Estado</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {ocaVinculaciones.map((v) => (
+                            <tr key={v.id}>
+                              <td>{v.fecha}</td>
+                              <td>{v.nro_planilla}</td>
+                              <td>{v.cod_contrato}</td>
+                              <td>{v.descripcion ?? '—'}</td>
+                              <td style={{ textAlign: 'right' }}>{Number(v.cantidad).toLocaleString('es-AR', { minimumFractionDigits: 0, maximumFractionDigits: 3 })}</td>
+                              <td style={{ textAlign: 'right' }}>${Number(v.precio_original).toLocaleString('es-AR', { minimumFractionDigits: 2 })}</td>
+                              <td style={{ textAlign: 'right' }}>${Number(v.importe_original).toLocaleString('es-AR', { minimumFractionDigits: 2 })}</td>
+                              <td>{v.distribuidor_nombre ?? '—'}</td>
+                              <td>
+                                <span style={{ padding: '1px 7px', borderRadius: 8, fontSize: 11, fontWeight: 600, background: (ESTADO_OCA_COLOR[v.estado] ?? '#6b7280') + '18', color: ESTADO_OCA_COLOR[v.estado] ?? '#6b7280' }}>
+                                  {ESTADO_OCA_LABELS[v.estado] ?? v.estado}
+                                </span>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                    {/* Paginación */}
+                    {ocaVincPage.last > 1 && (
+                      <div style={{ display: 'flex', gap: 8, justifyContent: 'center', marginTop: 8, fontSize: 12 }}>
+                        <button type="button" className="btn-sm" disabled={ocaVincPage.current <= 1} onClick={() => selectedLiq && loadOcaVinculaciones(selectedLiq.id, ocaVincPage.current - 1, ocaVincFiltro)}>Anterior</button>
+                        <span>Página {ocaVincPage.current} de {ocaVincPage.last}</span>
+                        <button type="button" className="btn-sm" disabled={ocaVincPage.current >= ocaVincPage.last} onClick={() => selectedLiq && loadOcaVinculaciones(selectedLiq.id, ocaVincPage.current + 1, ocaVincFiltro)}>Siguiente</button>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
 	          {/* Operations */}
 	          <div className="dashboard-card" style={{ marginBottom: 16 }}>
 	            <header className="card-header">
@@ -1190,7 +1460,7 @@ export function LiquidacionesExtractosPage({
                           }}
                         />
                       </th>
-                      <th>Dominio</th><th>Distribuidor</th><th>Concepto</th><th>Sucursal</th><th>Valor cliente</th><th>Tarifa orig.</th><th>Distribuidor</th><th>Diferencia</th><th>Estado</th><th></th>
+                      <th>Dominio</th><th>Distribuidor</th><th>Alta</th><th>Baja</th><th>Concepto</th><th>Sucursal</th><th>Valor cliente</th><th>Tarifa orig.</th><th>Distribuidor</th><th>Diferencia</th><th>Estado</th><th></th>
                     </tr>
 	                </thead>
 	                <tbody>
@@ -1206,6 +1476,8 @@ export function LiquidacionesExtractosPage({
                         </td>
 	                      <td><code>{op.dominio ?? '—'}</code></td>
 	                      <td style={{ fontSize: 12 }}>{op.distribuidor ? `${op.distribuidor.apellidos}, ${op.distribuidor.nombres}` : '—'}</td>
+	                      <td style={{ fontSize: 12 }}>{op.distribuidor?.fecha_alta ? new Date(op.distribuidor.fecha_alta).toLocaleDateString('es-AR') : '—'}</td>
+	                      <td style={{ fontSize: 12, color: op.distribuidor?.fecha_baja ? '#dc2626' : undefined }}>{op.distribuidor?.fecha_baja ? new Date(op.distribuidor.fecha_baja).toLocaleDateString('es-AR') : '—'}</td>
 	                      <td style={{ fontSize: 12 }}>{op.concepto ?? '—'}</td>
 	                      <td style={{ fontSize: 12 }}>{op.sucursal_tarifa ?? '—'}</td>
                       <td>{fmt(op.valor_cliente)}</td>
@@ -1245,7 +1517,7 @@ export function LiquidacionesExtractosPage({
                       </td>
 	                    </tr>
 	                  ))}
-	                  {operaciones.length === 0 && <tr><td colSpan={11} style={{ textAlign: 'center', color: '#6b7280' }}>Sin operaciones</td></tr>}
+	                  {operaciones.length === 0 && <tr><td colSpan={13} style={{ textAlign: 'center', color: '#6b7280' }}>Sin operaciones</td></tr>}
 	                </tbody>
 	              </table>
               {hotMapOp && (
@@ -1297,13 +1569,15 @@ export function LiquidacionesExtractosPage({
             <div className="card-body">
               <table className="data-table">
                 <thead>
-                  <tr><th>Distribuidor</th><th>Patente</th><th>Operaciones</th><th>Subtotal</th><th>Gastos</th><th>Total a pagar</th><th>Estado</th><th></th></tr>
+                  <tr><th>Distribuidor</th><th>Patente</th><th>Alta</th><th>Baja</th><th>Operaciones</th><th>Subtotal</th><th>Gastos</th><th>Total a pagar</th><th>Estado</th><th></th></tr>
                 </thead>
                 <tbody>
                   {distribuidores.map((d) => (
                     <tr key={d.id}>
                       <td><strong>{d.distribuidor ? `${d.distribuidor.apellidos}, ${d.distribuidor.nombres}` : `ID ${d.distribuidor_id}`}</strong></td>
                       <td><code>{d.distribuidor?.patente ?? '—'}</code></td>
+                      <td style={{ fontSize: 12 }}>{d.distribuidor?.fecha_alta ? new Date(d.distribuidor.fecha_alta).toLocaleDateString('es-AR') : '—'}</td>
+                      <td style={{ fontSize: 12, color: d.distribuidor?.fecha_baja ? '#dc2626' : undefined }}>{d.distribuidor?.fecha_baja ? new Date(d.distribuidor.fecha_baja).toLocaleDateString('es-AR') : '—'}</td>
                       <td>{d.cantidad_operaciones}</td>
                       <td>{fmt(d.subtotal)}</td>
                       <td style={{ color: '#dc2626' }}>{fmt(d.gastos_administrativos)}</td>
@@ -1336,7 +1610,7 @@ export function LiquidacionesExtractosPage({
                       </td>
                     </tr>
                   ))}
-                  {distribuidores.length === 0 && <tr><td colSpan={8} style={{ textAlign: 'center', color: '#6b7280' }}>Sin liquidaciones generadas aún</td></tr>}
+                  {distribuidores.length === 0 && <tr><td colSpan={10} style={{ textAlign: 'center', color: '#6b7280' }}>Sin liquidaciones generadas aún</td></tr>}
                 </tbody>
               </table>
             </div>

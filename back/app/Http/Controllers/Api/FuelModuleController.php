@@ -339,6 +339,7 @@ class FuelModuleController extends Controller
         $perPage = max(1, min(500, (int) $request->query('per_page', 500)));
         $onlyImputed = $request->boolean('only_imputed');
         $onlyPending = $request->boolean('only_pending');
+        $onlyDiscounted = $request->boolean('only_discounted');
         $includeDuplicates = $request->boolean('include_duplicates');
         $status = $request->query('status');
         $sourceFile = $request->query('source_file');
@@ -384,6 +385,10 @@ class FuelModuleController extends Controller
             $baseQuery->where(function ($query) {
                 $query->where('discounted', false)->orWhereNull('discounted');
             });
+        }
+
+        if ($onlyDiscounted) {
+            $baseQuery->where('discounted', true);
         }
 
         if ($onlyImputed) {

@@ -148,7 +148,7 @@ export type LiqOperacion = {
   distribuidor_id: number | null;
   excluida: boolean;
   observaciones: string | null;
-  distribuidor?: { id: number; apellidos: string; nombres: string; patente: string };
+  distribuidor?: { id: number; apellidos: string; nombres: string; patente: string; fecha_alta: string | null; fecha_baja: string | null };
   linea_tarifa?: Pick<LiqLineaTarifa, 'id' | 'dimensiones_valores' | 'precio_original' | 'precio_distribuidor' | 'porcentaje_agencia'>;
 };
 
@@ -165,7 +165,48 @@ export type LiqLiquidacionDistribuidor = {
   total_a_pagar: string;
   estado: 'generada' | 'aprobada' | 'pagada' | 'anulada';
   pdf_path: string | null;
-  distribuidor?: { id: number; apellidos: string; nombres: string; patente: string; cbu_alias: string | null };
+  distribuidor?: { id: number; apellidos: string; nombres: string; patente: string; cbu_alias: string | null; fecha_alta: string | null; fecha_baja: string | null };
+};
+
+// ── OCA types ────────────────────────────────────────────────────────────────
+
+export type LiqVinculacionOca = {
+  id: number;
+  liquidacion_cliente_id: number;
+  fecha: string;
+  nro_planilla: string;
+  cod_contrato: string;
+  descripcion: string | null;
+  precio_original: string;
+  cantidad: string;
+  importe_original: string;
+  distribuidor_id: number | null;
+  distribuidor_nombre: string | null;
+  precio_distribuidor: string | null;
+  importe_distribuidor: string | null;
+  match_score: string;
+  estado: 'EXACTO' | 'APROXIMADO' | 'SIN_ASIGNAR';
+  formato_origen: string | null;
+  sucursal: string | null;
+  distribuidor?: { id: number; apellidos: string; nombres: string; patente: string };
+};
+
+export type OcaResumen = {
+  por_estado: Array<{ estado: string; cantidad: number; total_importe: string }>;
+  por_distribuidor: Array<{ distribuidor_nombre: string; planillas: number; total_qty: string; total_importe: string }>;
+  por_dia: Record<string, Array<{ fecha: string; estado: string; planillas: number; total_importe: string }>>;
+};
+
+export const ESTADO_OCA_LABELS: Record<LiqVinculacionOca['estado'], string> = {
+  EXACTO: 'Exacto',
+  APROXIMADO: 'Aproximado',
+  SIN_ASIGNAR: 'Sin asignar',
+};
+
+export const ESTADO_OCA_COLOR: Record<LiqVinculacionOca['estado'], string> = {
+  EXACTO: '#16a34a',
+  APROXIMADO: '#d97706',
+  SIN_ASIGNAR: '#dc2626',
 };
 
 // ── UI helpers ────────────────────────────────────────────────────────────────

@@ -900,6 +900,10 @@ export const LiquidacionesPage: React.FC<LiquidacionesPageProps> = ({
     setLiquidacionYearFilter('');
     setDeletingDocumentIds(new Set<number>());
     setSelectedPagadoIds(new Set<number>());
+    setFuelParentDocumentId('');
+    setFuelSelectionAdjustments([]);
+    setFuelAdjustmentError(null);
+    setFuelAdjustmentsMessage(null);
   }, [selectedPersonaId]);
 
   useEffect(() => {

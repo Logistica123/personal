@@ -10382,6 +10382,7 @@ const CombustibleDistribuidorPage: React.FC = () => {
   const [newDistributorCode, setNewDistributorCode] = useState('');
   const [domain, setDomain] = useState('');
   const [invoiceNumber, setInvoiceNumber] = useState('');
+  const [estadoFilter, setEstadoFilter] = useState<'pending' | 'paid' | 'all'>('pending');
   const [sourceFile, setSourceFile] = useState('');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
@@ -10559,8 +10560,12 @@ const CombustibleDistribuidorPage: React.FC = () => {
         if (dateTo) {
           url.searchParams.set('date_to', dateTo);
         }
-        url.searchParams.set('only_pending', '1');
-        url.searchParams.set('only_imputed', '1');
+        if (estadoFilter === 'pending') {
+          url.searchParams.set('only_pending', '1');
+          url.searchParams.set('only_imputed', '1');
+        } else if (estadoFilter === 'paid') {
+          url.searchParams.set('only_discounted', '1');
+        }
         url.searchParams.set('page', String(nextPage));
         url.searchParams.set('per_page', String(CONSUMOS_PER_PAGE));
         const response = await fetch(url.toString(), { credentials: 'include' });
@@ -10631,6 +10636,7 @@ const CombustibleDistribuidorPage: React.FC = () => {
       normalizeDistributorSearch,
       domain,
       invoiceNumber,
+      estadoFilter,
       sourceFile,
       dateFrom,
       dateTo,
@@ -10979,6 +10985,17 @@ const CombustibleDistribuidorPage: React.FC = () => {
             onChange={(event) => setInvoiceNumber(event.target.value)}
             placeholder="Ej: 001-00012345"
           />
+        </label>
+        <label className="input-control">
+          <span>Estado</span>
+          <select
+            value={estadoFilter}
+            onChange={(event) => setEstadoFilter(event.target.value as 'pending' | 'paid' | 'all')}
+          >
+            <option value="pending">Por pagar</option>
+            <option value="paid">Pagado</option>
+            <option value="all">Todos</option>
+          </select>
         </label>
         <label className="input-control">
           <span>Período</span>

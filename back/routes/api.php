@@ -210,6 +210,7 @@ Route::middleware('auth.api')->group(function () {
         Route::get('/esquemas/{esquema}/lineas', [LiqTarifaController::class, 'lineas']);
         Route::post('/esquemas/{esquema}/lineas', [LiqTarifaController::class, 'storeLinea']);
         Route::post('/esquemas/{esquema}/importar-excel', [LiqTarifaController::class, 'importarExcel']);
+        Route::post('/esquemas/{esquema}/importar-oca', [LiqTarifaController::class, 'importarOca']);
         Route::post('/esquemas/{esquema}/lineas/aprobar-todas', [LiqTarifaController::class, 'aprobarTodasLineas']);
         Route::put('/lineas/{lineaTarifa}/aprobar', [LiqTarifaController::class, 'aprobarLinea']);
         Route::put('/lineas/{lineaTarifa}/desactivar', [LiqTarifaController::class, 'desactivarLinea']);
@@ -259,6 +260,12 @@ Route::middleware('auth.api')->group(function () {
         Route::patch('/archivos/{archivo}/sucursal', [LiqArchivoEntradaController::class, 'updateSucursal']);
         Route::post('/archivos/{archivo}/reprocesar', [LiqArchivoEntradaController::class, 'reprocesar']);
         Route::delete('/archivos/{archivo}', [LiqArchivoEntradaController::class, 'destroy']);
+
+        // OCA - procesamiento PDF con microservicio Python
+        Route::get('/oca/health', [\App\Http\Controllers\Api\Liq\LiqOcaController::class, 'health']);
+        Route::post('/oca/upload', [\App\Http\Controllers\Api\Liq\LiqOcaController::class, 'upload']);
+        Route::get('/oca/{liquidacionCliente}/vinculaciones', [\App\Http\Controllers\Api\Liq\LiqOcaController::class, 'vinculaciones']);
+        Route::get('/oca/{liquidacionCliente}/resumen', [\App\Http\Controllers\Api\Liq\LiqOcaController::class, 'resumen']);
 
         // Vista de proveedor (LiquidacionesPage) - liquidaciones generadas desde extractos (v2)
         Route::get('/distribuidores/{persona}/liquidaciones', [LiqDistribuidorLiquidacionesController::class, 'index']);

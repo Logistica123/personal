@@ -63,7 +63,7 @@ export const ReclamoNuevoPage: React.FC<ReclamoNuevoPageProps> = ({
     concepto: '',
     fechaCompromisoPago: '',
   });
-  const [adelantoCategoria, setAdelantoCategoria] = useState<'adelanto' | 'pago'>('adelanto');
+  const [adelantoCategoria, setAdelantoCategoria] = useState<'' | 'adelanto' | 'pago'>('');
   const authUser = useStoredAuthUser();
   const normalizedUserName = useMemo(
     () => authUser?.name?.trim().toLowerCase() ?? authUser?.email?.trim().toLowerCase() ?? '',
@@ -231,7 +231,7 @@ export const ReclamoNuevoPage: React.FC<ReclamoNuevoPageProps> = ({
       return;
     }
 
-    const nextConcepto = adelantoCategoria === 'pago' ? 'Reclamo de pago' : 'Solicitud de adelanto';
+    const nextConcepto = adelantoCategoria === 'pago' ? 'Reclamo de pago' : adelantoCategoria === 'adelanto' ? 'Solicitud de adelanto' : '';
     setFormValues((prev) => (prev.concepto === nextConcepto ? prev : { ...prev, concepto: nextConcepto }));
   }, [adelantoCategoria, isAdelantoQuickCreateMode, isReclamoAdelantoSelected]);
 
@@ -1095,7 +1095,8 @@ export const ReclamoNuevoPage: React.FC<ReclamoNuevoPageProps> = ({
             </div>
             <label className="input-control">
               <span>Tipo</span>
-              <select value={adelantoCategoria} onChange={(event) => setAdelantoCategoria(event.target.value as 'adelanto' | 'pago')}>
+              <select value={adelantoCategoria} onChange={(event) => setAdelantoCategoria(event.target.value as '' | 'adelanto' | 'pago')}>
+                <option value="">Seleccionar</option>
                 <option value="adelanto">Solicitud de adelanto</option>
                 <option value="pago">Reclamo de pago</option>
               </select>

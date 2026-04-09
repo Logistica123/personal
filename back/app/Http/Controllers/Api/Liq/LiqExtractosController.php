@@ -180,7 +180,7 @@ class LiqExtractosController extends Controller
     public function operaciones(Request $request, LiqLiquidacionCliente $liquidacionCliente): JsonResponse
     {
         $query = LiqOperacion::where('liquidacion_cliente_id', $liquidacionCliente->id)
-            ->with(['distribuidor:id,apellidos,nombres,patente', 'lineaTarifa:id,dimensiones_valores,precio_original,precio_distribuidor,porcentaje_agencia']);
+            ->with(['distribuidor:id,apellidos,nombres,patente,fecha_alta,fecha_baja', 'lineaTarifa:id,dimensiones_valores,precio_original,precio_distribuidor,porcentaje_agencia']);
         if ($request->filled('estado')) {
             $query->where('estado', $request->string('estado'));
         }
@@ -291,7 +291,7 @@ class LiqExtractosController extends Controller
     public function distribuidores(LiqLiquidacionCliente $liquidacionCliente): JsonResponse
     {
         $liqDist = LiqLiquidacionDistribuidor::where('liquidacion_cliente_id', $liquidacionCliente->id)
-            ->with('distribuidor:id,apellidos,nombres,patente,cbu_alias')
+            ->with('distribuidor:id,apellidos,nombres,patente,cbu_alias,fecha_alta,fecha_baja')
             ->orderBy('total_a_pagar', 'desc')
             ->get();
         return response()->json(['data' => $liqDist]);
@@ -331,7 +331,7 @@ class LiqExtractosController extends Controller
         // ── 2. Operaciones con diferencia (fuera de tolerancia) ───────────────
         $diferencias = LiqOperacion::where('liquidacion_cliente_id', $liqId)
             ->where('estado', 'diferencia')
-            ->with('distribuidor:id,apellidos,nombres,patente')
+            ->with('distribuidor:id,apellidos,nombres,patente,fecha_alta,fecha_baja')
             ->orderByRaw('ABS(diferencia_cliente) DESC')
             ->limit(200)
             ->get(['id', 'dominio', 'concepto', 'sucursal_tarifa', 'valor_cliente', 'valor_tarifa_original', 'diferencia_cliente', 'distribuidor_id', 'campos_originales']);
@@ -372,7 +372,7 @@ class LiqExtractosController extends Controller
         // ── 5. Duplicados ─────────────────────────────────────────────────────
         $duplicados = LiqOperacion::where('liquidacion_cliente_id', $liqId)
             ->where('estado', 'duplicado')
-            ->with('distribuidor:id,apellidos,nombres,patente')
+            ->with('distribuidor:id,apellidos,nombres,patente,fecha_alta,fecha_baja')
             ->limit(100)
             ->get(['id', 'dominio', 'concepto', 'valor_cliente', 'distribuidor_id', 'campos_originales']);
 
@@ -390,13 +390,15 @@ class LiqExtractosController extends Controller
                 SUM(diferencia_cliente) as total_diferencia
             ')
             ->groupBy('distribuidor_id')
-            ->with('distribuidor:id,apellidos,nombres,patente')
+            ->with('distribuidor:id,apellidos,nombres,patente,fecha_alta,fecha_baja')
             ->orderByRaw('SUM(valor_tarifa_distribuidor) DESC')
             ->get()
             ->map(fn($row) => [
                 'distribuidor_id'    => $row->distribuidor_id,
                 'nombre'             => $row->distribuidor ? trim($row->distribuidor->apellidos . ', ' . $row->distribuidor->nombres) : "ID {$row->distribuidor_id}",
                 'patente'            => $row->distribuidor?->patente ?? '—',
+                'fecha_alta'         => $row->distribuidor?->fecha_alta,
+                'fecha_baja'         => $row->distribuidor?->fecha_baja,
                 'cantidad'           => (int) $row->cantidad,
                 'total_cliente'      => round((float) $row->total_cliente, 2),
                 'total_correcto'     => round((float) $row->total_correcto, 2),

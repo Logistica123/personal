@@ -534,6 +534,297 @@ class LiqTarifaController extends Controller
         ], 201);
     }
 
+    // POST /liq/esquemas/{esquema}/importar-oca - importar tarifas OCA desde Excel multi-sección
+    public function importarOca(Request $request, LiqEsquemaTarifario $esquema): JsonResponse
+    {
+        $role = strtolower(trim((string) ($request->user()?->role ?? '')));
+        if (! in_array($role, ['admin', 'admin2'], true)) {
+            return response()->json(['message' => 'No tenés permisos para importar tarifas.'], 403);
+        }
+
+        $data = $request->validate([
+            'archivo' => 'required|file|mimes:xlsx,xls',
+            'vigencia_desde' => 'required|date',
+            'vigencia_hasta' => 'nullable|date|after_or_equal:vigencia_desde',
+            'motivo' => 'required|string|min:3',
+        ]);
+
+        $vigDesde = Carbon::parse($data['vigencia_desde'])->toDateString();
+        $vigHasta = isset($data['vigencia_hasta']) ? Carbon::parse($data['vigencia_hasta'])->toDateString() : null;
+
+        $file = $request->file('archivo');
+        $path = $file?->getRealPath();
+        if (! $path) {
+            return response()->json(['error' => 'No se pudo leer el archivo'], 422);
+        }
+
+        try {
+            $spreadsheet = IOFactory::load($path);
+        } catch (\Throwable $e) {
+            return response()->json(['error' => 'No se pudo abrir el Excel: ' . $e->getMessage()], 422);
+        }
+
+        $parsed = [];
+        $warnings = [];
+        $sheetCount = $spreadsheet->getSheetCount();
+
+        for ($si = 0; $si < $sheetCount; $si++) {
+            $ws = $spreadsheet->getSheet($si);
+            $sheetName = $ws->getTitle();
+            $maxRow = (int) $ws->getHighestDataRow();
+            $maxColIdx = Coordinate::columnIndexFromString($ws->getHighestDataColumn());
+
+            $currentSection = null;
+
+            for ($r = 1; $r <= $maxRow; $r++) {
+                // Leer todas las celdas de la fila
+                $cells = [];
+                for ($c = 1; $c <= $maxColIdx; $c++) {
+                    $ref = Coordinate::stringFromColumnIndex($c) . $r;
+                    $cells[$c] = trim((string) ($ws->getCell($ref)->getFormattedValue() ?? ''));
+                }
+
+                $nonEmpty = array_filter($cells, fn ($v) => $v !== '');
+                if (empty($nonEmpty)) {
+                    continue;
+                }
+
+                // Detectar fila de encabezado de sección (una sola celda prominente o header de sección)
+                $firstCell = $cells[1] ?? '';
+                $secondCell = $cells[2] ?? '';
+                $thirdCell = $cells[3] ?? '';
+                $firstUpper = mb_strtoupper(trim($firstCell));
+
+                // Detectar header de tabla: SUCURSAL | CHOFER | ORIGINAL | DISTRIBUIDOR
+                if ($this->normHeader($firstCell) === 'sucursal' && Str::contains($this->normHeader($secondCell), 'chofer')) {
+                    // Es una fila de headers, encontrar columnas
+                    $colSucursal = null;
+                    $colChofer = null;
+                    $colOriginal = null;
+                    $colDist = null;
+                    for ($c = 1; $c <= $maxColIdx; $c++) {
+                        $norm = $this->normHeader($cells[$c] ?? '');
+                        if ($norm === 'sucursal') $colSucursal = $c;
+                        if (Str::contains($norm, 'chofer') || Str::contains($norm, 'distribuidor_nombre')) $colChofer = $c;
+                        if ($norm === 'original') $colOriginal = $c;
+                        if ($norm === 'distribuidor') $colDist = $c;
+                    }
+                    continue;
+                }
+
+                // Detectar sección: fila con solo una celda en col A que no es datos
+                // Ejemplos: "CHASIS", "UNIDAD 700 KG", "TARIFAS ORIGINALES..."
+                if ($firstCell !== '' && $thirdCell === '' && $secondCell === '' && ! is_numeric(str_replace(['$', '.', ',', ' '], '', $firstCell))) {
+                    $currentSection = trim($firstCell);
+                    continue;
+                }
+
+                // También detectar secciones tipo "UNIDADES 0.5 T" con algo en col B
+                if ($firstCell !== '' && Str::startsWith($firstUpper, 'UNIDADES') || Str::startsWith($firstUpper, 'TARIFA')) {
+                    $sectionLabel = trim($firstCell . ' ' . $secondCell);
+                    if ($sectionLabel !== '' && $this->parseMoney($firstCell) === null) {
+                        $currentSection = $sectionLabel;
+                        continue;
+                    }
+                }
+
+                // Detectar filas de precio en formato: concepto | precio
+                // Ejemplo: "Paquete entregado" | "$1.820,00"  o  "Paquetes comunes" | "$2.165,80"
+                if ($firstCell !== '' && $this->parseMoney($firstCell) === null) {
+                    $priceVal = $this->parseMoney($secondCell);
+                    $distVal = $thirdCell !== '' ? $this->parseMoney($thirdCell) : null;
+
+                    // Fila con concepto + precio en col B (formato Interior)
+                    if ($priceVal !== null && $priceVal > 0 && count($nonEmpty) <= 3) {
+                        $concepto = trim($firstCell);
+                        $porcentaje = ($distVal !== null && $distVal > 0)
+                            ? round((1 - ($distVal / $priceVal)) * 100, 2)
+                            : 0.0;
+                        $precioDistribuidor = ($distVal !== null && $distVal > 0) ? $distVal : $priceVal;
+
+                        $parsed[] = [
+                            'dimensiones_valores' => [
+                                'sucursal' => $currentSection ?? $sheetName,
+                                'concepto' => $concepto,
+                            ],
+                            'precio_original' => $priceVal,
+                            'porcentaje_agencia' => $porcentaje,
+                            'precio_distribuidor' => round($precioDistribuidor, 2),
+                            'seccion' => $currentSection,
+                            'hoja' => $sheetName,
+                        ];
+                        continue;
+                    }
+                }
+
+                // Detectar filas de datos tabulares: SUCURSAL | CHOFER | $ORIGINAL | $DISTRIBUIDOR
+                // (cuando hay columnas con formato moneda en posiciones 3 y 4)
+                if (count($nonEmpty) >= 3) {
+                    $sucursal = trim($cells[1] ?? '');
+                    $chofer = trim($cells[2] ?? '');
+                    $origVal = $this->parseMoney($cells[3] ?? '');
+                    $distVal = (isset($cells[4]) && $cells[4] !== '') ? $this->parseMoney($cells[4]) : null;
+
+                    if ($sucursal !== '' && $chofer !== '' && $origVal !== null && $origVal > 0) {
+                        $porcentaje = ($distVal !== null && $distVal > 0)
+                            ? round((1 - ($distVal / $origVal)) * 100, 2)
+                            : 0.0;
+                        $precioDistribuidor = ($distVal !== null && $distVal > 0) ? $distVal : $origVal;
+
+                        $parsed[] = [
+                            'dimensiones_valores' => [
+                                'sucursal' => $sucursal,
+                                'concepto' => $currentSection ?? 'General',
+                            ],
+                            'precio_original' => $origVal,
+                            'porcentaje_agencia' => $porcentaje,
+                            'precio_distribuidor' => round($precioDistribuidor, 2),
+                            'chofer' => $chofer,
+                            'seccion' => $currentSection,
+                            'hoja' => $sheetName,
+                        ];
+                        continue;
+                    }
+                }
+
+                // Detectar filas de precio de Ultima Milla (múltiples precios en fila)
+                // Ejemplo: $2.165,80 | $2.412,76 | $1.313,75 | $1.368,33
+                $allMoney = true;
+                $moneyValues = [];
+                foreach ($nonEmpty as $c => $v) {
+                    $mv = $this->parseMoney($v);
+                    if ($mv === null) {
+                        $allMoney = false;
+                        break;
+                    }
+                    $moneyValues[$c] = $mv;
+                }
+                // No auto-importar filas de precios sueltos sin contexto, solo advertir
+                if ($allMoney && count($moneyValues) >= 2) {
+                    $warnings[] = [
+                        'row' => $r,
+                        'sheet' => $sheetName,
+                        'warning' => "Fila con múltiples precios sin encabezado de columna — revisar manualmente: " . implode(' | ', array_map(fn($v) => '$' . number_format($v, 2, ',', '.'), $moneyValues)),
+                    ];
+                }
+            }
+        }
+
+        if (empty($parsed)) {
+            return response()->json([
+                'error' => 'No se encontraron líneas de tarifa importables. ' .
+                    'El Excel OCA debe tener secciones con formato SUCURSAL | CHOFER | ORIGINAL | DISTRIBUIDOR, ' .
+                    'o concepto | precio.',
+                'warnings' => array_slice($warnings, 0, 50),
+            ], 422);
+        }
+
+        $userId = $request->user()?->id;
+        $inserted = 0;
+        $skipped = 0;
+
+        DB::beginTransaction();
+        try {
+            // Crear dimension values
+            foreach ($parsed as $item) {
+                foreach (($item['dimensiones_valores'] ?? []) as $dim => $val) {
+                    $val = trim((string) $val);
+                    if ($val === '') continue;
+                    if (! in_array($dim, $esquema->dimensiones ?? [], true)) continue;
+                    $dv = LiqDimensionValor::where('esquema_id', $esquema->id)
+                        ->where('nombre_dimension', $dim)
+                        ->where('valor', $val)
+                        ->first();
+                    if (! $dv) {
+                        LiqDimensionValor::create([
+                            'esquema_id' => $esquema->id,
+                            'nombre_dimension' => $dim,
+                            'valor' => $val,
+                            'orden_display' => 0,
+                            'activo' => true,
+                        ]);
+                    } elseif (! $dv->activo) {
+                        $dv->update(['activo' => true]);
+                    }
+                }
+            }
+
+            // Crear líneas de tarifa
+            foreach ($parsed as $item) {
+                $dimVals = [];
+                foreach (($item['dimensiones_valores'] ?? []) as $dim => $val) {
+                    if (in_array($dim, $esquema->dimensiones ?? [], true)) {
+                        $dimVals[$dim] = trim((string) $val);
+                    }
+                }
+                if (empty($dimVals)) continue;
+
+                // Verificar si ya existe
+                $q = LiqLineaTarifa::where('esquema_id', $esquema->id)
+                    ->whereDate('vigencia_desde', $vigDesde);
+                if ($vigHasta) {
+                    $q->whereDate('vigencia_hasta', $vigHasta);
+                } else {
+                    $q->whereNull('vigencia_hasta');
+                }
+                foreach ($dimVals as $dim => $val) {
+                    $q->where("dimensiones_valores->$dim", (string) $val);
+                }
+                // Para OCA también comparar precio original (puede haber mismas dims con distinto precio por chofer)
+                $q->where('precio_original', $item['precio_original']);
+
+                if ($q->exists()) {
+                    $skipped++;
+                    continue;
+                }
+
+                $linea = LiqLineaTarifa::create([
+                    'esquema_id' => $esquema->id,
+                    'dimensiones_valores' => $dimVals,
+                    'precio_original' => $item['precio_original'],
+                    'porcentaje_agencia' => $item['porcentaje_agencia'],
+                    'precio_distribuidor' => $item['precio_distribuidor'],
+                    'vigencia_desde' => $vigDesde,
+                    'vigencia_hasta' => $vigHasta,
+                    'creado_por' => $userId,
+                    'activo' => true,
+                ]);
+
+                LiqAuditoriaTarifa::create([
+                    'linea_tarifa_id' => $linea->id,
+                    'accion' => 'creacion',
+                    'valores_anteriores' => null,
+                    'valores_nuevos' => array_merge($linea->toArray(), array_filter([
+                        'chofer' => $item['chofer'] ?? null,
+                        'seccion' => $item['seccion'] ?? null,
+                        'hoja' => $item['hoja'] ?? null,
+                    ])),
+                    'usuario_id' => $userId,
+                    'motivo' => $data['motivo'] . ' (importación OCA)',
+                    'created_at' => now(),
+                ]);
+
+                $inserted++;
+            }
+
+            DB::commit();
+        } catch (\Throwable $e) {
+            DB::rollBack();
+            return response()->json(['error' => 'No se pudo importar: ' . $e->getMessage()], 500);
+        }
+
+        return response()->json([
+            'message' => "Importación OCA completa: $inserted líneas creadas, $skipped omitidas.",
+            'data' => [
+                'inserted' => $inserted,
+                'skipped' => $skipped,
+                'total_parseadas' => count($parsed),
+                'preview' => array_slice($parsed, 0, 30),
+                'warnings' => array_slice($warnings, 0, 100),
+            ],
+        ], 201);
+    }
+
     // PUT /liq/lineas/{lineaTarifa}/aprobar
     public function aprobarLinea(Request $request, LiqLineaTarifa $lineaTarifa): JsonResponse
     {

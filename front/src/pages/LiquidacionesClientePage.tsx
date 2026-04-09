@@ -104,7 +104,8 @@ export function LiquidacionesClientePage({
   // New tariff line form
   const [newLineaDims, setNewLineaDims] = useState<Record<string, string>>({});
   const [newLineaPrecio, setNewLineaPrecio] = useState('');
-  const [newLineaPctAg, setNewLineaPctAg] = useState('10');
+  const [newLineaPctAg, setNewLineaPctAg] = useState('');
+  const [newLineaDistPrecio, setNewLineaDistPrecio] = useState('');
   const [newLineaVigDesde, setNewLineaVigDesde] = useState('');
   const [newLineaVigHasta, setNewLineaVigHasta] = useState('');
   const [newLineaMotivo, setNewLineaMotivo] = useState('Carga inicial');
@@ -686,6 +687,33 @@ export function LiquidacionesClientePage({
     }
   }, [api, importMotivo, importTarifaFile, importVigDesde, importVigHasta, refreshEsquemas, selectEsquema, selectedEsquema]);
 
+  const importarTarifaOca = useCallback(async () => {
+    if (!selectedEsquema) return;
+    if (!importTarifaFile) { setError('Seleccioná un archivo Excel'); return; }
+    if (!importVigDesde) { setError('Vigencia desde es obligatoria'); return; }
+    if (!importMotivo.trim()) { setError('Motivo es obligatorio'); return; }
+
+    setImportingTarifa(true);
+    setError(null);
+    try {
+      const fd = new FormData();
+      fd.append('archivo', importTarifaFile);
+      fd.append('vigencia_desde', importVigDesde);
+      if (importVigHasta) fd.append('vigencia_hasta', importVigHasta);
+      fd.append('motivo', importMotivo.trim());
+
+      const res = await api.postForm(`/esquemas/${selectedEsquema.id}/importar-oca`, fd);
+      showSuccess(res.message ?? 'Tarifa OCA importada');
+      setImportTarifaFile(null);
+      await refreshEsquemas();
+      await selectEsquema(selectedEsquema);
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Error importando tarifa OCA');
+    } finally {
+      setImportingTarifa(false);
+    }
+  }, [api, importMotivo, importTarifaFile, importVigDesde, importVigHasta, refreshEsquemas, selectEsquema, selectedEsquema]);
+
   const desactivarEsquema = useCallback(async (esquema: LiqEsquemaTarifario) => {
     if (!selectedCliente) return;
     if (!window.confirm(`¿Desactivar el esquema "${esquema.nombre}"? (No se borra, queda histórico)`)) return;
@@ -752,9 +780,18 @@ export function LiquidacionesClientePage({
   const addLinea = useCallback(async () => {
     if (!selectedEsquema) return;
     const precio = parseMoneyInput(newLineaPrecio);
-    const pct = parsePercentInput(newLineaPctAg);
-    if (precio == null || precio <= 0) { setError('Precio inválido'); return; }
-    if (pct == null || pct <= 0 || pct >= 100) { setError('% agencia inválido (0 a 100)'); return; }
+    if (precio == null || precio <= 0) { setError('Precio original inválido'); return; }
+
+    // Calcular % agencia: prioridad al precio distribuidor manual
+    const distManual = parseMoneyInput(newLineaDistPrecio);
+    let pct: number | null;
+    if (distManual != null && distManual > 0) {
+      pct = parseFloat(((1 - distManual / precio) * 100).toFixed(4));
+    } else {
+      pct = parsePercentInput(newLineaPctAg);
+    }
+    if (pct == null || pct < 0 || pct >= 100) { setError('Necesitás un % agencia o un precio distribuidor válido'); return; }
+
     if (!newLineaVigDesde) { setError('Vigencia desde es obligatoria'); return; }
     if (!newLineaMotivo || newLineaMotivo.trim().length < 3) { setError('Motivo es obligatorio'); return; }
     const dimsFaltantes = (selectedEsquema.dimensiones ?? []).filter((d) => !(newLineaDims[d] ?? '').trim());
@@ -770,13 +807,15 @@ export function LiquidacionesClientePage({
       });
       setNewLineaDims({});
       setNewLineaPrecio('');
+      setNewLineaPctAg('');
+      setNewLineaDistPrecio('');
       const res = await api.get(`/esquemas/${selectedEsquema.id}/lineas`);
       setLineas(res.data ?? []);
       showSuccess('Línea creada');
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Error');
     }
-  }, [api, selectedEsquema, newLineaDims, newLineaPrecio, newLineaPctAg, newLineaVigDesde, newLineaVigHasta, newLineaMotivo]);
+  }, [api, selectedEsquema, newLineaDims, newLineaPrecio, newLineaPctAg, newLineaDistPrecio, newLineaVigDesde, newLineaVigHasta, newLineaMotivo]);
 
   const aprobarLinea = useCallback(async (id: number) => {
     const motivo = window.prompt('Motivo de aprobación:', 'Aprobación manual');
@@ -869,11 +908,22 @@ export function LiquidacionesClientePage({
     }
   }, [api, selectedCliente]);
 
-  const precioDistribuidor = () => {
+  const precioDistribuidor = (): number | null => {
+    const dist = parseMoneyInput(newLineaDistPrecio);
+    if (dist != null && dist > 0) return dist;
     const p = parseMoneyInput(newLineaPrecio);
     const pct = parsePercentInput(newLineaPctAg);
     if (p == null || pct == null) return null;
     return p * (1 - pct / 100);
+  };
+
+  const pctAgenciaCalculado = (): string => {
+    const p = parseMoneyInput(newLineaPrecio);
+    const dist = parseMoneyInput(newLineaDistPrecio);
+    if (p != null && p > 0 && dist != null && dist > 0) {
+      return ((1 - dist / p) * 100).toFixed(2);
+    }
+    return newLineaPctAg;
   };
 
   return (
@@ -1288,9 +1338,19 @@ export function LiquidacionesClientePage({
                         <button type="button" className="btn-primary" onClick={() => void importarTarifaExcel()} disabled={importingTarifa}>
                           {importingTarifa ? 'Importando...' : 'Importar'}
                         </button>
+                        {((selectedCliente?.configuracion_excel as any)?.formato_entrada === 'PDF_DUAL' || selectedCliente?.codigo_corto === 'OCA' || selectedCliente?.nombre_corto === 'OCA') && (
+                          <button type="button" className="btn-primary" style={{ background: '#7c3aed' }} onClick={() => void importarTarifaOca()} disabled={importingTarifa}>
+                            {importingTarifa ? 'Importando...' : 'Importar OCA'}
+                          </button>
+                        )}
                       </div>
                       <p style={{ marginTop: 8, fontSize: 12, color: '#6b7280' }}>
                         Carga dimensiones + líneas como <strong>borrador</strong> (pendiente de aprobación). Las filas sin precio o incompletas se omiten.
+                        {((selectedCliente?.configuracion_excel as any)?.formato_entrada === 'PDF_DUAL' || selectedCliente?.codigo_corto === 'OCA' || selectedCliente?.nombre_corto === 'OCA') && (
+                          <span style={{ display: 'block', marginTop: 4, color: '#7c3aed' }}>
+                            <strong>OCA:</strong> Usá "Importar OCA" para Excels con formato multi-sección (Chasis, Ultima Milla, Interior). Lee todas las hojas y secciones automáticamente.
+                          </span>
+                        )}
                       </p>
                     </div>
                   </div>
@@ -1379,14 +1439,23 @@ export function LiquidacionesClientePage({
                               type="text"
                               inputMode="decimal"
                               className="form-input"
-                              value={newLineaPctAg}
-                              onChange={(e) => setNewLineaPctAg(e.target.value)}
-                              placeholder="Ej: 10 o 10,5"
+                              value={newLineaDistPrecio ? pctAgenciaCalculado() : newLineaPctAg}
+                              onChange={(e) => { setNewLineaPctAg(e.target.value); setNewLineaDistPrecio(''); }}
+                              placeholder="Se calcula si ponés distrib."
+                              readOnly={!!newLineaDistPrecio}
+                              style={newLineaDistPrecio ? { background: '#f3f4f6', color: '#374151' } : {}}
                             />
                           </div>
                           <div>
                             <label style={{ display: 'block', fontSize: 12, marginBottom: 4 }}>Precio distribuidor</label>
-                            <input type="text" className="form-input" readOnly value={precioDistribuidor() != null ? fmt(precioDistribuidor()!) : '—'} style={{ background: '#f3f4f6', color: '#374151' }} />
+                            <input
+                              type="text"
+                              inputMode="decimal"
+                              className="form-input"
+                              value={newLineaDistPrecio || (precioDistribuidor() != null && !newLineaDistPrecio ? fmt(precioDistribuidor()!) : '')}
+                              onChange={(e) => { setNewLineaDistPrecio(e.target.value); setNewLineaPctAg(''); }}
+                              placeholder="Ej: 1800 (manual)"
+                            />
                           </div>
                           <div>
                             <label style={{ display: 'block', fontSize: 12, marginBottom: 4 }}>Vigencia desde</label>

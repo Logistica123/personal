@@ -138,4 +138,8 @@ return [
         'approver_emails' => env('RECLAMOS_ADELANTOS_APPROVER_EMAILS', ''),
     ],
 
+    'oca' => [
+        'base_url' => env('OCA_SERVICE_URL', 'http://localhost:8100'),
+    ],
+
 ];

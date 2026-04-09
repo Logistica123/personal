@@ -723,7 +723,7 @@ export const ReclamosPage: React.FC<ReclamosPageProps> = ({
           transportistaDisplay.restCount > 0 ? `${transportistaDisplay.label} (+${transportistaDisplay.restCount})` : transportistaDisplay.label ?? '',
           responsable ?? '',
           reclamo.cliente ?? '',
-          formatReclamoTipoLabel(reclamo.tipo),
+          (reclamo.isReclamoAdelanto && reclamo.concepto) ? reclamo.concepto : formatReclamoTipoLabel(reclamo.tipo),
           reclamo.statusLabel ?? reclamo.status ?? '',
           reclamo.fechaCompromisoPago ?? '',
           reclamo.aprobacionEstadoLabel ?? '',
@@ -1185,7 +1185,7 @@ export const ReclamosPage: React.FC<ReclamosPageProps> = ({
                       </span>
                     </td>
                     <td>{responsable ?? '—'}</td>
-                    <td>{formatReclamoTipoLabel(reclamo.tipo) || '—'}</td>
+                    <td>{(reclamo.isReclamoAdelanto && reclamo.concepto) ? reclamo.concepto : formatReclamoTipoLabel(reclamo.tipo) || '—'}</td>
                     <td>
                       {isAdelantoListMode ? (
                         <select

@@ -2142,7 +2142,7 @@ class PersonalDocumentController extends Controller
 
     public function addLiquidacionAdjustment(Request $request, Persona $persona, Archivo $documento): JsonResponse
     {
-        if ($documento->persona_id !== $persona->id) {
+        if ((int) $documento->persona_id !== (int) $persona->id) {
             return response()->json(['message' => 'No tenés permisos para modificar esta liquidación.'], 403);
         }
 
