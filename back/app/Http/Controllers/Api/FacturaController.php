@@ -160,9 +160,24 @@ class FacturaController extends Controller
             ? 'Factura ya autorizada. Se reutilizo la emision existente.'
             : 'Factura emitida correctamente.';
 
+        // Callback: si tiene estado_cuenta_id, actualizar el estado de cuenta
+        $facturaEmitida = $result['factura'];
+        if ($facturaEmitida->estado_cuenta_id) {
+            $ec = \App\Models\LiqEstadoCuentaCliente::find($facturaEmitida->estado_cuenta_id);
+            if ($ec && $ec->esPendiente()) {
+                $ec->update([
+                    'factura_id' => $facturaEmitida->id,
+                    'numero_factura' => $facturaEmitida->cbte_numero ? sprintf('%05d-%08d', $facturaEmitida->pto_vta, $facturaEmitida->cbte_numero) : null,
+                    'cae' => $facturaEmitida->cae,
+                    'fecha_factura' => $facturaEmitida->fecha_cbte,
+                    'estado' => \App\Models\LiqEstadoCuentaCliente::ESTADO_FACTURADA,
+                ]);
+            }
+        }
+
         return response()->json([
             'message' => $message,
-            'data' => $this->serializeFacturaDetail($result['factura']),
+            'data' => $this->serializeFacturaDetail($facturaEmitida),
         ]);
     }
 

@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useLiqApi } from '../features/liquidaciones/api';
 
 /* ------------------------------------------------------------------ */
@@ -87,6 +88,7 @@ export function LiquidacionesEstadoCuentaPage({
   formatCurrency: formatCurrencyProp,
 }: Props) {
   const authUser = useStoredAuthUser();
+  const navigate = useNavigate();
   const api = useLiqApi({ resolveApiBaseUrl, buildActorHeaders, authUser });
 
   // ---- Data state ----
@@ -220,8 +222,19 @@ export function LiquidacionesEstadoCuentaPage({
     }
     try {
       const res = await api.post(`/estado-cuenta/${row.id}/facturar`, {});
-      setSuccessMsg(res.message ?? 'Borrador de factura creado.');
-      fetchRows();
+      // Redirigir a /facturacion/nueva con datos precargados
+      if (res.prefill) {
+        navigate('/facturacion/nueva', {
+          state: {
+            prefill: res.prefill,
+            estado_cuenta_id: res.estado_cuenta_id,
+            fromEstadoCuenta: true,
+          },
+        });
+      } else {
+        setSuccessMsg(res.message ?? 'Datos preparados.');
+        fetchRows();
+      }
     } catch (err: any) {
       setError(err.message);
     }

@@ -226,7 +226,7 @@ class LiqEstadoCuentaController extends Controller
             'cbte_tipo'         => $estadoCuenta->mapCbteTipo(),
             'concepto'          => 2,
             'doc_tipo'          => 80,
-            'doc_nro'           => $cliente->cuit ?? $liqCliente->cuit,
+            'doc_nro'           => $cliente->documento_fiscal ?? $liqCliente->cuit,
             'cliente_id'        => $cliente->id,
             'sucursal_id'       => $sucursal?->id ?? $cliente->id,
             'cliente_nombre'    => $cliente->nombre ?? $liqCliente->razon_social,
@@ -287,20 +287,14 @@ class LiqEstadoCuentaController extends Controller
             ]];
         }
 
-        try {
-            $factura = $this->draftService->createDraft($payload);
-        } catch (\RuntimeException $e) {
-            return response()->json(['message' => $e->getMessage()], 409);
-        }
-
-        $estadoCuenta->update(['factura_id' => $factura->id]);
-
-        $factura->load(['ivaItems', 'tributos', 'detallePdf', 'cbtesAsoc']);
-
+        // Devolver los datos precargados para que el frontend redirija a /facturacion/nueva
+        // Ya NO crea borrador directamente — el usuario lo crea/emite desde la pantalla de facturación
         return response()->json([
-            'message'    => 'Borrador de factura creado. Revisa y emiti desde el facturador.',
-            'factura_id' => $factura->id,
-            'data'       => $this->serializeRow($estadoCuenta->fresh()),
+            'message'            => 'Datos de factura preparados. Redirigiendo al facturador.',
+            'redirect'           => '/facturacion/nueva',
+            'estado_cuenta_id'   => $estadoCuenta->id,
+            'prefill'            => $payload,
+            'data'               => $this->serializeRow($estadoCuenta->fresh()),
         ]);
     }
 

@@ -56,6 +56,7 @@ class FacturaCabecera extends Model
         'anio_facturado',
         'mes_facturado',
         'periodo_facturado',
+        'estado_cuenta_id',
         'fecha_aprox_cobro',
         'fecha_pago_manual',
         'monto_pagado_manual',

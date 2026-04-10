@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { NavLink, useNavigate } from 'react-router-dom';
+import { NavLink, useNavigate, useLocation } from 'react-router-dom';
 import { FACTURACION_COMPROBANTES_OPTIONS } from '../../facturacionComprobantes';
 import {
   FACTURACION_ALICUOTA_PCT_OPTIONS,
@@ -202,6 +202,7 @@ export const createFacturacionCreatePage = (ctx: FacturacionPageContext) => {
   const FacturacionCreatePage: React.FC = () => {
     const { requestJson } = useFacturacionApi();
     const navigate = useNavigate();
+    const location = useLocation();
     const [emisores, setEmisores] = useState<ArcaEmisorDto[]>([]);
     const [clientes, setClientes] = useState<ClienteSelectOption[]>([]);
     const [sucursales, setSucursales] = useState<SucursalSelectOption[]>([]);
@@ -220,6 +221,92 @@ export const createFacturacionCreatePage = (ctx: FacturacionPageContext) => {
     const [autoImportesDesdeDetalle, setAutoImportesDesdeDetalle] = useState(true);
     const [loading, setLoading] = useState(false);
     const [initialLoading, setInitialLoading] = useState(true);
+    const [estadoCuentaId, setEstadoCuentaId] = useState<number | null>(null);
+
+    // Precarga desde Estado de Cuenta (location.state.prefill)
+    const prefillRef = React.useRef(false);
+    useEffect(() => {
+      const state = location.state as { prefill?: Record<string, any>; estado_cuenta_id?: number; fromEstadoCuenta?: boolean } | null;
+      if (!state?.prefill || prefillRef.current) return;
+      prefillRef.current = true;
+      const p = state.prefill;
+      if (state.estado_cuenta_id) setEstadoCuentaId(state.estado_cuenta_id);
+
+      setForm(prev => ({
+        ...prev,
+        emisor_id: p.emisor_id != null ? String(p.emisor_id) : prev.emisor_id,
+        ambiente: p.ambiente ?? prev.ambiente,
+        pto_vta: p.pto_vta != null ? String(p.pto_vta) : prev.pto_vta,
+        cbte_tipo: p.cbte_tipo != null ? String(p.cbte_tipo) : prev.cbte_tipo,
+        concepto: p.concepto != null ? String(p.concepto) : prev.concepto,
+        doc_tipo: p.doc_tipo != null ? String(p.doc_tipo) : prev.doc_tipo,
+        doc_nro: p.doc_nro ?? prev.doc_nro,
+        cliente_id: p.cliente_id != null ? String(p.cliente_id) : prev.cliente_id,
+        sucursal_id: p.sucursal_id != null ? String(p.sucursal_id) : prev.sucursal_id,
+        cliente_nombre: p.cliente_nombre ?? prev.cliente_nombre,
+        fecha_cbte: p.fecha_cbte ?? prev.fecha_cbte,
+        fecha_serv_desde: p.fecha_serv_desde ?? prev.fecha_serv_desde,
+        fecha_serv_hasta: p.fecha_serv_hasta ?? prev.fecha_serv_hasta,
+        fecha_vto_pago: p.fecha_vto_pago ?? prev.fecha_vto_pago,
+        condiciones_venta: p.condiciones_venta ?? prev.condiciones_venta,
+        moneda_id: p.moneda_id ?? prev.moneda_id,
+        moneda_cotiz: p.moneda_cotiz != null ? String(p.moneda_cotiz) : prev.moneda_cotiz,
+        imp_total: p.imp_total != null ? String(p.imp_total) : prev.imp_total,
+        imp_tot_conc: p.imp_tot_conc != null ? String(p.imp_tot_conc) : prev.imp_tot_conc,
+        imp_neto: p.imp_neto != null ? String(p.imp_neto) : prev.imp_neto,
+        imp_op_ex: p.imp_op_ex != null ? String(p.imp_op_ex) : prev.imp_op_ex,
+        imp_iva: p.imp_iva != null ? String(p.imp_iva) : prev.imp_iva,
+        imp_trib: p.imp_trib != null ? String(p.imp_trib) : prev.imp_trib,
+        anio_facturado: p.anio_facturado != null ? String(p.anio_facturado) : prev.anio_facturado,
+        mes_facturado: p.mes_facturado != null ? String(p.mes_facturado) : prev.mes_facturado,
+        periodo_facturado: p.periodo_facturado ?? prev.periodo_facturado,
+        fecha_aprox_cobro: p.fecha_aprox_cobro ?? prev.fecha_aprox_cobro,
+        observaciones_cobranza: p.observaciones_cobranza ?? prev.observaciones_cobranza,
+      }));
+
+      // Precargar detalle PDF
+      if (Array.isArray(p.detalle_pdf) && p.detalle_pdf.length > 0) {
+        setDetallePdf(p.detalle_pdf.map((d: any, i: number) => ({
+          id: uniqueKey(),
+          orden: String(d.orden ?? i + 1),
+          descripcion: d.descripcion ?? '',
+          cantidad: String(d.cantidad ?? 1),
+          unidad_medida: d.unidad_medida ?? FACTURACION_UNIDAD_MEDIDA_DEFAULT,
+          precio_unitario: String(d.precio_unitario ?? 0),
+          bonificacion_pct: String(d.bonificacion_pct ?? 0),
+          subtotal: String(d.subtotal ?? 0),
+          alicuota_iva_pct: String(d.alicuota_iva_pct ?? 0),
+          subtotal_con_iva: String(d.subtotal_con_iva ?? 0),
+        })));
+        setAutoImportesDesdeDetalle(false);
+      }
+
+      // Precargar IVA
+      if (Array.isArray(p.iva) && p.iva.length > 0) {
+        setIvaItems(p.iva.map((iv: any) => ({
+          id: uniqueKey(),
+          iva_id: String(iv.iva_id ?? ''),
+          base_imp: String(iv.base_imp ?? 0),
+          importe: String(iv.importe ?? 0),
+          auto: false,
+        })));
+      }
+
+      // Precargar comprobantes asociados
+      if (Array.isArray(p.cbtes_asoc) && p.cbtes_asoc.length > 0) {
+        setCbtesAsoc(p.cbtes_asoc.map((ca: any) => ({
+          id: uniqueKey(),
+          cbte_tipo: String(ca.cbte_tipo ?? ''),
+          pto_vta: String(ca.pto_vta ?? ''),
+          cbte_numero: String(ca.cbte_numero ?? ''),
+          fecha_emision: ca.fecha_emision ?? '',
+        })));
+      }
+
+      if (state.fromEstadoCuenta) {
+        setFeedback({ type: 'success', message: 'Datos precargados desde Estado de Cuenta. Revisá y emití.' });
+      }
+    }, [location.state]);
 
     useEffect(() => {
       const loadInitial = async () => {
@@ -599,6 +686,7 @@ export const createFacturacionCreatePage = (ctx: FacturacionPageContext) => {
       fecha_pago_manual: form.fecha_pago_manual || null,
       monto_pagado_manual: form.monto_pagado_manual ? parseNumberOrZero(form.monto_pagado_manual) : null,
       observaciones_cobranza: form.observaciones_cobranza || null,
+      estado_cuenta_id: estadoCuentaId || null,
       iva: ivaItems
         .filter((item) => item.iva_id)
         .map((item) => ({
