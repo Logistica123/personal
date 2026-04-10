@@ -34,23 +34,37 @@ class LiqDistribuidorPdfService
             ->map(function (LiqOperacion $op) {
                 $raw = is_array($op->campos_originales) ? $op->campos_originales : [];
 
-                $idViaje = $this->pick($raw, ['IdViaje', 'idViaje', 'id_viaje', 'viaje_id', 'Id viaje']);
                 $fecha = $this->pick($raw, ['FechaViaje', 'fechaViaje', 'fecha_viaje', 'Fecha', 'fecha']);
-                $origen = $this->pick($raw, ['Origen', 'origen']);
-                $destino = $this->pick($raw, ['Destino', 'destino']);
+                $importe = $op->valor_tarifa_distribuidor !== null ? (float) $op->valor_tarifa_distribuidor : null;
+
+                // Cantidad: de campos_originales o calculada
+                $cantidad = $this->pick($raw, ['cantidad', 'qty']);
+                if ($cantidad !== null) {
+                    $cantidad = (float) $cantidad;
+                }
+
+                // Tarifa unitaria distribuidor: de campos_originales o calculada
+                $tarifaUnit = null;
+                if ($importe !== null && $cantidad !== null && $cantidad > 0) {
+                    $tarifaUnit = round($importe / $cantidad, 2);
+                }
+                // Si no hay cantidad pero hay valor_tarifa_distribuidor, la cantidad es 1
+                if ($cantidad === null && $importe !== null) {
+                    $cantidad = 1;
+                    $tarifaUnit = $importe;
+                }
 
                 return [
                     'id' => (int) $op->id,
-                    'idViaje' => $idViaje !== null ? (string) $idViaje : null,
                     'fecha' => $this->formatDate($fecha),
-                    'origen' => $origen !== null ? (string) $origen : null,
-                    'destino' => $destino !== null ? (string) $destino : null,
                     'concepto' => $op->concepto,
-                    'importe' => $op->valor_tarifa_distribuidor !== null ? (float) $op->valor_tarifa_distribuidor : null,
+                    'cantidad' => $cantidad,
+                    'tarifaUnit' => $tarifaUnit,
+                    'importe' => $importe,
                 ];
             })
             ->sortBy(function (array $row) {
-                return ($row['fecha'] ?? '') . '|' . ($row['idViaje'] ?? '') . '|' . (string) ($row['id'] ?? 0);
+                return ($row['fecha'] ?? '') . '|' . ($row['concepto'] ?? '') . '|' . (string) ($row['id'] ?? 0);
             })
             ->values();
 
@@ -72,15 +86,13 @@ class LiqDistribuidorPdfService
                 'patente' => $distribuidor?->patente,
             ],
             'liq' => [
-                'id' => (int) $liqDist->id,
-                'liquidacion_cliente_id' => (int) $liqDist->liquidacion_cliente_id,
                 'periodo_desde' => $desde,
                 'periodo_hasta' => $hasta,
-                'fecha_generacion' => $liqDist->fecha_generacion ? $liqDist->fecha_generacion->timezone(config('app.timezone', 'UTC'))->format('d/m/Y H:i') : null,
                 'cantidad_operaciones' => (int) $liqDist->cantidad_operaciones,
                 'subtotal' => (float) $liqDist->subtotal,
                 'gastos' => (float) $liqDist->gastos_administrativos,
                 'total' => (float) $liqDist->total_a_pagar,
+                'sucursal' => $operaciones->first()?->sucursal_tarifa,
             ],
             'operaciones' => $ops,
         ])->render();

@@ -7,6 +7,7 @@ use App\Models\LiqArchivoEntrada;
 use App\Models\LiqEsquemaTarifario;
 use App\Models\LiqLineaTarifa;
 use App\Models\LiqLiquidacionCliente;
+use App\Models\LiqHistorialMovimiento;
 use App\Models\LiqMapeoDistribuidor;
 use App\Models\LiqOperacion;
 use App\Models\LiqTarifaPatente;
@@ -368,6 +369,23 @@ class LiqOcaController extends Controller
                     ->update(['distribuidor_id' => $personaId]);
             }
 
+            // Historial
+            $userId = $request->user()?->id;
+            LiqHistorialMovimiento::registrar(
+                'tarifa_mapeada',
+                "Tarifa {$sucursal}/{$contrato}: OCA \${$precioOriginal} -> Distrib \${$precioDistribuidor} ({$data['modo_calculo']})",
+                $userId, $liquidacionCliente->id, null, null,
+                ['sucursal' => $sucursal, 'contrato' => $contrato, 'precio_oca' => $precioOriginal, 'precio_distrib' => $precioDistribuidor, 'modo' => $data['modo_calculo']]
+            );
+            if ($personaId && $distribNombre !== '') {
+                LiqHistorialMovimiento::registrar(
+                    'vinculado',
+                    "Vinculó '{$distribNombre}' a proveedor #{$personaId}",
+                    $userId, $liquidacionCliente->id, null, $personaId,
+                    ['nombre_pdf' => $distribNombre]
+                );
+            }
+
             DB::commit();
 
             return response()->json([
@@ -588,10 +606,34 @@ class LiqOcaController extends Controller
             'estado' => 'en_proceso',
         ]);
 
+        LiqHistorialMovimiento::registrar(
+            'operaciones_generadas',
+            "Generó {$stats['total']} operaciones: {$stats['ok']} OK, {$stats['sin_tarifa']} sin tarifa, {$stats['sin_distribuidor']} sin distrib.",
+            $request->user()?->id, $liqId, null, null, $stats
+        );
+
         return response()->json([
             'message' => "Operaciones generadas: {$stats['total']} total, {$stats['ok']} OK, {$stats['sin_tarifa']} sin tarifa, {$stats['sin_distribuidor']} sin distribuidor.",
             'data' => $stats,
         ]);
+    }
+
+    /**
+     * GET /liq/oca/{liquidacionCliente}/historial
+     */
+    public function historial(Request $request, LiqLiquidacionCliente $liquidacionCliente): JsonResponse
+    {
+        $query = LiqHistorialMovimiento::where('liquidacion_cliente_id', $liquidacionCliente->id)
+            ->orderByDesc('created_at');
+
+        if ($request->filled('persona_id')) {
+            $query->where('persona_id', $request->integer('persona_id'));
+        }
+        if ($request->filled('evento')) {
+            $query->where('evento', $request->string('evento'));
+        }
+
+        return response()->json(['data' => $query->limit(200)->get()]);
     }
 
     /**

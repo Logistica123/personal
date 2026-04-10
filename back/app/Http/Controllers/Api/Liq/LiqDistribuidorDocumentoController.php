@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\Liq;
 use App\Http\Controllers\Controller;
 use App\Models\Archivo;
 use App\Models\FileType;
+use App\Models\LiqHistorialMovimiento;
 use App\Models\LiqLiquidacionDistribuidor;
 use App\Models\LiqOperacion;
 use App\Services\Liq\LiqDistribuidorPdfService;
@@ -151,6 +152,18 @@ class LiqDistribuidorDocumentoController extends Controller
             $doc->updated_at = $fechaMes;
             $doc->save();
         }
+
+        // Historial
+        $distNombre = trim(($liquidacionDistribuidor->distribuidor?->apellidos ?? '') . ' ' . ($liquidacionDistribuidor->distribuidor?->nombres ?? ''));
+        LiqHistorialMovimiento::registrar(
+            'pdf_generado',
+            "PDF generado y subido para {$distNombre} (${$fmtTotal = number_format((float) $liquidacionDistribuidor->total_a_pagar, 2)})",
+            $request->user()?->id,
+            (int) $liquidacionDistribuidor->liquidacion_cliente_id,
+            (int) $liquidacionDistribuidor->id,
+            $personaId,
+            ['documento_id' => $doc->id, 'total' => (float) $liquidacionDistribuidor->total_a_pagar]
+        );
 
         return response()->json([
             'message' => 'PDF de liquidación creado y vinculado al proveedor.',
