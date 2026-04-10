@@ -153,12 +153,30 @@ class LiqDistribuidorDocumentoController extends Controller
         }
 
         return response()->json([
-            'message' => 'PDF de liquidación creado. Ya podés usar "Subir liquidaciones".',
+            'message' => 'PDF de liquidación creado y vinculado al proveedor.',
             'data' => [
                 'documento_id' => (int) $doc->id,
                 'ruta' => $storedPath,
                 'mime' => 'application/pdf',
             ],
         ], 201);
+    }
+
+    // GET /liq/liquidaciones-distribuidor/{liquidacionDistribuidor}/pdf
+    public function descargarPdf(LiqLiquidacionDistribuidor $liquidacionDistribuidor)
+    {
+        $pdfPath = $liquidacionDistribuidor->pdf_path;
+        if (!$pdfPath) {
+            return response()->json(['error' => 'No se ha generado el PDF aún.'], 404);
+        }
+
+        $disk = LiqV2DocumentoHelper::disk();
+        if (!Storage::disk($disk)->exists($pdfPath)) {
+            return response()->json(['error' => 'El archivo PDF no se encuentra en el storage.'], 404);
+        }
+
+        return Storage::disk($disk)->download($pdfPath, basename($pdfPath), [
+            'Content-Type' => 'application/pdf',
+        ]);
     }
 }

@@ -276,6 +276,7 @@ Route::middleware('auth.api')->group(function () {
 
         // Materializar un documento en el módulo viejo para poder publicar/enviar
         Route::post('/liquidaciones-distribuidor/{liquidacionDistribuidor}/documento', [LiqDistribuidorDocumentoController::class, 'store']);
+        Route::get('/liquidaciones-distribuidor/{liquidacionDistribuidor}/pdf', [LiqDistribuidorDocumentoController::class, 'descargarPdf']);
     });
 
     Route::get('/unidades', [UnidadController::class, 'index']);

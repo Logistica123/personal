@@ -762,6 +762,31 @@ export function LiquidacionesExtractosPage({
     }
   }, [api, selectedLiq]);
 
+  const generarYSubirTodas = useCallback(async () => {
+    const pendientes = distribuidores.filter(d => d.distribuidor_id && !d.pdf_path);
+    const total = pendientes.length;
+    if (total === 0) {
+      setError('No hay liquidaciones pendientes de generar PDF');
+      return;
+    }
+    if (!window.confirm(`¿Generar y subir PDF de ${total} liquidaciones?`)) return;
+    let ok = 0;
+    let errores = 0;
+    for (const d of pendientes) {
+      try {
+        await api.post(`/liquidaciones-distribuidor/${d.id}/documento`, {});
+        ok++;
+      } catch {
+        errores++;
+      }
+    }
+    showSuccess(`${ok} PDFs generados y subidos${errores ? `, ${errores} errores` : ''}`);
+    if (selectedLiq) {
+      const distRes = await api.get(`/liquidaciones/${selectedLiq.id}/distribuidores`);
+      setDistribuidores(distRes.data ?? []);
+    }
+  }, [api, distribuidores, selectedLiq]);
+
   const loadAuditoria = useCallback(async () => {
     if (!selectedLiq) return;
     setAuditoriaLoading(true);
@@ -1869,9 +1894,16 @@ export function LiquidacionesExtractosPage({
           <div className="dashboard-card">
             <header className="card-header">
               <h3>Liquidaciones por distribuidor</h3>
-              <button type="button" className="btn-primary" onClick={generarLiquidaciones}>
-                Generar liquidaciones
-              </button>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button type="button" className="btn-primary" onClick={generarLiquidaciones}>
+                  Generar liquidaciones
+                </button>
+                {distribuidores.length > 0 && distribuidores.some(d => !d.pdf_path) && (
+                  <button type="button" className="btn-primary" style={{ background: '#7c3aed' }} onClick={generarYSubirTodas}>
+                    Generar y Subir Todas ({distribuidores.filter(d => d.distribuidor_id && !d.pdf_path).length})
+                  </button>
+                )}
+              </div>
             </header>
             <div className="card-body">
               <table className="data-table">
@@ -1898,11 +1930,11 @@ export function LiquidacionesExtractosPage({
                           onClick={() => void generarPdf(d.id)}
                           disabled={pdfGenerating[d.id]}
                         >
-                          {pdfGenerating[d.id] ? 'Generando…' : d.pdf_path ? 'Regenerar PDF' : 'Generar PDF'}
+                          {pdfGenerating[d.id] ? 'Generando…' : d.pdf_path ? 'Regenerar y Subir' : 'Generar y Subir PDF'}
                         </button>
                         {d.pdf_path && (
                           <a
-                            href={`${resolveApiBaseUrl()}/storage/${d.pdf_path}`}
+                            href={`${resolveApiBaseUrl()}/api/liq/liquidaciones-distribuidor/${d.id}/pdf`}
                             target="_blank"
                             rel="noopener noreferrer"
                             className="btn-sm btn-primary"
