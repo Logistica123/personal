@@ -9,6 +9,7 @@ use App\Models\LiqArchivoEntrada;
 use App\Models\LiqOperacion;
 use App\Models\LiqLiquidacionDistribuidor;
 use App\Models\LiqConfiguracionGastos;
+use App\Models\LiqEstadoCuentaCliente;
 use App\Services\Liq\LiqIngestService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -274,12 +275,27 @@ class LiqExtractosController extends Controller
                 $created[] = $liqDist->id;
             }
 
+            // Crear filas automaticas en Estado de Cuenta por sucursal (cara cliente)
+            LiqEstadoCuentaCliente::where('liquidacion_cliente_id', $liquidacionCliente->id)->delete();
+            $estadoCuentaIds = LiqEstadoCuentaController::crearFilasDesdeOperaciones(
+                $liquidacionCliente->id,
+                $liquidacionCliente->cliente_id,
+                $liquidacionCliente->periodo_desde->format('Y-m-d'),
+                $liquidacionCliente->periodo_hasta->format('Y-m-d'),
+                $request->user()?->id
+            );
+
             $liquidacionCliente->update(['estado' => LiqLiquidacionCliente::ESTADO_AUDITADA]);
             DB::commit();
 
             return response()->json([
-                'data' => ['liquidaciones_generadas' => count($created), 'ids' => $created],
-                'message' => count($created) . ' liquidaciones de distribuidores generadas'
+                'data' => [
+                    'liquidaciones_generadas' => count($created),
+                    'ids' => $created,
+                    'estado_cuenta_generadas' => count($estadoCuentaIds),
+                    'estado_cuenta_ids' => $estadoCuentaIds,
+                ],
+                'message' => count($created) . ' liquidaciones de distribuidores generadas, ' . count($estadoCuentaIds) . ' filas de estado de cuenta creadas'
             ]);
         } catch (\Throwable $e) {
             DB::rollBack();

@@ -3,6 +3,7 @@
 namespace App\Services\Facturacion;
 
 use App\Models\FacturaCabecera;
+use App\Models\LiqEstadoCuentaCliente;
 use App\Repositories\Arca\ArcaCertificadoRepository;
 use App\Repositories\Facturacion\FacturaCabeceraRepository;
 use App\Services\Arca\Wsaa\TaCacheService;
@@ -114,6 +115,11 @@ class FacturaEmissionService
 
                     $fresh->save();
 
+                    // Sincronizar datos de factura con estado de cuenta (si aplica)
+                    if (($response['resultado'] ?? '') === 'A') {
+                        $this->syncEstadoCuenta($fresh);
+                    }
+
                     $this->auditService->record(
                         'factura_cabecera',
                         $fresh->id,
@@ -128,6 +134,27 @@ class FacturaEmissionService
                 });
             }
         );
+    }
+
+    private function syncEstadoCuenta(FacturaCabecera $factura): void
+    {
+        $fila = LiqEstadoCuentaCliente::where('factura_id', $factura->id)->first();
+        if (! $fila) {
+            return;
+        }
+
+        $ptoVta = str_pad((string) $factura->pto_vta, 5, '0', STR_PAD_LEFT);
+        $cbteNum = str_pad((string) $factura->cbte_numero, 8, '0', STR_PAD_LEFT);
+
+        $fila->update([
+            'numero_factura'  => "{$ptoVta}-{$cbteNum}",
+            'cae'             => $factura->cae,
+            'fecha_factura'   => $factura->fecha_cbte,
+            'vencimiento_pago' => $factura->fecha_vto_pago,
+            'estado'          => $fila->tipo_comprobante === LiqEstadoCuentaCliente::TIPO_NC
+                ? LiqEstadoCuentaCliente::ESTADO_NC_EMITIDA
+                : LiqEstadoCuentaCliente::ESTADO_FACTURADA,
+        ]);
     }
 
     private function normalizeArcaDate(mixed $value): ?string

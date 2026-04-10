@@ -52,6 +52,7 @@ import { WorkflowPage } from './pages/WorkflowPage';
 import { ApprovalsRequestsPage } from './pages/ApprovalsRequestsPage';
 import { LiquidacionesPage } from './pages/LiquidacionesPage';
 import { LiquidacionesClientePage } from './pages/LiquidacionesClientePage';
+import { LiquidacionesEstadoCuentaPage } from './pages/LiquidacionesEstadoCuentaPage';
 import { LiquidacionesExtractosPage } from './pages/LiquidacionesExtractosPage';
 import { RecibosPage } from './pages/RecibosPage';
 import { DocumentTypesPage } from './pages/DocumentTypesPage';
@@ -2255,6 +2256,7 @@ const DashboardLayout: React.FC<{
   const isRecibosRoute = location.pathname.startsWith('/liquidaciones/recibos');
   const isLiquidacionesExtractosRoute = location.pathname.startsWith('/liquidaciones/extractos');
   const isLiquidacionesClienteConfigRoute = location.pathname.startsWith('/liquidaciones/cliente');
+  const isLiquidacionesEstadoCuentaRoute = location.pathname.startsWith('/liquidaciones/estado-cuenta');
   const isLiquidacionesRoute =
     (location.pathname === '/liquidaciones' || /^\/liquidaciones\/\d+$/.test(location.pathname)) &&
     !isRecibosRoute;
@@ -3483,6 +3485,15 @@ const DashboardLayout: React.FC<{
 	                      onClick={() => navigate('/liquidaciones/cliente')}
 	                    >
 	                      Clientes/Tarifas (nuevo)
+	                    </button>
+	                  ) : null}
+	                  {canAccessSection(userRole, 'liquidaciones', authUser?.permissions) ? (
+	                    <button
+	                      type="button"
+	                      className={`sidebar-sublink${isLiquidacionesEstadoCuentaRoute ? ' is-active' : ''}`}
+	                      onClick={() => navigate('/liquidaciones/estado-cuenta')}
+	                    >
+	                      Estado de Cuenta
 	                    </button>
 	                  ) : null}
 	                  {canAccessSection(userRole, 'liquidaciones', authUser?.permissions) ? (
@@ -20324,6 +20335,20 @@ const AppRoutes: React.FC = () => {
 	            />
 	          </RequireAccess>
 	        }
+      />
+      <Route
+        path="/liquidaciones/estado-cuenta"
+        element={
+          <RequireAccess section="liquidaciones">
+            <LiquidacionesEstadoCuentaPage
+              DashboardLayout={DashboardLayout}
+              resolveApiBaseUrl={resolveApiBaseUrl}
+              useStoredAuthUser={useStoredAuthUser}
+              buildActorHeaders={buildActorHeaders}
+              formatCurrency={formatCurrency}
+            />
+          </RequireAccess>
+        }
       />
       <Route
         path="/liquidaciones/extractos"

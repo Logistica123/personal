@@ -42,6 +42,8 @@ use App\Http\Controllers\Api\Liq\LiqExtractosController;
 use App\Http\Controllers\Api\Liq\LiqArchivoEntradaController;
 use App\Http\Controllers\Api\Liq\LiqDistribuidorLiquidacionesController;
 use App\Http\Controllers\Api\Liq\LiqDistribuidorDocumentoController;
+use App\Http\Controllers\Api\Liq\LiqEstadoCuentaController;
+use App\Http\Controllers\Api\Liq\LiqJurisdiccionController;
 use Illuminate\Support\Facades\Route;
 
 Route::post('/login', [AuthController::class, 'login']);
@@ -278,6 +280,21 @@ Route::middleware('auth.api')->group(function () {
         // Materializar un documento en el módulo viejo para poder publicar/enviar
         Route::post('/liquidaciones-distribuidor/{liquidacionDistribuidor}/documento', [LiqDistribuidorDocumentoController::class, 'store']);
         Route::get('/liquidaciones-distribuidor/{liquidacionDistribuidor}/pdf', [LiqDistribuidorDocumentoController::class, 'descargarPdf']);
+
+        // Estado de Cuenta de Clientes
+        Route::get('/estado-cuenta', [LiqEstadoCuentaController::class, 'index']);
+        Route::post('/estado-cuenta', [LiqEstadoCuentaController::class, 'store']);
+        Route::get('/estado-cuenta/exportar', [LiqEstadoCuentaController::class, 'exportar']);
+        Route::get('/estado-cuenta/{estadoCuenta}', [LiqEstadoCuentaController::class, 'show']);
+        Route::patch('/estado-cuenta/{estadoCuenta}', [LiqEstadoCuentaController::class, 'update']);
+        Route::delete('/estado-cuenta/{estadoCuenta}', [LiqEstadoCuentaController::class, 'destroy']);
+        Route::post('/estado-cuenta/{estadoCuenta}/facturar', [LiqEstadoCuentaController::class, 'facturar']);
+        Route::post('/estado-cuenta/{estadoCuenta}/cobrar', [LiqEstadoCuentaController::class, 'cobrar']);
+
+        // Jurisdicciones IIBB
+        Route::get('/jurisdicciones', [LiqJurisdiccionController::class, 'index']);
+        Route::get('/jurisdicciones/sucursal', [LiqJurisdiccionController::class, 'sucursales']);
+        Route::post('/jurisdicciones/sucursal', [LiqJurisdiccionController::class, 'store']);
     });
 
     Route::get('/unidades', [UnidadController::class, 'index']);
