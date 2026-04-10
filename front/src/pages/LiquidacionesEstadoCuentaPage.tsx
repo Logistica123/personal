@@ -186,7 +186,7 @@ export function LiquidacionesEstadoCuentaPage({
 
   // ---- Unique sucursales for filter ----
   const sucursalOptions = useMemo(() => {
-    return [...new Set(rows.map(r => r.sucursal))].sort();
+    return Array.from(new Set(rows.map(r => r.sucursal))).sort();
   }, [rows]);
 
   // ---- Actions ----
@@ -248,7 +248,7 @@ export function LiquidacionesEstadoCuentaPage({
   };
 
   const handleEliminar = async (row: EstadoCuentaRow) => {
-    if (!confirm('Eliminar esta fila?')) return;
+    if (!window.confirm('Eliminar esta fila?')) return;
     clearMsg();
     try {
       await api.delete(`/estado-cuenta/${row.id}`);
