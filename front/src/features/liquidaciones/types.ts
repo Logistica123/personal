@@ -216,22 +216,37 @@ export type OcaTarifaDetectada = {
   tarifa_registrada: number | null;
   precio_distribuidor: number | null;
   linea_tarifa_id: number | null;
-  estado: 'ok' | 'nueva' | 'cambio';
+  estado: 'ok' | 'nueva' | 'cambio' | 'sin_vincular';
   cant_planillas: number;
   total_qty: number;
   total_importe: number;
+  distribuidor_nombre: string | null;
+  distribuidor_id: number | null;
+  proveedor_nombre: string | null;
+  proveedor_patente: string | null;
+};
+
+export type OcaPersonaBusqueda = {
+  id: number;
+  label: string;
+  apellidos: string;
+  nombres: string;
+  patente: string | null;
+  cuil: string | null;
 };
 
 export const ESTADO_TARIFA_COLOR: Record<OcaTarifaDetectada['estado'], string> = {
   ok: '#dcfce7',
   nueva: '#fef9c3',
   cambio: '#ffedd5',
+  sin_vincular: '#fee2e2',
 };
 
 export const ESTADO_TARIFA_LABEL: Record<OcaTarifaDetectada['estado'], string> = {
   ok: 'OK',
   nueva: 'Nueva',
   cambio: 'Cambio',
+  sin_vincular: 'Sin vincular',
 };
 
 // ── UI helpers ────────────────────────────────────────────────────────────────

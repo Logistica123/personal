@@ -12,6 +12,7 @@ import type {
   LiqVinculacionOca,
   OcaResumen,
   OcaTarifaDetectada,
+  OcaPersonaBusqueda,
 } from '../features/liquidaciones/types';
 import {
   ESTADO_OPERACION_LABELS,
@@ -116,6 +117,11 @@ export function LiquidacionesExtractosPage({
   const [ocaMapeoModo, setOcaMapeoModo] = useState<'porcentaje' | 'fijo'>('fijo');
   const [ocaMapeoValor, setOcaMapeoValor] = useState('');
   const [ocaMapeoSaving, setOcaMapeoSaving] = useState(false);
+  const [ocaMapeoPersonaId, setOcaMapeoPersonaId] = useState<number | null>(null);
+  const [ocaMapeoPersonaLabel, setOcaMapeoPersonaLabel] = useState('');
+  const [ocaPersonasSearch, setOcaPersonasSearch] = useState('');
+  const [ocaPersonasResults, setOcaPersonasResults] = useState<OcaPersonaBusqueda[]>([]);
+  const [ocaPersonasLoading, setOcaPersonasLoading] = useState(false);
 
   // OCA: detectar si el cliente seleccionado es OCA (formato PDF_DUAL)
   const isOcaClient = useMemo(() => {
@@ -290,6 +296,19 @@ export function LiquidacionesExtractosPage({
     }
   }, [api]);
 
+  const buscarPersonasOca = useCallback(async (q: string) => {
+    if (q.length < 2) { setOcaPersonasResults([]); return; }
+    setOcaPersonasLoading(true);
+    try {
+      const res = await api.get(`/oca/buscar-personas?q=${encodeURIComponent(q)}`);
+      setOcaPersonasResults(res.data ?? []);
+    } catch {
+      setOcaPersonasResults([]);
+    } finally {
+      setOcaPersonasLoading(false);
+    }
+  }, [api]);
+
   const loadOcaTarifas = useCallback(async (liqId: number) => {
     try {
       const res = await api.get(`/oca/${liqId}/tarifas-detectadas`);
@@ -324,6 +343,8 @@ export function LiquidacionesExtractosPage({
         modo_calculo: ocaMapeoModo,
         valor_referencia: parseFloat(ocaMapeoValor.replace(',', '.')),
         precio_distribuidor: precioDistribuidor,
+        distribuidor_nombre: ocaMapeo.distribuidor_nombre ?? '',
+        persona_id: ocaMapeoPersonaId,
       });
       setOcaMapeo(null);
       setOcaMapeoValor('');
@@ -338,9 +359,9 @@ export function LiquidacionesExtractosPage({
 
   const generarOperacionesOca = useCallback(async () => {
     if (!selectedLiq) return;
-    const sinMapear = ocaTarifas.filter(t => t.estado === 'nueva');
+    const sinMapear = ocaTarifas.filter(t => t.estado === 'nueva' || t.estado === 'sin_vincular');
     if (sinMapear.length > 0) {
-      setError(`Hay ${sinMapear.length} tarifa(s) sin mapear. Mapeá todas antes de generar operaciones.`);
+      setError(`Hay ${sinMapear.length} fila(s) sin mapear o sin vincular. Mapeá todas antes de generar operaciones.`);
       return;
     }
     if (!window.confirm('¿Generar operaciones OCA? Esto reemplaza operaciones previas.')) return;
@@ -1509,11 +1530,11 @@ export function LiquidacionesExtractosPage({
                       <tr>
                         <th>Sucursal</th>
                         <th>Contrato</th>
-                        <th style={{ textAlign: 'right' }}>Tarifa OCA (PDF)</th>
-                        <th style={{ textAlign: 'right' }}>Tarifa Registrada</th>
+                        <th>Distribuidor (PDF)</th>
+                        <th>Proveedor</th>
+                        <th style={{ textAlign: 'right' }}>Tarifa OCA</th>
                         <th style={{ textAlign: 'right' }}>Tarifa Distrib.</th>
                         <th style={{ textAlign: 'right' }}>Planillas</th>
-                        <th style={{ textAlign: 'right' }}>Total Importe</th>
                         <th>Estado</th>
                         <th></th>
                       </tr>
@@ -1523,18 +1544,26 @@ export function LiquidacionesExtractosPage({
                         <tr key={i} style={{ background: ESTADO_TARIFA_COLOR[t.estado] }}>
                           <td>{t.sucursal}</td>
                           <td>{t.cod_contrato}</td>
+                          <td style={{ fontSize: 11 }}>{t.distribuidor_nombre ?? '—'}</td>
+                          <td style={{ fontSize: 11 }}>{t.proveedor_nombre ? <span title={t.proveedor_patente ?? ''}>{t.proveedor_nombre}</span> : <span style={{ color: '#dc2626', fontWeight: 600 }}>Sin vincular</span>}</td>
                           <td style={{ textAlign: 'right' }}>${t.precio_recibido.toLocaleString('es-AR', { minimumFractionDigits: 2 })}</td>
-                          <td style={{ textAlign: 'right' }}>{t.tarifa_registrada != null ? `$${t.tarifa_registrada.toLocaleString('es-AR', { minimumFractionDigits: 2 })}` : <span style={{ color: '#9ca3af' }}>Sin registro</span>}</td>
                           <td style={{ textAlign: 'right' }}>{t.precio_distribuidor != null ? `$${t.precio_distribuidor.toLocaleString('es-AR', { minimumFractionDigits: 2 })}` : <span style={{ color: '#9ca3af' }}>—</span>}</td>
                           <td style={{ textAlign: 'right' }}>{t.cant_planillas}</td>
-                          <td style={{ textAlign: 'right' }}>${t.total_importe.toLocaleString('es-AR', { minimumFractionDigits: 2 })}</td>
                           <td>
                             <span style={{ padding: '2px 8px', borderRadius: 8, fontSize: 11, fontWeight: 600 }}>
                               {ESTADO_TARIFA_LABEL[t.estado]}
                             </span>
                           </td>
                           <td>
-                            <button type="button" className="btn-sm btn-primary" onClick={() => { setOcaMapeo(t); setOcaMapeoModo('fijo'); setOcaMapeoValor(t.precio_distribuidor != null ? String(t.precio_distribuidor) : ''); }}>
+                            <button type="button" className="btn-sm btn-primary" onClick={() => {
+                              setOcaMapeo(t);
+                              setOcaMapeoModo('fijo');
+                              setOcaMapeoValor(t.precio_distribuidor != null ? String(t.precio_distribuidor) : '');
+                              setOcaMapeoPersonaId(t.distribuidor_id);
+                              setOcaMapeoPersonaLabel(t.proveedor_nombre ?? '');
+                              setOcaPersonasSearch('');
+                              setOcaPersonasResults([]);
+                            }}>
                               Mapear
                             </button>
                           </td>
@@ -1548,16 +1577,16 @@ export function LiquidacionesExtractosPage({
                     type="button"
                     className="btn-primary"
                     onClick={generarOperacionesOca}
-                    disabled={ocaTarifas.some(t => t.estado === 'nueva')}
+                    disabled={ocaTarifas.some(t => t.estado === 'nueva' || t.estado === 'sin_vincular')}
                   >
                     Generar operaciones con tarifa
                   </button>
-                  {ocaTarifas.some(t => t.estado === 'nueva') && (
+                  {ocaTarifas.some(t => t.estado === 'nueva' || t.estado === 'sin_vincular') && (
                     <span style={{ fontSize: 12, color: '#dc2626', fontWeight: 600 }}>
-                      Hay tarifas nuevas sin mapear. Mapeá todas antes de generar.
+                      Hay tarifas sin mapear o distribuidores sin vincular.
                     </span>
                   )}
-                  {!ocaTarifas.some(t => t.estado === 'nueva') && ocaTarifas.length > 0 && (
+                  {!ocaTarifas.some(t => t.estado === 'nueva' || t.estado === 'sin_vincular') && ocaTarifas.length > 0 && (
                     <span style={{ fontSize: 12, color: '#16a34a' }}>
                       Todas las tarifas mapeadas. Listo para generar operaciones.
                     </span>
@@ -1638,6 +1667,54 @@ export function LiquidacionesExtractosPage({
                         }
                         return dist > 0 ? `$${(ocaMapeo.precio_recibido - dist).toLocaleString('es-AR', { minimumFractionDigits: 2 })}` : '—';
                       })()}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Sección C: Vincular distribuidor */}
+                <div style={{ marginBottom: 16, padding: 12, background: '#fdf2f8', borderRadius: 8 }}>
+                  <h4 style={{ fontSize: 13, fontWeight: 600, margin: '0 0 8px' }}>Distribuidor Asignado</h4>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, fontSize: 13, alignItems: 'center' }}>
+                    <div>Nombre en PDF:</div>
+                    <div style={{ fontWeight: 600 }}>{ocaMapeo.distribuidor_nombre ?? '—'}</div>
+                    <div>Proveedor vinculado:</div>
+                    <div>
+                      {ocaMapeoPersonaId ? (
+                        <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                          <span style={{ fontWeight: 600, color: '#16a34a' }}>{ocaMapeoPersonaLabel}</span>
+                          <button type="button" style={{ fontSize: 10, color: '#dc2626', cursor: 'pointer', border: 'none', background: 'none' }} onClick={() => { setOcaMapeoPersonaId(null); setOcaMapeoPersonaLabel(''); }}>x</button>
+                        </div>
+                      ) : (
+                        <div style={{ position: 'relative' }}>
+                          <input
+                            type="text"
+                            className="form-input"
+                            value={ocaPersonasSearch}
+                            onChange={(e) => { setOcaPersonasSearch(e.target.value); buscarPersonasOca(e.target.value); }}
+                            placeholder="Buscar por nombre, patente, CUIL..."
+                            style={{ fontSize: 12, width: '100%' }}
+                          />
+                          {ocaPersonasResults.length > 0 && (
+                            <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, background: '#fff', border: '1px solid #d1d5db', borderRadius: 6, maxHeight: 200, overflowY: 'auto', zIndex: 10, boxShadow: '0 4px 12px rgba(0,0,0,0.15)' }}>
+                              {ocaPersonasResults.map((p) => (
+                                <div key={p.id} style={{ padding: '6px 10px', cursor: 'pointer', fontSize: 12, borderBottom: '1px solid #f3f4f6' }}
+                                  onMouseDown={() => {
+                                    setOcaMapeoPersonaId(p.id);
+                                    setOcaMapeoPersonaLabel(p.label);
+                                    setOcaPersonasSearch('');
+                                    setOcaPersonasResults([]);
+                                  }}
+                                >
+                                  <strong>{p.apellidos} {p.nombres}</strong>
+                                  {p.patente && <span style={{ color: '#6b7280' }}> — {p.patente}</span>}
+                                  {p.cuil && <span style={{ color: '#9ca3af' }}> — {p.cuil}</span>}
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                          {ocaPersonasLoading && <span style={{ fontSize: 10, color: '#6b7280' }}>Buscando...</span>}
+                        </div>
+                      )}
                     </div>
                   </div>
                 </div>

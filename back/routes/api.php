@@ -269,6 +269,7 @@ Route::middleware('auth.api')->group(function () {
         Route::get('/oca/{liquidacionCliente}/tarifas-detectadas', [\App\Http\Controllers\Api\Liq\LiqOcaController::class, 'tarifasDetectadas']);
         Route::post('/oca/{liquidacionCliente}/mapear-tarifa', [\App\Http\Controllers\Api\Liq\LiqOcaController::class, 'mapearTarifa']);
         Route::post('/oca/{liquidacionCliente}/generar-operaciones', [\App\Http\Controllers\Api\Liq\LiqOcaController::class, 'generarOperaciones']);
+        Route::get('/oca/buscar-personas', [\App\Http\Controllers\Api\Liq\LiqOcaController::class, 'buscarPersonas']);
 
         // Vista de proveedor (LiquidacionesPage) - liquidaciones generadas desde extractos (v2)
         Route::get('/distribuidores/{persona}/liquidaciones', [LiqDistribuidorLiquidacionesController::class, 'index']);
