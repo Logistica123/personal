@@ -4,12 +4,17 @@ namespace App\Http\Controllers\Api\Liq;
 
 use App\Http\Controllers\Controller;
 use App\Models\LiqArchivoEntrada;
+use App\Models\LiqEsquemaTarifario;
+use App\Models\LiqLineaTarifa;
 use App\Models\LiqLiquidacionCliente;
+use App\Models\LiqTarifaPatente;
 use App\Models\LiqVinculacionOca;
 use App\Services\Oca\OcaClient;
 use App\Services\Oca\OcaIngestService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 
@@ -147,6 +152,320 @@ class LiqOcaController extends Controller
             'por_estado' => $porEstado,
             'por_distribuidor' => $porDistribuidor,
             'por_dia' => $porDia,
+        ]);
+    }
+
+    /**
+     * GET /liq/oca/{liquidacionCliente}/tarifas-detectadas
+     *
+     * Agrupa vinculaciones por sucursal+contrato+precio, compara contra liq_lineas_tarifa
+     * y devuelve el cuadro con estado OK/Nueva/Cambio.
+     */
+    public function tarifasDetectadas(LiqLiquidacionCliente $liquidacionCliente): JsonResponse
+    {
+        $liqId = $liquidacionCliente->id;
+        $clienteId = $liquidacionCliente->cliente_id;
+
+        // Agrupar vinculaciones por sucursal + cod_contrato + precio_original
+        $grupos = LiqVinculacionOca::where('liquidacion_cliente_id', $liqId)
+            ->where('estado', '!=', 'SIN_ASIGNAR')
+            ->selectRaw('sucursal, cod_contrato, precio_original, COUNT(*) as cant_planillas, SUM(cantidad) as total_qty, SUM(importe_original) as total_importe')
+            ->groupBy('sucursal', 'cod_contrato', 'precio_original')
+            ->orderBy('sucursal')
+            ->orderBy('cod_contrato')
+            ->get();
+
+        // Buscar esquema activo del cliente
+        $esquema = LiqEsquemaTarifario::where('cliente_id', $clienteId)
+            ->where('activo', true)
+            ->first();
+
+        $resultado = [];
+        foreach ($grupos as $g) {
+            $sucursal = $g->sucursal;
+            $contrato = $g->cod_contrato;
+            $precioRecibido = (float) $g->precio_original;
+
+            // Buscar línea de tarifa vigente para esta sucursal+contrato
+            $lineaTarifa = null;
+            if ($esquema) {
+                $lineaTarifa = LiqLineaTarifa::where('esquema_id', $esquema->id)
+                    ->where('activo', true)
+                    ->where('dimensiones_valores->sucursal', $sucursal)
+                    ->where('dimensiones_valores->contrato', $contrato)
+                    ->latest('vigencia_desde')
+                    ->first();
+            }
+
+            // Determinar estado
+            $estado = 'nueva';
+            $tarifaRegistrada = null;
+            $precioDistribuidor = null;
+            $lineaTarifaId = null;
+
+            if ($lineaTarifa) {
+                $lineaTarifaId = $lineaTarifa->id;
+                $tarifaRegistrada = (float) $lineaTarifa->precio_original;
+                $precioDistribuidor = (float) $lineaTarifa->precio_distribuidor;
+                $diff = abs($precioRecibido - $tarifaRegistrada);
+                $estado = $diff < 1.0 ? 'ok' : 'cambio';
+            }
+
+            $resultado[] = [
+                'sucursal' => $sucursal,
+                'cod_contrato' => $contrato,
+                'precio_recibido' => $precioRecibido,
+                'tarifa_registrada' => $tarifaRegistrada,
+                'precio_distribuidor' => $precioDistribuidor,
+                'linea_tarifa_id' => $lineaTarifaId,
+                'estado' => $estado,
+                'cant_planillas' => (int) $g->cant_planillas,
+                'total_qty' => (float) $g->total_qty,
+                'total_importe' => (float) $g->total_importe,
+            ];
+        }
+
+        return response()->json(['data' => $resultado]);
+    }
+
+    /**
+     * POST /liq/oca/{liquidacionCliente}/mapear-tarifa
+     *
+     * Crea/actualiza liq_lineas_tarifa (tarifa OCA) + liq_tarifas_patente (default distribuidor)
+     * en un solo paso atómico.
+     */
+    public function mapearTarifa(Request $request, LiqLiquidacionCliente $liquidacionCliente): JsonResponse
+    {
+        $data = $request->validate([
+            'sucursal' => 'required|string',
+            'cod_contrato' => 'required|string',
+            'precio_original' => 'required|numeric|min:0',
+            'aceptar_tarifa' => 'required|boolean',
+            'modo_calculo' => 'required|in:porcentaje,fijo',
+            'valor_referencia' => 'required|numeric|min:0',
+            'precio_distribuidor' => 'required|numeric|min:0',
+            'vigencia_desde' => 'nullable|date',
+        ]);
+
+        $clienteId = $liquidacionCliente->cliente_id;
+        $esquema = LiqEsquemaTarifario::where('cliente_id', $clienteId)
+            ->where('activo', true)
+            ->firstOrFail();
+
+        $sucursal = $data['sucursal'];
+        $contrato = $data['cod_contrato'];
+        $precioOriginal = (float) $data['precio_original'];
+        $precioDistribuidor = (float) $data['precio_distribuidor'];
+        $pctAgencia = $precioOriginal > 0
+            ? round((1 - $precioDistribuidor / $precioOriginal) * 100, 4)
+            : 0;
+        $vigDesde = $data['vigencia_desde'] ?? $liquidacionCliente->periodo_desde;
+
+        DB::beginTransaction();
+        try {
+            // 1. Crear/actualizar línea de tarifa (tarifa OCA original)
+            $lineaTarifa = LiqLineaTarifa::where('esquema_id', $esquema->id)
+                ->where('activo', true)
+                ->where('dimensiones_valores->sucursal', $sucursal)
+                ->where('dimensiones_valores->contrato', $contrato)
+                ->first();
+
+            if ($lineaTarifa && $data['aceptar_tarifa']) {
+                $lineaTarifa->update([
+                    'precio_original' => $precioOriginal,
+                    'porcentaje_agencia' => $pctAgencia,
+                    'precio_distribuidor' => $precioDistribuidor,
+                ]);
+            } elseif (!$lineaTarifa) {
+                $lineaTarifa = LiqLineaTarifa::create([
+                    'esquema_id' => $esquema->id,
+                    'dimensiones_valores' => ['sucursal' => $sucursal, 'contrato' => $contrato],
+                    'precio_original' => $precioOriginal,
+                    'porcentaje_agencia' => $pctAgencia,
+                    'precio_distribuidor' => $precioDistribuidor,
+                    'vigencia_desde' => $vigDesde,
+                    'vigencia_hasta' => null,
+                    'creado_por' => $request->user()?->id,
+                    'activo' => true,
+                ]);
+            }
+
+            DB::commit();
+
+            return response()->json([
+                'message' => 'Tarifa mapeada correctamente',
+                'data' => [
+                    'linea_tarifa_id' => $lineaTarifa->id,
+                    'sucursal' => $sucursal,
+                    'contrato' => $contrato,
+                    'precio_original' => $precioOriginal,
+                    'precio_distribuidor' => $precioDistribuidor,
+                    'porcentaje_agencia' => $pctAgencia,
+                    'modo_calculo' => $data['modo_calculo'],
+                ],
+            ]);
+        } catch (\Throwable $e) {
+            DB::rollBack();
+            return response()->json(['error' => 'Error al mapear tarifa: ' . $e->getMessage()], 500);
+        }
+    }
+
+    /**
+     * POST /liq/oca/{liquidacionCliente}/generar-operaciones
+     *
+     * Convierte las vinculaciones OCA en liq_operaciones con lookup de tarifa.
+     * Cada vinculación se convierte en una operación con:
+     * - valor_cliente = importe con tarifa OCA (del PDF)
+     * - valor_tarifa_distribuidor = cantidad x precio_distribuidor (de liq_lineas_tarifa o override)
+     * - estado: ok / sin_tarifa / sin_distribuidor
+     */
+    public function generarOperaciones(Request $request, LiqLiquidacionCliente $liquidacionCliente): JsonResponse
+    {
+        $liqId = $liquidacionCliente->id;
+        $clienteId = $liquidacionCliente->cliente_id;
+
+        $esquema = LiqEsquemaTarifario::where('cliente_id', $clienteId)
+            ->where('activo', true)
+            ->first();
+
+        if (!$esquema) {
+            return response()->json(['error' => 'No hay esquema tarifario activo para OCA'], 422);
+        }
+
+        // Verificar que no haya tarifas sin mapear
+        $vinculaciones = LiqVinculacionOca::where('liquidacion_cliente_id', $liqId)
+            ->where('estado', '!=', 'SIN_ASIGNAR')
+            ->get();
+
+        if ($vinculaciones->isEmpty()) {
+            return response()->json(['error' => 'No hay vinculaciones para procesar'], 422);
+        }
+
+        // Obtener archivo principal para FK
+        $archivoPrincipal = \App\Models\LiqArchivoEntrada::where('liquidacion_cliente_id', $liqId)
+            ->where('tipo_archivo', 'OCA_PRINCIPAL')
+            ->first();
+
+        // Limpiar operaciones previas de esta liquidación
+        \App\Models\LiqOperacion::where('liquidacion_cliente_id', $liqId)->delete();
+
+        $stats = ['ok' => 0, 'sin_tarifa' => 0, 'sin_distribuidor' => 0, 'total' => 0];
+
+        foreach ($vinculaciones as $vinc) {
+            $sucursal = $vinc->sucursal;
+            $contrato = $vinc->cod_contrato;
+            $cantidad = (float) $vinc->cantidad;
+            $precioOca = (float) $vinc->precio_original;
+            $importeOca = (float) $vinc->importe_original;
+            $distribuidorId = $vinc->distribuidor_id;
+
+            // Buscar línea de tarifa para sucursal+contrato
+            $lineaTarifa = LiqLineaTarifa::where('esquema_id', $esquema->id)
+                ->where('activo', true)
+                ->where('dimensiones_valores->sucursal', $sucursal)
+                ->where('dimensiones_valores->contrato', $contrato)
+                ->latest('vigencia_desde')
+                ->first();
+
+            $estado = 'ok';
+            $lineaTarifaId = null;
+            $valorTarifaOriginal = null;
+            $valorTarifaDistribuidor = null;
+            $porcentajeAgencia = null;
+            $diferencia = null;
+            $observaciones = null;
+            $dimensionesValores = ['sucursal' => $sucursal, 'contrato' => $contrato];
+
+            if (!$distribuidorId) {
+                $estado = 'sin_distribuidor';
+                $observaciones = 'Distribuidor no vinculado: ' . ($vinc->distribuidor_nombre ?? 'desconocido');
+                $stats['sin_distribuidor']++;
+            } elseif (!$lineaTarifa) {
+                $estado = 'sin_tarifa';
+                $observaciones = "Sin tarifa para {$sucursal}/{$contrato}. Usar botón Mapear en Tarifas Detectadas.";
+                $stats['sin_tarifa']++;
+            } else {
+                $lineaTarifaId = $lineaTarifa->id;
+                $valorTarifaOriginal = $precioOca;
+                $porcentajeAgencia = (float) $lineaTarifa->porcentaje_agencia;
+
+                // Buscar override por patente del distribuidor
+                $distribuidor = \App\Models\Persona::find($distribuidorId);
+                $patenteNorm = $distribuidor ? strtoupper(preg_replace('/[^A-Z0-9]/', '', $distribuidor->patente ?? '')) : '';
+                $override = null;
+                if ($patenteNorm !== '') {
+                    $override = LiqTarifaPatente::where('esquema_id', $esquema->id)
+                        ->where('patente_norm', $patenteNorm)
+                        ->where('linea_tarifa_id', $lineaTarifa->id)
+                        ->where('activo', true)
+                        ->first();
+                }
+
+                if ($override && $override->lineaTarifa) {
+                    // Usar precio del override
+                    $precioDistrib = (float) $override->lineaTarifa->precio_distribuidor;
+                    $valorTarifaDistribuidor = round($cantidad * $precioDistrib, 2);
+                    $observaciones = 'Tarifa por override de patente.';
+                } else {
+                    // Usar precio default de la línea
+                    $precioDistrib = (float) $lineaTarifa->precio_distribuidor;
+                    $valorTarifaDistribuidor = round($cantidad * $precioDistrib, 2);
+                    $observaciones = $patenteNorm ? 'Sin override individual, usando tarifa default.' : null;
+                }
+
+                $diferencia = round($importeOca - $valorTarifaDistribuidor, 2);
+
+                // Verificar si tarifa OCA cambió
+                $tarifaRegistrada = (float) $lineaTarifa->precio_original;
+                if (abs($precioOca - $tarifaRegistrada) > 1.0) {
+                    $estado = 'diferencia';
+                    $observaciones = "Tarifa OCA cambió: registrada \${$tarifaRegistrada}, recibida \${$precioOca}.";
+                }
+
+                $stats['ok']++;
+            }
+
+            \App\Models\LiqOperacion::create([
+                'liquidacion_cliente_id' => $liqId,
+                'archivo_entrada_id' => $archivoPrincipal?->id,
+                'campos_originales' => [
+                    'fecha' => $vinc->fecha?->format('Y-m-d'),
+                    'nro_planilla' => $vinc->nro_planilla,
+                    'cod_contrato' => $contrato,
+                    'descripcion' => $vinc->descripcion,
+                    'precio_unitario' => $precioOca,
+                    'cantidad' => $cantidad,
+                    'importe_total' => $importeOca,
+                    'distribuidor_nombre' => $vinc->distribuidor_nombre,
+                ],
+                'dominio' => $distribuidor->patente ?? null,
+                'concepto' => $vinc->descripcion ?? $contrato,
+                'sucursal_tarifa' => $sucursal,
+                'dimensiones_valores' => $dimensionesValores,
+                'valor_cliente' => $importeOca,
+                'linea_tarifa_id' => $lineaTarifaId,
+                'valor_tarifa_original' => $valorTarifaOriginal,
+                'valor_tarifa_distribuidor' => $valorTarifaDistribuidor,
+                'porcentaje_agencia' => $porcentajeAgencia,
+                'diferencia_cliente' => $diferencia,
+                'estado' => $estado,
+                'distribuidor_id' => $distribuidorId,
+                'observaciones' => $observaciones,
+            ]);
+
+            $stats['total']++;
+        }
+
+        // Recalcular totales de la liquidación
+        $liquidacionCliente->update([
+            'total_operaciones' => $stats['total'],
+            'total_importe_cliente' => $vinculaciones->sum('importe_original'),
+            'estado' => 'en_proceso',
+        ]);
+
+        return response()->json([
+            'message' => "Operaciones generadas: {$stats['total']} total, {$stats['ok']} OK, {$stats['sin_tarifa']} sin tarifa, {$stats['sin_distribuidor']} sin distribuidor.",
+            'data' => $stats,
         ]);
     }
 

@@ -11,6 +11,7 @@ import type {
   LiqMapeoSucursal,
   LiqVinculacionOca,
   OcaResumen,
+  OcaTarifaDetectada,
 } from '../features/liquidaciones/types';
 import {
   ESTADO_OPERACION_LABELS,
@@ -18,6 +19,8 @@ import {
   ESTADO_LIQ_LABELS,
   ESTADO_OCA_LABELS,
   ESTADO_OCA_COLOR,
+  ESTADO_TARIFA_COLOR,
+  ESTADO_TARIFA_LABEL,
 } from '../features/liquidaciones/types';
 
 type Props = {
@@ -108,6 +111,11 @@ export function LiquidacionesExtractosPage({
   const [ocaHealth, setOcaHealth] = useState<boolean | null>(null);
   const [ocaVincPage, setOcaVincPage] = useState<{ current: number; last: number }>({ current: 1, last: 1 });
   const [ocaVincFiltro, setOcaVincFiltro] = useState('');
+  const [ocaTarifas, setOcaTarifas] = useState<OcaTarifaDetectada[]>([]);
+  const [ocaMapeo, setOcaMapeo] = useState<OcaTarifaDetectada | null>(null);
+  const [ocaMapeoModo, setOcaMapeoModo] = useState<'porcentaje' | 'fijo'>('fijo');
+  const [ocaMapeoValor, setOcaMapeoValor] = useState('');
+  const [ocaMapeoSaving, setOcaMapeoSaving] = useState(false);
 
   // OCA: detectar si el cliente seleccionado es OCA (formato PDF_DUAL)
   const isOcaClient = useMemo(() => {
@@ -282,6 +290,73 @@ export function LiquidacionesExtractosPage({
     }
   }, [api]);
 
+  const loadOcaTarifas = useCallback(async (liqId: number) => {
+    try {
+      const res = await api.get(`/oca/${liqId}/tarifas-detectadas`);
+      setOcaTarifas(res.data ?? []);
+    } catch {
+      setOcaTarifas([]);
+    }
+  }, [api]);
+
+  const guardarMapeoOca = useCallback(async () => {
+    if (!ocaMapeo || !selectedLiq) return;
+    setOcaMapeoSaving(true);
+    try {
+      const precioOca = ocaMapeo.precio_recibido;
+      let precioDistribuidor: number;
+      if (ocaMapeoModo === 'porcentaje') {
+        const pct = parseFloat(ocaMapeoValor.replace(',', '.'));
+        precioDistribuidor = Math.round(precioOca * (1 - pct / 100) * 100) / 100;
+      } else {
+        precioDistribuidor = parseFloat(ocaMapeoValor.replace(',', '.'));
+      }
+      if (!precioDistribuidor || precioDistribuidor <= 0) {
+        setError('Precio distribuidor inválido');
+        setOcaMapeoSaving(false);
+        return;
+      }
+      await api.post(`/oca/${selectedLiq.id}/mapear-tarifa`, {
+        sucursal: ocaMapeo.sucursal,
+        cod_contrato: ocaMapeo.cod_contrato,
+        precio_original: precioOca,
+        aceptar_tarifa: true,
+        modo_calculo: ocaMapeoModo,
+        valor_referencia: parseFloat(ocaMapeoValor.replace(',', '.')),
+        precio_distribuidor: precioDistribuidor,
+      });
+      setOcaMapeo(null);
+      setOcaMapeoValor('');
+      showSuccess('Tarifa mapeada');
+      await loadOcaTarifas(selectedLiq.id);
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Error mapeando tarifa');
+    } finally {
+      setOcaMapeoSaving(false);
+    }
+  }, [api, ocaMapeo, ocaMapeoModo, ocaMapeoValor, selectedLiq, loadOcaTarifas]);
+
+  const generarOperacionesOca = useCallback(async () => {
+    if (!selectedLiq) return;
+    const sinMapear = ocaTarifas.filter(t => t.estado === 'nueva');
+    if (sinMapear.length > 0) {
+      setError(`Hay ${sinMapear.length} tarifa(s) sin mapear. Mapeá todas antes de generar operaciones.`);
+      return;
+    }
+    if (!window.confirm('¿Generar operaciones OCA? Esto reemplaza operaciones previas.')) return;
+    try {
+      const res = await api.post(`/oca/${selectedLiq.id}/generar-operaciones`, {});
+      showSuccess(res.message ?? 'Operaciones generadas');
+      // Refrescar operaciones y tarifas
+      const opRes = await api.get(`/liquidaciones/${selectedLiq.id}/operaciones`);
+      setOperaciones(opRes.data?.data ?? opRes.data ?? []);
+      setOpPage({ current: opRes.data?.current_page ?? 1, last: opRes.data?.last_page ?? 1 });
+      await loadOcaTarifas(selectedLiq.id);
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Error generando operaciones');
+    }
+  }, [api, selectedLiq, ocaTarifas]);
+
   useEffect(() => {
     loadLiquidaciones();
     loadClientes();
@@ -331,6 +406,7 @@ export function LiquidacionesExtractosPage({
       if (esOca) {
         loadOcaVinculaciones(liq.id).catch(() => {});
         loadOcaResumen(liq.id).catch(() => {});
+        loadOcaTarifas(liq.id).catch(() => {});
         checkOcaHealth().catch(() => {});
       } else {
         setOcaVinculaciones([]);
@@ -339,7 +415,7 @@ export function LiquidacionesExtractosPage({
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Error cargando detalle');
     }
-  }, [api, clientes, loadOcaVinculaciones, loadOcaResumen, checkOcaHealth]);
+  }, [api, clientes, loadOcaVinculaciones, loadOcaResumen, loadOcaTarifas, checkOcaHealth]);
 
   useEffect(() => {
     if (!autoOpenLiqId) return;
@@ -1418,6 +1494,160 @@ export function LiquidacionesExtractosPage({
                     )}
                   </div>
                 )}
+              </div>
+            </div>
+          )}
+
+          {/* OCA Tarifas Detectadas */}
+          {isOcaClient && ocaTarifas.length > 0 && (
+            <div className="dashboard-card" style={{ marginBottom: 16 }}>
+              <header className="card-header"><h3>Tarifas Detectadas</h3></header>
+              <div className="card-body">
+                <div style={{ overflowX: 'auto' }}>
+                  <table className="table-sm" style={{ width: '100%', fontSize: 12 }}>
+                    <thead>
+                      <tr>
+                        <th>Sucursal</th>
+                        <th>Contrato</th>
+                        <th style={{ textAlign: 'right' }}>Tarifa OCA (PDF)</th>
+                        <th style={{ textAlign: 'right' }}>Tarifa Registrada</th>
+                        <th style={{ textAlign: 'right' }}>Tarifa Distrib.</th>
+                        <th style={{ textAlign: 'right' }}>Planillas</th>
+                        <th style={{ textAlign: 'right' }}>Total Importe</th>
+                        <th>Estado</th>
+                        <th></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {ocaTarifas.map((t, i) => (
+                        <tr key={i} style={{ background: ESTADO_TARIFA_COLOR[t.estado] }}>
+                          <td>{t.sucursal}</td>
+                          <td>{t.cod_contrato}</td>
+                          <td style={{ textAlign: 'right' }}>${t.precio_recibido.toLocaleString('es-AR', { minimumFractionDigits: 2 })}</td>
+                          <td style={{ textAlign: 'right' }}>{t.tarifa_registrada != null ? `$${t.tarifa_registrada.toLocaleString('es-AR', { minimumFractionDigits: 2 })}` : <span style={{ color: '#9ca3af' }}>Sin registro</span>}</td>
+                          <td style={{ textAlign: 'right' }}>{t.precio_distribuidor != null ? `$${t.precio_distribuidor.toLocaleString('es-AR', { minimumFractionDigits: 2 })}` : <span style={{ color: '#9ca3af' }}>—</span>}</td>
+                          <td style={{ textAlign: 'right' }}>{t.cant_planillas}</td>
+                          <td style={{ textAlign: 'right' }}>${t.total_importe.toLocaleString('es-AR', { minimumFractionDigits: 2 })}</td>
+                          <td>
+                            <span style={{ padding: '2px 8px', borderRadius: 8, fontSize: 11, fontWeight: 600 }}>
+                              {ESTADO_TARIFA_LABEL[t.estado]}
+                            </span>
+                          </td>
+                          <td>
+                            <button type="button" className="btn-sm btn-primary" onClick={() => { setOcaMapeo(t); setOcaMapeoModo('fijo'); setOcaMapeoValor(t.precio_distribuidor != null ? String(t.precio_distribuidor) : ''); }}>
+                              Mapear
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <div style={{ marginTop: 12, display: 'flex', gap: 12, alignItems: 'center' }}>
+                  <button
+                    type="button"
+                    className="btn-primary"
+                    onClick={generarOperacionesOca}
+                    disabled={ocaTarifas.some(t => t.estado === 'nueva')}
+                  >
+                    Generar operaciones con tarifa
+                  </button>
+                  {ocaTarifas.some(t => t.estado === 'nueva') && (
+                    <span style={{ fontSize: 12, color: '#dc2626', fontWeight: 600 }}>
+                      Hay tarifas nuevas sin mapear. Mapeá todas antes de generar.
+                    </span>
+                  )}
+                  {!ocaTarifas.some(t => t.estado === 'nueva') && ocaTarifas.length > 0 && (
+                    <span style={{ fontSize: 12, color: '#16a34a' }}>
+                      Todas las tarifas mapeadas. Listo para generar operaciones.
+                    </span>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Modal Mapeo OCA */}
+          {ocaMapeo && (
+            <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
+              <div style={{ background: '#fff', borderRadius: 12, padding: 24, width: 520, maxHeight: '90vh', overflow: 'auto', boxShadow: '0 8px 32px rgba(0,0,0,0.2)' }}>
+                <h3 style={{ margin: '0 0 16px', fontSize: 16 }}>Mapear Tarifa — {ocaMapeo.sucursal} / {ocaMapeo.cod_contrato}</h3>
+
+                {/* Sección A: Tarifa OCA */}
+                <div style={{ marginBottom: 16, padding: 12, background: '#f9fafb', borderRadius: 8 }}>
+                  <h4 style={{ fontSize: 13, fontWeight: 600, margin: '0 0 8px' }}>Tarifa Original (OCA)</h4>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, fontSize: 13 }}>
+                    <div>Tarifa recibida (PDF):</div>
+                    <div style={{ fontWeight: 600 }}>${ocaMapeo.precio_recibido.toLocaleString('es-AR', { minimumFractionDigits: 2 })}</div>
+                    <div>Tarifa registrada:</div>
+                    <div>{ocaMapeo.tarifa_registrada != null ? `$${ocaMapeo.tarifa_registrada.toLocaleString('es-AR', { minimumFractionDigits: 2 })}` : <span style={{ color: '#d97706' }}>Sin registro</span>}</div>
+                    <div>Planillas afectadas:</div>
+                    <div>{ocaMapeo.cant_planillas}</div>
+                  </div>
+                </div>
+
+                {/* Sección B: Tarifa Distribuidor */}
+                <div style={{ marginBottom: 16, padding: 12, background: '#f0f9ff', borderRadius: 8 }}>
+                  <h4 style={{ fontSize: 13, fontWeight: 600, margin: '0 0 8px' }}>Tarifa Distribuidor</h4>
+                  <div style={{ display: 'flex', gap: 16, marginBottom: 12 }}>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 13, cursor: 'pointer' }}>
+                      <input type="radio" checked={ocaMapeoModo === 'fijo'} onChange={() => { setOcaMapeoModo('fijo'); setOcaMapeoValor(ocaMapeo.precio_distribuidor != null ? String(ocaMapeo.precio_distribuidor) : ''); }} />
+                      Valor fijo
+                    </label>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 13, cursor: 'pointer' }}>
+                      <input type="radio" checked={ocaMapeoModo === 'porcentaje'} onChange={() => { setOcaMapeoModo('porcentaje'); setOcaMapeoValor(''); }} />
+                      Porcentaje descuento
+                    </label>
+                  </div>
+
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, alignItems: 'center', fontSize: 13 }}>
+                    {ocaMapeoModo === 'fijo' ? (
+                      <>
+                        <div>Precio distribuidor:</div>
+                        <input type="text" inputMode="decimal" className="form-input" value={ocaMapeoValor} onChange={(e) => setOcaMapeoValor(e.target.value)} placeholder="Ej: 1800" style={{ fontSize: 13 }} />
+                        <div>% Agencia (calc.):</div>
+                        <div style={{ color: '#6b7280' }}>
+                          {(() => {
+                            const v = parseFloat(ocaMapeoValor.replace(',', '.'));
+                            return v > 0 ? `${((1 - v / ocaMapeo.precio_recibido) * 100).toFixed(2)}%` : '—';
+                          })()}
+                        </div>
+                      </>
+                    ) : (
+                      <>
+                        <div>Descuento %:</div>
+                        <input type="text" inputMode="decimal" className="form-input" value={ocaMapeoValor} onChange={(e) => setOcaMapeoValor(e.target.value)} placeholder="Ej: 17" style={{ fontSize: 13 }} />
+                        <div>Precio distribuidor (calc.):</div>
+                        <div style={{ fontWeight: 600 }}>
+                          {(() => {
+                            const pct = parseFloat(ocaMapeoValor.replace(',', '.'));
+                            return pct > 0 ? `$${(ocaMapeo.precio_recibido * (1 - pct / 100)).toLocaleString('es-AR', { minimumFractionDigits: 2 })}` : '—';
+                          })()}
+                        </div>
+                      </>
+                    )}
+                    <div>Margen por unidad:</div>
+                    <div style={{ fontWeight: 600, color: '#16a34a' }}>
+                      {(() => {
+                        let dist: number;
+                        if (ocaMapeoModo === 'fijo') {
+                          dist = parseFloat(ocaMapeoValor.replace(',', '.'));
+                        } else {
+                          const pct = parseFloat(ocaMapeoValor.replace(',', '.'));
+                          dist = ocaMapeo.precio_recibido * (1 - (pct || 0) / 100);
+                        }
+                        return dist > 0 ? `$${(ocaMapeo.precio_recibido - dist).toLocaleString('es-AR', { minimumFractionDigits: 2 })}` : '—';
+                      })()}
+                    </div>
+                  </div>
+                </div>
+
+                <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+                  <button type="button" className="btn-sm" onClick={() => setOcaMapeo(null)}>Cancelar</button>
+                  <button type="button" className="btn-primary" onClick={guardarMapeoOca} disabled={ocaMapeoSaving || !ocaMapeoValor}>
+                    {ocaMapeoSaving ? 'Guardando...' : 'Guardar mapeo'}
+                  </button>
+                </div>
               </div>
             </div>
           )}

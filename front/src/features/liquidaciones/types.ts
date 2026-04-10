@@ -209,6 +209,31 @@ export const ESTADO_OCA_COLOR: Record<LiqVinculacionOca['estado'], string> = {
   SIN_ASIGNAR: '#dc2626',
 };
 
+export type OcaTarifaDetectada = {
+  sucursal: string;
+  cod_contrato: string;
+  precio_recibido: number;
+  tarifa_registrada: number | null;
+  precio_distribuidor: number | null;
+  linea_tarifa_id: number | null;
+  estado: 'ok' | 'nueva' | 'cambio';
+  cant_planillas: number;
+  total_qty: number;
+  total_importe: number;
+};
+
+export const ESTADO_TARIFA_COLOR: Record<OcaTarifaDetectada['estado'], string> = {
+  ok: '#dcfce7',
+  nueva: '#fef9c3',
+  cambio: '#ffedd5',
+};
+
+export const ESTADO_TARIFA_LABEL: Record<OcaTarifaDetectada['estado'], string> = {
+  ok: 'OK',
+  nueva: 'Nueva',
+  cambio: 'Cambio',
+};
+
 // ── UI helpers ────────────────────────────────────────────────────────────────
 
 export const ESTADO_OPERACION_LABELS: Record<LiqOperacion['estado'], string> = {
