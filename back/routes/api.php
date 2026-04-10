@@ -263,13 +263,13 @@ Route::middleware('auth.api')->group(function () {
 
         // OCA - procesamiento PDF con microservicio Python
         Route::get('/oca/health', [\App\Http\Controllers\Api\Liq\LiqOcaController::class, 'health']);
+        Route::get('/oca/buscar-personas', [\App\Http\Controllers\Api\Liq\LiqOcaController::class, 'buscarPersonas']);
         Route::post('/oca/upload', [\App\Http\Controllers\Api\Liq\LiqOcaController::class, 'upload']);
         Route::get('/oca/{liquidacionCliente}/vinculaciones', [\App\Http\Controllers\Api\Liq\LiqOcaController::class, 'vinculaciones']);
         Route::get('/oca/{liquidacionCliente}/resumen', [\App\Http\Controllers\Api\Liq\LiqOcaController::class, 'resumen']);
         Route::get('/oca/{liquidacionCliente}/tarifas-detectadas', [\App\Http\Controllers\Api\Liq\LiqOcaController::class, 'tarifasDetectadas']);
         Route::post('/oca/{liquidacionCliente}/mapear-tarifa', [\App\Http\Controllers\Api\Liq\LiqOcaController::class, 'mapearTarifa']);
         Route::post('/oca/{liquidacionCliente}/generar-operaciones', [\App\Http\Controllers\Api\Liq\LiqOcaController::class, 'generarOperaciones']);
-        Route::get('/oca/buscar-personas', [\App\Http\Controllers\Api\Liq\LiqOcaController::class, 'buscarPersonas']);
 
         // Vista de proveedor (LiquidacionesPage) - liquidaciones generadas desde extractos (v2)
         Route::get('/distribuidores/{persona}/liquidaciones', [LiqDistribuidorLiquidacionesController::class, 'index']);
