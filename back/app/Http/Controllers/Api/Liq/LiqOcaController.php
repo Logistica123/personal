@@ -398,8 +398,7 @@ class LiqOcaController extends Controller
             return response()->json(['data' => []]);
         }
 
-        $personas = Persona::where('tipo', 'transportista')
-            ->where(function ($query) use ($q) {
+        $personas = Persona::where(function ($query) use ($q) {
                 $query->where('apellidos', 'LIKE', "%{$q}%")
                     ->orWhere('nombres', 'LIKE', "%{$q}%")
                     ->orWhere('patente', 'LIKE', "%{$q}%")

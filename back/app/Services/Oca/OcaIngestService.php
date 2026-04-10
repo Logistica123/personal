@@ -174,7 +174,7 @@ class OcaIngestService
 
         // Intentar match por apellido o nombre
         $parts = preg_split('/\s+/', trim($nombre), 2);
-        $query = Persona::where('tipo', 'transportista');
+        $query = Persona::query();
         if (count($parts) >= 2) {
             $query->where(function ($q) use ($parts) {
                 $q->where(function ($q2) use ($parts) {
