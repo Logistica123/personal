@@ -541,6 +541,9 @@ class LiqOcaController extends Controller
                         ->where('patente_norm', $patenteNorm)
                         ->where('linea_tarifa_id', $lineaTarifa->id)
                         ->where('activo', true)
+                        ->where(function ($q) use ($clienteId) {
+                            $q->where('liq_cliente_id', $clienteId)->orWhereNull('liq_cliente_id');
+                        })
                         ->first();
                 }
 

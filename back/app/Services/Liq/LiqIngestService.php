@@ -448,7 +448,8 @@ class LiqIngestService
                             $esquema->id,
                             $dominio,
                             $dimensionesValores,
-                            $liquidacion->periodo_desde->toDateString()
+                            $liquidacion->periodo_desde->toDateString(),
+                            $liquidacion->cliente_id
                         );
                         if ($tpLinea) {
                             $linea = $tpLinea;
@@ -672,11 +673,15 @@ class LiqIngestService
         return $q->first();
     }
 
-    private function buscarLineaTarifaPorPatenteYDimensiones(int $esquemaId, string $patenteNorm, array $dimensionesValores, string $fecha): ?LiqLineaTarifa
+    private function buscarLineaTarifaPorPatenteYDimensiones(int $esquemaId, string $patenteNorm, array $dimensionesValores, string $fecha, ?int $clienteId = null): ?LiqLineaTarifa
     {
         $q = LiqTarifaPatente::where('esquema_id', $esquemaId)
             ->where('activo', true)
-            ->where('patente_norm', $patenteNorm)
+            ->where('patente_norm', $patenteNorm);
+        if ($clienteId) {
+            $q->where('liq_cliente_id', $clienteId);
+        }
+        $q
             ->where('vigencia_desde', '<=', $fecha)
             ->where(function ($q) use ($fecha) {
                 $q->whereNull('vigencia_hasta')->orWhere('vigencia_hasta', '>=', $fecha);

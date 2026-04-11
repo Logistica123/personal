@@ -1928,7 +1928,7 @@ export function LiquidacionesExtractosPage({
                       <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
                         {op.estado === 'sin_tarifa' && !op.excluida && (
                           <button type="button" className="btn-sm" style={{ marginRight: 4, background: '#fef3c7', color: '#92400e', border: '1px solid #fcd34d' }}
-                            onClick={() => { setHotMapOp(op); setHotMapValorTarifa(''); setHotMapDim('concepto'); }}>
+                            onClick={() => { setHotMapOp(op); setHotMapValorTarifa(''); setHotMapDim(isOcaClient ? 'fijo' : 'porcentaje'); }}>
                             + Mapeo
                           </button>
                         )}
@@ -1950,32 +1950,100 @@ export function LiquidacionesExtractosPage({
 	                  {operaciones.length === 0 && <tr><td colSpan={13} style={{ textAlign: 'center', color: '#6b7280' }}>Sin operaciones</td></tr>}
 	                </tbody>
 	              </table>
+              {/* Modal de Mapeo Completo (3 secciones) */}
               {hotMapOp && (
-                <div style={{ margin: '12px 0', background: '#fffbeb', border: '1px solid #fcd34d', borderRadius: 8, padding: 16 }}>
-                  <h4 style={{ margin: '0 0 12px 0', color: '#92400e' }}>Crear mapeo para: <code>{hotMapOp.concepto}</code></h4>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr 1.5fr auto auto', gap: 10, alignItems: 'end' }}>
-                    <div>
-                      <label style={{ display: 'block', fontSize: 12, marginBottom: 4 }}>Valor en Excel (concepto)</label>
-                      <input type="text" className="form-input" value={hotMapOp.concepto ?? ''} readOnly style={{ background: '#f3f4f6' }} />
+                <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
+                  <div style={{ background: '#fff', borderRadius: 12, padding: 24, width: 540, maxHeight: '90vh', overflow: 'auto', boxShadow: '0 8px 32px rgba(0,0,0,0.2)' }}>
+                    <h3 style={{ margin: '0 0 16px', fontSize: 16 }}>Mapear Operación — {hotMapOp.concepto}</h3>
+
+                    {/* Sección 1: Tarifa Original (Cliente) */}
+                    <div style={{ marginBottom: 16, padding: 12, background: '#f9fafb', borderRadius: 8 }}>
+                      <h4 style={{ fontSize: 13, fontWeight: 600, margin: '0 0 8px' }}>Tarifa Original (Cliente)</h4>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, fontSize: 13 }}>
+                        <div>Concepto:</div><div style={{ fontWeight: 600 }}>{hotMapOp.concepto ?? '—'}</div>
+                        <div>Valor cliente:</div><div style={{ fontWeight: 600 }}>${Number(hotMapOp.valor_cliente).toLocaleString('es-AR', { minimumFractionDigits: 2 })}</div>
+                        <div>Sucursal:</div><div>{hotMapOp.sucursal_tarifa ?? '—'}</div>
+                        <div>Patente:</div><div style={{ fontWeight: 600 }}>{hotMapOp.dominio ?? '—'}</div>
+                      </div>
                     </div>
-                    <div>
-                      <label style={{ display: 'block', fontSize: 12, marginBottom: 4 }}>Dimensión destino</label>
-                      <input type="text" className="form-input" value={hotMapDim} onChange={(e) => setHotMapDim(e.target.value)} placeholder="concepto" />
+
+                    {/* Sección 2: Tarifa Distribuidor */}
+                    <div style={{ marginBottom: 16, padding: 12, background: '#f0f9ff', borderRadius: 8 }}>
+                      <h4 style={{ fontSize: 13, fontWeight: 600, margin: '0 0 8px' }}>Tarifa Distribuidor</h4>
+                      <div style={{ display: 'flex', gap: 16, marginBottom: 10 }}>
+                        <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 13, cursor: 'pointer' }}>
+                          <input type="radio" checked={hotMapDim === 'fijo'} onChange={() => setHotMapDim('fijo')} /> Valor fijo
+                        </label>
+                        <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 13, cursor: 'pointer' }}>
+                          <input type="radio" checked={hotMapDim === 'porcentaje'} onChange={() => setHotMapDim('porcentaje')} /> Porcentaje descuento
+                        </label>
+                      </div>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, fontSize: 13, alignItems: 'center' }}>
+                        {hotMapDim === 'fijo' ? (
+                          <>
+                            <div>Precio distribuidor:</div>
+                            <input type="text" inputMode="decimal" className="form-input" value={hotMapValorTarifa} onChange={(e) => setHotMapValorTarifa(e.target.value)} placeholder="Ej: 181374" style={{ fontSize: 13 }} />
+                            <div>% Agencia (calc.):</div>
+                            <div style={{ color: '#6b7280' }}>{(() => { const v = parseFloat(hotMapValorTarifa.replace(',', '.')); const c = Number(hotMapOp.valor_cliente); return v > 0 && c > 0 ? `${((1 - v / c) * 100).toFixed(2)}%` : '—'; })()}</div>
+                          </>
+                        ) : (
+                          <>
+                            <div>Descuento %:</div>
+                            <input type="text" inputMode="decimal" className="form-input" value={hotMapValorTarifa} onChange={(e) => setHotMapValorTarifa(e.target.value)} placeholder="Ej: 15" style={{ fontSize: 13 }} />
+                            <div>Precio distrib. (calc.):</div>
+                            <div style={{ fontWeight: 600 }}>{(() => { const pct = parseFloat(hotMapValorTarifa.replace(',', '.')); const c = Number(hotMapOp.valor_cliente); return pct > 0 && c > 0 ? `$${(c * (1 - pct / 100)).toLocaleString('es-AR', { minimumFractionDigits: 2 })}` : '—'; })()}</div>
+                          </>
+                        )}
+                        <div>Margen:</div>
+                        <div style={{ fontWeight: 600, color: '#16a34a' }}>{(() => {
+                          const c = Number(hotMapOp.valor_cliente);
+                          let d: number;
+                          if (hotMapDim === 'fijo') d = parseFloat(hotMapValorTarifa.replace(',', '.'));
+                          else { const pct = parseFloat(hotMapValorTarifa.replace(',', '.')); d = c * (1 - (pct || 0) / 100); }
+                          return d > 0 ? `$${(c - d).toLocaleString('es-AR', { minimumFractionDigits: 2 })}` : '—';
+                        })()}</div>
+                      </div>
                     </div>
-                    <div>
-                      <label style={{ display: 'block', fontSize: 12, marginBottom: 4 }}>Valor tarifa (destino)</label>
-                      <input type="text" className="form-input" value={hotMapValorTarifa} onChange={(e) => setHotMapValorTarifa(e.target.value)} placeholder="Ej: Ut. Corto AM" autoFocus />
+
+                    {/* Sección 3: Distribuidor Asignado */}
+                    <div style={{ marginBottom: 16, padding: 12, background: '#fdf2f8', borderRadius: 8 }}>
+                      <h4 style={{ fontSize: 13, fontWeight: 600, margin: '0 0 8px' }}>Distribuidor Asignado</h4>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, fontSize: 13, alignItems: 'center' }}>
+                        <div>Nombre en archivo:</div>
+                        <div style={{ fontWeight: 600 }}>{hotMapOp.distribuidor ? `${hotMapOp.distribuidor.apellidos} ${hotMapOp.distribuidor.nombres}` : (hotMapOp.campos_originales as any)?.conductor ?? (hotMapOp.campos_originales as any)?.nombre ?? '—'}</div>
+                        <div>Patente:</div>
+                        <div style={{ fontWeight: 600 }}>{hotMapOp.dominio ?? '—'}</div>
+                        <div>Proveedor vinculado:</div>
+                        <div>
+                          {hotMapOp.distribuidor_id ? (
+                            <span style={{ color: '#16a34a', fontWeight: 600 }}>{hotMapOp.distribuidor ? `${hotMapOp.distribuidor.apellidos} ${hotMapOp.distribuidor.nombres}` : `ID ${hotMapOp.distribuidor_id}`}</span>
+                          ) : (
+                            <span style={{ color: '#dc2626' }}>Sin vincular — usar Mapeo de Distribuidores en la sección de arriba</span>
+                          )}
+                        </div>
+                      </div>
                     </div>
-                    <button type="button" className="btn-primary" onClick={() => void guardarHotMapeo()}>
-                      Guardar mapeo
-                    </button>
-                    <button type="button" className="btn-sm" onClick={() => setHotMapOp(null)}>
-                      Cancelar
-                    </button>
+
+                    {/* Mapeo de concepto */}
+                    <div style={{ marginBottom: 16, padding: 12, background: '#fffbeb', borderRadius: 8 }}>
+                      <h4 style={{ fontSize: 13, fontWeight: 600, margin: '0 0 8px' }}>Mapeo de Concepto</h4>
+                      <div style={{ fontSize: 12, color: '#92400e', marginBottom: 8 }}>Concepto del Excel → dimensión de tarifa en el esquema</div>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, fontSize: 13, alignItems: 'center' }}>
+                        <div>Valor en Excel:</div>
+                        <div style={{ fontWeight: 600 }}>{hotMapOp.concepto}</div>
+                        <div>Dimensión destino:</div>
+                        <div>concepto</div>
+                      </div>
+                    </div>
+
+                    <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+                      <button type="button" className="btn-sm" onClick={() => setHotMapOp(null)}>Cancelar</button>
+                      <button type="button" className="btn-primary" onClick={() => void guardarHotMapeo()}>Guardar mapeo</button>
+                    </div>
+                    <p style={{ margin: '8px 0 0 0', fontSize: 11, color: '#6b7280' }}>
+                      Después de guardar, usá <strong>Reprocesar</strong> en el archivo para recalcular.
+                    </p>
                   </div>
-                  <p style={{ margin: '8px 0 0 0', fontSize: 12, color: '#92400e' }}>
-                    Después de guardar, usá el botón <strong>Reprocesar</strong> en el archivo correspondiente para re-calcular las operaciones con el nuevo mapeo.
-                  </p>
                 </div>
               )}
               {opPage.last > 1 && (

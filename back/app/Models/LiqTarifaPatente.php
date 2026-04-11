@@ -13,6 +13,7 @@ class LiqTarifaPatente extends Model
 
     protected $fillable = [
         'esquema_id',
+        'liq_cliente_id',
         'patente_norm',
         'dimensiones_valores',
         'linea_tarifa_id',
