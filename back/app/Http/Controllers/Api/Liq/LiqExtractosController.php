@@ -497,6 +497,51 @@ class LiqExtractosController extends Controller
         ]);
     }
 
+    // GET /liq/liquidaciones/{liquidacionCliente}/origenes-sin-mapear
+    public function origenesSinMapear(LiqLiquidacionCliente $liquidacionCliente): JsonResponse
+    {
+        $clienteId = $liquidacionCliente->cliente_id;
+
+        // Obtener todos los orígenes únicos de las operaciones sin sucursal
+        $sinSucursal = LiqOperacion::where('liquidacion_cliente_id', $liquidacionCliente->id)
+            ->whereNull('sucursal_tarifa')
+            ->selectRaw("DISTINCT JSON_UNQUOTE(JSON_EXTRACT(campos_originales, '$.origen')) as origen_texto")
+            ->pluck('origen_texto')
+            ->filter(fn ($v) => $v !== null && $v !== '' && $v !== 'null')
+            ->values();
+
+        // También buscar en campos_originales los que tienen sucursal pero el origen no está mapeado
+        $todosOrigenes = LiqOperacion::where('liquidacion_cliente_id', $liquidacionCliente->id)
+            ->selectRaw("DISTINCT JSON_UNQUOTE(JSON_EXTRACT(campos_originales, '$.origen')) as origen_texto")
+            ->pluck('origen_texto')
+            ->filter(fn ($v) => $v !== null && $v !== '' && $v !== 'null')
+            ->unique()
+            ->values();
+
+        // Verificar cuáles tienen mapeo
+        $mapeados = \App\Models\LiqMapeoSucursal::where('cliente_id', $clienteId)
+            ->where('activo', true)
+            ->pluck('patron_archivo')
+            ->map(fn ($p) => strtolower(trim($p)))
+            ->toArray();
+
+        $sinMapear = $todosOrigenes->filter(function ($origen) use ($mapeados) {
+            $origenLower = strtolower(trim($origen));
+            foreach ($mapeados as $m) {
+                if ($origenLower === $m || str_contains($origenLower, $m) || str_contains($m, $origenLower)) {
+                    return false;
+                }
+            }
+            return true;
+        })->values();
+
+        return response()->json([
+            'data' => $sinMapear,
+            'total_origenes' => $todosOrigenes->count(),
+            'sin_mapear' => $sinMapear->count(),
+        ]);
+    }
+
     private function allowedUploadTypesForCliente(?LiqCliente $cliente): array
     {
         $cfg = $cliente?->configuracion_excel;

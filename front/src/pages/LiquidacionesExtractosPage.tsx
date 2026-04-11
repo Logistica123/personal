@@ -123,6 +123,11 @@ export function LiquidacionesExtractosPage({
   const [ocaPersonasResults, setOcaPersonasResults] = useState<OcaPersonaBusqueda[]>([]);
   const [ocaPersonasLoading, setOcaPersonasLoading] = useState(false);
 
+  // Mini-modal mapeo Origen (Loginter)
+  const [origenesSinMapear, setOrigenesSinMapear] = useState<string[]>([]);
+  const [showOrigenModal, setShowOrigenModal] = useState<string | null>(null);
+  const [origenSucursalCode, setOrigenSucursalCode] = useState('');
+
   // OCA: detectar si el cliente seleccionado es OCA (formato PDF_DUAL)
   const isOcaClient = useMemo(() => {
     if (!selectedLiq) return false;
@@ -296,6 +301,30 @@ export function LiquidacionesExtractosPage({
     }
   }, [api]);
 
+  const loadOrigenesSinMapear = useCallback(async (liqId: number) => {
+    try {
+      const res = await api.get(`/liquidaciones/${liqId}/origenes-sin-mapear`);
+      setOrigenesSinMapear(res.data ?? []);
+    } catch {
+      setOrigenesSinMapear([]);
+    }
+  }, [api]);
+
+  const guardarMapeoOrigen = useCallback(async () => {
+    if (!showOrigenModal || !origenSucursalCode.trim() || !selectedLiq) return;
+    try {
+      await api.post(`/clientes/${selectedLiq.cliente_id}/mapeos-sucursal`, {
+        mapeos: [{ patron_archivo: showOrigenModal, sucursal_tarifa: origenSucursalCode.trim().toUpperCase() }],
+      });
+      setShowOrigenModal(null);
+      setOrigenSucursalCode('');
+      showSuccess(`Origen "${showOrigenModal}" mapeado a ${origenSucursalCode.toUpperCase()}`);
+      await loadOrigenesSinMapear(selectedLiq.id);
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Error guardando mapeo');
+    }
+  }, [api, showOrigenModal, origenSucursalCode, selectedLiq, loadOrigenesSinMapear]);
+
   const buscarPersonasOca = useCallback(async (q: string) => {
     if (q.length < 2) { setOcaPersonasResults([]); return; }
     setOcaPersonasLoading(true);
@@ -433,10 +462,13 @@ export function LiquidacionesExtractosPage({
         setOcaVinculaciones([]);
         setOcaResumen(null);
       }
+
+      // Cargar orígenes sin mapear (Loginter)
+      loadOrigenesSinMapear(liq.id).catch(() => {});
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Error cargando detalle');
     }
-  }, [api, clientes, loadOcaVinculaciones, loadOcaResumen, loadOcaTarifas, checkOcaHealth]);
+  }, [api, clientes, loadOcaVinculaciones, loadOcaResumen, loadOcaTarifas, checkOcaHealth, loadOrigenesSinMapear]);
 
   useEffect(() => {
     if (!autoOpenLiqId) return;
@@ -1431,6 +1463,72 @@ export function LiquidacionesExtractosPage({
 		              </div>
 	            </div>
 	          )}
+
+          {/* Orígenes sin mapear (Loginter) */}
+          {origenesSinMapear.length > 0 && (
+            <div className="dashboard-card" style={{ marginBottom: 16, border: '2px solid #f59e0b' }}>
+              <header className="card-header" style={{ background: '#fef9c3' }}>
+                <h3 style={{ color: '#92400e' }}>Orígenes sin mapear ({origenesSinMapear.length})</h3>
+              </header>
+              <div className="card-body">
+                <p style={{ fontSize: 12, color: '#92400e', marginBottom: 8 }}>
+                  Se detectaron orígenes en el Excel que no tienen sucursal asignada. Mapeá cada uno para que las operaciones se procesen correctamente.
+                </p>
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                  {origenesSinMapear.map((origen) => (
+                    <button
+                      key={origen}
+                      type="button"
+                      className="btn-sm"
+                      style={{ background: '#fef3c7', border: '1px solid #f59e0b', color: '#92400e', fontWeight: 600 }}
+                      onClick={() => { setShowOrigenModal(origen); setOrigenSucursalCode(''); }}
+                    >
+                      {origen}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Mini-modal mapeo Origen */}
+          {showOrigenModal && (
+            <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
+              <div style={{ background: '#fff', borderRadius: 12, padding: 24, width: 400, boxShadow: '0 8px 32px rgba(0,0,0,0.2)' }}>
+                <h3 style={{ margin: '0 0 12px', fontSize: 15 }}>Mapear Origen Nuevo</h3>
+                <div style={{ fontSize: 13, marginBottom: 12 }}>
+                  <div style={{ marginBottom: 8 }}>
+                    <span style={{ color: '#6b7280' }}>Origen del Excel:</span>
+                    <span style={{ fontWeight: 600, marginLeft: 8 }}>"{showOrigenModal}"</span>
+                  </div>
+                  <div>
+                    <label style={{ display: 'block', fontSize: 12, marginBottom: 4 }}>Código de sucursal (ej: NEU, CDO, TUC)</label>
+                    <input
+                      type="text"
+                      className="form-input"
+                      value={origenSucursalCode}
+                      onChange={(e) => setOrigenSucursalCode(e.target.value.toUpperCase())}
+                      placeholder="Ej: NEU"
+                      maxLength={10}
+                      style={{ fontSize: 14, fontWeight: 600, width: 120 }}
+                      autoFocus
+                    />
+                  </div>
+                  {sucursalTarifaOptions.length > 0 && (
+                    <div style={{ marginTop: 8, fontSize: 11, color: '#6b7280' }}>
+                      Sucursales existentes: {sucursalTarifaOptions.join(', ')}
+                    </div>
+                  )}
+                </div>
+                <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+                  <button type="button" className="btn-sm" onClick={() => setShowOrigenModal(null)}>Cancelar</button>
+                  <button type="button" className="btn-primary" onClick={guardarMapeoOrigen} disabled={!origenSucursalCode.trim()}>
+                    Guardar mapeo
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* OCA Vinculaciones */}
           {isOcaClient && (ocaResumen || ocaVinculaciones.length > 0) && (

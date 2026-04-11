@@ -266,14 +266,18 @@ class LiqIngestService
             return $catalogoDimensiones[$dim][$norm] ?? $raw;
         };
 
+        // Sucursal: puede venir del archivo (OCA) o de un campo de cada fila (Loginter)
+        $campoSucursalOrigen = $config['campo_sucursal_origen'] ?? null;
+        $sucursalPorFila = is_string($campoSucursalOrigen) && trim($campoSucursalOrigen) !== '';
+
         $sucursalTarifa = $archivo->sucursal;
-        if (! $sucursalTarifa) {
+        if (! $sucursalTarifa && ! $sucursalPorFila) {
             $sucursalTarifa = $this->resolverSucursalDesdeNombre($archivo->nombre_original, $liquidacion->cliente_id);
             if ($sucursalTarifa) {
                 $archivo->update(['sucursal' => $sucursalTarifa]);
             }
         }
-        if ($sucursalTarifa && in_array('sucursal', $esquema->dimensiones ?? [], true)) {
+        if ($sucursalTarifa && ! $sucursalPorFila && in_array('sucursal', $esquema->dimensiones ?? [], true)) {
             $sucursalTarifa = $canon('sucursal', (string) $sucursalTarifa);
             $archivo->update(['sucursal' => $sucursalTarifa]);
         }
@@ -330,6 +334,29 @@ class LiqIngestService
             $categoriaVehiculoKey = $this->normalizarTexto(trim((string) ($rawCategoriaVehiculo ?? '')));
             $camposOriginales = $record['campos_originales'];
 
+            // Loginter: resolver sucursal desde campo Origen de cada fila
+            $sucursalFilaResuelta = $sucursalTarifa; // default: sucursal del archivo
+            if ($sucursalPorFila) {
+                $rawOrigen = $this->firstFieldValue($fieldValues, [$campoSucursalOrigen, 'origen']);
+                $origenTxt = trim((string) ($rawOrigen ?? ''));
+                if ($origenTxt !== '') {
+                    $sucursalFilaResuelta = $this->resolverSucursalDesdeOrigen($origenTxt, $liquidacion->cliente_id) ?? $origenTxt;
+                }
+            }
+
+            // Skip fila TOTAL (Loginter: primera columna = 'TOTAL')
+            $skipTotal = $config['fila_total_skip'] ?? null;
+            if (is_array($skipTotal)) {
+                $skipCol = $skipTotal['columna'] ?? null;
+                $skipVal = strtoupper(trim((string) ($skipTotal['valor'] ?? 'TOTAL')));
+                if ($skipCol) {
+                    $rawSkip = $this->firstFieldValue($fieldValues, [$skipCol]);
+                    if (strtoupper(trim((string) ($rawSkip ?? ''))) === $skipVal) {
+                        continue;
+                    }
+                }
+            }
+
             $idViaje = $this->firstFieldValue($fieldValues, ['id_viaje', 'viaje_id', 'idviaje']);
             $idViajeNorm = trim((string) ($idViaje ?? ''));
             $estado = 'pendiente';
@@ -373,17 +400,21 @@ class LiqIngestService
                     $dimKey = $this->normalizarClaveCampo($dim);
 
                     if ($dim === 'sucursal') {
-                        if (! $sucursalTarifa) {
+                        $sucVal = $sucursalPorFila ? $sucursalFilaResuelta : $sucursalTarifa;
+                        if (! $sucVal) {
                             $dimensionFallida = 'sucursal';
                             break;
                         }
-                        $dimensionesValores[$dim] = $canon($dim, (string) $sucursalTarifa);
+                        $dimensionesValores[$dim] = $canon($dim, (string) $sucVal);
                         continue;
                     }
 
-                    if ($sucursalTarifa && str_contains(Str::lower((string) $dim), 'sucursal')) {
-                        $dimensionesValores[$dim] = $canon($dim, (string) $sucursalTarifa);
-                        continue;
+                    if (str_contains(Str::lower((string) $dim), 'sucursal')) {
+                        $sucVal = $sucursalPorFila ? $sucursalFilaResuelta : $sucursalTarifa;
+                        if ($sucVal) {
+                            $dimensionesValores[$dim] = $canon($dim, (string) $sucVal);
+                            continue;
+                        }
                     }
 
                     $mapeosParaConcepto = $mapeosConcepto->get($conceptoKey);
@@ -524,7 +555,7 @@ class LiqIngestService
                 'campos_originales' => $camposOriginales,
                 'dominio' => $dominio !== '' ? $dominio : null,
                 'concepto' => $concepto !== '' ? $concepto : null,
-                'sucursal_tarifa' => $sucursalTarifa,
+                'sucursal_tarifa' => $sucursalPorFila ? $sucursalFilaResuelta : $sucursalTarifa,
                 'dimensiones_valores' => $dimensionesValores !== [] ? $dimensionesValores : null,
                 'dimension_fallida' => $dimensionFallida,
                 'valor_cliente' => $valor,
@@ -593,6 +624,34 @@ class LiqIngestService
                 return $mapeo->sucursal_tarifa;
             }
         }
+        return null;
+    }
+
+    /**
+     * Resuelve sucursal desde el texto del campo Origen de cada fila (Loginter).
+     * Busca match exacto en liq_mapeos_sucursal.patron_archivo.
+     */
+    private function resolverSucursalDesdeOrigen(string $origenTexto, int $clienteId): ?string
+    {
+        $mapeos = LiqMapeoSucursal::where('cliente_id', $clienteId)
+            ->where('activo', true)
+            ->get();
+
+        // Match exacto primero
+        foreach ($mapeos as $mapeo) {
+            if (strcasecmp(trim($mapeo->patron_archivo), trim($origenTexto)) === 0) {
+                return $mapeo->sucursal_tarifa;
+            }
+        }
+
+        // Match parcial (contains)
+        $origenUpper = strtoupper(trim($origenTexto));
+        foreach ($mapeos as $mapeo) {
+            if (str_contains($origenUpper, strtoupper($mapeo->patron_archivo))) {
+                return $mapeo->sucursal_tarifa;
+            }
+        }
+
         return null;
     }
 
