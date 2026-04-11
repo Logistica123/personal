@@ -31,7 +31,7 @@ class LoginterConfigSeeder extends Seeder
             'configuracion_excel' => [
                 'formato_entrada' => 'EXCEL',
                 'hoja' => 'Detalle',
-                'fila_datos' => 2,
+                'fila_datos' => 1,
                 'periodo_tipo' => 'QUINCENAL',
                 'matching_distribuidor' => 'patente',
                 'campo_sucursal_origen' => 'origen',

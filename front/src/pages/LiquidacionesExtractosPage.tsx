@@ -760,22 +760,56 @@ export function LiquidacionesExtractosPage({
   const guardarHotMapeo = useCallback(async () => {
     if (!selectedLiq || !hotMapOp) return;
     const concepto = (hotMapOp.concepto ?? '').trim();
-    const valorTarifa = hotMapValorTarifa.trim();
-    const dim = hotMapDim.trim();
+    const valorInput = hotMapValorTarifa.trim().replace(',', '.');
+    const modo = hotMapDim; // 'fijo' o 'porcentaje'
+
     if (!concepto) { setError('El concepto no puede ser vacío'); return; }
-    if (!valorTarifa) { setError('El valor tarifa es obligatorio'); return; }
-    if (!dim) { setError('La dimensión es obligatoria'); return; }
+    if (!valorInput || isNaN(parseFloat(valorInput))) { setError('Ingresá un valor numérico válido'); return; }
+
+    const valorNum = parseFloat(valorInput);
+    const valorCliente = Number(hotMapOp.valor_cliente);
+
+    // Calcular precio distribuidor
+    let precioDistribuidor: number;
+    let pctAgencia: number;
+    if (modo === 'porcentaje') {
+      pctAgencia = valorNum;
+      precioDistribuidor = Math.round(valorCliente * (1 - pctAgencia / 100) * 100) / 100;
+    } else {
+      precioDistribuidor = valorNum;
+      pctAgencia = valorCliente > 0 ? Math.round((1 - precioDistribuidor / valorCliente) * 10000) / 100 : 0;
+    }
+
+    if (precioDistribuidor <= 0) { setError('El precio distribuidor debe ser mayor a 0'); return; }
+
     try {
+      // 1. Guardar mapeo de concepto (para que el reprocesar funcione)
       await api.post(`/clientes/${selectedLiq.cliente_id}/mapeos-concepto`, {
-        mapeos: [{ valor_excel: concepto, dimension_destino: dim, valor_tarifa: valorTarifa }],
+        mapeos: [{ valor_excel: concepto, dimension_destino: 'concepto', valor_tarifa: concepto }],
       });
+
+      // 2. Si es OCA, usar el endpoint de mapeo OCA
+      if (isOcaClient) {
+        await api.post(`/oca/${selectedLiq.id}/mapear-tarifa`, {
+          sucursal: hotMapOp.sucursal_tarifa ?? '',
+          cod_contrato: concepto,
+          precio_original: valorCliente,
+          aceptar_tarifa: true,
+          modo_calculo: modo,
+          valor_referencia: valorNum,
+          precio_distribuidor: precioDistribuidor,
+          distribuidor_nombre: '',
+          persona_id: hotMapOp.distribuidor_id,
+        });
+      }
+
       setHotMapOp(null);
       setHotMapValorTarifa('');
-      showSuccess('Mapeo guardado. Reprocesá el archivo para aplicarlo.');
+      showSuccess(`Mapeo guardado: ${concepto} → distrib $${precioDistribuidor.toLocaleString('es-AR', { minimumFractionDigits: 2 })} (${pctAgencia.toFixed(2)}%). Reprocesá el archivo.`);
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Error guardando mapeo');
     }
-  }, [api, selectedLiq, hotMapOp, hotMapValorTarifa, hotMapDim]);
+  }, [api, selectedLiq, hotMapOp, hotMapValorTarifa, hotMapDim, isOcaClient]);
 
   const generarPdf = useCallback(async (liqDistId: number) => {
     setPdfGenerating((prev) => ({ ...prev, [liqDistId]: true }));
@@ -1890,7 +1924,7 @@ export function LiquidacionesExtractosPage({
                           }}
                         />
                       </th>
-                      <th>Dominio</th><th>Distribuidor</th><th>Alta</th><th>Baja</th><th>Concepto</th><th>Sucursal</th><th>Valor cliente</th><th>Tarifa orig.</th><th>Distribuidor</th><th>Diferencia</th><th>Estado</th><th></th>
+                      <th>Dominio</th><th>Distribuidor</th><th>Fecha</th><th>Concepto</th><th>Sucursal</th><th>Valor cliente</th><th>Tarifa orig.</th><th>Distribuidor</th><th>Diferencia</th><th>Estado</th><th></th>
                     </tr>
 	                </thead>
 	                <tbody>
@@ -1906,8 +1940,7 @@ export function LiquidacionesExtractosPage({
                         </td>
 	                      <td><code>{op.dominio ?? '—'}</code></td>
 	                      <td style={{ fontSize: 12 }}>{op.distribuidor ? `${op.distribuidor.apellidos}, ${op.distribuidor.nombres}` : '—'}</td>
-	                      <td style={{ fontSize: 12 }}>{op.distribuidor?.fecha_alta ? new Date(op.distribuidor.fecha_alta).toLocaleDateString('es-AR') : '—'}</td>
-	                      <td style={{ fontSize: 12, color: op.distribuidor?.fecha_baja ? '#dc2626' : undefined }}>{op.distribuidor?.fecha_baja ? new Date(op.distribuidor.fecha_baja).toLocaleDateString('es-AR') : '—'}</td>
+	                      <td style={{ fontSize: 12 }}>{(() => { const raw = (op.campos_originales as any)?.fecha ?? (op.campos_originales as any)?.fecha_viaje ?? (op.campos_originales as any)?.FechaViaje; if (!raw) return '—'; try { return new Date(raw).toLocaleDateString('es-AR'); } catch { return String(raw); } })()}</td>
 	                      <td style={{ fontSize: 12 }}>{op.concepto ?? '—'}</td>
 	                      <td style={{ fontSize: 12 }}>{op.sucursal_tarifa ?? '—'}</td>
                       <td>{fmt(op.valor_cliente)}</td>
