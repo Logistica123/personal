@@ -1170,6 +1170,15 @@ class PersonalDocumentController extends Controller
             $path = $materializedPath;
         }
 
+        // Si se pide ?inline=1, servir para visualización en el navegador (no forzar descarga)
+        if (request()->boolean('inline')) {
+            $mime = $documento->mime ?: Storage::disk($disk)->mimeType($path) ?: 'application/octet-stream';
+            return response(Storage::disk($disk)->get($path), 200, [
+                'Content-Type'        => $mime,
+                'Content-Disposition' => "inline; filename=\"{$fileName}\"",
+            ]);
+        }
+
         return Storage::disk($disk)->download($path, $fileName);
     }
 

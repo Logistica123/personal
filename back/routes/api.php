@@ -309,6 +309,7 @@ Route::middleware('auth.api')->group(function () {
             Route::get('/liquidaciones', [LiqPagosController::class, 'liquidaciones']);
             Route::get('/liquidaciones/exportar', [LiqPagosController::class, 'exportarLiquidaciones']);
             Route::get('/liquidaciones-unificado', [LiqPagosController::class, 'liquidacionesUnificado']);
+            Route::get('/factura-distribuidor/{personaId}', [LiqPagosController::class, 'facturaDistribuidor']);
             Route::get('/ordenes', [LiqPagosController::class, 'ordenes']);
             Route::get('/ordenes/exportar', [LiqPagosController::class, 'exportarOrdenes']);
             Route::get('/ordenes/{ordenPago}', [LiqPagosController::class, 'showOrden']);

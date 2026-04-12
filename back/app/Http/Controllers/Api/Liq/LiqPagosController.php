@@ -132,6 +132,7 @@ class LiqPagosController extends Controller
     {
         $filtros = $request->only([
             'cliente_nombre', 'distribuidor', 'fuente', 'facturado', 'pagado', 'estado_liq',
+            'mes', 'anio', 'quincena',
         ]);
 
         $data = $this->unificadoService->listarUnificado($filtros);
@@ -616,6 +617,50 @@ class LiqPagosController extends Controller
                 'message' => $e->getMessage(),
             ], 500);
         }
+    }
+
+    // =========================================================================
+    // FACTURA DEL DISTRIBUIDOR
+    // =========================================================================
+
+    // GET /api/liq/pagos/factura-distribuidor/{personaId}
+    public function facturaDistribuidor(Request $request, int $personaId)
+    {
+        $persona = \App\Models\Persona::findOrFail($personaId);
+
+        // Buscar el documento más reciente del distribuidor que sea factura/comprobante
+        // Prioridad: cualquier documento recibido (recibido=true) o el más reciente
+        $archivo = \App\Models\Archivo::where('persona_id', $personaId)
+            ->whereNull('parent_document_id')
+            ->where(function ($q) {
+                $q->where('recibido', true)
+                  ->orWhereHas('tipo', fn ($tq) => $tq->where('nombre', 'like', '%factur%'));
+            })
+            ->orderByDesc('created_at')
+            ->first();
+
+        if (!$archivo) {
+            return response()->json(['message' => 'No se encontró factura del distribuidor.'], 404);
+        }
+
+        // Servir el archivo inline (para visualizar en el navegador)
+        $disk = $archivo->disk ?: 'local';
+        $path = $archivo->ruta;
+
+        if (!$path || !\Illuminate\Support\Facades\Storage::disk($disk)->exists($path)) {
+            if ($archivo->download_url) {
+                return redirect($archivo->download_url);
+            }
+            return response()->json(['message' => 'Archivo no encontrado en storage.'], 404);
+        }
+
+        $mime = $archivo->mime ?: 'application/pdf';
+        $filename = $archivo->nombre_original ?: 'factura.pdf';
+
+        return response(\Illuminate\Support\Facades\Storage::disk($disk)->get($path), 200, [
+            'Content-Type'        => $mime,
+            'Content-Disposition' => "inline; filename=\"{$filename}\"",
+        ]);
     }
 
     // =========================================================================

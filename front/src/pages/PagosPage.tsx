@@ -251,6 +251,9 @@ export const PagosPage: React.FC<Props> = ({
   const [filtroCliente, setFiltroCliente] = useState(searchParams.get('cliente') || '');
   const [filtroDistribuidor, setFiltroDistribuidor] = useState(searchParams.get('distribuidor') || '');
   const [filtroEstadoPago, setFiltroEstadoPago] = useState(searchParams.get('estadoPago') || '');
+  const [filtroMes, setFiltroMes] = useState(searchParams.get('mes') || '');
+  const [filtroAnio, setFiltroAnio] = useState(searchParams.get('anio') || String(new Date().getFullYear()));
+  const [filtroQuincena, setFiltroQuincena] = useState(searchParams.get('quincena') || '');
   const [filtroFuente, setFiltroFuente] = useState(searchParams.get('fuente') || '');
   const [filtroFacturado, setFiltroFacturado] = useState(searchParams.get('facturado') || '');
   const [filtroPagado, setFiltroPagado] = useState(searchParams.get('pagado') ?? 'NO');
@@ -294,6 +297,9 @@ export const PagosPage: React.FC<Props> = ({
       const params = new URLSearchParams();
       if (filtroCliente) params.set('cliente_nombre', filtroCliente);
       if (filtroDistribuidor) params.set('distribuidor', filtroDistribuidor);
+      if (filtroMes) params.set('mes', filtroMes);
+      if (filtroAnio) params.set('anio', filtroAnio);
+      if (filtroQuincena) params.set('quincena', filtroQuincena);
       if (filtroFuente) params.set('fuente', filtroFuente);
       if (filtroFacturado) params.set('facturado', filtroFacturado);
       if (filtroPagado) params.set('pagado', filtroPagado);
@@ -305,7 +311,7 @@ export const PagosPage: React.FC<Props> = ({
     } finally {
       setLoadingLiq(false);
     }
-  }, [api, filtroCliente, filtroDistribuidor, filtroFuente, filtroFacturado, filtroPagado]);
+  }, [api, filtroCliente, filtroDistribuidor, filtroMes, filtroAnio, filtroQuincena, filtroFuente, filtroFacturado, filtroPagado]);
 
   // ── Fetch ordenes ─────────────────────────────────────────────────
   const fetchOrdenes = useCallback(async () => {
@@ -335,13 +341,16 @@ export const PagosPage: React.FC<Props> = ({
     const p = new URLSearchParams();
     if (tab !== 'liquidaciones') p.set('tab', tab);
     if (filtroCliente) p.set('cliente', filtroCliente);
+    if (filtroMes) p.set('mes', filtroMes);
+    if (filtroAnio && filtroAnio !== String(new Date().getFullYear())) p.set('anio', filtroAnio);
+    if (filtroQuincena) p.set('quincena', filtroQuincena);
     if (filtroDistribuidor) p.set('distribuidor', filtroDistribuidor);
     if (filtroFuente) p.set('fuente', filtroFuente);
     if (filtroFacturado) p.set('facturado', filtroFacturado);
     if (filtroPagado && filtroPagado !== 'NO') p.set('pagado', filtroPagado);
     if (filtroEstadoPago) p.set('estadoPago', filtroEstadoPago);
     setSearchParams(p, { replace: true });
-  }, [tab, filtroCliente, filtroDistribuidor, filtroFuente, filtroFacturado, filtroPagado, filtroEstadoPago, setSearchParams]);
+  }, [tab, filtroCliente, filtroMes, filtroAnio, filtroQuincena, filtroDistribuidor, filtroFuente, filtroFacturado, filtroPagado, filtroEstadoPago, setSearchParams]);
 
   // ── Initial load ──────────────────────────────────────────────────
   useEffect(() => {
@@ -752,6 +761,33 @@ export const PagosPage: React.FC<Props> = ({
                 <input type="text" value={filtroCliente} onChange={(e) => setFiltroCliente(e.target.value)} placeholder="Filtrar por cliente..." />
               </div>
               <div className="filter-field">
+                <label>Mes</label>
+                <select value={filtroMes} onChange={(e) => setFiltroMes(e.target.value)}>
+                  <option value="">Todos</option>
+                  {MESES.slice(1).map((m, i) => (
+                    <option key={i + 1} value={i + 1}>{m}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="filter-field">
+                <label>Anio</label>
+                <select value={filtroAnio} onChange={(e) => setFiltroAnio(e.target.value)}>
+                  <option value="">Todos</option>
+                  {[2024, 2025, 2026, 2027].map((y) => (
+                    <option key={y} value={y}>{y}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="filter-field">
+                <label>Quincena</label>
+                <select value={filtroQuincena} onChange={(e) => setFiltroQuincena(e.target.value)}>
+                  <option value="">Todas</option>
+                  <option value="1Q">1ra Quincena</option>
+                  <option value="2Q">2da Quincena</option>
+                  <option value="MC">Mes completo</option>
+                </select>
+              </div>
+              <div className="filter-field">
                 <label>Distribuidor</label>
                 <input type="text" value={filtroDistribuidor} onChange={(e) => setFiltroDistribuidor(e.target.value)} placeholder="Buscar por nombre..." />
               </div>
@@ -896,7 +932,7 @@ export const PagosPage: React.FC<Props> = ({
                         </td>
                         <td>
                           <div className="pagos-actions-cell">
-                            {/* Ver Liquidación PDF */}
+                            {/* Ver Liquidación PDF (inline, no descarga) */}
                             <button
                               className="pagos-action-btn"
                               title="Ver PDF de liquidación"
@@ -904,24 +940,27 @@ export const PagosPage: React.FC<Props> = ({
                                 if (row.pdf_url_tipo === 'extracto' && row.pdf_liq_dist_id) {
                                   window.open(`${baseUrlRef.current}/api/liq/liquidaciones-distribuidor/${row.pdf_liq_dist_id}/pdf`, '_blank');
                                 } else if (row.pdf_persona_id && row.pdf_archivo_id) {
-                                  window.open(`${baseUrlRef.current}/api/personal/${row.pdf_persona_id}/documentos/${row.pdf_archivo_id}/descargar`, '_blank');
+                                  window.open(`${baseUrlRef.current}/api/personal/${row.pdf_persona_id}/documentos/${row.pdf_archivo_id}/descargar?inline=1`, '_blank');
                                 }
                               }}
                             >
                               Liq
                             </button>
-                            {/* Ver Factura (solo si facturado) */}
-                            {row.facturado && row.factura_doc_id ? (
-                              <button
-                                className="pagos-action-btn pagos-action-btn--primary"
-                                title="Ver factura del distribuidor"
-                                onClick={() => {
-                                  window.open(`${baseUrlRef.current}/api/personal/${row.persona_id}/documentos/${row.factura_doc_id}/descargar`, '_blank');
-                                }}
-                              >
-                                Fact
-                              </button>
-                            ) : null}
+                            {/* Ver Factura del distribuidor */}
+                            <button
+                              className={`pagos-action-btn${row.facturado ? ' pagos-action-btn--primary' : ''}`}
+                              title={row.facturado ? 'Ver factura del distribuidor' : 'Sin factura disponible'}
+                              disabled={!row.facturado}
+                              onClick={() => {
+                                if (row.factura_doc_id) {
+                                  window.open(`${baseUrlRef.current}/api/personal/${row.persona_id}/documentos/${row.factura_doc_id}/descargar?inline=1`, '_blank');
+                                } else {
+                                  window.open(`${baseUrlRef.current}/api/liq/pagos/factura-distribuidor/${row.persona_id}`, '_blank');
+                                }
+                              }}
+                            >
+                              Fac
+                            </button>
                           </div>
                         </td>
                       </tr>

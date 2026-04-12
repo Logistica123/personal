@@ -23,6 +23,15 @@ class PagosUnificadoService
 
         $unificado = $extractos->merge($legacy);
 
+        // Enriquecer con campos parseados del periodo
+        $unificado = $unificado->map(function ($row) {
+            $parsed = $this->parsePeriodo($row['periodo'] ?? '');
+            $row['periodo_mes'] = $parsed['mes'];
+            $row['periodo_anio'] = $parsed['anio'];
+            $row['periodo_quincena'] = $parsed['quincena'];
+            return $row;
+        });
+
         // Filtros post-merge
         if (!empty($filtros['fuente'])) {
             $unificado = $unificado->where('fuente', $filtros['fuente']);
@@ -34,6 +43,15 @@ class PagosUnificadoService
         if (isset($filtros['pagado']) && $filtros['pagado'] !== '') {
             $val = strtoupper($filtros['pagado']) === 'SI';
             $unificado = $unificado->where('pagado', $val);
+        }
+        if (!empty($filtros['mes'])) {
+            $unificado = $unificado->where('periodo_mes', (int) $filtros['mes']);
+        }
+        if (!empty($filtros['anio'])) {
+            $unificado = $unificado->where('periodo_anio', (int) $filtros['anio']);
+        }
+        if (!empty($filtros['quincena'])) {
+            $unificado = $unificado->where('periodo_quincena', $filtros['quincena']);
         }
 
         return $unificado->sortByDesc('periodo_sort')->values();
@@ -241,5 +259,49 @@ class PagosUnificadoService
         }
 
         return '';
+    }
+
+    /**
+     * Parsea un string de periodo (ej: '1Q MAR 2026', 'FEB 2026') y extrae mes, año, quincena.
+     * @return array{mes: int|null, anio: int|null, quincena: string}
+     */
+    private function parsePeriodo(string $periodo): array
+    {
+        $mesMap = [
+            'ENE' => 1, 'FEB' => 2, 'MAR' => 3, 'ABR' => 4, 'MAY' => 5, 'JUN' => 6,
+            'JUL' => 7, 'AGO' => 8, 'SEP' => 9, 'OCT' => 10, 'NOV' => 11, 'DIC' => 12,
+        ];
+
+        $periodo = strtoupper(trim($periodo));
+        $quincena = 'MC'; // Mes completo por defecto
+
+        // Detectar quincena
+        if (str_starts_with($periodo, '1Q ')) {
+            $quincena = '1Q';
+            $periodo = substr($periodo, 3);
+        } elseif (str_starts_with($periodo, '2Q ')) {
+            $quincena = '2Q';
+            $periodo = substr($periodo, 3);
+        }
+
+        $parts = preg_split('/\s+/', trim($periodo));
+        $mes = null;
+        $anio = null;
+
+        foreach ($parts as $part) {
+            if (isset($mesMap[$part])) {
+                $mes = $mesMap[$part];
+            } elseif (preg_match('/^\d{4}$/', $part)) {
+                $anio = (int) $part;
+            }
+        }
+
+        // Fallback: intentar formato YYYY-MM
+        if (!$mes && preg_match('/(\d{4})-(\d{2})/', $periodo, $m)) {
+            $anio = (int) $m[1];
+            $mes = (int) $m[2];
+        }
+
+        return ['mes' => $mes, 'anio' => $anio, 'quincena' => $quincena];
     }
 }
