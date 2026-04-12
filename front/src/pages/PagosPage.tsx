@@ -949,7 +949,7 @@ export const PagosPage: React.FC<Props> = ({
                             {/* Ver Factura del distribuidor */}
                             <button
                               className={`pagos-action-btn${row.facturado ? ' pagos-action-btn--primary' : ''}`}
-                              title={row.facturado ? 'Ver factura del distribuidor' : 'Sin factura disponible'}
+                              title={row.facturado ? 'Ver factura del distribuidor' : 'El distribuidor aun no subio su factura para este periodo'}
                               disabled={!row.facturado}
                               onClick={() => {
                                 const liqParam = row.archivo_id ? `?liquidacion_id=${row.archivo_id}` : '';

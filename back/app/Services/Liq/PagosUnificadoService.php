@@ -266,28 +266,33 @@ class PagosUnificadoService
      * Determina si el distribuidor tiene una factura adjuntada para una liquidación.
      * Busca: 1) archivo hijo de la liquidación (no descuento/ajuste), 2) factura IA validada.
      */
+    /**
+     * Determina si existe factura del distribuidor para una liquidación específica.
+     * IMPORTANTE: sin liquidacionArchivoId no se puede determinar → devuelve false.
+     */
     private function tieneFacturaDistribuidor(int $personaId, ?int $liquidacionArchivoId): bool
     {
+        // Sin ID de liquidación padre, no podemos saber si hay factura para ESTE periodo
+        if (!$liquidacionArchivoId) {
+            return false;
+        }
+
         $tiposExcluir = FileType::whereIn('nombre', [
             'DESCUENTO_COMBUSTIBLE', 'AJUSTE_LIQUIDACION', 'Factura combustible',
         ])->pluck('id')->all();
 
-        // Estrategia 1: hijo de la liquidación padre
-        if ($liquidacionArchivoId) {
-            $tiene = Archivo::where('parent_document_id', $liquidacionArchivoId)
-                ->where('persona_id', $personaId)
-                ->whereNotIn('tipo_archivo_id', $tiposExcluir)
-                ->exists();
-            if ($tiene) return true;
-        }
+        // Estrategia 1: archivo hijo de la liquidación padre (no descuento/ajuste)
+        $tiene = Archivo::where('parent_document_id', $liquidacionArchivoId)
+            ->where('persona_id', $personaId)
+            ->whereNotIn('tipo_archivo_id', $tiposExcluir)
+            ->exists();
 
-        // Estrategia 2: factura IA validada
-        $query = Factura::where('persona_id', $personaId);
-        if ($liquidacionArchivoId) {
-            $query->where('liquidacion_id', $liquidacionArchivoId);
-        }
+        if ($tiene) return true;
 
-        return $query->exists();
+        // Estrategia 2: factura IA validada para esta liquidación específica
+        return Factura::where('persona_id', $personaId)
+            ->where('liquidacion_id', $liquidacionArchivoId)
+            ->exists();
     }
 
     /**
