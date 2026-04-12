@@ -252,6 +252,7 @@ Route::middleware('auth.api')->group(function () {
         Route::get('/liquidaciones/{liquidacionCliente}/distribuidores', [LiqExtractosController::class, 'distribuidores']);
         Route::get('/liquidaciones/{liquidacionCliente}/auditoria', [LiqExtractosController::class, 'auditoria']);
         Route::get('/liquidaciones/{liquidacionCliente}/origenes-sin-mapear', [LiqExtractosController::class, 'origenesSinMapear']);
+        Route::post('/liquidaciones/{liquidacionCliente}/mapear-tarifa', [LiqExtractosController::class, 'mapearTarifa']);
         Route::delete('/operaciones/{operacion}', [\App\Http\Controllers\Api\Liq\LiqOperacionController::class, 'destroy']);
         Route::patch('/liquidaciones/{liquidacionCliente}/estado', [LiqExtractosController::class, 'cambiarEstado']);
         Route::put('/operaciones/{operacion}/excluir', [\App\Http\Controllers\Api\Liq\LiqOperacionController::class, 'excluir']);

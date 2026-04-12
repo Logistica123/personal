@@ -542,6 +542,151 @@ class LiqExtractosController extends Controller
         ]);
     }
 
+    // POST /liq/liquidaciones/{liquidacionCliente}/mapear-tarifa — GENÉRICO (Loginter + OCA + futuros)
+    public function mapearTarifa(Request $request, LiqLiquidacionCliente $liquidacionCliente): JsonResponse
+    {
+        $data = $request->validate([
+            'operacion_id' => 'nullable|integer',
+            'patente' => 'required|string|max:20',
+            'persona_id' => 'nullable|integer',
+            'sucursal' => 'required|string|max:50',
+            'concepto' => 'required|string|max:200',
+            'valor_cliente' => 'required|numeric|min:0',
+            'modo_calculo' => 'required|in:fijo,porcentaje',
+            'valor_referencia' => 'required|numeric|min:0',
+            'dimension_destino' => 'nullable|string',
+        ]);
+
+        $clienteId = $liquidacionCliente->cliente_id;
+
+        // Paso 2: esquema activo
+        $esquema = \App\Models\LiqEsquemaTarifario::where('cliente_id', $clienteId)
+            ->where('activo', true)->first();
+        if (!$esquema) {
+            return response()->json(['error' => 'No hay esquema tarifario activo para este cliente'], 422);
+        }
+
+        $sucursal = trim($data['sucursal']);
+        $concepto = trim($data['concepto']);
+        $valorCliente = (float) $data['valor_cliente'];
+        $patenteNorm = strtoupper(preg_replace('/[^A-Z0-9]/', '', strtoupper($data['patente'])));
+
+        // Calcular precio distribuidor y porcentaje
+        if ($data['modo_calculo'] === 'fijo') {
+            $precioDistribuidor = (float) $data['valor_referencia'];
+            $pctAgencia = $valorCliente > 0 ? round((1 - $precioDistribuidor / $valorCliente) * 100, 4) : 0;
+        } else {
+            $pctAgencia = (float) $data['valor_referencia'];
+            $precioDistribuidor = round($valorCliente * (1 - $pctAgencia / 100), 2);
+        }
+
+        DB::beginTransaction();
+        try {
+            // Paso 3: buscar o crear línea de tarifa
+            $dimValues = ['sucursal' => $sucursal, 'concepto' => $concepto];
+            $lineaTarifa = \App\Models\LiqLineaTarifa::where('esquema_id', $esquema->id)
+                ->where('activo', true)
+                ->where('dimensiones_valores->sucursal', $sucursal)
+                ->where('dimensiones_valores->concepto', $concepto)
+                ->first();
+
+            if ($lineaTarifa) {
+                $lineaTarifa->update([
+                    'precio_original' => $valorCliente,
+                    'porcentaje_agencia' => $pctAgencia,
+                    'precio_distribuidor' => $precioDistribuidor,
+                ]);
+            } else {
+                $lineaTarifa = \App\Models\LiqLineaTarifa::create([
+                    'esquema_id' => $esquema->id,
+                    'dimensiones_valores' => $dimValues,
+                    'precio_original' => $valorCliente,
+                    'porcentaje_agencia' => $pctAgencia,
+                    'precio_distribuidor' => $precioDistribuidor,
+                    'vigencia_desde' => $liquidacionCliente->periodo_desde,
+                    'vigencia_hasta' => null,
+                    'creado_por' => $request->user()?->id,
+                    'activo' => true,
+                ]);
+
+                // Auto-crear dimension values si no existen
+                foreach ($dimValues as $dim => $val) {
+                    \App\Models\LiqDimensionValor::firstOrCreate(
+                        ['esquema_id' => $esquema->id, 'nombre_dimension' => $dim, 'valor' => $val],
+                        ['orden_display' => 0, 'activo' => true]
+                    );
+                }
+            }
+
+            // Paso 4: UPSERT tarifa por patente
+            $tarifaData = [
+                'esquema_id' => $esquema->id,
+                'linea_tarifa_id' => $lineaTarifa->id,
+                'modo_calculo' => $data['modo_calculo'],
+                'valor_referencia' => $data['valor_referencia'],
+                'activo' => true,
+                'creado_por' => $request->user()?->id,
+                'vigencia_desde' => $liquidacionCliente->periodo_desde,
+            ];
+
+            // Buscar por liq_cliente_id + patente si la columna existe
+            $tarifaPatente = \App\Models\LiqTarifaPatente::where('esquema_id', $esquema->id)
+                ->where('patente_norm', $patenteNorm)
+                ->where(function ($q) use ($clienteId) {
+                    $q->where('liq_cliente_id', $clienteId)->orWhereNull('liq_cliente_id');
+                })
+                ->first();
+
+            if ($tarifaPatente) {
+                $tarifaPatente->update(array_merge($tarifaData, ['liq_cliente_id' => $clienteId]));
+            } else {
+                $tarifaPatente = \App\Models\LiqTarifaPatente::create(array_merge($tarifaData, [
+                    'patente_norm' => $patenteNorm,
+                    'dimensiones_valores' => $dimValues,
+                    'liq_cliente_id' => $clienteId,
+                ]));
+            }
+
+            // Paso 5: mapeo de concepto
+            \App\Models\LiqMapeoConcepto::firstOrCreate(
+                ['cliente_id' => $clienteId, 'valor_excel' => $concepto, 'dimension_destino' => $data['dimension_destino'] ?? 'concepto'],
+                ['valor_tarifa' => $concepto, 'activo' => true]
+            );
+
+            // Paso 6: vincular distribuidor si se indicó persona_id
+            if ($data['persona_id']) {
+                \App\Models\LiqMapeoDistribuidor::updateOrCreate(
+                    ['cliente_id' => $clienteId, 'nombre_pdf' => $patenteNorm, 'sucursal' => null],
+                    ['persona_id' => $data['persona_id'], 'creado_por' => $request->user()?->id]
+                );
+            }
+
+            // Historial
+            if (class_exists(\App\Models\LiqHistorialMovimiento::class)) {
+                \App\Models\LiqHistorialMovimiento::registrar(
+                    'tarifa_mapeada',
+                    "Tarifa {$sucursal}/{$concepto}: cliente \${$valorCliente} → distrib \${$precioDistribuidor} ({$data['modo_calculo']})",
+                    $request->user()?->id, $liquidacionCliente->id, null, $data['persona_id'] ?? null,
+                    ['patente' => $patenteNorm, 'modo' => $data['modo_calculo'], 'valor_ref' => $data['valor_referencia']]
+                );
+            }
+
+            DB::commit();
+
+            return response()->json([
+                'success' => true,
+                'tarifa_patente_id' => $tarifaPatente->id,
+                'linea_tarifa_id' => $lineaTarifa->id,
+                'precio_distribuidor' => $precioDistribuidor,
+                'porcentaje_agencia' => $pctAgencia,
+                'margen' => round($valorCliente - $precioDistribuidor, 2),
+            ]);
+        } catch (\Throwable $e) {
+            DB::rollBack();
+            return response()->json(['error' => 'Error al guardar tarifa: ' . $e->getMessage()], 500);
+        }
+    }
+
     private function allowedUploadTypesForCliente(?LiqCliente $cliente): array
     {
         $cfg = $cliente?->configuracion_excel;

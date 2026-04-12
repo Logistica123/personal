@@ -767,49 +767,31 @@ export function LiquidacionesExtractosPage({
     if (!valorInput || isNaN(parseFloat(valorInput))) { setError('Ingresá un valor numérico válido'); return; }
 
     const valorNum = parseFloat(valorInput);
-    const valorCliente = Number(hotMapOp.valor_cliente);
-
-    // Calcular precio distribuidor
-    let precioDistribuidor: number;
-    let pctAgencia: number;
-    if (modo === 'porcentaje') {
-      pctAgencia = valorNum;
-      precioDistribuidor = Math.round(valorCliente * (1 - pctAgencia / 100) * 100) / 100;
-    } else {
-      precioDistribuidor = valorNum;
-      pctAgencia = valorCliente > 0 ? Math.round((1 - precioDistribuidor / valorCliente) * 10000) / 100 : 0;
-    }
-
-    if (precioDistribuidor <= 0) { setError('El precio distribuidor debe ser mayor a 0'); return; }
+    if (valorNum <= 0) { setError('El valor debe ser mayor a 0'); return; }
 
     try {
-      // 1. Guardar mapeo de concepto (para que el reprocesar funcione)
-      await api.post(`/clientes/${selectedLiq.cliente_id}/mapeos-concepto`, {
-        mapeos: [{ valor_excel: concepto, dimension_destino: 'concepto', valor_tarifa: concepto }],
+      // Endpoint genérico — funciona para TODOS los clientes (Loginter, OCA, futuros)
+      const res = await api.post(`/liquidaciones/${selectedLiq.id}/mapear-tarifa`, {
+        operacion_id: hotMapOp.id,
+        patente: hotMapOp.dominio ?? '',
+        persona_id: hotMapOp.distribuidor_id,
+        sucursal: hotMapOp.sucursal_tarifa ?? '',
+        concepto: concepto,
+        valor_cliente: Number(hotMapOp.valor_cliente),
+        modo_calculo: modo,
+        valor_referencia: valorNum,
+        dimension_destino: 'concepto',
       });
-
-      // 2. Si es OCA, usar el endpoint de mapeo OCA
-      if (isOcaClient) {
-        await api.post(`/oca/${selectedLiq.id}/mapear-tarifa`, {
-          sucursal: hotMapOp.sucursal_tarifa ?? '',
-          cod_contrato: concepto,
-          precio_original: valorCliente,
-          aceptar_tarifa: true,
-          modo_calculo: modo,
-          valor_referencia: valorNum,
-          precio_distribuidor: precioDistribuidor,
-          distribuidor_nombre: '',
-          persona_id: hotMapOp.distribuidor_id,
-        });
-      }
 
       setHotMapOp(null);
       setHotMapValorTarifa('');
-      showSuccess(`Mapeo guardado: ${concepto} → distrib $${precioDistribuidor.toLocaleString('es-AR', { minimumFractionDigits: 2 })} (${pctAgencia.toFixed(2)}%). Reprocesá el archivo.`);
+      const pd = res.precio_distribuidor ?? 0;
+      const pct = res.porcentaje_agencia ?? 0;
+      showSuccess(`Tarifa mapeada: ${concepto} → distrib $${Number(pd).toLocaleString('es-AR', { minimumFractionDigits: 2 })} (${Number(pct).toFixed(2)}%). Reprocesá el archivo.`);
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Error guardando mapeo');
     }
-  }, [api, selectedLiq, hotMapOp, hotMapValorTarifa, hotMapDim, isOcaClient]);
+  }, [api, selectedLiq, hotMapOp, hotMapValorTarifa, hotMapDim]);
 
   const generarPdf = useCallback(async (liqDistId: number) => {
     setPdfGenerating((prev) => ({ ...prev, [liqDistId]: true }));
