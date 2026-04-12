@@ -124,6 +124,13 @@ export function LiquidacionesClientePage({
   const [importMotivo, setImportMotivo] = useState('Importación Excel');
   const [importingTarifa, setImportingTarifa] = useState(false);
 
+  // Aumento porcentual
+  const [aumentoPct, setAumentoPct] = useState('');
+  const [aumentoSucursal, setAumentoSucursal] = useState('');
+  const [aumentoMotivo, setAumentoMotivo] = useState('');
+  const [aumentoPreview, setAumentoPreview] = useState<any>(null);
+  const [aumentoLoading, setAumentoLoading] = useState(false);
+
   // New gasto form
   const [newGastoConcepto, setNewGastoConcepto] = useState('Administración');
   const [newGastoMonto, setNewGastoMonto] = useState('');
@@ -713,6 +720,51 @@ export function LiquidacionesClientePage({
       setImportingTarifa(false);
     }
   }, [api, importMotivo, importTarifaFile, importVigDesde, importVigHasta, refreshEsquemas, selectEsquema, selectedEsquema]);
+
+  const previsualizarAumento = useCallback(async () => {
+    if (!selectedEsquema || !aumentoPct) return;
+    setAumentoLoading(true);
+    try {
+      const res = await api.post(`/esquemas/${selectedEsquema.id}/aumento-preview`, {
+        porcentaje: parseFloat(aumentoPct.replace(',', '.')),
+        sucursal: aumentoSucursal || null,
+      });
+      setAumentoPreview(res.data);
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Error');
+    } finally {
+      setAumentoLoading(false);
+    }
+  }, [api, selectedEsquema, aumentoPct, aumentoSucursal]);
+
+  const aplicarAumento = useCallback(async () => {
+    if (!selectedEsquema || !aumentoPreview || !aumentoMotivo.trim()) { setError('Motivo obligatorio'); return; }
+    if (!window.confirm(`¿Aplicar aumento a ${aumentoPreview.lineas.length} líneas?`)) return;
+    setAumentoLoading(true);
+    try {
+      const lineas = aumentoPreview.lineas.map((l: any) => ({
+        linea_id: l.linea_id,
+        precio_nuevo: l.precio_nuevo,
+        overrides: (l.overrides ?? []).map((o: any) => ({
+          id: o.id,
+          accion: o._accion ?? 'mantener',
+        })),
+      }));
+      const res = await api.post(`/esquemas/${selectedEsquema.id}/aumento-aplicar`, {
+        motivo: aumentoMotivo,
+        lineas,
+      });
+      showSuccess(res.message ?? 'Aumento aplicado');
+      setAumentoPreview(null);
+      setAumentoPct('');
+      setAumentoMotivo('');
+      if (selectedEsquema) await selectEsquema(selectedEsquema);
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Error aplicando aumento');
+    } finally {
+      setAumentoLoading(false);
+    }
+  }, [api, selectedEsquema, aumentoPreview, aumentoMotivo, selectEsquema]);
 
   const desactivarEsquema = useCallback(async (esquema: LiqEsquemaTarifario) => {
     if (!selectedCliente) return;
@@ -1355,6 +1407,86 @@ export function LiquidacionesClientePage({
                     </div>
                   </div>
 
+                  {/* Aumento porcentual */}
+                  <div className="dashboard-card">
+                    <header className="card-header"><h3>Aumento porcentual</h3></header>
+                    <div className="card-body">
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 2fr auto', gap: 10, alignItems: 'end' }}>
+                        <div>
+                          <label style={{ display: 'block', fontSize: 12, marginBottom: 4 }}>Sucursal (opcional)</label>
+                          <select className="form-input" value={aumentoSucursal} onChange={(e) => setAumentoSucursal(e.target.value)}>
+                            <option value="">Todas</option>
+                            {(dimensiones['sucursal'] ?? []).filter(d => d.activo).map(d => (
+                              <option key={d.id} value={d.valor}>{d.valor}</option>
+                            ))}
+                          </select>
+                        </div>
+                        <div>
+                          <label style={{ display: 'block', fontSize: 12, marginBottom: 4 }}>Porcentaje (%)</label>
+                          <input type="text" inputMode="decimal" className="form-input" value={aumentoPct} onChange={(e) => setAumentoPct(e.target.value)} placeholder="Ej: 15 o -5" />
+                        </div>
+                        <div>
+                          <label style={{ display: 'block', fontSize: 12, marginBottom: 4 }}>Motivo</label>
+                          <input type="text" className="form-input" value={aumentoMotivo} onChange={(e) => setAumentoMotivo(e.target.value)} placeholder="Ej: Aumento semestral julio 2026" />
+                        </div>
+                        <button type="button" className="btn-primary" onClick={previsualizarAumento} disabled={!aumentoPct || aumentoLoading}>
+                          {aumentoLoading ? 'Cargando...' : 'Previsualizar'}
+                        </button>
+                      </div>
+
+                      {/* Previsualización */}
+                      {aumentoPreview && (
+                        <div style={{ marginTop: 16 }}>
+                          <div style={{ marginBottom: 8, fontSize: 13 }}>
+                            <strong>{aumentoPreview.resumen.total_lineas}</strong> líneas afectadas.
+                            {aumentoPreview.resumen.con_overrides > 0 && (
+                              <span style={{ color: '#d97706', marginLeft: 8 }}>
+                                {aumentoPreview.resumen.con_overrides} con overrides (revisar)
+                              </span>
+                            )}
+                          </div>
+                          <div style={{ overflowX: 'auto', maxHeight: 400, overflow: 'auto' }}>
+                            <table className="data-table" style={{ fontSize: 12 }}>
+                              <thead>
+                                <tr>
+                                  <th>Sucursal</th><th>Concepto</th>
+                                  <th style={{ textAlign: 'right' }}>Actual</th>
+                                  <th style={{ textAlign: 'right' }}>Nuevo</th>
+                                  <th style={{ textAlign: 'right' }}>Var.</th>
+                                  <th style={{ textAlign: 'right' }}>Distrib.</th>
+                                  <th style={{ textAlign: 'center' }}>Overr.</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {aumentoPreview.lineas.map((l: any, i: number) => (
+                                  <tr key={i} style={{ background: l.overrides_count > 0 ? '#fef9c3' : undefined }}>
+                                    <td>{l.sucursal}</td>
+                                    <td>{l.concepto}</td>
+                                    <td style={{ textAlign: 'right' }}>{fmt(l.precio_actual)}</td>
+                                    <td style={{ textAlign: 'right', fontWeight: 600 }}>{fmt(l.precio_nuevo)}</td>
+                                    <td style={{ textAlign: 'right', color: l.variacion_pct > 0 ? '#16a34a' : '#dc2626' }}>{l.variacion_pct > 0 ? '+' : ''}{l.variacion_pct}%</td>
+                                    <td style={{ textAlign: 'right' }}>{fmt(l.precio_distribuidor_nuevo)}</td>
+                                    <td style={{ textAlign: 'center' }}>
+                                      {l.overrides_count > 0 ? (
+                                        <span style={{ color: '#d97706', fontWeight: 600 }}>{l.overrides_count}</span>
+                                      ) : '—'}
+                                    </td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                          <div style={{ marginTop: 12, display: 'flex', gap: 8 }}>
+                            <button type="button" className="btn-primary" onClick={aplicarAumento} disabled={aumentoLoading || !aumentoMotivo.trim()}>
+                              {aumentoLoading ? 'Aplicando...' : 'Aplicar cambios'}
+                            </button>
+                            <button type="button" className="btn-sm" onClick={() => setAumentoPreview(null)}>Cancelar</button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
                   {/* Dimension values */}
                   <div className="dashboard-card">
                     <header className="card-header"><h3>Valores de dimensiones — {selectedEsquema.nombre}</h3></header>
@@ -1480,7 +1612,7 @@ export function LiquidacionesClientePage({
                             <tr>
                               {selectedEsquema.dimensiones.map((d) => <th key={d} style={{ textTransform: 'capitalize' }}>{d}</th>)}
                               <th>Original</th><th>% Ag.</th><th>Distribuidor</th>
-                              <th>Vigencia</th><th>Estado</th><th></th>
+                              <th>Vigencia</th><th>Estado</th><th style={{ textAlign: 'center' }}>Overr.</th><th></th>
                             </tr>
                           </thead>
                           <tbody>
@@ -1504,6 +1636,15 @@ export function LiquidacionesClientePage({
                                     )
                                   ) : (
                                     <span style={{ color: '#6b7280', fontSize: 12 }}>Inactiva</span>
+                                  )}
+                                </td>
+                                <td style={{ textAlign: 'center' }}>
+                                  {(l as any).overrides_count > 0 ? (
+                                    <span style={{ color: '#2563eb', fontWeight: 600, cursor: 'pointer' }} title="Distribuidores con tarifa especial">
+                                      {(l as any).overrides_count}
+                                    </span>
+                                  ) : (
+                                    <span style={{ color: '#9ca3af' }}>0</span>
                                   )}
                                 </td>
                                 <td style={{ display: 'flex', gap: 4 }}>
@@ -1631,27 +1772,33 @@ export function LiquidacionesClientePage({
                               {(selectedEsquema?.dimensiones ?? []).map((d) => (
                                 <th key={d} style={{ textTransform: 'capitalize' }}>{d}</th>
                               ))}
-                              <th>Línea destino</th>
-                              <th>Vigencia</th>
-                              <th>Activo</th>
+                              <th style={{ textAlign: 'right' }}>Precio Cli.</th>
+                              <th style={{ textAlign: 'right' }}>Tarifa Dist.</th>
+                              <th>Modo</th>
+                              <th>Rev.</th>
                               <th></th>
                             </tr>
                           </thead>
                           <tbody>
                             {tarifasPatente.map((tp) => {
-                              const dest = tp.linea_tarifa;
-                              const destDims = dest ? (selectedEsquema?.dimensiones ?? []).map((d) => dest.dimensiones_valores?.[d]).filter(Boolean).join(' | ') : `#${tp.linea_tarifa_id}`;
+                              const tpAny = tp as any;
+                              const precioOrig = tpAny.precio_original;
+                              const modo = tpAny.modo_calculo;
+                              const valorRef = tpAny.valor_referencia ? Number(tpAny.valor_referencia) : null;
+                              const tarifaDist = modo === 'fijo' && valorRef ? valorRef : (precioOrig && valorRef ? precioOrig * (1 - valorRef / 100) : null);
+                              const reqRev = tpAny.requiere_revision;
                               return (
                                 <tr key={tp.id} style={{ opacity: tp.activo ? 1 : 0.5 }}>
                                   <td><strong>{tp.patente_norm}</strong></td>
                                   {(selectedEsquema?.dimensiones ?? []).map((d) => (
                                     <td key={d}>{tp.dimensiones_valores?.[d] ?? '—'}</td>
                                   ))}
-                                  <td style={{ fontSize: 12 }}>{destDims}</td>
-                                  <td style={{ fontSize: 12 }}>
-                                    {fmtDate(tp.vigencia_desde)}{tp.vigencia_hasta ? ` → ${fmtDate(tp.vigencia_hasta)}` : ' →'}
+                                  <td style={{ textAlign: 'right', color: precioOrig ? '#dc2626' : '#9ca3af', fontWeight: precioOrig ? 600 : 400 }}>
+                                    {precioOrig ? fmt(Number(precioOrig)) : '—'}
                                   </td>
-                                  <td>{tp.activo ? '✓' : '—'}</td>
+                                  <td style={{ textAlign: 'right' }}>{tarifaDist ? fmt(tarifaDist) : '—'}</td>
+                                  <td style={{ fontSize: 11 }}>{modo ?? '—'}</td>
+                                  <td>{reqRev ? <span style={{ color: '#d97706' }} title="Pendiente de revisión">⚠</span> : '—'}</td>
                                   <td style={{ textAlign: 'right' }}>
                                     {tp.activo && (
                                       <button type="button" className="btn-sm btn-danger" onClick={() => desactivarTarifaPatente(tp.id)}>

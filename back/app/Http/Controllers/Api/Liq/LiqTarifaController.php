@@ -132,6 +132,18 @@ class LiqTarifaController extends Controller
             $query->where('activo', true);
         }
         $lineas = $query->get();
+
+        // Agregar count de overrides por línea
+        $overrideCounts = LiqTarifaPatente::where('esquema_id', $esquema->id)
+            ->where('activo', true)
+            ->selectRaw('linea_tarifa_id, COUNT(*) as total')
+            ->groupBy('linea_tarifa_id')
+            ->pluck('total', 'linea_tarifa_id');
+
+        $lineas->each(function ($linea) use ($overrideCounts) {
+            $linea->overrides_count = $overrideCounts->get($linea->id, 0);
+        });
+
         return response()->json(['data' => $lineas]);
     }
 
@@ -1147,6 +1159,162 @@ class LiqTarifaController extends Controller
         ]);
 
         return null;
+    }
+
+    // =====================================================================
+    // POST /liq/esquemas/{esquema}/aumento-preview — Previsualización de aumento porcentual
+    // =====================================================================
+    public function aumentoPreview(Request $request, LiqEsquemaTarifario $esquema): JsonResponse
+    {
+        $data = $request->validate([
+            'porcentaje' => 'required|numeric',
+            'sucursal' => 'nullable|string',
+        ]);
+
+        $pct = (float) $data['porcentaje'];
+        $sucursalFilter = $data['sucursal'] ?? null;
+
+        $query = LiqLineaTarifa::where('esquema_id', $esquema->id)->where('activo', true);
+        if ($sucursalFilter) {
+            $query->where('dimensiones_valores->sucursal', $sucursalFilter);
+        }
+        $lineas = $query->get();
+
+        $preview = [];
+        foreach ($lineas as $linea) {
+            $dims = is_array($linea->dimensiones_valores) ? $linea->dimensiones_valores : [];
+            $precioActual = (float) $linea->precio_original;
+            $precioNuevo = round($precioActual * (1 + $pct / 100), 2);
+            $variacion = $precioActual > 0 ? round(($precioNuevo - $precioActual) / $precioActual * 100, 2) : 0;
+            $pctAg = (float) $linea->porcentaje_agencia;
+            $distribNuevo = round($precioNuevo * (1 - $pctAg / 100), 2);
+
+            // Buscar overrides
+            $overrides = LiqTarifaPatente::where('esquema_id', $esquema->id)
+                ->where('linea_tarifa_id', $linea->id)
+                ->where('activo', true)
+                ->with('lineaTarifa')
+                ->get()
+                ->map(function ($tp) {
+                    $persona = \App\Models\Persona::find($tp->linea_tarifa_id ? null : null);
+                    return [
+                        'id' => $tp->id,
+                        'patente' => $tp->patente_norm,
+                        'precio_original_actual' => $tp->precio_original,
+                        'modo_calculo' => $tp->modo_calculo,
+                        'valor_referencia' => $tp->valor_referencia,
+                    ];
+                });
+
+            $preview[] = [
+                'linea_id' => $linea->id,
+                'sucursal' => $dims['sucursal'] ?? null,
+                'concepto' => $dims['concepto'] ?? $dims['contrato'] ?? null,
+                'precio_actual' => $precioActual,
+                'precio_nuevo' => $precioNuevo,
+                'variacion_pct' => $variacion,
+                'porcentaje_agencia' => $pctAg,
+                'precio_distribuidor_nuevo' => $distribNuevo,
+                'overrides_count' => $overrides->count(),
+                'overrides' => $overrides,
+            ];
+        }
+
+        return response()->json([
+            'data' => [
+                'lineas' => $preview,
+                'resumen' => [
+                    'total_lineas' => count($preview),
+                    'con_overrides' => collect($preview)->where('overrides_count', '>', 0)->count(),
+                    'porcentaje' => $pct,
+                ],
+            ],
+        ]);
+    }
+
+    // =====================================================================
+    // POST /liq/esquemas/{esquema}/aumento-aplicar — Aplicar aumento porcentual
+    // =====================================================================
+    public function aumentoAplicar(Request $request, LiqEsquemaTarifario $esquema): JsonResponse
+    {
+        $data = $request->validate([
+            'motivo' => 'required|string|min:3',
+            'lineas' => 'required|array',
+            'lineas.*.linea_id' => 'required|integer',
+            'lineas.*.precio_nuevo' => 'required|numeric|min:0',
+            'lineas.*.overrides' => 'nullable|array',
+            'lineas.*.overrides.*.id' => 'required|integer',
+            'lineas.*.overrides.*.accion' => 'required|in:proporcional,mantener,eliminar',
+        ]);
+
+        $userId = $request->user()?->id;
+        $motivo = $data['motivo'];
+        $stats = ['actualizadas' => 0, 'overrides_ajustados' => 0, 'overrides_mantenidos' => 0, 'overrides_eliminados' => 0];
+
+        DB::beginTransaction();
+        try {
+            foreach ($data['lineas'] as $cambio) {
+                $linea = LiqLineaTarifa::where('esquema_id', $esquema->id)->findOrFail($cambio['linea_id']);
+                $precioAnterior = (float) $linea->precio_original;
+                $precioNuevo = (float) $cambio['precio_nuevo'];
+                $variacion = $precioAnterior > 0 ? ($precioNuevo - $precioAnterior) / $precioAnterior : 0;
+                $pctAg = (float) $linea->porcentaje_agencia;
+
+                // Auditoría
+                \App\Models\LiqAuditoriaTarifaLog::registrar(
+                    $esquema->id, 'precio_original', $precioAnterior, $precioNuevo,
+                    'aumento_porcentual', $motivo, $linea->id, null, $userId
+                );
+
+                // Actualizar línea genérica
+                $linea->update([
+                    'precio_original' => $precioNuevo,
+                    'precio_distribuidor' => round($precioNuevo * (1 - $pctAg / 100), 2),
+                ]);
+                $stats['actualizadas']++;
+
+                // Procesar overrides
+                foreach ($cambio['overrides'] ?? [] as $ov) {
+                    $override = LiqTarifaPatente::find($ov['id']);
+                    if (!$override) continue;
+
+                    switch ($ov['accion']) {
+                        case 'proporcional':
+                            $anteriorOv = (float) ($override->precio_original ?? 0);
+                            if ($anteriorOv > 0) {
+                                $nuevoOv = round($anteriorOv * (1 + $variacion), 2);
+                                \App\Models\LiqAuditoriaTarifaLog::registrar(
+                                    $esquema->id, 'precio_original', $anteriorOv, $nuevoOv,
+                                    'aumento_porcentual', $motivo, null, $override->id, $userId
+                                );
+                                $override->update(['precio_original' => $nuevoOv, 'requiere_revision' => false]);
+                            }
+                            $stats['overrides_ajustados']++;
+                            break;
+
+                        case 'mantener':
+                            $override->update(['requiere_revision' => true]);
+                            $stats['overrides_mantenidos']++;
+                            break;
+
+                        case 'eliminar':
+                            \App\Models\LiqAuditoriaTarifaLog::registrar(
+                                $esquema->id, 'precio_original', (float) $override->precio_original, null,
+                                'aumento_porcentual', $motivo, null, $override->id, $userId
+                            );
+                            $override->delete();
+                            $stats['overrides_eliminados']++;
+                            break;
+                    }
+                }
+            }
+
+            DB::commit();
+            return response()->json(['message' => "Aumento aplicado: {$stats['actualizadas']} líneas.", 'data' => $stats]);
+        } catch (\Throwable $e) {
+            DB::rollBack();
+            return response()->json(['error' => 'Error aplicando aumento: ' . $e->getMessage()], 500);
+        }
     }
 
     private function normHeader(string $s): string

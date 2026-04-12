@@ -213,6 +213,8 @@ Route::middleware('auth.api')->group(function () {
         Route::post('/esquemas/{esquema}/lineas', [LiqTarifaController::class, 'storeLinea']);
         Route::post('/esquemas/{esquema}/importar-excel', [LiqTarifaController::class, 'importarExcel']);
         Route::post('/esquemas/{esquema}/importar-oca', [LiqTarifaController::class, 'importarOca']);
+        Route::post('/esquemas/{esquema}/aumento-preview', [LiqTarifaController::class, 'aumentoPreview']);
+        Route::post('/esquemas/{esquema}/aumento-aplicar', [LiqTarifaController::class, 'aumentoAplicar']);
         Route::post('/esquemas/{esquema}/lineas/aprobar-todas', [LiqTarifaController::class, 'aprobarTodasLineas']);
         Route::put('/lineas/{lineaTarifa}/aprobar', [LiqTarifaController::class, 'aprobarLinea']);
         Route::put('/lineas/{lineaTarifa}/desactivar', [LiqTarifaController::class, 'desactivarLinea']);

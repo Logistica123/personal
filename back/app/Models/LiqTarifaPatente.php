@@ -24,6 +24,7 @@ class LiqTarifaPatente extends Model
         'modo_calculo',
         'valor_referencia',
         'precio_original',
+        'requiere_revision',
     ];
 
     protected $casts = [
