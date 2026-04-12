@@ -591,11 +591,14 @@ class LiqExtractosController extends Controller
                 ->first();
 
             if ($lineaTarifa) {
-                $lineaTarifa->update([
-                    'precio_original' => $valorCliente,
-                    'porcentaje_agencia' => $pctAgencia,
-                    'precio_distribuidor' => $precioDistribuidor,
-                ]);
+                // Línea ya existe — NO pisar precio_original (es la tarifa GENÉRICA compartida)
+                // Solo actualizar si no tenía precio distribuidor definido
+                if (!$lineaTarifa->precio_distribuidor || $lineaTarifa->precio_distribuidor == 0) {
+                    $lineaTarifa->update([
+                        'porcentaje_agencia' => $pctAgencia,
+                        'precio_distribuidor' => $precioDistribuidor,
+                    ]);
+                }
             } else {
                 $lineaTarifa = \App\Models\LiqLineaTarifa::create([
                     'esquema_id' => $esquema->id,
