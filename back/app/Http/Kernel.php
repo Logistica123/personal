@@ -46,6 +46,7 @@ class Kernel extends HttpKernel
         'auth' => \App\Http\Middleware\Authenticate::class,
         'verified' => \Illuminate\Auth\Middleware\EnsureEmailIsVerified::class,
         'auth.api' => \App\Http\Middleware\ApiTokenAuth::class,
+        'admin' => \App\Http\Middleware\RequireAdminRole::class,
     ];
 }
 PHP

@@ -156,4 +156,40 @@ class Persona extends Model
         return $this->hasOne(TaxProfile::class, 'entity_id')
             ->where('entity_type', 'persona');
     }
+
+    public function ordenesPagoBeneficiario()
+    {
+        return $this->hasMany(LiqOrdenPago::class, 'beneficiario_id');
+    }
+
+    /**
+     * Determina si este distribuidor tiene un cobrador designado.
+     */
+    public function tieneCobrador(): bool
+    {
+        return $this->es_cobrador && !empty($this->cobrador_cuil) && !empty($this->cobrador_cbu_alias);
+    }
+
+    /**
+     * Devuelve los datos del beneficiario real (cobrador si existe, sino el distribuidor).
+     * Retorna [tipo, nombre, cuil, cbu].
+     */
+    public function datosBeneficiario(): array
+    {
+        if ($this->tieneCobrador()) {
+            return [
+                'tipo'   => 'COBRADOR',
+                'nombre' => $this->cobrador_nombre ?? ($this->apellidos . ', ' . $this->nombres . ' (cobrador)'),
+                'cuil'   => $this->cobrador_cuil,
+                'cbu'    => $this->cobrador_cbu_alias,
+            ];
+        }
+
+        return [
+            'tipo'   => 'DISTRIBUIDOR',
+            'nombre' => trim($this->apellidos . ', ' . $this->nombres),
+            'cuil'   => $this->cuil,
+            'cbu'    => $this->cbu_alias,
+        ];
+    }
 }

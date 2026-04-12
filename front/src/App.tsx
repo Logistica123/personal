@@ -54,6 +54,7 @@ import { LiquidacionesPage } from './pages/LiquidacionesPage';
 import { LiquidacionesClientePage } from './pages/LiquidacionesClientePage';
 import { LiquidacionesEstadoCuentaPage } from './pages/LiquidacionesEstadoCuentaPage';
 import { LiquidacionesExtractosPage } from './pages/LiquidacionesExtractosPage';
+import { PagosPage } from './pages/PagosPage';
 import { RecibosPage } from './pages/RecibosPage';
 import { DocumentTypesPage } from './pages/DocumentTypesPage';
 import { DocumentTypeCreatePage } from './pages/DocumentTypeCreatePage';
@@ -20367,48 +20368,12 @@ const AppRoutes: React.FC = () => {
         path="/pagos"
         element={
           <RequireAccess section="pagos">
-            <LiquidacionesPage
+            <PagosPage
               DashboardLayout={DashboardLayout}
               resolveApiBaseUrl={resolveApiBaseUrl}
               useStoredAuthUser={useStoredAuthUser}
               buildActorHeaders={buildActorHeaders}
-              resolveApiUrl={resolveApiUrl}
-              parseJsonSafe={parseJsonSafe}
               formatCurrency={formatCurrency}
-              formatPagoLabel={formatPagoLabel}
-              getPerfilDisplayLabel={getPerfilDisplayLabel}
-              createImagePreviewUrl={createImagePreviewUrl}
-              revokeImagePreviewUrl={revokeImagePreviewUrl}
-              readAuthTokenFromStorage={readAuthTokenFromStorage}
-              withAuthToken={withAuthToken}
-              PERSON_TAX_ID_LABEL={PERSON_TAX_ID_LABEL}
-              COLLECTOR_TAX_ID_LABEL={COLLECTOR_TAX_ID_LABEL}
-              formatDateTime={formatDateTime}
-            />
-          </RequireAccess>
-        }
-      />
-      <Route
-        path="/pagos/:personaId"
-        element={
-          <RequireAccess section="pagos">
-            <LiquidacionesPage
-              DashboardLayout={DashboardLayout}
-              resolveApiBaseUrl={resolveApiBaseUrl}
-              useStoredAuthUser={useStoredAuthUser}
-              buildActorHeaders={buildActorHeaders}
-              resolveApiUrl={resolveApiUrl}
-              parseJsonSafe={parseJsonSafe}
-              formatCurrency={formatCurrency}
-              formatPagoLabel={formatPagoLabel}
-              getPerfilDisplayLabel={getPerfilDisplayLabel}
-              createImagePreviewUrl={createImagePreviewUrl}
-              revokeImagePreviewUrl={revokeImagePreviewUrl}
-              readAuthTokenFromStorage={readAuthTokenFromStorage}
-              withAuthToken={withAuthToken}
-              PERSON_TAX_ID_LABEL={PERSON_TAX_ID_LABEL}
-              COLLECTOR_TAX_ID_LABEL={COLLECTOR_TAX_ID_LABEL}
-              formatDateTime={formatDateTime}
             />
           </RequireAccess>
         }

@@ -44,6 +44,7 @@ use App\Http\Controllers\Api\Liq\LiqDistribuidorLiquidacionesController;
 use App\Http\Controllers\Api\Liq\LiqDistribuidorDocumentoController;
 use App\Http\Controllers\Api\Liq\LiqEstadoCuentaController;
 use App\Http\Controllers\Api\Liq\LiqJurisdiccionController;
+use App\Http\Controllers\Api\Liq\LiqPagosController;
 use Illuminate\Support\Facades\Route;
 
 Route::post('/login', [AuthController::class, 'login']);
@@ -299,6 +300,46 @@ Route::middleware('auth.api')->group(function () {
         Route::get('/jurisdicciones', [LiqJurisdiccionController::class, 'index']);
         Route::get('/jurisdicciones/sucursal', [LiqJurisdiccionController::class, 'sucursales']);
         Route::post('/jurisdicciones/sucursal', [LiqJurisdiccionController::class, 'store']);
+
+        // ── Módulo de Pagos y Ordenes de Pago ───────────────────────────────
+        Route::prefix('pagos')->group(function () {
+            // Lectura (cualquier usuario autenticado con acceso a la sección)
+            Route::get('/conceptos', [LiqPagosController::class, 'conceptos']);
+            Route::get('/conceptos/{concepto}/proximo-numero', [LiqPagosController::class, 'proximoNumero']);
+            Route::get('/liquidaciones', [LiqPagosController::class, 'liquidaciones']);
+            Route::get('/liquidaciones/exportar', [LiqPagosController::class, 'exportarLiquidaciones']);
+            Route::get('/ordenes', [LiqPagosController::class, 'ordenes']);
+            Route::get('/ordenes/exportar', [LiqPagosController::class, 'exportarOrdenes']);
+            Route::get('/ordenes/{ordenPago}', [LiqPagosController::class, 'showOrden']);
+            Route::get('/ordenes/{ordenPago}/resumen', [LiqPagosController::class, 'resumenOrden']);
+            Route::get('/ordenes/{ordenPago}/pdf', [LiqPagosController::class, 'descargarPdf']);
+            Route::get('/ordenes/{ordenPago}/transferencias', [LiqPagosController::class, 'transferencias']);
+            Route::get('/config-banco', [LiqPagosController::class, 'configBanco']);
+
+            // Escritura (solo Admin / Admin2)
+            Route::middleware('admin')->group(function () {
+                // Conceptos
+                Route::post('/conceptos', [LiqPagosController::class, 'storeConcepto']);
+                Route::patch('/conceptos/{concepto}', [LiqPagosController::class, 'updateConcepto']);
+
+                // Validación y preview
+                Route::post('/validar-beneficiarios', [LiqPagosController::class, 'validarBeneficiarios']);
+                Route::post('/preview', [LiqPagosController::class, 'preview']);
+
+                // Ordenes de pago
+                Route::post('/ordenes', [LiqPagosController::class, 'storeOrden']);
+                Route::patch('/ordenes/{ordenPago}/estado', [LiqPagosController::class, 'cambiarEstado']);
+                Route::delete('/ordenes/{ordenPago}', [LiqPagosController::class, 'destroyOrden']);
+
+                // Transferencias bancarias
+                Route::post('/ordenes/{ordenPago}/ejecutar-pago', [LiqPagosController::class, 'ejecutarPago']);
+                Route::post('/ordenes/{ordenPago}/reintentar', [LiqPagosController::class, 'reintentar']);
+
+                // Configuración bancaria
+                Route::put('/config-banco', [LiqPagosController::class, 'updateConfigBanco']);
+                Route::post('/config-banco/test', [LiqPagosController::class, 'testConfigBanco']);
+            });
+        });
     });
 
     Route::get('/unidades', [UnidadController::class, 'index']);

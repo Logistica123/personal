@@ -56,4 +56,28 @@ class LiqLiquidacionDistribuidor extends Model
     {
         return $this->belongsTo(\App\Models\Persona::class, 'distribuidor_id');
     }
+
+    public function ordenPagoDetalle()
+    {
+        return $this->hasOne(LiqOrdenPagoDetalle::class, 'liquidacion_distribuidor_id');
+    }
+
+    /**
+     * Indica si esta liquidacion ya esta incluida en una OP activa (no anulada).
+     */
+    public function tieneOrdenPagoActiva(): bool
+    {
+        return $this->ordenPagoDetalle()
+            ->whereHas('ordenPago', fn ($q) => $q->activas())
+            ->exists();
+    }
+
+    /**
+     * Indica si esta liquidacion esta disponible para incluir en una nueva OP.
+     */
+    public function disponibleParaPago(): bool
+    {
+        return in_array($this->estado, [self::ESTADO_GENERADA, self::ESTADO_APROBADA])
+            && !$this->tieneOrdenPagoActiva();
+    }
 }
