@@ -25,7 +25,7 @@
       $periodoStr = "{$mes} {$anio}";
     } elseif ($desde->day == 1 && $hasta->day <= 15) {
       $periodoStr = "1ra Quincena de {$mes} {$anio}";
-    } elseif ($desde->day >= 16) {
+    } elseif ($desde->day >= 15 && $hasta->day >= 28) {
       $periodoStr = "2da Quincena de {$mes} {$anio}";
     } else {
       $periodoStr = "{$mes} {$anio}";

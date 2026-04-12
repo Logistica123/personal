@@ -1922,7 +1922,7 @@ export function LiquidacionesExtractosPage({
                         </td>
 	                      <td><code>{op.dominio ?? '—'}</code></td>
 	                      <td style={{ fontSize: 12 }}>{op.distribuidor ? `${op.distribuidor.apellidos}, ${op.distribuidor.nombres}` : '—'}</td>
-	                      <td style={{ fontSize: 12 }}>{(() => { const raw = (op.campos_originales as any)?.fecha ?? (op.campos_originales as any)?.fecha_viaje ?? (op.campos_originales as any)?.FechaViaje; if (!raw) return '—'; try { return new Date(raw).toLocaleDateString('es-AR'); } catch { return String(raw); } })()}</td>
+	                      <td style={{ fontSize: 12 }}>{(() => { const raw = (op.campos_originales as any)?.fecha ?? (op.campos_originales as any)?.fecha_viaje ?? (op.campos_originales as any)?.FechaViaje; if (!raw) return '—'; const s = String(raw); const dateOnly = s.includes('T') ? s.split('T')[0] : s.slice(0, 10); const parts = dateOnly.split('-'); return parts.length === 3 ? `${parts[2]}/${parts[1]}/${parts[0]}` : s; })()}</td>
 	                      <td style={{ fontSize: 12 }}>{op.concepto ?? '—'}</td>
 	                      <td style={{ fontSize: 12 }}>{op.sucursal_tarifa ?? '—'}</td>
                       <td>{fmt(op.valor_cliente)}</td>

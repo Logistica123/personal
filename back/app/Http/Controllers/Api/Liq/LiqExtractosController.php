@@ -606,6 +606,8 @@ class LiqExtractosController extends Controller
                     'vigencia_desde' => $liquidacionCliente->periodo_desde,
                     'vigencia_hasta' => null,
                     'creado_por' => $request->user()?->id,
+                    'aprobado_por' => $request->user()?->id,
+                    'fecha_aprobacion' => now(),
                     'activo' => true,
                 ]);
 
