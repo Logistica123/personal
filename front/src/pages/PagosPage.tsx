@@ -952,11 +952,8 @@ export const PagosPage: React.FC<Props> = ({
                               title={row.facturado ? 'Ver factura del distribuidor' : 'Sin factura disponible'}
                               disabled={!row.facturado}
                               onClick={() => {
-                                if (row.factura_doc_id) {
-                                  window.open(`${baseUrlRef.current}/api/personal/${row.persona_id}/documentos/${row.factura_doc_id}/descargar?inline=1`, '_blank');
-                                } else {
-                                  window.open(`${baseUrlRef.current}/api/liq/pagos/factura-distribuidor/${row.persona_id}`, '_blank');
-                                }
+                                const liqParam = row.archivo_id ? `?liquidacion_id=${row.archivo_id}` : '';
+                                window.open(`${baseUrlRef.current}/api/liq/pagos/factura-distribuidor/${row.persona_id}${liqParam}`, '_blank');
                               }}
                             >
                               Fac

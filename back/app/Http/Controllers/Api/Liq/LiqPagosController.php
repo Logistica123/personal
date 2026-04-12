@@ -624,26 +624,62 @@ class LiqPagosController extends Controller
     // =========================================================================
 
     // GET /api/liq/pagos/factura-distribuidor/{personaId}
+    // Query params: ?liquidacion_id=XX (archivo_id de la liquidación padre)
     public function facturaDistribuidor(Request $request, int $personaId)
     {
-        $persona = \App\Models\Persona::findOrFail($personaId);
+        \App\Models\Persona::findOrFail($personaId);
+        $liquidacionArchivoId = $request->integer('liquidacion_id');
 
-        // Buscar el documento más reciente del distribuidor que sea factura/comprobante
-        // Prioridad: cualquier documento recibido (recibido=true) o el más reciente
-        $archivo = \App\Models\Archivo::where('persona_id', $personaId)
-            ->whereNull('parent_document_id')
-            ->where(function ($q) {
-                $q->where('recibido', true)
-                  ->orWhereHas('tipo', fn ($tq) => $tq->where('nombre', 'like', '%factur%'));
-            })
-            ->orderByDesc('created_at')
-            ->first();
+        // Tipos a excluir (son documentos internos de la agencia, no facturas)
+        $tiposExcluir = \App\Models\FileType::whereIn('nombre', [
+            'DESCUENTO_COMBUSTIBLE', 'AJUSTE_LIQUIDACION', 'Factura combustible',
+        ])->pluck('id')->all();
 
-        if (!$archivo) {
-            return response()->json(['message' => 'No se encontró factura del distribuidor.'], 404);
+        // ESTRATEGIA 1: Buscar documento HIJO de la liquidación padre
+        // La factura del distribuidor se adjunta como hijo de la liquidación (parent_document_id = liquidación padre)
+        if ($liquidacionArchivoId) {
+            $factura = \App\Models\Archivo::where('parent_document_id', $liquidacionArchivoId)
+                ->where('persona_id', $personaId)
+                ->whereNotIn('tipo_archivo_id', $tiposExcluir)
+                ->orderByDesc('created_at')
+                ->first();
+
+            if ($factura) {
+                return $this->servirArchivoInline($factura);
+            }
         }
 
-        // Servir el archivo inline (para visualizar en el navegador)
+        // ESTRATEGIA 2: Buscar en tabla facturas (facturas IA-validadas)
+        $query = \App\Models\Factura::where('persona_id', $personaId)
+            ->orderByDesc('created_at');
+
+        if ($liquidacionArchivoId) {
+            $query->where('liquidacion_id', $liquidacionArchivoId);
+        }
+
+        $facturaIa = $query->first();
+
+        if ($facturaIa && $facturaIa->archivo_path) {
+            $disk = $facturaIa->archivo_disk ?: 'public';
+            $path = $facturaIa->archivo_path;
+
+            if ($path && \Illuminate\Support\Facades\Storage::disk($disk)->exists($path)) {
+                $filename = 'factura_' . ($facturaIa->numero_factura ?? $facturaIa->id) . '.pdf';
+                return response(\Illuminate\Support\Facades\Storage::disk($disk)->get($path), 200, [
+                    'Content-Type'        => 'application/pdf',
+                    'Content-Disposition' => "inline; filename=\"{$filename}\"",
+                ]);
+            }
+        }
+
+        return response()->json(['message' => 'No se encontró factura del distribuidor.'], 404);
+    }
+
+    /**
+     * Sirve un Archivo con Content-Disposition: inline para visualizar en el navegador.
+     */
+    private function servirArchivoInline(\App\Models\Archivo $archivo)
+    {
         $disk = $archivo->disk ?: 'local';
         $path = $archivo->ruta;
 
