@@ -70,6 +70,7 @@ export function LiquidacionesExtractosPage({
   const [hotMapOp, setHotMapOp] = useState<LiqOperacion | null>(null);
   const [hotMapValorTarifa, setHotMapValorTarifa] = useState('');
   const [hotMapDim, setHotMapDim] = useState('concepto');
+  const [hotMapValorCliente, setHotMapValorCliente] = useState('');
 
   type AuditoriaData = {
     resumen: {
@@ -777,7 +778,7 @@ export function LiquidacionesExtractosPage({
         persona_id: hotMapOp.distribuidor_id,
         sucursal: hotMapOp.sucursal_tarifa ?? '',
         concepto: concepto,
-        valor_cliente: Number(hotMapOp.valor_cliente),
+        valor_cliente: parseFloat(hotMapValorCliente.replace(',', '.')) || Number(hotMapOp.valor_cliente),
         modo_calculo: modo,
         valor_referencia: valorNum,
         dimension_destino: 'concepto',
@@ -791,7 +792,7 @@ export function LiquidacionesExtractosPage({
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Error guardando mapeo');
     }
-  }, [api, selectedLiq, hotMapOp, hotMapValorTarifa, hotMapDim]);
+  }, [api, selectedLiq, hotMapOp, hotMapValorTarifa, hotMapDim, hotMapValorCliente]);
 
   const generarPdf = useCallback(async (liqDistId: number) => {
     setPdfGenerating((prev) => ({ ...prev, [liqDistId]: true }));
@@ -1943,7 +1944,7 @@ export function LiquidacionesExtractosPage({
                       <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
                         {op.estado === 'sin_tarifa' && !op.excluida && (
                           <button type="button" className="btn-sm" style={{ marginRight: 4, background: '#fef3c7', color: '#92400e', border: '1px solid #fcd34d' }}
-                            onClick={() => { setHotMapOp(op); setHotMapValorTarifa(''); setHotMapDim(isOcaClient ? 'fijo' : 'porcentaje'); }}>
+                            onClick={() => { setHotMapOp(op); setHotMapValorTarifa(''); setHotMapDim(isOcaClient ? 'fijo' : 'porcentaje'); setHotMapValorCliente(String(op.valor_cliente)); }}>
                             + Mapeo
                           </button>
                         )}
@@ -1976,7 +1977,7 @@ export function LiquidacionesExtractosPage({
                       <h4 style={{ fontSize: 13, fontWeight: 600, margin: '0 0 8px' }}>Tarifa Original (Cliente)</h4>
                       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, fontSize: 13 }}>
                         <div>Concepto:</div><div style={{ fontWeight: 600 }}>{hotMapOp.concepto ?? '—'}</div>
-                        <div>Valor cliente:</div><div style={{ fontWeight: 600 }}>${Number(hotMapOp.valor_cliente).toLocaleString('es-AR', { minimumFractionDigits: 2 })}</div>
+                        <div>Valor cliente:</div><div><input type="text" inputMode="decimal" className="form-input" value={hotMapValorCliente} onChange={(e) => setHotMapValorCliente(e.target.value)} style={{ fontSize: 13, fontWeight: 600, width: 140 }} /></div>
                         <div>Sucursal:</div><div>{hotMapOp.sucursal_tarifa ?? '—'}</div>
                         <div>Patente:</div><div style={{ fontWeight: 600 }}>{hotMapOp.dominio ?? '—'}</div>
                       </div>
@@ -1999,19 +2000,19 @@ export function LiquidacionesExtractosPage({
                             <div>Precio distribuidor:</div>
                             <input type="text" inputMode="decimal" className="form-input" value={hotMapValorTarifa} onChange={(e) => setHotMapValorTarifa(e.target.value)} placeholder="Ej: 181374" style={{ fontSize: 13 }} />
                             <div>% Agencia (calc.):</div>
-                            <div style={{ color: '#6b7280' }}>{(() => { const v = parseFloat(hotMapValorTarifa.replace(',', '.')); const c = Number(hotMapOp.valor_cliente); return v > 0 && c > 0 ? `${((1 - v / c) * 100).toFixed(2)}%` : '—'; })()}</div>
+                            <div style={{ color: '#6b7280' }}>{(() => { const v = parseFloat(hotMapValorTarifa.replace(',', '.')); const c = parseFloat(hotMapValorCliente.replace(',', '.')) || Number(hotMapOp.valor_cliente); return v > 0 && c > 0 ? `${((1 - v / c) * 100).toFixed(2)}%` : '—'; })()}</div>
                           </>
                         ) : (
                           <>
                             <div>Descuento %:</div>
                             <input type="text" inputMode="decimal" className="form-input" value={hotMapValorTarifa} onChange={(e) => setHotMapValorTarifa(e.target.value)} placeholder="Ej: 15" style={{ fontSize: 13 }} />
                             <div>Precio distrib. (calc.):</div>
-                            <div style={{ fontWeight: 600 }}>{(() => { const pct = parseFloat(hotMapValorTarifa.replace(',', '.')); const c = Number(hotMapOp.valor_cliente); return pct > 0 && c > 0 ? `$${(c * (1 - pct / 100)).toLocaleString('es-AR', { minimumFractionDigits: 2 })}` : '—'; })()}</div>
+                            <div style={{ fontWeight: 600 }}>{(() => { const pct = parseFloat(hotMapValorTarifa.replace(',', '.')); const c = parseFloat(hotMapValorCliente.replace(',', '.')) || Number(hotMapOp.valor_cliente); return pct > 0 && c > 0 ? `$${(c * (1 - pct / 100)).toLocaleString('es-AR', { minimumFractionDigits: 2 })}` : '—'; })()}</div>
                           </>
                         )}
                         <div>Margen:</div>
                         <div style={{ fontWeight: 600, color: '#16a34a' }}>{(() => {
-                          const c = Number(hotMapOp.valor_cliente);
+                          const c = parseFloat(hotMapValorCliente.replace(',', '.')) || Number(hotMapOp.valor_cliente);
                           let d: number;
                           if (hotMapDim === 'fijo') d = parseFloat(hotMapValorTarifa.replace(',', '.'));
                           else { const pct = parseFloat(hotMapValorTarifa.replace(',', '.')); d = c * (1 - (pct || 0) / 100); }

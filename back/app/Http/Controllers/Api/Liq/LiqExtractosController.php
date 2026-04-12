@@ -626,6 +626,7 @@ class LiqExtractosController extends Controller
                 'linea_tarifa_id' => $lineaTarifa->id,
                 'modo_calculo' => $data['modo_calculo'],
                 'valor_referencia' => $data['valor_referencia'],
+                'precio_original' => $valorCliente,
                 'activo' => true,
                 'creado_por' => $request->user()?->id,
                 'vigencia_desde' => $liquidacionCliente->periodo_desde,

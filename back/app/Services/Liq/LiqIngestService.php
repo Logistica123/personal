@@ -443,17 +443,19 @@ class LiqIngestService
                 } else {
                     $linea = null;
 
+                    $overrideData = null;
                     if ($dominio !== '') {
-                        $tpLinea = $this->buscarLineaTarifaPorPatenteYDimensiones(
+                        $tpResult = $this->buscarLineaTarifaPorPatenteYDimensiones(
                             $esquema->id,
                             $dominio,
                             $dimensionesValores,
                             $liquidacion->periodo_desde->toDateString(),
                             $liquidacion->cliente_id
                         );
-                        if ($tpLinea) {
-                            $linea = $tpLinea;
-                            $dimensionesValores = (array) ($tpLinea->dimensiones_valores ?? $dimensionesValores);
+                        if ($tpResult) {
+                            $linea = $tpResult['linea'];
+                            $overrideData = $tpResult['override'];
+                            $dimensionesValores = (array) ($linea->dimensiones_valores ?? $dimensionesValores);
                             $observaciones = $this->appendObservacion($observaciones, 'Tarifa aplicada por patente (override).');
                         }
                     }
@@ -509,8 +511,23 @@ class LiqIngestService
                                 'Tarifa variable: precio original tomado del Excel/PDF.'
                             );
                         } else {
-                            $valorTarifaOriginal = (float) $linea->precio_original;
-                            $valorTarifaDistribuidor = (float) $linea->precio_distribuidor;
+                            // Priorizar precio_original del override si existe (Addendum 3)
+                            $overridePrecioOrig = $overrideData?->precio_original ?? null;
+                            $valorTarifaOriginal = $overridePrecioOrig !== null
+                                ? (float) $overridePrecioOrig
+                                : (float) $linea->precio_original;
+
+                            // Calcular distribuidor según modo del override
+                            if ($overrideData && $overrideData->modo_calculo === 'fijo') {
+                                $valorTarifaDistribuidor = (float) $overrideData->valor_referencia;
+                            } elseif ($overrideData && $overrideData->modo_calculo === 'porcentaje') {
+                                $pctOverride = (float) $overrideData->valor_referencia;
+                                $valorTarifaDistribuidor = round($valorTarifaOriginal * (1 - $pctOverride / 100), 2);
+                                $porcentajeAgencia = $pctOverride;
+                            } else {
+                                $valorTarifaDistribuidor = (float) $linea->precio_distribuidor;
+                            }
+
                             $diferencia = round($valor - $valorTarifaOriginal, 2);
 
                             $tolerancia = (float) ($config['tolerancia_porcentaje'] ?? 2.0);
@@ -673,13 +690,18 @@ class LiqIngestService
         return $q->first();
     }
 
-    private function buscarLineaTarifaPorPatenteYDimensiones(int $esquemaId, string $patenteNorm, array $dimensionesValores, string $fecha, ?int $clienteId = null): ?LiqLineaTarifa
+    /**
+     * @return array{linea: LiqLineaTarifa, override: LiqTarifaPatente}|null
+     */
+    private function buscarLineaTarifaPorPatenteYDimensiones(int $esquemaId, string $patenteNorm, array $dimensionesValores, string $fecha, ?int $clienteId = null): ?array
     {
         $q = LiqTarifaPatente::where('esquema_id', $esquemaId)
             ->where('activo', true)
             ->where('patente_norm', $patenteNorm);
         if ($clienteId) {
-            $q->where('liq_cliente_id', $clienteId);
+            $q->where(function ($q2) use ($clienteId) {
+                $q2->where('liq_cliente_id', $clienteId)->orWhereNull('liq_cliente_id');
+            });
         }
         $q
             ->where('vigencia_desde', '<=', $fecha)
@@ -702,12 +724,11 @@ class LiqIngestService
         }
 
         $tp = $q->first();
-        if (! $tp) {
+        if (! $tp || ! ($tp->lineaTarifa instanceof LiqLineaTarifa)) {
             return null;
         }
 
-        $linea = $tp->lineaTarifa;
-        return $linea instanceof LiqLineaTarifa ? $linea : null;
+        return ['linea' => $tp->lineaTarifa, 'override' => $tp];
     }
 
     private function buscarLineaTarifaPendientePorDimensiones(int $esquemaId, array $dimensionesValores, string $fecha): ?LiqLineaTarifa
