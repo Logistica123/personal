@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useLiqApi } from '../features/liquidaciones/api';
 
 /* ------------------------------------------------------------------ */
@@ -31,21 +32,31 @@ type Props = {
 
 type LiqRow = {
   id: number;
-  cliente_id: number | null;
+  fuente: 'EXTRACTO' | 'LEGACY';
+  fuente_id: number | null;
+  archivo_id: number | null;
+  persona_id: number;
   cliente_nombre: string;
   sucursal: string;
-  periodo_desde: string | null;
-  periodo_hasta: string | null;
-  distribuidor_id: number;
+  periodo: string;
+  periodo_sort: string;
   distribuidor_nombre: string;
   cobrador_nombre: string | null;
-  subtotal: string | number;
-  gastos_administrativos: string | number;
-  total_a_pagar: string | number;
+  importe: number;
+  enviada: boolean;
+  facturado: boolean;
+  factura_doc_id: number | null;
+  pagado: boolean;
   estado_liquidacion: string;
   estado_pago: string | null;
   op_numero_display: string | null;
   op_id: number | null;
+  tiene_op_activa: boolean;
+  // Para descargar PDFs
+  pdf_url_tipo: string;
+  pdf_liq_dist_id?: number;
+  pdf_persona_id?: number;
+  pdf_archivo_id?: number;
 };
 
 type Concepto = {
@@ -58,7 +69,10 @@ type Concepto = {
 
 type ValidacionResult = {
   validas: Array<{
-    liquidacion_id: number;
+    fuente: string;
+    fuente_id: number | null;
+    archivo_id: number | null;
+    persona_id: number;
     distribuidor_id: number;
     distribuidor_nombre: string;
     beneficiario_tipo: string;
@@ -69,7 +83,7 @@ type ValidacionResult = {
     total_a_pagar: number;
   }>;
   errores: Array<{
-    liquidacion_id: number;
+    item?: unknown;
     distribuidor_id?: number;
     distribuidor_nombre?: string;
     beneficiario_tipo?: string;
@@ -223,19 +237,23 @@ export const PagosPage: React.FC<Props> = ({
 }) => {
   const authUser = useStoredAuthUser();
   const api = useLiqApi({ resolveApiBaseUrl, buildActorHeaders, authUser });
+  const [searchParams, setSearchParams] = useSearchParams();
 
   // ── Tab state ─────────────────────────────────────────────────────
-  const [tab, setTab] = useState<Tab>('liquidaciones');
+  const [tab, setTab] = useState<Tab>((searchParams.get('tab') as Tab) || 'liquidaciones');
 
   // ── Liquidaciones state ───────────────────────────────────────────
   const [liquidaciones, setLiquidaciones] = useState<LiqRow[]>([]);
   const [loadingLiq, setLoadingLiq] = useState(false);
-  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
-  // ── Filtros ───────────────────────────────────────────────────────
-  const [filtroCliente, setFiltroCliente] = useState('');
-  const [filtroDistribuidor, setFiltroDistribuidor] = useState('');
-  const [filtroEstadoPago, setFiltroEstadoPago] = useState('');
+  // ── Filtros (inicializados desde query params) ─────────────────────
+  const [filtroCliente, setFiltroCliente] = useState(searchParams.get('cliente') || '');
+  const [filtroDistribuidor, setFiltroDistribuidor] = useState(searchParams.get('distribuidor') || '');
+  const [filtroEstadoPago, setFiltroEstadoPago] = useState(searchParams.get('estadoPago') || '');
+  const [filtroFuente, setFiltroFuente] = useState(searchParams.get('fuente') || '');
+  const [filtroFacturado, setFiltroFacturado] = useState(searchParams.get('facturado') || '');
+  const [filtroPagado, setFiltroPagado] = useState(searchParams.get('pagado') ?? 'NO');
 
   // ── Ordenes state ─────────────────────────────────────────────────
   const [ordenes, setOrdenes] = useState<OrdenPago[]>([]);
@@ -273,14 +291,21 @@ export const PagosPage: React.FC<Props> = ({
   const fetchLiquidaciones = useCallback(async () => {
     setLoadingLiq(true);
     try {
-      const json = await api.get('/pagos/liquidaciones');
+      const params = new URLSearchParams();
+      if (filtroCliente) params.set('cliente_nombre', filtroCliente);
+      if (filtroDistribuidor) params.set('distribuidor', filtroDistribuidor);
+      if (filtroFuente) params.set('fuente', filtroFuente);
+      if (filtroFacturado) params.set('facturado', filtroFacturado);
+      if (filtroPagado) params.set('pagado', filtroPagado);
+      const qs = params.toString();
+      const json = await api.get(`/pagos/liquidaciones-unificado${qs ? '?' + qs : ''}`);
       setLiquidaciones(json.data ?? []);
     } catch (e: any) {
       setMsg({ type: 'err', text: e.message });
     } finally {
       setLoadingLiq(false);
     }
-  }, [api]);
+  }, [api, filtroCliente, filtroDistribuidor, filtroFuente, filtroFacturado, filtroPagado]);
 
   // ── Fetch ordenes ─────────────────────────────────────────────────
   const fetchOrdenes = useCallback(async () => {
@@ -304,6 +329,19 @@ export const PagosPage: React.FC<Props> = ({
       /* silent */
     }
   }, [api]);
+
+  // ── Sync filtros a URL query params ────────────────────────────────
+  useEffect(() => {
+    const p = new URLSearchParams();
+    if (tab !== 'liquidaciones') p.set('tab', tab);
+    if (filtroCliente) p.set('cliente', filtroCliente);
+    if (filtroDistribuidor) p.set('distribuidor', filtroDistribuidor);
+    if (filtroFuente) p.set('fuente', filtroFuente);
+    if (filtroFacturado) p.set('facturado', filtroFacturado);
+    if (filtroPagado && filtroPagado !== 'NO') p.set('pagado', filtroPagado);
+    if (filtroEstadoPago) p.set('estadoPago', filtroEstadoPago);
+    setSearchParams(p, { replace: true });
+  }, [tab, filtroCliente, filtroDistribuidor, filtroFuente, filtroFacturado, filtroPagado, filtroEstadoPago, setSearchParams]);
 
   // ── Initial load ──────────────────────────────────────────────────
   useEffect(() => {
@@ -336,20 +374,15 @@ export const PagosPage: React.FC<Props> = ({
 
   // ── Filtrado ──────────────────────────────────────────────────────
   const filteredLiq = useMemo(() => {
+    // Los filtros principales ya se aplican en el backend; solo filtros locales rápidos aquí
     let rows = liquidaciones;
-    if (filtroCliente) {
-      rows = rows.filter((r) => r.cliente_nombre.toLowerCase().includes(filtroCliente.toLowerCase()));
-    }
-    if (filtroDistribuidor) {
-      rows = rows.filter((r) => r.distribuidor_nombre.toLowerCase().includes(filtroDistribuidor.toLowerCase()));
-    }
     if (filtroEstadoPago === 'SIN_OP') {
       rows = rows.filter((r) => !r.estado_pago);
     } else if (filtroEstadoPago) {
       rows = rows.filter((r) => r.estado_pago === filtroEstadoPago);
     }
     return rows;
-  }, [liquidaciones, filtroCliente, filtroDistribuidor, filtroEstadoPago]);
+  }, [liquidaciones, filtroEstadoPago]);
 
   const filteredOrdenes = useMemo(() => {
     let rows = ordenes;
@@ -447,13 +480,16 @@ export const PagosPage: React.FC<Props> = ({
   const collapseAll = () => setExpandedNodes(new Set());
 
   // ── Selection helpers ─────────────────────────────────────────────
-  const disponibles = useMemo(() => filteredLiq.filter((r) => !r.estado_pago), [filteredLiq]);
+  const disponibles = useMemo(() => filteredLiq.filter((r) => !r.tiene_op_activa && !r.pagado), [filteredLiq]);
 
-  const toggleSelect = (id: number) => {
+  const rowKey = (r: LiqRow) => `${r.fuente}:${r.id}`;
+
+  const toggleSelect = (r: LiqRow) => {
+    const key = rowKey(r);
     setSelectedIds((prev) => {
       const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
       return next;
     });
   };
@@ -462,15 +498,28 @@ export const PagosPage: React.FC<Props> = ({
     if (selectedIds.size === disponibles.length && disponibles.length > 0) {
       setSelectedIds(new Set());
     } else {
-      setSelectedIds(new Set(disponibles.map((r) => r.id)));
+      setSelectedIds(new Set(disponibles.map((r) => rowKey(r))));
     }
   };
 
   const totalSeleccionado = useMemo(() => {
-    return filteredLiq.filter((r) => selectedIds.has(r.id)).reduce((sum, r) => sum + num(r.total_a_pagar), 0);
+    return filteredLiq.filter((r) => selectedIds.has(`${r.fuente}:${r.id}`)).reduce((sum, r) => sum + num(r.importe), 0);
   }, [filteredLiq, selectedIds]);
 
   // ── Flujo PAGAR - Paso 2: Validar ────────────────────────────────
+  // Construir items seleccionados para enviar al backend
+  const buildSelectedItems = useCallback(() => {
+    return filteredLiq
+      .filter((r) => selectedIds.has(rowKey(r)))
+      .map((r) => ({
+        fuente: r.fuente,
+        fuente_id: r.fuente_id,
+        archivo_id: r.archivo_id,
+        persona_id: r.persona_id,
+        importe: r.importe,
+      }));
+  }, [filteredLiq, selectedIds]);
+
   const handlePagar = useCallback(async () => {
     if (selectedIds.size === 0) return;
     setPagoStep('validando');
@@ -478,9 +527,8 @@ export const PagosPage: React.FC<Props> = ({
     setMsg(null);
 
     try {
-      const json: ValidacionResult = await api.post('/pagos/validar-beneficiarios', {
-        liquidacion_ids: Array.from(selectedIds),
-      });
+      const items = buildSelectedItems();
+      const json: ValidacionResult = await api.post('/pagos/validar-beneficiarios', { items });
       setValidacion(json);
 
       if (json.validas.length === 0) {
@@ -523,7 +571,10 @@ export const PagosPage: React.FC<Props> = ({
         concepto_id: pagoConceptoId,
         numero: pagoNumero || null,
         agrupacion: pagoAgrupacion,
-        liquidacion_ids: validacion.validas.map((v) => v.liquidacion_id),
+        items: validacion.validas.map((v) => ({
+          fuente: v.fuente, fuente_id: v.fuente_id, archivo_id: v.archivo_id,
+          persona_id: v.persona_id ?? v.distribuidor_id, importe: v.total_a_pagar,
+        })),
         anio: pagoAnio,
         mes: pagoMes,
         observaciones: pagoObs || null,
@@ -547,7 +598,10 @@ export const PagosPage: React.FC<Props> = ({
         concepto_id: pagoConceptoId,
         numero: pagoNumero || null,
         agrupacion: pagoAgrupacion,
-        liquidacion_ids: validacion.validas.map((v) => v.liquidacion_id),
+        items: validacion.validas.map((v) => ({
+          fuente: v.fuente, fuente_id: v.fuente_id, archivo_id: v.archivo_id,
+          persona_id: v.persona_id ?? v.distribuidor_id, importe: v.total_a_pagar,
+        })),
         anio: pagoAnio,
         mes: pagoMes,
         observaciones: pagoObs || null,
@@ -702,6 +756,30 @@ export const PagosPage: React.FC<Props> = ({
                 <input type="text" value={filtroDistribuidor} onChange={(e) => setFiltroDistribuidor(e.target.value)} placeholder="Buscar por nombre..." />
               </div>
               <div className="filter-field">
+                <label>Fuente</label>
+                <select value={filtroFuente} onChange={(e) => setFiltroFuente(e.target.value)}>
+                  <option value="">Todas</option>
+                  <option value="EXTRACTO">Extracto</option>
+                  <option value="LEGACY">Legacy</option>
+                </select>
+              </div>
+              <div className="filter-field">
+                <label>Facturado</label>
+                <select value={filtroFacturado} onChange={(e) => setFiltroFacturado(e.target.value)}>
+                  <option value="">Todos</option>
+                  <option value="SI">SI</option>
+                  <option value="NO">NO</option>
+                </select>
+              </div>
+              <div className="filter-field">
+                <label>Pagado</label>
+                <select value={filtroPagado} onChange={(e) => setFiltroPagado(e.target.value)}>
+                  <option value="">Todos</option>
+                  <option value="SI">SI</option>
+                  <option value="NO">NO</option>
+                </select>
+              </div>
+              <div className="filter-field">
                 <label>Estado pago</label>
                 <select value={filtroEstadoPago} onChange={(e) => setFiltroEstadoPago(e.target.value)}>
                   <option value="">Todos</option>
@@ -743,17 +821,17 @@ export const PagosPage: React.FC<Props> = ({
                   <th style={{ width: 36 }}>
                     <input type="checkbox" checked={disponibles.length > 0 && selectedIds.size === disponibles.length} onChange={toggleSelectAll} />
                   </th>
+                  <th>Fuente</th>
                   <th>Cliente</th>
-                  <th>Sucursal</th>
                   <th>Periodo</th>
                   <th>Distribuidor</th>
-                  <th>Cobrador</th>
-                  <th style={{ textAlign: 'right' }}>Subtotal</th>
-                  <th style={{ textAlign: 'right' }}>Gastos</th>
-                  <th style={{ textAlign: 'right' }}>A Pagar</th>
-                  <th>Estado Liq.</th>
+                  <th style={{ textAlign: 'right' }}>Importe</th>
+                  <th>Enviada</th>
+                  <th>Facturado</th>
+                  <th>Pagado</th>
                   <th>Estado Pago</th>
                   <th>OP</th>
+                  <th>Acciones</th>
                 </tr>
               </thead>
               <tbody>
@@ -763,32 +841,41 @@ export const PagosPage: React.FC<Props> = ({
                   </tr>
                 ) : filteredLiq.length === 0 ? (
                   <tr>
-                    <td colSpan={12} style={{ textAlign: 'center', padding: 24, color: '#888' }}>No hay liquidaciones disponibles</td>
+                    <td colSpan={12} style={{ textAlign: 'center', padding: 24, color: '#888' }}>No hay liquidaciones</td>
                   </tr>
                 ) : (
                   filteredLiq.map((row) => {
-                    const tieneOp = !!row.estado_pago;
-                    const periodo = row.periodo_desde
-                      ? row.periodo_desde.substring(0, 7)
-                      : '';
+                    const key = rowKey(row);
+                    const selectable = !row.tiene_op_activa && !row.pagado;
                     return (
-                      <tr key={row.id} className={selectedIds.has(row.id) ? 'row-selected' : ''}>
+                      <tr key={key} className={selectedIds.has(key) ? 'row-selected' : ''}>
                         <td>
-                          {!tieneOp ? (
-                            <input type="checkbox" checked={selectedIds.has(row.id)} onChange={() => toggleSelect(row.id)} />
+                          {selectable ? (
+                            <input type="checkbox" checked={selectedIds.has(key)} onChange={() => toggleSelect(row)} />
                           ) : null}
                         </td>
-                        <td>{row.cliente_nombre}</td>
-                        <td>{row.sucursal}</td>
-                        <td>{periodo}</td>
-                        <td>{row.distribuidor_nombre}</td>
-                        <td>{row.cobrador_nombre ?? ''}</td>
-                        <td style={{ textAlign: 'right' }}>{fmt(num(row.subtotal))}</td>
-                        <td style={{ textAlign: 'right' }}>{fmt(num(row.gastos_administrativos))}</td>
-                        <td style={{ textAlign: 'right', fontWeight: 600 }}>{fmt(num(row.total_a_pagar))}</td>
                         <td>
-                          <span className="status-badge" style={{ backgroundColor: ESTADO_LIQ_COLORS[row.estado_liquidacion] ?? '#6b7280' }}>
-                            {row.estado_liquidacion}
+                          <span className={`pagos-fuente-badge pagos-fuente-badge--${row.fuente.toLowerCase()}`}>
+                            {row.fuente === 'EXTRACTO' ? 'Extracto' : 'Legacy'}
+                          </span>
+                        </td>
+                        <td>{row.cliente_nombre}</td>
+                        <td>{row.periodo}</td>
+                        <td>{row.distribuidor_nombre}</td>
+                        <td style={{ textAlign: 'right', fontWeight: 600 }}>{fmt(row.importe)}</td>
+                        <td>
+                          <span className={`pagos-sino pagos-sino--${row.enviada ? 'si' : 'no'}`}>
+                            {row.enviada ? 'SI' : 'NO'}
+                          </span>
+                        </td>
+                        <td>
+                          <span className={`pagos-sino pagos-sino--${row.facturado ? 'si' : 'no'}`}>
+                            {row.facturado ? 'SI' : 'NO'}
+                          </span>
+                        </td>
+                        <td>
+                          <span className={`pagos-sino pagos-sino--${row.pagado ? 'si' : 'pagado-no'}`}>
+                            {row.pagado ? 'SI' : 'NO'}
                           </span>
                         </td>
                         <td>
@@ -797,7 +884,7 @@ export const PagosPage: React.FC<Props> = ({
                               {ESTADO_PAGO_LABELS[row.estado_pago] ?? row.estado_pago}
                             </span>
                           ) : (
-                            <span style={{ color: '#aaa' }}>Sin OP</span>
+                            <span style={{ color: '#aaa' }}>-</span>
                           )}
                         </td>
                         <td>
@@ -806,6 +893,36 @@ export const PagosPage: React.FC<Props> = ({
                               {row.op_numero_display}
                             </button>
                           ) : null}
+                        </td>
+                        <td>
+                          <div className="pagos-actions-cell">
+                            {/* Ver Liquidación PDF */}
+                            <button
+                              className="pagos-action-btn"
+                              title="Ver PDF de liquidación"
+                              onClick={() => {
+                                if (row.pdf_url_tipo === 'extracto' && row.pdf_liq_dist_id) {
+                                  window.open(`${baseUrlRef.current}/api/liq/liquidaciones-distribuidor/${row.pdf_liq_dist_id}/pdf`, '_blank');
+                                } else if (row.pdf_persona_id && row.pdf_archivo_id) {
+                                  window.open(`${baseUrlRef.current}/api/personal/${row.pdf_persona_id}/documentos/${row.pdf_archivo_id}/descargar`, '_blank');
+                                }
+                              }}
+                            >
+                              Liq
+                            </button>
+                            {/* Ver Factura (solo si facturado) */}
+                            {row.facturado && row.factura_doc_id ? (
+                              <button
+                                className="pagos-action-btn pagos-action-btn--primary"
+                                title="Ver factura del distribuidor"
+                                onClick={() => {
+                                  window.open(`${baseUrlRef.current}/api/personal/${row.persona_id}/documentos/${row.factura_doc_id}/descargar`, '_blank');
+                                }}
+                              >
+                                Fact
+                              </button>
+                            ) : null}
+                          </div>
                         </td>
                       </tr>
                     );
@@ -1011,7 +1128,7 @@ export const PagosPage: React.FC<Props> = ({
                   <ul>
                     {validacion.errores.map((e, i) => (
                       <li key={i}>
-                        {e.distribuidor_nombre ?? `Liq #${e.liquidacion_id}`}: {(e.motivos ?? [e as any]).join(', ')}
+                        {e.distribuidor_nombre ?? 'Desconocido'}: {(e.motivos ?? []).join(', ')}
                       </li>
                     ))}
                   </ul>
@@ -1185,7 +1302,7 @@ export const PagosPage: React.FC<Props> = ({
                   <ul>
                     {validacion.errores.map((e, i) => (
                       <li key={i}>
-                        {e.distribuidor_nombre ?? `Liq #${e.liquidacion_id}`}: {(e.motivos ?? []).join(', ')}
+                        {e.distribuidor_nombre ?? 'Desconocido'}: {(e.motivos ?? []).join(', ')}
                       </li>
                     ))}
                   </ul>

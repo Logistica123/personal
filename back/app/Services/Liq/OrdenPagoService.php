@@ -79,8 +79,12 @@ class OrdenPagoService
         $concepto = LiqOrdenPagoConcepto::findOrFail($params['concepto_id']);
         $agrupacion = $params['agrupacion'] ?? LiqOrdenPago::AGRUPACION_INDIVIDUAL;
 
-        // Validar beneficiarios
-        $resultado = $this->beneficiarioResolver->validar($params['liquidacion_ids']);
+        // Validar beneficiarios (soporta items unificados o liquidacion_ids legacy)
+        if (!empty($params['items'])) {
+            $resultado = $this->beneficiarioResolver->validarUnificado($params['items']);
+        } else {
+            $resultado = $this->beneficiarioResolver->validar($params['liquidacion_ids'] ?? []);
+        }
 
         if (empty($resultado['validas'])) {
             return [
@@ -241,14 +245,20 @@ class OrdenPagoService
         DB::transaction(function () use ($op) {
             $op->update(['estado' => LiqOrdenPago::ESTADO_CONFIRMADA]);
 
-            // Actualizar estado de cada liquidacion_distribuidor a 'pagada'
             foreach ($op->detalles as $detalle) {
-                $liqDist = $detalle->liquidacionDistribuidor;
-                if ($liqDist) {
-                    $liqDist->update(['estado' => LiqLiquidacionDistribuidor::ESTADO_PAGADA]);
-
-                    // Integración post-pago con módulo de documentos (archivo pagado)
-                    $this->marcarDocumentoPagado($liqDist);
+                if ($detalle->fuente === LiqOrdenPagoDetalle::FUENTE_EXTRACTO && $detalle->liquidacion_distribuidor_id) {
+                    // Extracto: marcar liquidacion como pagada
+                    $liqDist = $detalle->liquidacionDistribuidor;
+                    if ($liqDist) {
+                        $liqDist->update(['estado' => LiqLiquidacionDistribuidor::ESTADO_PAGADA]);
+                        $this->marcarDocumentoPagado($liqDist);
+                    }
+                } elseif ($detalle->fuente === LiqOrdenPagoDetalle::FUENTE_LEGACY && $detalle->archivo_id) {
+                    // Legacy: marcar archivo como pagado
+                    $archivo = $detalle->archivo;
+                    if ($archivo && !$archivo->pagado) {
+                        $archivo->update(['pagado' => true]);
+                    }
                 }
             }
         });
@@ -293,56 +303,83 @@ class OrdenPagoService
         $totalFinal = 0;
 
         foreach ($liquidaciones as $liqData) {
-            $liqDist = LiqLiquidacionDistribuidor::with([
-                'liquidacionCliente.cliente:id,nombre_corto',
-                'distribuidor:id,apellidos,nombres,es_cobrador,cobrador_nombre',
-            ])->find($liqData['liquidacion_id']);
-
-            if (!$liqDist) {
-                continue;
-            }
-
-            $clienteNombre = $liqDist->liquidacionCliente?->cliente?->nombre_corto ?? 'N/A';
-            $sucursal = $liqDist->liquidacionCliente?->sucursal_tarifa ?? 'N/A';
-
-            // Formatear periodo
-            $periodoDesde = $liqDist->periodo_desde?->format('Y-m');
-            $periodoHasta = $liqDist->periodo_hasta?->format('Y-m');
-            $periodo = $periodoDesde === $periodoHasta ? $periodoDesde : "{$periodoDesde} a {$periodoHasta}";
-
+            $fuente = $liqData['fuente'] ?? 'EXTRACTO';
             $distribuidorNombre = $liqData['distribuidor_nombre'];
-            $cobradorNombre = $liqData['beneficiario_tipo'] === 'COBRADOR'
-                ? $liqData['beneficiario_nombre']
-                : null;
+            $cobradorNombre = $liqData['beneficiario_tipo'] === 'COBRADOR' ? $liqData['beneficiario_nombre'] : null;
 
-            $subtotalLiq = (float) $liqDist->subtotal;
-            $gastosAdmin = (float) $liqDist->gastos_administrativos;
-            $importeFinal = (float) $liqDist->total_a_pagar;
+            if ($fuente === 'EXTRACTO') {
+                // ── Extracto: datos de liq_liquidaciones_distribuidor ──
+                $liqDist = LiqLiquidacionDistribuidor::with([
+                    'liquidacionCliente.cliente:id,nombre_corto',
+                ])->find($liqData['fuente_id'] ?? $liqData['liquidacion_id'] ?? null);
 
-            // Buscar descuentos desglosados en archivos
-            $descCombustible = $this->buscarDescuentoArchivo($liqDist->distribuidor_id, 'DESCUENTO_COMBUSTIBLE', $liqDist);
-            $descPaquete = $this->buscarDescuentoArchivo($liqDist->distribuidor_id, 'DESCUENTO_PAQUETE', $liqDist);
-            $descAjuste = $this->buscarDescuentoArchivo($liqDist->distribuidor_id, 'AJUSTE_LIQUIDACION', $liqDist);
+                if (!$liqDist) continue;
 
-            $detalle = LiqOrdenPagoDetalle::create([
-                'orden_pago_id'              => $op->id,
-                'liquidacion_distribuidor_id' => $liqDist->id,
-                'cliente_nombre'             => $clienteNombre,
-                'sucursal'                   => $sucursal,
-                'periodo'                    => $periodo,
-                'distribuidor_nombre'        => $distribuidorNombre,
-                'cobrador_nombre'            => $cobradorNombre,
-                'subtotal_liquidacion'       => $subtotalLiq,
-                'gastos_admin'               => $gastosAdmin,
-                'descuento_combustible'      => $descCombustible,
-                'descuento_paquete'          => $descPaquete,
-                'descuento_ajuste'           => $descAjuste,
-                'otros_descuentos'           => 0,
-                'importe_final'              => $importeFinal,
-            ]);
+                $clienteNombre = $liqDist->liquidacionCliente?->cliente?->nombre_corto ?? 'N/A';
+                $sucursalVal = $liqDist->liquidacionCliente?->sucursal_tarifa ?? 'N/A';
+                $periodoDesde = $liqDist->periodo_desde?->format('Y-m');
+                $periodoHasta = $liqDist->periodo_hasta?->format('Y-m');
+                $periodo = $periodoDesde === $periodoHasta ? $periodoDesde : "{$periodoDesde} a {$periodoHasta}";
 
-            $totalDescuentos += $gastosAdmin + $descCombustible + $descPaquete + $descAjuste;
-            $totalFinal += $importeFinal;
+                $subtotalLiq = (float) $liqDist->subtotal;
+                $gastosAdmin = (float) $liqDist->gastos_administrativos;
+                $importeFinal = (float) $liqDist->total_a_pagar;
+
+                $descCombustible = $this->buscarDescuentoArchivo($liqDist->distribuidor_id, 'DESCUENTO_COMBUSTIBLE', $liqDist);
+                $descPaquete = $this->buscarDescuentoArchivo($liqDist->distribuidor_id, 'DESCUENTO_PAQUETE', $liqDist);
+                $descAjuste = $this->buscarDescuentoArchivo($liqDist->distribuidor_id, 'AJUSTE_LIQUIDACION', $liqDist);
+
+                LiqOrdenPagoDetalle::create([
+                    'orden_pago_id'              => $op->id,
+                    'liquidacion_distribuidor_id' => $liqDist->id,
+                    'archivo_id'                 => null,
+                    'fuente'                     => 'EXTRACTO',
+                    'cliente_nombre'             => $clienteNombre,
+                    'sucursal'                   => $sucursalVal,
+                    'periodo'                    => $periodo,
+                    'distribuidor_nombre'        => $distribuidorNombre,
+                    'cobrador_nombre'            => $cobradorNombre,
+                    'subtotal_liquidacion'       => $subtotalLiq,
+                    'gastos_admin'               => $gastosAdmin,
+                    'descuento_combustible'      => $descCombustible,
+                    'descuento_paquete'          => $descPaquete,
+                    'descuento_ajuste'           => $descAjuste,
+                    'otros_descuentos'           => 0,
+                    'importe_final'              => $importeFinal,
+                ]);
+
+                $totalDescuentos += $gastosAdmin + $descCombustible + $descPaquete + $descAjuste;
+                $totalFinal += $importeFinal;
+            } else {
+                // ── Legacy: datos de archivos ──
+                $archivo = \App\Models\Archivo::with('persona.cliente:id,nombre')->find($liqData['archivo_id']);
+                if (!$archivo) continue;
+
+                $persona = $archivo->persona;
+                $clienteNombre = $persona?->cliente?->nombre ?? 'N/A';
+                $importeFinal = (float) $archivo->importe_facturar;
+
+                LiqOrdenPagoDetalle::create([
+                    'orden_pago_id'              => $op->id,
+                    'liquidacion_distribuidor_id' => null,
+                    'archivo_id'                 => $archivo->id,
+                    'fuente'                     => 'LEGACY',
+                    'cliente_nombre'             => $clienteNombre,
+                    'sucursal'                   => '',
+                    'periodo'                    => '',
+                    'distribuidor_nombre'        => $distribuidorNombre,
+                    'cobrador_nombre'            => $cobradorNombre,
+                    'subtotal_liquidacion'       => $importeFinal,
+                    'gastos_admin'               => 0,
+                    'descuento_combustible'      => 0,
+                    'descuento_paquete'          => 0,
+                    'descuento_ajuste'           => 0,
+                    'otros_descuentos'           => 0,
+                    'importe_final'              => $importeFinal,
+                ]);
+
+                $totalFinal += $importeFinal;
+            }
         }
 
         // Recalcular totales reales

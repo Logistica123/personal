@@ -4941,25 +4941,7 @@ export const LiquidacionesPage: React.FC<LiquidacionesPageProps> = ({
         <button type="button" className="secondary-action" onClick={() => navigate('/personal')}>
           Ir a personal
         </button>
-        <button
-          type="button"
-          className="secondary-action"
-          onClick={() => updateListPagadoStatus(true)}
-          disabled={selectedListPagadoIds.size === 0 || listPagadoUpdating}
-        >
-          Marcar pagado
-        </button>
-        <button
-          type="button"
-          className="secondary-action secondary-action--ghost"
-          onClick={() => updateListPagadoStatus(false)}
-          disabled={selectedListPagadoIds.size === 0 || listPagadoUpdating}
-        >
-          Desmarcar pagado
-        </button>
-        {selectedListPagadoIds.size > 0 ? (
-          <span className="form-info">{`${selectedListPagadoIds.size} seleccionada${selectedListPagadoIds.size === 1 ? '' : 's'}`}</span>
-        ) : null}
+        {/* Botones de pagado removidos - el pago se gestiona desde el módulo de Pagos */}
       </div>
       {isPagosView && pagosMonthChips.length > 0 ? (
         <div className="filters-actions" style={{ gap: '0.5rem', flexWrap: 'wrap' }}>
@@ -5588,27 +5570,7 @@ export const LiquidacionesPage: React.FC<LiquidacionesPageProps> = ({
           </label>
         </div>
 
-        <div className="liquidaciones-actions">
-          <button
-            type="button"
-            className="secondary-action"
-            onClick={() => updatePagadoStatus(true)}
-            disabled={selectedPagadoIds.size === 0 || pagadoUpdating}
-          >
-            Marcar pagado
-          </button>
-          <button
-            type="button"
-            className="secondary-action secondary-action--ghost"
-            onClick={() => updatePagadoStatus(false)}
-            disabled={selectedPagadoIds.size === 0 || pagadoUpdating}
-          >
-            Desmarcar pagado
-          </button>
-          {selectedPagadoIds.size > 0 ? (
-            <span className="form-info">{`${selectedPagadoIds.size} seleccionada${selectedPagadoIds.size === 1 ? '' : 's'}`}</span>
-          ) : null}
-        </div>
+        {/* Botones de pagado removidos - el pago se gestiona desde el módulo de Pagos */}
 
         {selectedPersonaId ? (
           <div className="dashboard-card" style={{ marginBottom: '0.85rem' }}>
@@ -5734,13 +5696,6 @@ export const LiquidacionesPage: React.FC<LiquidacionesPageProps> = ({
                   <th>
                     <div className="liquidaciones-pagado-header">
                       <span>Pagado</span>
-                      <input
-                        type="checkbox"
-                        aria-label="Seleccionar todas las liquidaciones"
-                        checked={allPagadoSelected}
-                        onChange={togglePagadoSelectAll}
-                        disabled={visibleMainLiquidacionIds.length === 0}
-                      />
                     </div>
                   </th>
                   <th style={{ width: '200px' }}>Acciones</th>
@@ -5801,12 +5756,6 @@ export const LiquidacionesPage: React.FC<LiquidacionesPageProps> = ({
                                 <td>
                                   <div className="liquidaciones-pagado-cell">
                                     {renderLiquidacionStatus(group.main.pagado)}
-                                    <input
-                                      type="checkbox"
-                                      aria-label={`Seleccionar liquidación ${group.main.id}`}
-                                      checked={selectedPagadoIds.has(group.main.id)}
-                                      onChange={() => togglePagadoSelection(group.main.id)}
-                                    />
                                   </div>
                                 </td>
                                 <td className="table-actions">

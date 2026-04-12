@@ -308,6 +308,7 @@ Route::middleware('auth.api')->group(function () {
             Route::get('/conceptos/{concepto}/proximo-numero', [LiqPagosController::class, 'proximoNumero']);
             Route::get('/liquidaciones', [LiqPagosController::class, 'liquidaciones']);
             Route::get('/liquidaciones/exportar', [LiqPagosController::class, 'exportarLiquidaciones']);
+            Route::get('/liquidaciones-unificado', [LiqPagosController::class, 'liquidacionesUnificado']);
             Route::get('/ordenes', [LiqPagosController::class, 'ordenes']);
             Route::get('/ordenes/exportar', [LiqPagosController::class, 'exportarOrdenes']);
             Route::get('/ordenes/{ordenPago}', [LiqPagosController::class, 'showOrden']);

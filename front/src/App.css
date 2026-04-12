@@ -9504,6 +9504,45 @@ tbody tr:hover {
   resize: vertical;
 }
 
+/* ── Badges fuente y SI/NO ─────────────────────────────────────────── */
+
+.pagos-fuente-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+.pagos-fuente-badge--extracto {
+  background: #dbeafe;
+  color: #1e40af;
+}
+
+.pagos-fuente-badge--legacy {
+  background: #f3f4f6;
+  color: #4b5563;
+}
+
+.pagos-sino {
+  font-weight: 600;
+  font-size: 0.8rem;
+}
+
+.pagos-sino--si {
+  color: #16a34a;
+}
+
+.pagos-sino--no {
+  color: #dc2626;
+}
+
+.pagos-sino--pagado-no {
+  color: #9ca3af;
+}
+
 /* ── Nuevo concepto inline ─────────────────────────────────────────── */
 
 .pagos-nuevo-concepto {

@@ -10,6 +10,7 @@ use App\Services\Liq\BeneficiarioResolver;
 use App\Services\Liq\Banco\BancoTransferenciaService;
 use App\Services\Liq\OrdenPagoService;
 use App\Services\Liq\OrdenPagoPdfService;
+use App\Services\Liq\PagosUnificadoService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
@@ -22,6 +23,7 @@ class LiqPagosController extends Controller
         private readonly BeneficiarioResolver $beneficiarioResolver,
         private readonly BancoTransferenciaService $bancoService,
         private readonly OrdenPagoPdfService $pdfService,
+        private readonly PagosUnificadoService $unificadoService,
     ) {
     }
 
@@ -125,15 +127,31 @@ class LiqPagosController extends Controller
         return response()->json(['data' => $data]);
     }
 
+    // GET /api/liq/pagos/liquidaciones-unificado
+    public function liquidacionesUnificado(Request $request): JsonResponse
+    {
+        $filtros = $request->only([
+            'cliente_nombre', 'distribuidor', 'fuente', 'facturado', 'pagado', 'estado_liq',
+        ]);
+
+        $data = $this->unificadoService->listarUnificado($filtros);
+
+        return response()->json(['data' => $data]);
+    }
+
     // POST /api/liq/pagos/validar-beneficiarios
     public function validarBeneficiarios(Request $request): JsonResponse
     {
         $validated = $request->validate([
-            'liquidacion_ids'   => ['required', 'array', 'min:1'],
-            'liquidacion_ids.*' => ['integer', 'exists:liq_liquidaciones_distribuidor,id'],
+            'items'          => ['required', 'array', 'min:1'],
+            'items.*.fuente' => ['required', Rule::in(['EXTRACTO', 'LEGACY'])],
+            'items.*.fuente_id' => ['nullable', 'integer'],
+            'items.*.archivo_id' => ['nullable', 'integer'],
+            'items.*.persona_id' => ['required', 'integer'],
+            'items.*.importe'    => ['required', 'numeric', 'min:0.01'],
         ]);
 
-        $resultado = $this->beneficiarioResolver->validar($validated['liquidacion_ids']);
+        $resultado = $this->beneficiarioResolver->validarUnificado($validated['items']);
 
         return response()->json($resultado);
     }
@@ -352,14 +370,18 @@ class LiqPagosController extends Controller
     public function storeOrden(Request $request): JsonResponse
     {
         $validated = $request->validate([
-            'concepto_id'       => ['required', 'integer', 'exists:liq_ordenes_pago_conceptos,id'],
-            'numero'            => ['nullable', 'integer', 'min:1'],
-            'agrupacion'        => ['required', Rule::in(['INDIVIDUAL', 'GLOBAL'])],
-            'liquidacion_ids'   => ['required', 'array', 'min:1'],
-            'liquidacion_ids.*' => ['integer', 'exists:liq_liquidaciones_distribuidor,id'],
-            'anio'              => ['nullable', 'integer', 'min:2020', 'max:2099'],
-            'mes'               => ['nullable', 'integer', 'min:1', 'max:12'],
-            'observaciones'     => ['nullable', 'string', 'max:5000'],
+            'concepto_id'        => ['required', 'integer', 'exists:liq_ordenes_pago_conceptos,id'],
+            'numero'             => ['nullable', 'integer', 'min:1'],
+            'agrupacion'         => ['required', Rule::in(['INDIVIDUAL', 'GLOBAL'])],
+            'items'              => ['required', 'array', 'min:1'],
+            'items.*.fuente'     => ['required', Rule::in(['EXTRACTO', 'LEGACY'])],
+            'items.*.fuente_id'  => ['nullable', 'integer'],
+            'items.*.archivo_id' => ['nullable', 'integer'],
+            'items.*.persona_id' => ['required', 'integer'],
+            'items.*.importe'    => ['required', 'numeric', 'min:0.01'],
+            'anio'               => ['nullable', 'integer', 'min:2020', 'max:2099'],
+            'mes'                => ['nullable', 'integer', 'min:1', 'max:12'],
+            'observaciones'      => ['nullable', 'string', 'max:5000'],
         ]);
 
         $validated['usuario_id'] = $request->user()?->id;

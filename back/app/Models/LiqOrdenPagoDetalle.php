@@ -11,9 +11,14 @@ class LiqOrdenPagoDetalle extends Model
 
     protected $table = 'liq_ordenes_pago_detalle';
 
+    const FUENTE_EXTRACTO = 'EXTRACTO';
+    const FUENTE_LEGACY   = 'LEGACY';
+
     protected $fillable = [
         'orden_pago_id',
         'liquidacion_distribuidor_id',
+        'archivo_id',
+        'fuente',
         'cliente_nombre',
         'sucursal',
         'periodo',
@@ -51,6 +56,16 @@ class LiqOrdenPagoDetalle extends Model
     public function liquidacionDistribuidor()
     {
         return $this->belongsTo(LiqLiquidacionDistribuidor::class, 'liquidacion_distribuidor_id');
+    }
+
+    public function archivo()
+    {
+        return $this->belongsTo(\App\Models\Archivo::class, 'archivo_id');
+    }
+
+    public function esLegacy(): bool
+    {
+        return $this->fuente === self::FUENTE_LEGACY;
     }
 
     // -------------------------------------------------------------------------
