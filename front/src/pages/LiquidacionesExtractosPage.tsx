@@ -1942,7 +1942,7 @@ export function LiquidacionesExtractosPage({
                         </span>
                       </td>
                       <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
-                        {op.estado === 'sin_tarifa' && !op.excluida && (
+                        {(op.estado === 'sin_tarifa' || op.estado === 'diferencia') && !op.excluida && (
                           <button type="button" className="btn-sm" style={{ marginRight: 4, background: '#fef3c7', color: '#92400e', border: '1px solid #fcd34d' }}
                             onClick={() => { setHotMapOp(op); setHotMapValorTarifa(''); setHotMapDim(isOcaClient ? 'fijo' : 'porcentaje'); setHotMapValorCliente(String(op.valor_cliente)); }}>
                             + Mapeo
