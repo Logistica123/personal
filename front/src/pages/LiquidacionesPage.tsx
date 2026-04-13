@@ -4615,9 +4615,9 @@ export const LiquidacionesPage: React.FC<LiquidacionesPageProps> = ({
       return;
     }
 
-    const fallbackPath = `/api/personal/${detail.id}/documentos/${documento.id}/descargar`;
-    const resolvedUrl = resolveApiUrl(apiBaseUrl, documento.downloadUrl ?? fallbackPath);
-    const downloadUrl = withAuthToken(resolvedUrl);
+    // Siempre usar el endpoint directo con ?inline=1 para preview en navegador
+    const directPath = `${apiBaseUrl}/api/personal/${detail.id}/documentos/${documento.id}/descargar?inline=1`;
+    const downloadUrl = withAuthToken(directPath);
 
     if (!downloadUrl) {
       window.alert('No se pudo determinar la URL de descarga para este documento.');
