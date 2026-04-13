@@ -9504,6 +9504,34 @@ tbody tr:hover {
   resize: vertical;
 }
 
+/* ── Tabla desglose de Ver Liquidaciones ───────────────────────────── */
+
+.liquidaciones-desglose-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.83rem;
+  margin: 6px 0;
+}
+
+.liquidaciones-desglose-table th {
+  background: #f9fafb;
+  padding: 5px 8px;
+  text-align: left;
+  font-weight: 600;
+  color: #374151;
+  border-bottom: 1px solid #e5e7eb;
+  font-size: 0.8rem;
+}
+
+.liquidaciones-desglose-table td {
+  padding: 5px 8px;
+  border-bottom: 1px solid #f3f4f6;
+}
+
+.liquidaciones-desglose-table tr:hover {
+  background: #f8fafc;
+}
+
 /* ── Badges fuente y SI/NO ─────────────────────────────────────────── */
 
 .pagos-fuente-badge {

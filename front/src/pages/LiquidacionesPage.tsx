@@ -5358,63 +5358,77 @@ export const LiquidacionesPage: React.FC<LiquidacionesPageProps> = ({
                 );
 
                 if (isExpanded) {
-                  const colsBeforeEnviada = 1 +
-                    ['id', 'nombre', 'cuil', 'telefono', 'email', 'cbuAlias', 'cobradorCbuAlias', 'cobradorCuil', 'perfil', 'agente', 'estado', 'combustible', 'tarifaEspecial', 'cliente', 'unidad', 'sucursal', 'fechaAlta', 'importeFacturarConDescuento', 'combustibleResumen']
+                  // Calcular colspan total para la fila expandida
+                  const totalVisibleCols = 1 +
+                    ['id', 'nombre', 'cuil', 'telefono', 'email', 'cbuAlias', 'cobradorCbuAlias', 'cobradorCuil', 'perfil', 'agente', 'estado', 'combustible', 'tarifaEspecial', 'cliente', 'unidad', 'sucursal', 'fechaAlta', 'importeFacturarConDescuento', 'combustibleResumen', 'acciones']
                       .filter((key) => isListColumnVisible(key)).length;
-                  liquidaciones
-                    .slice()
-                    .sort((a, b) => String(b.fecha ?? b.monthKey ?? '').localeCompare(String(a.fecha ?? a.monthKey ?? '')))
-                    .forEach((liq) => {
-                      const label = `Liquidación #${liq.id} · ${formatMonthKeyLabel(liq.monthKey)} · ${formatFortnightKeyLabel(liq.fortnightKey)}`;
-                      rows.push(
-                        <tr key={`${rowKey}-liq-${liq.id}`} className="liquidaciones-persona-expanded">
-                          <td />
-                          <td colSpan={colsBeforeEnviada - 1} className="liquidaciones-persona-expanded__label-cell">
-                            <span className="liquidaciones-persona-chip">{label}</span>
-                            {liq.adjuntos && liq.adjuntos.length > 0 && (
-                              <div className="liquidaciones-persona-adjuntos">
-                                {liq.adjuntos.map((adj) => {
-                                  const url = adj.downloadUrl
-                                    ? withAuthToken(resolveApiUrl(apiBaseUrl, adj.downloadUrl))
-                                    : withAuthToken(resolveApiUrl(apiBaseUrl, `/api/personal/${registro.id}/documentos/${adj.id}/descargar`));
-                                  return url ? (
-                                    <a
-                                      key={adj.id}
-                                      href={url}
-                                      target="_blank"
-                                      rel="noopener noreferrer"
-                                      className="liquidaciones-persona-adjunto-link"
-                                      download
-                                    >
-                                      📎 {adj.nombre}
-                                    </a>
-                                  ) : (
-                                    <span key={adj.id} className="liquidaciones-persona-adjunto-link liquidaciones-persona-adjunto-link--disabled">
-                                      📎 {adj.nombre}
-                                    </span>
-                                  );
-                                })}
-                              </div>
-                            )}
-                          </td>
-                          {isListColumnVisible('enviada') ? <td>{renderLiquidacionStatus(liq.enviada)}</td> : null}
-                          {isListColumnVisible('facturado') ? (
-                            <td>
-                              <button
-                                type="button"
-                                className="status-toggle-btn"
-                                title="Clic para cambiar estado de facturación"
-                                onClick={() => void handleToggleRecibido(registro.id, liq.id, liq.recibido)}
-                              >
-                                {renderLiquidacionStatus(liq.recibido)}
-                              </button>
-                            </td>
-                          ) : null}
-                          {isListColumnVisible('pagado') ? <td>{renderLiquidacionStatus(liq.pagado)}</td> : null}
-                          {isListColumnVisible('acciones') ? <td /> : null}
-                        </tr>
-                      );
-                    });
+
+                  rows.push(
+                    <tr key={`${rowKey}-liq-table`} className="liquidaciones-persona-expanded">
+                      <td />
+                      <td colSpan={totalVisibleCols - 1}>
+                        <table className="liquidaciones-desglose-table">
+                          <thead>
+                            <tr>
+                              <th>Nombre</th>
+                              <th>Periodo</th>
+                              <th>Enviada</th>
+                              <th>Facturado</th>
+                              <th>Acciones</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {liquidaciones
+                              .slice()
+                              .sort((a, b) => String(b.fecha ?? b.monthKey ?? '').localeCompare(String(a.fecha ?? a.monthKey ?? '')))
+                              .map((liq) => {
+                                const label = `Liquidación #${liq.id}`;
+                                const periodo = `${formatFortnightKeyLabel(liq.fortnightKey)} ${formatMonthKeyLabel(liq.monthKey)}`;
+                                const facturado = liq.recibido === true;
+                                return (
+                                  <tr key={liq.id}>
+                                    <td>{label}</td>
+                                    <td>{periodo}</td>
+                                    <td>{renderLiquidacionStatus(liq.enviada)}</td>
+                                    <td>
+                                      <button
+                                        type="button"
+                                        className="status-toggle-btn"
+                                        title="Clic para cambiar estado de facturación"
+                                        onClick={() => void handleToggleRecibido(registro.id, liq.id, liq.recibido)}
+                                      >
+                                        {renderLiquidacionStatus(liq.recibido)}
+                                      </button>
+                                    </td>
+                                    <td>
+                                      <div className="pagos-actions-cell">
+                                        <button
+                                          type="button"
+                                          className="pagos-action-btn"
+                                          title="Ver liquidación (preview)"
+                                          onClick={() => window.open(`${apiBaseUrl}/api/personal/${registro.id}/documentos/${liq.id}/descargar?inline=1`, '_blank')}
+                                        >
+                                          Liq
+                                        </button>
+                                        <button
+                                          type="button"
+                                          className={`pagos-action-btn${facturado ? ' pagos-action-btn--primary' : ''}`}
+                                          title={facturado ? 'Ver factura del distribuidor' : 'El distribuidor aun no subió su factura para este periodo'}
+                                          disabled={!facturado}
+                                          onClick={() => window.open(`${apiBaseUrl}/api/liq/pagos/factura-distribuidor/${registro.id}?liquidacion_id=${liq.id}`, '_blank')}
+                                        >
+                                          Fac
+                                        </button>
+                                      </div>
+                                    </td>
+                                  </tr>
+                                );
+                              })}
+                          </tbody>
+                        </table>
+                      </td>
+                    </tr>
+                  );
                 }
 
                 return rows;
