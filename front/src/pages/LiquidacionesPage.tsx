@@ -808,9 +808,6 @@ export const LiquidacionesPage: React.FC<LiquidacionesPageProps> = ({
       { key: 'fechaAlta', label: 'Fecha alta' },
       { key: 'importeFacturarConDescuento', label: 'Importe a facturar con descuento' },
       { key: 'combustibleResumen', label: 'Resumen combustible' },
-      { key: 'enviada', label: 'Enviada' },
-      { key: 'facturado', label: 'Facturado' },
-      { key: 'pagado', label: 'Pagado' },
       { key: 'acciones', label: 'Acciones', locked: true },
     ],
     []
@@ -890,8 +887,12 @@ export const LiquidacionesPage: React.FC<LiquidacionesPageProps> = ({
   ]);
   const listTableColumnCount = listVisibleColumnCount + (isPagosView ? 0 : 1);
   const isListColumnVisible = useCallback(
-    (key: string) =>
-      isPagosView ? visiblePagosColumns[key] !== false : visibleLiquidacionesColumns[key] !== false,
+    (key: string) => {
+      if (isPagosView) return visiblePagosColumns[key] !== false;
+      // En vista liquidaciones: ocultar enviada/facturado/pagado (solo se ven en desglose)
+      if (key === 'enviada' || key === 'facturado' || key === 'pagado') return false;
+      return visibleLiquidacionesColumns[key] !== false;
+    },
     [isPagosView, visiblePagosColumns, visibleLiquidacionesColumns]
   );
   useEffect(() => {
@@ -5693,11 +5694,6 @@ export const LiquidacionesPage: React.FC<LiquidacionesPageProps> = ({
                   <th>Enviada</th>
                   <th>Facturado</th>
                   <th>Validación IA</th>
-                  <th>
-                    <div className="liquidaciones-pagado-header">
-                      <span>Pagado</span>
-                    </div>
-                  </th>
                   <th style={{ width: '200px' }}>Acciones</th>
                 </tr>
               </thead>
@@ -5753,12 +5749,28 @@ export const LiquidacionesPage: React.FC<LiquidacionesPageProps> = ({
                                   </button>
                                 </td>
                                 <td>{renderAiValidationStatus(group.main)}</td>
-                                <td>
-                                  <div className="liquidaciones-pagado-cell">
-                                    {renderLiquidacionStatus(group.main.pagado)}
-                                  </div>
-                                </td>
                                 <td className="table-actions">
+                                  <button
+                                    type="button"
+                                    className="pagos-action-btn"
+                                    title="Ver liquidación (preview)"
+                                    onClick={() => {
+                                      window.open(`${apiBaseUrl}/api/personal/${selectedPersonaId}/documentos/${group.main.id}/descargar?inline=1`, '_blank');
+                                    }}
+                                  >
+                                    Liq
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className={`pagos-action-btn${group.main.recibido ? ' pagos-action-btn--primary' : ''}`}
+                                    title={group.main.recibido ? 'Ver factura del distribuidor' : 'El distribuidor aun no subió su factura para este periodo'}
+                                    disabled={!group.main.recibido}
+                                    onClick={() => {
+                                      window.open(`${apiBaseUrl}/api/liq/pagos/factura-distribuidor/${selectedPersonaId}?liquidacion_id=${group.main.id}`, '_blank');
+                                    }}
+                                  >
+                                    Fac
+                                  </button>
                                   <button
                                     type="button"
                                     className="secondary-action"
