@@ -695,7 +695,7 @@ const canAccessSection = (
   }
 
   if (Array.isArray(permissions)) {
-    if (permissions.includes(section) && section !== 'liquidaciones') {
+    if (permissions.includes(section)) {
       return true;
     }
 

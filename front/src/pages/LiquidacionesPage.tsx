@@ -471,6 +471,7 @@ export const LiquidacionesPage: React.FC<LiquidacionesPageProps> = ({
   const authUser = useStoredAuthUser();
   const actorHeaders = useMemo(() => buildActorHeaders(authUser), [authUser]);
   const isAsesor = (authUser?.role ?? '').toLowerCase().includes('asesor');
+  const isAdminRole = (authUser?.role ?? '').toLowerCase() === 'admin' || (authUser?.role ?? '').toLowerCase() === 'admin2';
   const [personal, setPersonal] = useState<PersonalRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -5331,7 +5332,7 @@ export const LiquidacionesPage: React.FC<LiquidacionesPageProps> = ({
                   {isListColumnVisible('acciones') ? (
                     <td>
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
-                        {!isAsesor ? (
+                        {isAdminRole ? (
                           <button
                             type="button"
                             className="secondary-action"
