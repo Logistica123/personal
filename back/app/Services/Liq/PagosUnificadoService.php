@@ -108,7 +108,7 @@ class PagosUnificadoService
                 'cobrador_nombre'     => $dist?->es_cobrador ? $dist->cobrador_nombre : null,
                 'importe'             => (float) $liq->total_a_pagar,
                 'enviada'             => in_array($estado, ['subida', 'publicada', 'pagada']),
-                'facturado'           => $this->tieneFacturaDistribuidor($liq->distribuidor_id, null),
+                'facturado'           => false, // Extractos no tienen archivo padre en tabla archivos
                 'factura_doc_id'      => null, // Se usa endpoint factura-distribuidor
                 'pagado'              => $estado === 'pagada',
                 'estado_liquidacion'  => $estado,
@@ -192,7 +192,7 @@ class PagosUnificadoService
                 'cobrador_nombre'     => $persona?->es_cobrador ? $persona->cobrador_nombre : null,
                 'importe'             => max($importeConDescuento, 0),
                 'enviada'             => (bool) $archivo->enviada,
-                'facturado'           => $this->tieneFacturaDistribuidor($archivo->persona_id, $archivo->id),
+                'facturado'           => $this->tieneFacturaDistribuidor($archivo->id),
                 'factura_doc_id'      => null, // Se usa endpoint factura-distribuidor
                 'pagado'              => (bool) $archivo->pagado,
                 'estado_liquidacion'  => $estadoLiq,
@@ -270,29 +270,34 @@ class PagosUnificadoService
      * Determina si existe factura del distribuidor para una liquidación específica.
      * IMPORTANTE: sin liquidacionArchivoId no se puede determinar → devuelve false.
      */
-    private function tieneFacturaDistribuidor(int $personaId, ?int $liquidacionArchivoId): bool
+    /**
+     * Determina si existe factura del distribuidor para UNA liquidación específica.
+     * Busca SOLO hijos de ESA liquidación, nunca de otra.
+     *
+     * @param int $liquidacionArchivoId  ID del archivo padre (la liquidación de la agencia)
+     */
+    private function tieneFacturaDistribuidor(?int $liquidacionArchivoId): bool
     {
-        // Sin ID de liquidación padre, no podemos saber si hay factura para ESTE periodo
         if (!$liquidacionArchivoId) {
             return false;
         }
 
-        $tiposExcluir = FileType::whereIn('nombre', [
-            'DESCUENTO_COMBUSTIBLE', 'AJUSTE_LIQUIDACION', 'Factura combustible',
-        ])->pluck('id')->all();
+        static $tiposExcluir = null;
+        if ($tiposExcluir === null) {
+            $tiposExcluir = FileType::whereIn('nombre', [
+                'DESCUENTO_COMBUSTIBLE', 'AJUSTE_LIQUIDACION', 'Factura combustible',
+            ])->pluck('id')->all();
+        }
 
-        // Estrategia 1: archivo hijo de la liquidación padre (no descuento/ajuste)
+        // Estrategia 1: archivo hijo de ESTA liquidación (no descuento/ajuste)
         $tiene = Archivo::where('parent_document_id', $liquidacionArchivoId)
-            ->where('persona_id', $personaId)
             ->whereNotIn('tipo_archivo_id', $tiposExcluir)
             ->exists();
 
         if ($tiene) return true;
 
-        // Estrategia 2: factura IA validada para esta liquidación específica
-        return Factura::where('persona_id', $personaId)
-            ->where('liquidacion_id', $liquidacionArchivoId)
-            ->exists();
+        // Estrategia 2: factura IA vinculada a ESTA liquidación específica
+        return Factura::where('liquidacion_id', $liquidacionArchivoId)->exists();
     }
 
     /**

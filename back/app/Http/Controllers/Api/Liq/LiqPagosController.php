@@ -630,34 +630,29 @@ class LiqPagosController extends Controller
         \App\Models\Persona::findOrFail($personaId);
         $liquidacionArchivoId = $request->integer('liquidacion_id');
 
-        // Tipos a excluir (son documentos internos de la agencia, no facturas)
+        if (!$liquidacionArchivoId) {
+            return response()->json(['message' => 'Se requiere liquidacion_id para buscar la factura del periodo.'], 422);
+        }
+
+        // Tipos a excluir (documentos internos de la agencia, no facturas del distribuidor)
         $tiposExcluir = \App\Models\FileType::whereIn('nombre', [
             'DESCUENTO_COMBUSTIBLE', 'AJUSTE_LIQUIDACION', 'Factura combustible',
         ])->pluck('id')->all();
 
-        // ESTRATEGIA 1: Buscar documento HIJO de la liquidación padre
-        // La factura del distribuidor se adjunta como hijo de la liquidación (parent_document_id = liquidación padre)
-        if ($liquidacionArchivoId) {
-            $factura = \App\Models\Archivo::where('parent_document_id', $liquidacionArchivoId)
-                ->where('persona_id', $personaId)
-                ->whereNotIn('tipo_archivo_id', $tiposExcluir)
-                ->orderByDesc('created_at')
-                ->first();
+        // ESTRATEGIA 1: Buscar documento HIJO de ESTA liquidación específica
+        $facturaHijo = \App\Models\Archivo::where('parent_document_id', $liquidacionArchivoId)
+            ->whereNotIn('tipo_archivo_id', $tiposExcluir)
+            ->orderByDesc('created_at')
+            ->first();
 
-            if ($factura) {
-                return $this->servirArchivoInline($factura);
-            }
+        if ($facturaHijo) {
+            return $this->servirArchivoInline($facturaHijo);
         }
 
-        // ESTRATEGIA 2: Buscar en tabla facturas (facturas IA-validadas)
-        $query = \App\Models\Factura::where('persona_id', $personaId)
-            ->orderByDesc('created_at');
-
-        if ($liquidacionArchivoId) {
-            $query->where('liquidacion_id', $liquidacionArchivoId);
-        }
-
-        $facturaIa = $query->first();
+        // ESTRATEGIA 2: Buscar factura IA vinculada a ESTA liquidación específica
+        $facturaIa = \App\Models\Factura::where('liquidacion_id', $liquidacionArchivoId)
+            ->orderByDesc('created_at')
+            ->first();
 
         if ($facturaIa && $facturaIa->archivo_path) {
             $disk = $facturaIa->archivo_disk ?: 'public';
@@ -672,7 +667,11 @@ class LiqPagosController extends Controller
             }
         }
 
-        return response()->json(['message' => 'No se encontró factura del distribuidor.'], 404);
+        // NUNCA devolver el padre. 404 si no hay factura para este periodo.
+        return response()->json([
+            'message'        => 'No existe factura del distribuidor para esta liquidacion.',
+            'liquidacion_id' => $liquidacionArchivoId,
+        ], 404);
     }
 
     /**
