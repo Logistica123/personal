@@ -655,8 +655,9 @@ class LiqPagosController extends Controller
             return $this->servirArchivoInline($facturaHijo);
         }
 
-        // ESTRATEGIA 2: Buscar factura IA vinculada a ESTA liquidación específica
+        // ESTRATEGIA 2: Buscar factura IA APROBADA vinculada a ESTA liquidación específica
         $facturaIa = \App\Models\Factura::where('liquidacion_id', $liquidacionArchivoId)
+            ->where('estado', 'aprobada')
             ->orderByDesc('created_at')
             ->first();
 

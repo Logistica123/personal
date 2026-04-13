@@ -194,7 +194,7 @@ class PagosUnificadoService
                 'cobrador_nombre'     => $persona?->es_cobrador ? $persona->cobrador_nombre : null,
                 'importe'             => max($importeConDescuento, 0),
                 'enviada'             => (bool) $archivo->enviada,
-                'facturado'           => $this->tieneFacturaDistribuidor($archivo->id),
+                'facturado'           => (bool) $archivo->recibido || $this->tieneFacturaDistribuidor($archivo->id),
                 'factura_doc_id'      => null, // Se usa endpoint factura-distribuidor
                 'pagado'              => (bool) $archivo->pagado,
                 'estado_liquidacion'  => $estadoLiq,
@@ -298,8 +298,11 @@ class PagosUnificadoService
 
         if ($tiene) return true;
 
-        // Estrategia 2: factura IA vinculada a ESTA liquidación específica
-        return Factura::where('liquidacion_id', $liquidacionArchivoId)->exists();
+        // Estrategia 2: factura IA APROBADA vinculada a ESTA liquidación específica
+        // Una factura rechazada NO cuenta como "facturado"
+        return Factura::where('liquidacion_id', $liquidacionArchivoId)
+            ->where('estado', 'aprobada')
+            ->exists();
     }
 
     /**
