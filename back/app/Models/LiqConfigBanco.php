@@ -19,13 +19,20 @@ class LiqConfigBanco extends Model
         'nombre_banco',
         'banco_codigo',
         'url_base',
+        'wsdl_url',
         'certificado_path',
         'clave_privada_path',
         'certificado_cliente_path',
+        'cert_empresa_path',
         'certificado_password',
         'cbu_empresa',
         'cuil_empresa',
+        'doc_type',
+        'doc_number',
         'ordenante_id',
+        'service_id',
+        'product_type',
+        'delivery_branch',
         'ordenante_nombre',
         'producto',
         'timeout_segundos',
@@ -34,6 +41,7 @@ class LiqConfigBanco extends Model
         'activo',
         'ultimo_test',
         'ultimo_test_resultado',
+        'cert_vencimiento',
     ];
 
     protected $casts = [
@@ -41,6 +49,7 @@ class LiqConfigBanco extends Model
         'reintentos_max'   => 'integer',
         'activo'           => 'boolean',
         'ultimo_test'      => 'datetime',
+        'cert_vencimiento' => 'date',
     ];
 
     protected $hidden = [

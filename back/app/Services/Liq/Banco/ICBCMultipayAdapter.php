@@ -6,85 +6,110 @@ use App\DTOs\EstadoTransferencia;
 use App\DTOs\ResultadoTransferencia;
 use App\DTOs\TransferenciaDTO;
 use App\Models\LiqConfigBanco;
+use App\Models\LiqOrdenPago;
 use Illuminate\Support\Facades\Log;
+use RobRichards\WsePhp\WSSESoap;
+use RobRichards\XMLSecLibs\XMLSecurityDSig;
+use RobRichards\XMLSecLibs\XMLSecurityKey;
 
 /**
- * Adapter para ICBC Multipay H2H (Host-to-Host).
+ * Adapter ICBC Multipay H2H - SOAP con WS-Security.
  *
- * Usa mTLS (mutual TLS) con certificado digital para autenticarse.
- * Los detalles del formato XML/SOAP dependen de la doc técnica de ICBC (pendiente).
- *
- * Endpoints y formato de request/response son PROVISIONALES.
- * Se completarán cuando se reciba la documentación técnica del WS.
+ * Protocolo: SOAP 1.1 + WS-Security (firma X.509 + encripción)
+ * Servicio: CollectionPPService (Pago a Proveedores)
+ * Formato items: PPV4 (CSV en ZIP)
  */
 class ICBCMultipayAdapter implements BancoAdapterInterface
 {
-    private string $baseUrl;
-    private ?string $certServidor;
-    private ?string $certCliente;
-    private ?string $clavePrivada;
+    private string $endpointUrl;
+    private ?string $wsdlUrl;
+    private ?string $certBancoPath;   // WebServices.cer (pub ICBC) - para encriptar
+    private ?string $certEmpresaPath; // empresa.cer (pub empresa) - se envía con el mensaje
+    private ?string $keyEmpresaPath;  // empresa.key (priv empresa) - para firmar
     private int $timeout;
-    private string $ordenanteId;
-    private string $cuit;
+
+    // Datos del RequestHeader
+    private string $docType;
+    private string $docNumber;
+    private string $userId;
+
+    // Datos del servicio
+    private string $serviceId;
+    private string $productType;
+    private string $deliveryBranch;
+
+    private ICBCCsvHelper $csvHelper;
 
     public function __construct(LiqConfigBanco $config)
     {
-        $this->baseUrl      = rtrim($config->url_base, '/');
-        $this->certServidor = $config->certificado_path ? storage_path('app/' . $config->certificado_path) : null;
-        $this->certCliente  = $config->certificado_cliente_path ? storage_path('app/' . $config->certificado_cliente_path) : null;
-        $this->clavePrivada = $config->clave_privada_path ? storage_path('app/' . $config->clave_privada_path) : null;
-        $this->timeout      = $config->timeout_segundos ?? 30;
-        $this->ordenanteId  = $config->ordenante_id ?? '';
-        $this->cuit         = $config->cuil_empresa ?? '';
+        $this->endpointUrl    = rtrim($config->url_base, '/');
+        $this->wsdlUrl        = $config->wsdl_url;
+        $this->certBancoPath  = $config->certificado_path ? storage_path('app/' . $config->certificado_path) : null;
+        $this->certEmpresaPath = $config->cert_empresa_path ? storage_path('app/' . $config->cert_empresa_path) : null;
+        $this->keyEmpresaPath = $config->clave_privada_path ? storage_path('app/' . $config->clave_privada_path) : null;
+        $this->timeout        = $config->timeout_segundos ?? 30;
+
+        $this->docType        = $config->doc_type ?? '06';
+        $this->docNumber      = $config->doc_number ?? preg_replace('/\D/', '', $config->cuil_empresa ?? '');
+        $this->userId         = $this->docType . '_' . $this->docNumber;
+
+        $this->serviceId      = $config->service_id ?? $config->ordenante_id ?? '';
+        $this->productType    = $config->product_type ?? '';
+        $this->deliveryBranch = $config->delivery_branch ?? '';
+
+        $this->csvHelper = new ICBCCsvHelper();
     }
 
-    // -------------------------------------------------------------------------
+    // =========================================================================
     // Interface methods
-    // -------------------------------------------------------------------------
+    // =========================================================================
 
     public function testConexion(): bool
     {
         try {
-            // Intentar conectar vía mTLS al endpoint base
-            $response = $this->request('/test', '<ping/>');
-            return !empty($response);
+            $client = $this->createSoapClient();
+            $params = ['doEcho' => $this->buildRequestHeader()];
+            $response = $client->doEcho($params);
+
+            $result = $response->ResponseHeader->Result ?? '';
+            Log::info('ICBC doEcho', ['result' => $result]);
+
+            return strtolower($result) === 'ok';
         } catch (\Exception $e) {
-            Log::warning('ICBC test conexión falló', ['error' => $e->getMessage()]);
+            Log::error('ICBC doEcho falló', ['error' => $e->getMessage()]);
             return false;
         }
     }
 
     public function enviarTransferencia(TransferenciaDTO $dto): ResultadoTransferencia
     {
-        // TODO: Completar con formato XML/SOAP real de ICBC cuando se tenga la doc técnica
-        $xml = $this->buildTransferenciaXml($dto);
-
-        try {
-            $response = $this->request('/pagos/proveedores', $xml);
-            return $this->parseTransferenciaResponse($response);
-        } catch (\Exception $e) {
-            Log::error('ICBC enviar transferencia falló', [
-                'referencia' => $dto->referencia,
-                'error'      => $e->getMessage(),
-            ]);
-
-            return new ResultadoTransferencia(
-                exitoso:     false,
-                codigo:      'ERROR',
-                mensaje:     $e->getMessage(),
-                responseRaw: null,
-            );
-        }
+        // Este método no se usa directamente para ICBC.
+        // ICBC trabaja con Listas (createListUpload), no transferencias individuales.
+        // Se mantiene por compatibilidad con la interface.
+        // Para ICBC, usar enviarListaPago().
+        return new ResultadoTransferencia(
+            exitoso: false,
+            mensaje: 'ICBC requiere envío por Lista. Usar enviarListaPago().',
+        );
     }
 
     public function consultarEstado(string $referencia): EstadoTransferencia
     {
-        // TODO: Completar con endpoint real de ICBC
-        $xml = "<consultaEstado><referencia>{$referencia}</referencia></consultaEstado>";
-
         try {
-            $response = $this->request('/consulta/estado', $xml);
-            return $this->parseEstadoResponse($response);
+            $client = $this->createSoapClient();
+            $params = [
+                'getList' => $this->buildRequestHeader(),
+                'getList' => ['ListId' => ['ListId' => $referencia]],
+            ];
+
+            $response = $client->getList($params);
+            $status = $response->ListHeader->Status ?? 'DESCONOCIDO';
+
+            return new EstadoTransferencia(
+                estado:       strtolower($status),
+                mensaje:      "Estado ICBC: {$status}",
+                fechaProceso: $response->ListHeader->ReleaseDate ?? null,
+            );
         } catch (\Exception $e) {
             return new EstadoTransferencia(
                 estado:  'error',
@@ -93,126 +118,243 @@ class ICBCMultipayAdapter implements BancoAdapterInterface
         }
     }
 
-    // -------------------------------------------------------------------------
-    // HTTP con mTLS via cURL
-    // -------------------------------------------------------------------------
+    // =========================================================================
+    // Método principal: enviar Lista de Pago a ICBC
+    // =========================================================================
 
-    private function request(string $endpoint, string $xmlBody): string
+    /**
+     * Crea una Lista de Pago en ICBC con los items de la OP.
+     * Usa flujo abreviado: Status=LIB (liberar automáticamente si no hay errores).
+     *
+     * @return array{list_id: ?string, tx_id: ?string, result: string, error_code: ?string, error_msg: ?string}
+     */
+    public function enviarListaPago(LiqOrdenPago $op): array
     {
-        $url = $this->baseUrl . $endpoint;
+        $itemCount = $this->csvHelper->contarItems($op);
+        $totalCentavos = $this->csvHelper->importeTotalCentavos($op);
 
-        $ch = curl_init($url);
-        curl_setopt_array($ch, [
-            CURLOPT_POST           => true,
-            CURLOPT_POSTFIELDS     => $xmlBody,
-            CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_TIMEOUT        => $this->timeout,
-            CURLOPT_HTTPHEADER     => [
-                'Content-Type: text/xml; charset=utf-8',
-                'Accept: text/xml',
-            ],
+        if ($itemCount === 0) {
+            return ['list_id' => null, 'tx_id' => null, 'result' => 'error', 'error_code' => 'NO_ITEMS', 'error_msg' => 'No hay items de transferencia en la OP.'];
+        }
 
-            // mTLS: certificado del cliente
-            CURLOPT_SSLCERT        => $this->certCliente,
-            CURLOPT_SSLKEY         => $this->clavePrivada,
+        // Generar ZIP con CSV PPV4
+        $zipData = $this->csvHelper->generarZip($op);
 
-            // Verificar certificado del servidor ICBC
-            CURLOPT_SSL_VERIFYPEER => true,
-            CURLOPT_SSL_VERIFYHOST => 2,
+        $payDate = now()->format('d/m/Y H:i:s') . ' -0300';
+        $observations = mb_substr("OP {$op->numero_display} - {$op->concepto?->nombre}", 0, 100);
+
+        try {
+            $client = $this->createSoapClient();
+
+            $params = [
+                // RequestHeader
+                'createListUpload' => $this->buildRequestHeader(),
+
+                // ListHeader
+                'createListUpload' => [
+                    'Service' => [
+                        'Id'        => $this->serviceId,
+                        'DocType'   => $this->docType,
+                        'DocNumber' => $this->docNumber,
+                        'Number'    => $this->docType . '|' . $this->docNumber,
+                    ],
+                    'RefId'              => $op->id,
+                    'ProductType'        => $this->productType,
+                    'PayDate'            => $payDate,
+                    'Observations'       => $observations,
+                    'DeliveryBranch'     => $this->deliveryBranch,
+                    'DeclaredItemCount'  => $itemCount,
+                    'DeclaredAmount'     => $totalCentavos,
+                ],
+
+                // UploadParameters
+                'createListUpload' => [
+                    'UploadFormat' => 'PPV4',
+                    'UpdateMaster' => 'N',
+                ],
+
+                // ListData (ZIP binario)
+                'createListUpload' => $zipData,
+
+                // TransactionAction
+                'createListUpload' => [
+                    'Status'        => 'LIB', // Liberar automáticamente si OK
+                    'StatusOnError'  => 'ABR', // Dejar abierta si hay error
+                ],
+            ];
+
+            $response = $client->createListUpload($params);
+
+            $result    = $response->ResponseHeader->Result ?? 'error';
+            $txId      = $response->ResponseHeader->TxId ?? null;
+            $errorCode = $response->ResponseHeader->ErrorCode ?? null;
+            $errorMsg  = $response->ResponseHeader->ErrorMsg ?? null;
+            $listId    = $response->ListId->ListId ?? null;
+
+            Log::info('ICBC createListUpload', [
+                'op_id'   => $op->id,
+                'result'  => $result,
+                'list_id' => $listId,
+                'tx_id'   => $txId,
+                'error'   => $errorCode . ' ' . $errorMsg,
+            ]);
+
+            return [
+                'list_id'    => $listId,
+                'tx_id'      => $txId,
+                'result'     => strtolower($result),
+                'error_code' => $errorCode,
+                'error_msg'  => $errorMsg,
+            ];
+        } catch (\Exception $e) {
+            Log::error('ICBC createListUpload falló', ['op_id' => $op->id, 'error' => $e->getMessage()]);
+
+            return [
+                'list_id'    => null,
+                'tx_id'      => null,
+                'result'     => 'error',
+                'error_code' => 'EXCEPTION',
+                'error_msg'  => $e->getMessage(),
+            ];
+        }
+    }
+
+    /**
+     * Consulta el estado de una Lista en ICBC via getList.
+     */
+    public function consultarLista(string $listId): array
+    {
+        try {
+            $client = $this->createSoapClient();
+
+            $response = $client->getList([
+                'getList' => $this->buildRequestHeader(),
+                'getList' => ['ListId' => ['ListId' => $listId]],
+            ]);
+
+            return [
+                'status'              => $response->ListHeader->Status ?? null,
+                'status_upload'       => $response->ListHeader->StatusUpload ?? null,
+                'accepted_count'      => $response->ListHeader->AcceptedItemCount ?? 0,
+                'rejected_count'      => $response->ListHeader->RejectedItemCount ?? 0,
+                'release_date'        => $response->ListHeader->ReleaseDate ?? null,
+                'collection_account'  => $response->ListHeader->CollectionAccount ?? null,
+            ];
+        } catch (\Exception $e) {
+            Log::error('ICBC getList falló', ['list_id' => $listId, 'error' => $e->getMessage()]);
+            return ['status' => 'ERROR', 'error' => $e->getMessage()];
+        }
+    }
+
+    /**
+     * Obtiene los servicios/ordenantes disponibles via getServices.
+     */
+    public function obtenerServicios(): array
+    {
+        try {
+            $client = $this->createSoapClient();
+            $response = $client->getServices(['getServices' => $this->buildRequestHeader()]);
+
+            $servicios = [];
+            $services = $response->Service ?? [];
+            if (!is_array($services)) $services = [$services];
+
+            foreach ($services as $svc) {
+                $servicios[] = [
+                    'id'           => $svc->Id ?? null,
+                    'doc_type'     => $svc->DocType ?? null,
+                    'doc_number'   => $svc->DocNumber ?? null,
+                    'description'  => $svc->Description ?? null,
+                    'product_type' => $svc->ProductType ?? null,
+                ];
+            }
+
+            return $servicios;
+        } catch (\Exception $e) {
+            Log::error('ICBC getServices falló', ['error' => $e->getMessage()]);
+            return [];
+        }
+    }
+
+    // =========================================================================
+    // SOAP Client con WS-Security
+    // =========================================================================
+
+    private function createSoapClient(): \SoapClient
+    {
+        $wsdl = $this->wsdlUrl ?? ($this->endpointUrl . '/WEB-INF/wsdl/CollectionPPService.wsdl');
+
+        $client = new \SoapClient($wsdl, [
+            'trace'      => true,
+            'exceptions' => true,
+            'cache_wsdl' => WSDL_CACHE_NONE,
+            'location'   => $this->endpointUrl,
+            'connection_timeout' => $this->timeout,
+            'stream_context'     => stream_context_create([
+                'ssl' => [
+                    'verify_peer'      => true,
+                    'verify_peer_name' => true,
+                ],
+            ]),
         ]);
 
-        // Si tenemos el certificado del servidor como CA
-        if ($this->certServidor && file_exists($this->certServidor)) {
-            curl_setopt($ch, CURLOPT_CAINFO, $this->certServidor);
-        }
+        // TODO: Aplicar WS-Security (firma + encripción) al SoapClient
+        // Esto requiere interceptar el XML antes de enviarlo.
+        // Se implementará usando un middleware SOAP o sobrecargando __doRequest().
+        // Por ahora, el cliente se crea sin WS-Security para pruebas de estructura.
 
-        $response = curl_exec($ch);
-        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-        $error    = curl_error($ch);
-        $errno    = curl_errno($ch);
-        curl_close($ch);
-
-        if ($errno) {
-            throw new \RuntimeException("Error mTLS (curl {$errno}): {$error}");
-        }
-
-        if ($httpCode >= 400) {
-            throw new \RuntimeException("HTTP {$httpCode} de ICBC: " . substr((string) $response, 0, 500));
-        }
-
-        return (string) $response;
+        return $client;
     }
 
-    // -------------------------------------------------------------------------
-    // XML builders (PROVISORIOS - completar con doc ICBC)
-    // -------------------------------------------------------------------------
-
-    private function buildTransferenciaXml(TransferenciaDTO $dto): string
+    private function buildRequestHeader(): array
     {
-        // TODO: Reemplazar con el formato XML/SOAP real de ICBC
-        return <<<XML
-        <pagoProveedor>
-            <ordenante>{$this->ordenanteId}</ordenante>
-            <cuit>{$this->cuit}</cuit>
-            <cbuOrigen>{$dto->cbuOrigen}</cbuOrigen>
-            <cbuDestino>{$dto->cbuDestino}</cbuDestino>
-            <importe>{$dto->importe}</importe>
-            <moneda>{$dto->moneda}</moneda>
-            <concepto>{$dto->concepto}</concepto>
-            <referencia>{$dto->referencia}</referencia>
-            <beneficiario>{$dto->beneficiario}</beneficiario>
-            <cuitBeneficiario>{$dto->cuitBenef}</cuitBeneficiario>
-        </pagoProveedor>
-        XML;
+        return [
+            'UserId'    => $this->userId,
+            'DocType'   => $this->docType,
+            'DocNumber' => $this->docNumber,
+            'Version'   => '1.0',
+        ];
     }
 
-    private function parseTransferenciaResponse(string $xml): ResultadoTransferencia
+    /**
+     * Aplica WS-Security (firma + encripción) a un documento SOAP XML.
+     * Se usará cuando se implemente el interceptor de SoapClient.
+     */
+    public function aplicarWsSecurity(\DOMDocument $doc): \DOMDocument
     {
-        // TODO: Parsear respuesta real de ICBC
-        // Por ahora, intentar extraer campos básicos del XML
-        $exitoso = str_contains($xml, '<estado>OK</estado>') || str_contains($xml, '<codigo>00</codigo>');
-
-        $referencia = null;
-        if (preg_match('/<referencia>(.*?)<\/referencia>/s', $xml, $m)) {
-            $referencia = $m[1];
+        if (!$this->keyEmpresaPath || !file_exists($this->keyEmpresaPath)) {
+            throw new \RuntimeException('Falta la clave privada de la empresa (empresa.key) para firmar el mensaje SOAP.');
+        }
+        if (!$this->certEmpresaPath || !file_exists($this->certEmpresaPath)) {
+            throw new \RuntimeException('Falta el certificado de la empresa (empresa.cer) para el BinarySecurityToken.');
+        }
+        if (!$this->certBancoPath || !file_exists($this->certBancoPath)) {
+            throw new \RuntimeException('Falta el certificado de ICBC (WebServices.cer) para encriptar el mensaje.');
         }
 
-        $codigo = null;
-        if (preg_match('/<codigo>(.*?)<\/codigo>/s', $xml, $m)) {
-            $codigo = $m[1];
-        }
+        $wsse = new WSSESoap($doc);
 
-        $mensaje = null;
-        if (preg_match('/<mensaje>(.*?)<\/mensaje>/s', $xml, $m)) {
-            $mensaje = $m[1];
-        }
+        // Agregar Timestamp
+        $wsse->addTimestamp(300); // 5 minutos de validez
 
-        return new ResultadoTransferencia(
-            exitoso:         $exitoso,
-            referenciaBanco: $referencia,
-            codigo:          $codigo,
-            mensaje:         $mensaje,
-            responseRaw:     $xml,
-        );
-    }
+        // Firmar con la clave privada de la empresa
+        $key = new XMLSecurityKey(XMLSecurityKey::RSA_SHA256, ['type' => 'private']);
+        $key->loadKey($this->keyEmpresaPath, true);
+        $wsse->signSoapDoc($key);
 
-    private function parseEstadoResponse(string $xml): EstadoTransferencia
-    {
-        // TODO: Parsear respuesta real de ICBC
-        $estado = 'pendiente';
-        if (preg_match('/<estado>(.*?)<\/estado>/s', $xml, $m)) {
-            $estado = strtolower($m[1]);
-        }
+        // Agregar BinarySecurityToken con el certificado público de la empresa
+        $token = $wsse->addBinaryToken(file_get_contents($this->certEmpresaPath));
+        $wsse->attachTokentoSig($token);
 
-        $mensaje = null;
-        if (preg_match('/<mensaje>(.*?)<\/mensaje>/s', $xml, $m)) {
-            $mensaje = $m[1];
-        }
+        // Encriptar con el certificado público de ICBC
+        $encKey = new XMLSecurityKey(XMLSecurityKey::AES256_CBC);
+        $encKey->generateSessionKey();
 
-        return new EstadoTransferencia(
-            estado:       $estado,
-            mensaje:      $mensaje,
-            fechaProceso: null,
-        );
+        $siteKey = new XMLSecurityKey(XMLSecurityKey::RSA_OAEP_MGF1P, ['type' => 'public']);
+        $siteKey->loadKey($this->certBancoPath, true, true);
+
+        $wsse->encryptSoapDoc($siteKey, $encKey);
+
+        return $wsse->saveXML();
     }
 }

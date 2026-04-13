@@ -46,6 +46,17 @@ class LiqOrdenPago extends Model
         'estado',
         'agrupacion',
         'medio_pago',
+        'icbc_list_id',
+        'icbc_ref_id',
+        'icbc_estado',
+        'icbc_estado_upload',
+        'icbc_tx_id',
+        'icbc_error_code',
+        'icbc_error_msg',
+        'icbc_enviado_at',
+        'icbc_acreditado_at',
+        'icbc_items_aceptados',
+        'icbc_items_rechazados',
         'observaciones',
         'usuario_id',
     ];
@@ -57,7 +68,9 @@ class LiqOrdenPago extends Model
         'fecha_emision'    => 'date',
         'subtotal'         => 'decimal:2',
         'total_descuentos' => 'decimal:2',
-        'total_a_pagar'    => 'decimal:2',
+        'total_a_pagar'      => 'decimal:2',
+        'icbc_enviado_at'    => 'datetime',
+        'icbc_acreditado_at' => 'datetime',
     ];
 
     // -------------------------------------------------------------------------
