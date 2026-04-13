@@ -23,11 +23,14 @@ class LiqTransferenciaBanco extends Model
 
     protected $fillable = [
         'orden_pago_id',
+        'referencia_interna',
         'banco_referencia',
         'cbu_origen',
         'cbu_destino',
         'cuil_destino',
+        'nombre_beneficiario',
         'importe',
+        'moneda',
         'concepto_bancario',
         'estado_ws',
         'codigo_respuesta',
