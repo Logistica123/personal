@@ -33,6 +33,7 @@ class Persona extends Model
         'email',
         'pago',
         'cbu_alias',
+        'medio_pago',
         'combustible',
         'combustible_estado',
         'es_cobrador',

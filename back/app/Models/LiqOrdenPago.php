@@ -45,6 +45,7 @@ class LiqOrdenPago extends Model
         'total_a_pagar',
         'estado',
         'agrupacion',
+        'medio_pago',
         'observaciones',
         'usuario_id',
     ];

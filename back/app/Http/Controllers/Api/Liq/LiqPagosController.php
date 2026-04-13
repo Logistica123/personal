@@ -132,7 +132,7 @@ class LiqPagosController extends Controller
     {
         $filtros = $request->only([
             'cliente_nombre', 'distribuidor', 'fuente', 'facturado', 'pagado', 'estado_liq',
-            'mes', 'anio', 'quincena',
+            'mes', 'anio', 'quincena', 'medio_pago',
         ]);
 
         $data = $this->unificadoService->listarUnificado($filtros);

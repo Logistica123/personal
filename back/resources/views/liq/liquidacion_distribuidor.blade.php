@@ -147,8 +147,8 @@
         <td class="v">{{ $fmtMoney($liq['gastos'] ?? null) }}</td>
       </tr>
       <tr>
-        <td class="k grand">Total a pagar</td>
-        <td class="v grand">{{ $fmtMoney($liq['total'] ?? null) }}</td>
+        <td class="k grand" style="font-size: 14px; font-weight: 700;">Importe a Facturar</td>
+        <td class="v grand" style="font-size: 14px; font-weight: 700;">{{ $fmtMoney($liq['total'] ?? null) }}</td>
       </tr>
     </table>
 

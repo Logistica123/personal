@@ -52,6 +52,7 @@ type LiqRow = {
   op_numero_display: string | null;
   op_id: number | null;
   tiene_op_activa: boolean;
+  medio_pago: string | null;
   // Para descargar PDFs
   pdf_url_tipo: string;
   pdf_liq_dist_id?: number;
@@ -221,6 +222,8 @@ const ESTADO_LIQ_COLORS: Record<string, string> = {
 
 const MESES = ['', 'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
 
+const MEDIOS_PAGO = ['Transferencia', 'Remesa', 'Pago 24', 'Pago 24 David', 'Deposito Bancario', 'Efectivo'];
+
 type Tab = 'liquidaciones' | 'ordenes';
 type PagoStep = 'idle' | 'validando' | 'config' | 'preview' | 'creando';
 
@@ -258,6 +261,7 @@ export const PagosPage: React.FC<Props> = ({
   const [filtroFuente, setFiltroFuente] = useState(searchParams.get('fuente') || '');
   const [filtroFacturado, setFiltroFacturado] = useState(searchParams.get('facturado') || '');
   const [filtroPagado, setFiltroPagado] = useState(searchParams.get('pagado') ?? 'NO');
+  const [filtroMedioPago, setFiltroMedioPago] = useState(searchParams.get('medio_pago') || '');
 
   // ── Ordenes state ─────────────────────────────────────────────────
   const [ordenes, setOrdenes] = useState<OrdenPago[]>([]);
@@ -304,6 +308,7 @@ export const PagosPage: React.FC<Props> = ({
       if (filtroFuente) params.set('fuente', filtroFuente);
       if (filtroFacturado) params.set('facturado', filtroFacturado);
       if (filtroPagado) params.set('pagado', filtroPagado);
+      if (filtroMedioPago) params.set('medio_pago', filtroMedioPago);
       const qs = params.toString();
       const json = await api.get(`/pagos/liquidaciones-unificado${qs ? '?' + qs : ''}`);
       setLiquidaciones(json.data ?? []);
@@ -313,7 +318,7 @@ export const PagosPage: React.FC<Props> = ({
     } finally {
       setLoadingLiq(false);
     }
-  }, [api, filtroCliente, filtroDistribuidor, filtroMes, filtroAnio, filtroQuincena, filtroFuente, filtroFacturado, filtroPagado]);
+  }, [api, filtroCliente, filtroDistribuidor, filtroMes, filtroAnio, filtroQuincena, filtroFuente, filtroFacturado, filtroPagado, filtroMedioPago]);
 
   // ── Fetch ordenes ─────────────────────────────────────────────────
   const fetchOrdenes = useCallback(async () => {
@@ -351,8 +356,9 @@ export const PagosPage: React.FC<Props> = ({
     if (filtroFacturado) p.set('facturado', filtroFacturado);
     if (filtroPagado && filtroPagado !== 'NO') p.set('pagado', filtroPagado);
     if (filtroEstadoPago) p.set('estadoPago', filtroEstadoPago);
+    if (filtroMedioPago) p.set('medio_pago', filtroMedioPago);
     setSearchParams(p, { replace: true });
-  }, [tab, filtroCliente, filtroMes, filtroAnio, filtroQuincena, filtroDistribuidor, filtroFuente, filtroFacturado, filtroPagado, filtroEstadoPago, setSearchParams]);
+  }, [tab, filtroCliente, filtroMes, filtroAnio, filtroQuincena, filtroDistribuidor, filtroFuente, filtroFacturado, filtroPagado, filtroEstadoPago, filtroMedioPago, setSearchParams]);
 
   // ── Initial load ──────────────────────────────────────────────────
   useEffect(() => {
@@ -823,6 +829,15 @@ export const PagosPage: React.FC<Props> = ({
                 </select>
               </div>
               <div className="filter-field">
+                <label>Medio pago</label>
+                <select value={filtroMedioPago} onChange={(e) => setFiltroMedioPago(e.target.value)}>
+                  <option value="">Todos</option>
+                  {MEDIOS_PAGO.map((mp) => (
+                    <option key={mp} value={mp}>{mp}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="filter-field">
                 <label>Estado pago</label>
                 <select value={filtroEstadoPago} onChange={(e) => setFiltroEstadoPago(e.target.value)}>
                   <option value="">Todos</option>
@@ -869,6 +884,7 @@ export const PagosPage: React.FC<Props> = ({
                   <th>Periodo</th>
                   <th>Distribuidor</th>
                   <th style={{ textAlign: 'right' }}>Importe</th>
+                  <th>Medio pago</th>
                   <th>Enviada</th>
                   <th>Facturado</th>
                   <th>Pagado</th>
@@ -880,11 +896,11 @@ export const PagosPage: React.FC<Props> = ({
               <tbody>
                 {loadingLiq ? (
                   <tr>
-                    <td colSpan={12} style={{ textAlign: 'center', padding: 24 }}>Cargando...</td>
+                    <td colSpan={13} style={{ textAlign: 'center', padding: 24 }}>Cargando...</td>
                   </tr>
                 ) : filteredLiq.length === 0 ? (
                   <tr>
-                    <td colSpan={12} style={{ textAlign: 'center', padding: 24, color: '#888' }}>No hay liquidaciones</td>
+                    <td colSpan={13} style={{ textAlign: 'center', padding: 24, color: '#888' }}>No hay liquidaciones</td>
                   </tr>
                 ) : (
                   filteredLiq.map((row) => {
@@ -906,6 +922,7 @@ export const PagosPage: React.FC<Props> = ({
                         <td>{row.periodo}</td>
                         <td>{row.distribuidor_nombre}</td>
                         <td style={{ textAlign: 'right', fontWeight: 600 }}>{fmt(row.importe)}</td>
+                        <td style={{ fontSize: '0.8rem' }}>{row.medio_pago ?? <span style={{ color: '#aaa' }}>-</span>}</td>
                         <td>
                           <span className={`pagos-sino pagos-sino--${row.enviada ? 'si' : 'no'}`}>
                             {row.enviada ? 'SI' : 'NO'}

@@ -19,6 +19,7 @@ class LiqOrdenPagoDetalle extends Model
         'liquidacion_distribuidor_id',
         'archivo_id',
         'fuente',
+        'medio_pago',
         'cliente_nombre',
         'sucursal',
         'periodo',

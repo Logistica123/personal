@@ -54,6 +54,9 @@ class PagosUnificadoService
         if (!empty($filtros['quincena'])) {
             $unificado = $unificado->where('periodo_quincena', $filtros['quincena']);
         }
+        if (!empty($filtros['medio_pago'])) {
+            $unificado = $unificado->where('medio_pago', $filtros['medio_pago']);
+        }
 
         return $unificado->sortByDesc('periodo_sort')->values();
     }
@@ -116,6 +119,7 @@ class PagosUnificadoService
                 'op_numero_display'   => $op?->numero_display ?? null,
                 'op_id'               => $op?->id ?? null,
                 'tiene_op_activa'     => $op && $op->estado !== 'ANULADA',
+                'medio_pago'          => $dist?->medio_pago ?? null,
                 // Para descargar PDF
                 'pdf_url_tipo'        => 'extracto',
                 'pdf_liq_dist_id'     => $liq->id,
@@ -137,7 +141,7 @@ class PagosUnificadoService
 
         $query = Archivo::query()
             ->with([
-                'persona:id,apellidos,nombres,cuil,cbu_alias,es_cobrador,cobrador_nombre,cobrador_cuil,cobrador_cbu_alias,cliente_id',
+                'persona:id,apellidos,nombres,cuil,cbu_alias,medio_pago,es_cobrador,cobrador_nombre,cobrador_cuil,cobrador_cbu_alias,cliente_id',
                 'persona.cliente:id,nombre',
             ])
             ->whereIn('tipo_archivo_id', $tipoIds)
@@ -202,6 +206,7 @@ class PagosUnificadoService
                 'op_numero_display'   => $op?->numero_display ?? null,
                 'op_id'               => $op?->id ?? null,
                 'tiene_op_activa'     => (bool) $op,
+                'medio_pago'          => $persona?->medio_pago ?? null,
                 // Para descargar PDF
                 'pdf_url_tipo'        => 'legacy',
                 'pdf_persona_id'      => $archivo->persona_id,
@@ -237,28 +242,32 @@ class PagosUnificadoService
     {
         $meses = ['', 'ENE', 'FEB', 'MAR', 'ABR', 'MAY', 'JUN', 'JUL', 'AGO', 'SEP', 'OCT', 'NOV', 'DIC'];
 
-        // Intentar extraer periodo del fortnight_key o del nombre del archivo
-        if ($archivo->fortnight_key) {
-            $parts = explode('-', $archivo->fortnight_key);
-            if (count($parts) >= 2) {
-                $yearMonth = $parts[0] ?? '';
-                $q = $parts[1] ?? '';
-                $ym = explode('-', $yearMonth);
-                if (strlen($yearMonth) >= 7) {
-                    $y = substr($yearMonth, 0, 4);
-                    $m = (int) substr($yearMonth, 5, 2);
-                    $mesLabel = $meses[$m] ?? '';
-                    $prefix = $q === 'Q1' ? '1Q ' : ($q === 'Q2' ? '2Q ' : '');
-                    return "{$prefix}{$mesLabel} {$y}";
-                }
+        $fk = $archivo->fortnight_key;
+        $fecha = $archivo->created_at;
+
+        // Determinar quincena desde fortnight_key
+        $prefix = '';
+        if ($fk) {
+            $fkUpper = strtoupper(trim($fk));
+            if (str_contains($fkUpper, 'Q1') || str_contains($fkUpper, '1Q')) {
+                $prefix = '1Q ';
+            } elseif (str_contains($fkUpper, 'Q2') || str_contains($fkUpper, '2Q')) {
+                $prefix = '2Q ';
+            }
+
+            // Intentar extraer año-mes del fortnight_key (formato YYYY-MM-QX)
+            if (preg_match('/(\d{4})-(\d{2})/', $fk, $m)) {
+                $y = $m[1];
+                $mesNum = (int) $m[2];
+                $mesLabel = $meses[$mesNum] ?? '';
+                return "{$prefix}{$mesLabel} {$y}";
             }
         }
 
-        // Fallback: usar fecha de creación
-        $fecha = $archivo->created_at;
+        // Fallback: usar fecha de creación + quincena detectada
         if ($fecha) {
             $mes = $meses[$fecha->month] ?? '';
-            return "{$mes} {$fecha->year}";
+            return "{$prefix}{$mes} {$fecha->year}";
         }
 
         return '';
