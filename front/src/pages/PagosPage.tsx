@@ -244,6 +244,7 @@ export const PagosPage: React.FC<Props> = ({
 
   // ── Liquidaciones state ───────────────────────────────────────────
   const [liquidaciones, setLiquidaciones] = useState<LiqRow[]>([]);
+  const [clientesDisponibles, setClientesDisponibles] = useState<string[]>([]);
   const [loadingLiq, setLoadingLiq] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
@@ -306,6 +307,7 @@ export const PagosPage: React.FC<Props> = ({
       const qs = params.toString();
       const json = await api.get(`/pagos/liquidaciones-unificado${qs ? '?' + qs : ''}`);
       setLiquidaciones(json.data ?? []);
+      if (json.clientes) setClientesDisponibles(json.clientes);
     } catch (e: any) {
       setMsg({ type: 'err', text: e.message });
     } finally {
@@ -555,7 +557,7 @@ export const PagosPage: React.FC<Props> = ({
       setPagoError(e.message);
       setPagoStep('idle');
     }
-  }, [selectedIds, api, conceptos, pagoConceptoId]);
+  }, [selectedIds, buildSelectedItems, api, conceptos, pagoConceptoId]);
 
   // ── Fetch proximo numero cuando cambia concepto ───────────────────
   useEffect(() => {
@@ -758,7 +760,12 @@ export const PagosPage: React.FC<Props> = ({
             <div className="filters-grid">
               <div className="filter-field">
                 <label>Cliente</label>
-                <input type="text" value={filtroCliente} onChange={(e) => setFiltroCliente(e.target.value)} placeholder="Filtrar por cliente..." />
+                <select value={filtroCliente} onChange={(e) => setFiltroCliente(e.target.value)}>
+                  <option value="">Todos</option>
+                  {clientesDisponibles.map((c) => (
+                    <option key={c} value={c}>{c}</option>
+                  ))}
+                </select>
               </div>
               <div className="filter-field">
                 <label>Mes</label>

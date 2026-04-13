@@ -920,6 +920,25 @@ class PersonalDocumentController extends Controller
         ]);
     }
 
+    public function updateRecibido(Request $request, Persona $persona): JsonResponse
+    {
+        $validated = $request->validate([
+            'documentIds' => ['required', 'array', 'min:1'],
+            'documentIds.*' => ['integer'],
+            'recibido' => ['required', 'boolean'],
+        ]);
+
+        $updated = $persona->documentos()
+            ->whereIn('id', $validated['documentIds'])
+            ->whereNull('parent_document_id')
+            ->update(['recibido' => $validated['recibido']]);
+
+        return response()->json([
+            'message' => 'Estado de facturado actualizado correctamente.',
+            'data' => ['updated' => $updated],
+        ]);
+    }
+
     public function updatePagadoBulk(Request $request): JsonResponse
     {
         $validated = $request->validate([

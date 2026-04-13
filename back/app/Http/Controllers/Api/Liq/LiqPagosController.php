@@ -137,7 +137,13 @@ class LiqPagosController extends Controller
 
         $data = $this->unificadoService->listarUnificado($filtros);
 
-        return response()->json(['data' => $data]);
+        // Extraer lista de clientes distintos para el dropdown
+        $clientes = $data->pluck('cliente_nombre')->unique()->filter(fn ($c) => $c && $c !== 'N/A')->sort()->values();
+
+        return response()->json([
+            'data'     => $data,
+            'clientes' => $clientes,
+        ]);
     }
 
     // POST /api/liq/pagos/validar-beneficiarios

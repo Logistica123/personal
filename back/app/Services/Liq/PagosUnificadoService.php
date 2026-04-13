@@ -144,7 +144,9 @@ class PagosUnificadoService
             ->whereNull('parent_document_id') // Solo padres, no hijos (descuentos)
             ->where('es_pendiente', false)
             ->whereNotNull('importe_facturar')
-            ->where('importe_facturar', '>', 0);
+            ->where('importe_facturar', '>', 0)
+            ->whereNotNull('persona_id')
+            ->whereHas('persona'); // Excluir archivos cuya persona fue eliminada
 
         if (!empty($filtros['cliente_nombre'])) {
             $query->whereHas('persona.cliente', function ($q) use ($filtros) {
