@@ -38,7 +38,7 @@ class ICBCMultipayAdapter implements BancoAdapterInterface
     private string $productType;
     private string $deliveryBranch;
 
-    private ICBCCsvHelper $csvHelper;
+    private ICBCPpv4Helper $csvHelper;
 
     public function __construct(LiqConfigBanco $config)
     {
@@ -57,7 +57,7 @@ class ICBCMultipayAdapter implements BancoAdapterInterface
         $this->productType    = $config->product_type ?? '';
         $this->deliveryBranch = $config->delivery_branch ?? '';
 
-        $this->csvHelper = new ICBCCsvHelper();
+        $this->csvHelper = new ICBCPpv4Helper();
     }
 
     // =========================================================================
