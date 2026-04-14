@@ -32,9 +32,16 @@ class AddCorsHeaders
 
         $normalizedOrigin = is_string($origin) ? trim($origin) : null;
         $isLocalhost = $normalizedOrigin && preg_match('#^https?://(localhost|127\\.0\\.0\\.1)(:\\d+)?$#', $normalizedOrigin);
-        $allowedOrigin = in_array($normalizedOrigin, $allowedOrigins, true)
-            ? $normalizedOrigin
-            : ($isLocalhost ? $normalizedOrigin : null);
+
+        // Las rutas readonly de DistriApp permiten cualquier origen (autenticadas por API key).
+        $isReadonlyApi = $request->is('api/distriapp/readonly/*') || $request->is('distriapp/readonly/*');
+        if ($isReadonlyApi) {
+            $allowedOrigin = $normalizedOrigin ?: '*';
+        } else {
+            $allowedOrigin = in_array($normalizedOrigin, $allowedOrigins, true)
+                ? $normalizedOrigin
+                : ($isLocalhost ? $normalizedOrigin : null);
+        }
 
         if (! $allowedOrigin && $normalizedOrigin) {
             // Origin no permitido pero explícito: devolvemos 403 sin comodines para que el navegador lo bloquee.
@@ -53,7 +60,7 @@ class AddCorsHeaders
         $headers = [
             'Access-Control-Allow-Origin' => $allowedOrigin,
             'Access-Control-Allow-Methods' => 'GET, POST, PUT, PATCH, DELETE, OPTIONS',
-            'Access-Control-Allow-Headers' => 'Content-Type, Authorization, X-Requested-With, Accept, Origin, X-Api-Token, X-Actor-Email, X-Actor-Cuil',
+            'Access-Control-Allow-Headers' => 'Content-Type, Authorization, X-Requested-With, Accept, Origin, X-Api-Token, X-Actor-Email, X-Actor-Cuil, X-Distriapp-Key',
             'Access-Control-Allow-Credentials' => 'true',
             'Vary' => 'Origin',
         ];
