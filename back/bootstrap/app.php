@@ -15,6 +15,7 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->append(\App\Http\Middleware\AddCorsHeaders::class);
         $middleware->alias([
             'auth.api' => \App\Http\Middleware\ApiTokenAuth::class,
+            'distriapp.readonly' => \App\Http\Middleware\DistriappReadonlyAuth::class,
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {

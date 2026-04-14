@@ -18441,6 +18441,23 @@ const ActivosAsesoresPage: React.FC = () => {
     void loadRecords();
   }, [loadRecords]);
 
+  // Auto-open edit modal when ?edit=ID is in the URL
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const editId = params.get('edit');
+    if (editId && records.length > 0) {
+      const record = records.find((r) => String(r.id) === editId);
+      if (record) {
+        openEditModal(record);
+        // Clean up URL
+        const url = new URL(window.location.href);
+        url.searchParams.delete('edit');
+        window.history.replaceState({}, '', url.pathname);
+      }
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [records]);
+
   const resetForm = useCallback(() => {
     setEditingRecord(null);
     setModalError(null);
@@ -18954,9 +18971,14 @@ const ActivosAsesoresPage: React.FC = () => {
 	                      <td>{record.vehiculo ?? '—'}</td>
 	                      <td>
 	                        <div className="action-buttons">
-	                          <button type="button" aria-label="Editar registro" onClick={() => openEditModal(record)}>
+	                          <a
+	                            href={`/bdd-activos-asesores-comerciales?edit=${record.id}`}
+	                            aria-label="Editar registro"
+	                            onClick={(e) => { e.preventDefault(); openEditModal(record); }}
+	                            style={{ cursor: 'pointer', textDecoration: 'none' }}
+	                          >
 	                            ✏️
-	                          </button>
+	                          </a>
                           <button
                             type="button"
                             aria-label="Eliminar registro"

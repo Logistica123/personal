@@ -33,6 +33,7 @@ use App\Http\Controllers\Api\TaxProfileController;
 use App\Http\Controllers\Api\SolicitudPersonalController;
 use App\Http\Controllers\Api\VacacionesDiasController;
 use App\Http\Controllers\Api\DistriappController;
+use App\Http\Controllers\Api\DistriappReadonlyController;
 use App\Http\Controllers\Api\UserDocumentController;
 use App\Http\Controllers\Api\CallController;
 use App\Http\Controllers\Api\MembresiaController;
@@ -481,5 +482,19 @@ Route::post('/voice/anura/status', [CallController::class, 'anuraStatusWebhook']
 Route::match(['GET', 'POST'], '/voice/twilio/twiml/outbound', [CallController::class, 'twilioOutboundTwiml'])
     ->name('voice.twilio.twiml.outbound')
     ->middleware('throttle:120,1');
+
+// ── DistriApp API Read-Only (/api/distriapp/readonly/*) ─────────────
+Route::prefix('distriapp/readonly')->middleware(['distriapp.readonly', 'throttle:60,1'])->group(function () {
+    Route::get('/dashboard', [DistriappReadonlyController::class, 'dashboard']);
+    Route::get('/activos', [DistriappReadonlyController::class, 'activos']);
+    Route::get('/pre-activos', [DistriappReadonlyController::class, 'preActivos']);
+    Route::get('/pausados', [DistriappReadonlyController::class, 'pausados']);
+    Route::get('/no-citados', [DistriappReadonlyController::class, 'noCitados']);
+    Route::get('/sin-estado', [DistriappReadonlyController::class, 'sinEstado']);
+    Route::get('/bajas', [DistriappReadonlyController::class, 'bajas']);
+    Route::get('/semanas', [DistriappReadonlyController::class, 'semanas']);
+    Route::get('/cierres-diarios', [DistriappReadonlyController::class, 'cierresDiarios']);
+    Route::get('/cierres-diarios/fechas', [DistriappReadonlyController::class, 'cierresFechas']);
+});
 
 Route::options('/{any}', fn () => response()->noContent())->where('any', '.*');

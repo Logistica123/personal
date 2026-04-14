@@ -52,6 +52,10 @@ return [
         'timeout' => env('DISTRIAPP_ADMIN_API_TIMEOUT', 12),
     ],
 
+    'distriapp_readonly' => [
+        'api_key' => env('DISTRIAPP_READONLY_API_KEY'),
+    ],
+
     'erp' => [
         'enabled' => env('ERP_INTEGRATION_ENABLED', false),
         'mock_mode' => env('ERP_MOCK_MODE', false),
