@@ -1065,6 +1065,13 @@ export const ReclamoDetallePage: React.FC<ReclamoDetallePageProps> = ({
                 </label>
               ) : null}
 
+              {detail.fechaFinalizado ? (
+                <label className="input-control">
+                  <span>Fecha de finalización</span>
+                  <input type="date" value={detail.fechaFinalizado} disabled />
+                </label>
+              ) : null}
+
               <label className="input-control">
                 <span>Fecha del reclamo</span>
                 <input type="date" value={formValues.fechaReclamo} onChange={(event) => setFormValues((prev) => ({ ...prev, fechaReclamo: event.target.value }))} />

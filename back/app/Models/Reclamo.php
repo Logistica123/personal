@@ -35,6 +35,7 @@ class Reclamo extends Model
         'pagado',
         'importe_pagado',
         'importe_facturado',
+        'fecha_finalizado',
     ];
 
     protected $casts = [
@@ -42,6 +43,7 @@ class Reclamo extends Model
         'created_at' => 'datetime',
         'updated_at' => 'datetime',
         'fecha_compromiso_pago' => 'date',
+        'fecha_finalizado' => 'datetime',
         'bloqueado_en' => 'datetime',
         'en_revision' => 'boolean',
         'pagado' => 'boolean',

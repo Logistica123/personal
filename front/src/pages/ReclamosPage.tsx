@@ -56,7 +56,7 @@ export const ReclamosPage: React.FC<ReclamosPageProps> = ({
     () => isElevatedRole(userRole) && userRole !== 'asesor',
     [isElevatedRole, userRole]
   );
-  const reclamosColumnCount = canViewReclamoImportes ? 17 : 15;
+  const reclamosColumnCount = canViewReclamoImportes ? 18 : 16;
   const [reclamos, setReclamos] = useState<ReclamoRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -1121,6 +1121,7 @@ export const ReclamosPage: React.FC<ReclamosPageProps> = ({
               <th>Responsable</th>
               <th>Tipo de reclamo</th>
               <th>Estado</th>
+              <th>Fecha finalización</th>
               <th>Fecha compromiso</th>
               <th>Aprobación</th>
               <th>Motivo</th>
@@ -1210,6 +1211,7 @@ export const ReclamosPage: React.FC<ReclamosPageProps> = ({
                         </span>
                       )}
                     </td>
+                    <td>{reclamo.fechaFinalizado ?? '—'}</td>
                     <td>{reclamo.fechaCompromisoPago ?? '—'}</td>
                     <td title={reclamo.aprobacionMotivo ?? undefined}>{reclamo.aprobacionEstadoLabel ?? '—'}</td>
                     <td title={reclamo.aprobacionMotivo ?? undefined}>{truncateText(reclamo.aprobacionMotivo ?? null, 60) || '—'}</td>

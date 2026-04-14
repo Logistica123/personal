@@ -42,6 +42,8 @@ export type ReclamoRecord = {
   aprobacionEstado?: 'aprobado' | 'no_aprobado' | null;
   aprobacionEstadoLabel?: string | null;
   aprobacionMotivo?: string | null;
+  fechaFinalizado?: string | null;
+  fechaFinalizadoIso?: string | null;
   bloqueadoEn?: string | null;
   enRevision?: boolean;
   tipo: string | null;

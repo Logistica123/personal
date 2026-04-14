@@ -1710,6 +1710,18 @@ class PersonalController extends Controller
             'duenoCuilCobrador' => 'CUIT/CUIL cobrador del dueño',
         ]);
 
+        $cuil = trim((string) ($validated['cuil'] ?? ''));
+        if ($cuil !== '') {
+            $existing = Persona::withTrashed()->where('cuil', $cuil)->first();
+            if ($existing) {
+                $estado = $existing->trashed() ? 'dado de baja' : 'activo';
+                throw ValidationException::withMessages([
+                    'cuil' => "Ya existe un registro con este CUIT/CUIL (ID {$existing->id}, {$estado}). "
+                        . 'Si necesita cambiar de cliente, edite el registro existente en lugar de crear uno nuevo.',
+                ]);
+            }
+        }
+
         $targetEsCobrador = (bool) ($validated['esCobrador'] ?? false);
         if ($targetEsCobrador) {
             $missing = [];

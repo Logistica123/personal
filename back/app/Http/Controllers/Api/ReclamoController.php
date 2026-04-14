@@ -486,6 +486,7 @@ class ReclamoController extends Controller
                     ? Carbon::parse($validated['fechaReclamo'])
                     : null,
                 'status' => $validated['status'],
+                'fecha_finalizado' => $validated['status'] === 'finalizado' ? Carbon::now() : null,
                 'pagado' => (bool) $validated['pagado'],
                 'importe_pagado' => (bool) $validated['pagado']
                     ? ($canViewImportes
@@ -782,6 +783,11 @@ class ReclamoController extends Controller
                 ? Carbon::parse($validated['fechaReclamo'])
                 : null;
             $reclamo->status = $validated['status'];
+            if ($validated['status'] === 'finalizado' && $originalStatus !== 'finalizado') {
+                $reclamo->fecha_finalizado = Carbon::now();
+            } elseif ($validated['status'] !== 'finalizado') {
+                $reclamo->fecha_finalizado = null;
+            }
             $reclamo->pagado = (bool) $validated['pagado'];
             if ($canViewImportes) {
                 $reclamo->importe_pagado = $reclamo->pagado
@@ -1448,6 +1454,8 @@ class ReclamoController extends Controller
             'aprobacionEstado' => $this->normalizeAprobacionEstado($reclamo->aprobacion_estado),
             'aprobacionEstadoLabel' => $this->aprobacionEstadoLabel($this->normalizeAprobacionEstado($reclamo->aprobacion_estado)),
             'aprobacionMotivo' => $reclamo->aprobacion_motivo,
+            'fechaFinalizado' => optional($reclamo->fecha_finalizado)->format('Y-m-d'),
+            'fechaFinalizadoIso' => $reclamo->fecha_finalizado?->toIso8601String(),
             'bloqueadoEn' => $reclamo->bloqueado_en?->toIso8601String(),
             'enRevision' => (bool) $reclamo->en_revision,
             'tipo' => $reclamo->tipo?->nombre,
