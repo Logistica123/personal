@@ -495,6 +495,12 @@ Route::prefix('distriapp/readonly')->middleware(['distriapp.readonly', 'throttle
     Route::get('/semanas', [DistriappReadonlyController::class, 'semanas']);
     Route::get('/cierres-diarios', [DistriappReadonlyController::class, 'cierresDiarios']);
     Route::get('/cierres-diarios/fechas', [DistriappReadonlyController::class, 'cierresFechas']);
+    Route::get('/buscar-persona', [DistriappReadonlyController::class, 'buscarPersona']);
+    Route::get('/persona/{personaId}/documentos', [DistriappReadonlyController::class, 'personaDocumentos']);
+    Route::get('/persona/{personaId}/historial', [DistriappReadonlyController::class, 'personaHistorial']);
+    Route::get('/documentos-vencidos', [DistriappReadonlyController::class, 'documentosVencidos']);
+    Route::get('/vencimientos', [DistriappReadonlyController::class, 'vencimientos']);
+    Route::get('/tipos-documento', [DistriappReadonlyController::class, 'tiposDocumento']);
 });
 
 Route::options('/{any}', fn () => response()->noContent())->where('any', '.*');

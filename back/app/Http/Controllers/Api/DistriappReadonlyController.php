@@ -4,9 +4,12 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\ActivoAsesorComercial;
+use App\Models\Archivo;
 use App\Models\CierreDiario;
 use App\Models\Estado;
+use App\Models\FileType;
 use App\Models\Persona;
+use App\Models\PersonaHistory;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -253,6 +256,207 @@ class DistriappReadonlyController extends Controller
         return response()->json(['data' => $fechas]);
     }
 
+    // ── Documentación de una persona ───────────────────────────────────
+
+    public function personaDocumentos(Request $request, int $personaId): JsonResponse
+    {
+        $persona = Persona::find($personaId);
+
+        if (! $persona) {
+            return response()->json(['error' => 'Persona no encontrada'], 404);
+        }
+
+        $query = Archivo::query()
+            ->where('persona_id', $personaId)
+            ->with('tipo')
+            ->whereNull('deleted_at')
+            ->where(function ($q) {
+                $q->whereNull('es_pendiente')->orWhere('es_pendiente', false);
+            })
+            ->orderByDesc('created_at');
+
+        $perPage = $this->resolvePerPage($request);
+        $paginator = $query->paginate($perPage);
+
+        return response()->json([
+            'data' => collect($paginator->items())->map(fn (Archivo $a) => $this->formatArchivo($a)),
+            'meta' => $this->paginationMeta($paginator),
+        ]);
+    }
+
+    // ── Documentos vencidos ─────────────────────────────────────────────
+
+    public function documentosVencidos(Request $request): JsonResponse
+    {
+        $perPage = $this->resolvePerPage($request);
+
+        $paginator = Archivo::query()
+            ->with(['persona:id,apellidos,nombres,cuil', 'tipo'])
+            ->whereNull('deleted_at')
+            ->whereNotNull('fecha_vencimiento')
+            ->whereDate('fecha_vencimiento', '<', now())
+            ->orderBy('fecha_vencimiento')
+            ->paginate($perPage);
+
+        return response()->json([
+            'data' => collect($paginator->items())->map(function (Archivo $a) {
+                $base = $this->formatArchivo($a);
+                $base['personaId'] = $a->persona_id;
+                $base['personaNombre'] = $a->persona
+                    ? trim($a->persona->apellidos . ' ' . $a->persona->nombres)
+                    : null;
+                $base['personaCuil'] = $a->persona?->cuil;
+
+                return $base;
+            }),
+            'meta' => $this->paginationMeta($paginator),
+        ]);
+    }
+
+    // ── Vencimientos (próximos + ya vencidos) ─────────────────────────
+
+    public function vencimientos(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'dias' => ['nullable', 'integer', 'min:0', 'max:365'],
+            'estado' => ['nullable', 'string'],  // vencido, por_vencer, todos
+            'per_page' => ['nullable', 'integer', 'min:1', 'max:500'],
+        ]);
+
+        $dias = (int) ($validated['dias'] ?? 30);
+        $estado = $validated['estado'] ?? 'todos';
+        $perPage = $this->resolvePerPage($request);
+
+        $query = Archivo::query()
+            ->with(['persona:id,apellidos,nombres,cuil,estado_id', 'persona.estado:id,nombre', 'tipo'])
+            ->whereNull('deleted_at')
+            ->whereNotNull('fecha_vencimiento');
+
+        if ($estado === 'vencido') {
+            $query->whereDate('fecha_vencimiento', '<', now());
+        } elseif ($estado === 'por_vencer') {
+            $query->whereDate('fecha_vencimiento', '>=', now())
+                ->whereDate('fecha_vencimiento', '<=', now()->addDays($dias));
+        } else {
+            // todos: vencidos + por vencer en los próximos N días
+            $query->whereDate('fecha_vencimiento', '<=', now()->addDays($dias));
+        }
+
+        $paginator = $query->orderBy('fecha_vencimiento')->paginate($perPage);
+
+        $items = collect($paginator->items())->map(function (Archivo $a) {
+            $base = $this->formatArchivo($a);
+            $base['personaId'] = $a->persona_id;
+            $base['personaNombre'] = $a->persona
+                ? trim($a->persona->apellidos . ' ' . $a->persona->nombres)
+                : null;
+            $base['personaCuil'] = $a->persona?->cuil;
+            $base['personaEstado'] = $a->persona?->estado?->nombre;
+            $base['diasParaVencer'] = $a->fecha_vencimiento
+                ? (int) now()->startOfDay()->diffInDays($a->fecha_vencimiento, false)
+                : null;
+
+            return $base;
+        });
+
+        // Resumen
+        $vencidos = $items->filter(fn ($i) => ($i['diasParaVencer'] ?? 0) < 0)->count();
+        $porVencer = $items->filter(fn ($i) => ($i['diasParaVencer'] ?? 0) >= 0)->count();
+
+        return response()->json([
+            'data' => $items->values(),
+            'resumen' => [
+                'vencidos' => $vencidos,
+                'porVencer' => $porVencer,
+                'total' => $paginator->total(),
+                'diasConsultados' => $dias,
+            ],
+            'meta' => $this->paginationMeta($paginator),
+        ]);
+    }
+
+    // ── Tipos de documentos ─────────────────────────────────────────────
+
+    public function tiposDocumento(): JsonResponse
+    {
+        $tipos = FileType::query()
+            ->whereNull('deleted_at')
+            ->orderBy('nombre')
+            ->get()
+            ->map(fn (FileType $t) => [
+                'id' => $t->id,
+                'nombre' => $t->nombre,
+                'vence' => (bool) $t->vence,
+            ]);
+
+        return response()->json(['data' => $tipos]);
+    }
+
+    // ── Historial de cambios de una persona ─────────────────────────────
+
+    public function personaHistorial(int $personaId): JsonResponse
+    {
+        $persona = Persona::find($personaId);
+
+        if (! $persona) {
+            return response()->json(['error' => 'Persona no encontrada'], 404);
+        }
+
+        $historial = PersonaHistory::query()
+            ->where('persona_id', $personaId)
+            ->with('user:id,name')
+            ->orderByDesc('created_at')
+            ->limit(200)
+            ->get()
+            ->map(fn (PersonaHistory $h) => [
+                'id' => $h->id,
+                'autor' => $h->user?->name,
+                'descripcion' => $h->description,
+                'cambios' => $h->changes,
+                'fecha' => $h->created_at?->toIso8601String(),
+                'fechaLabel' => $h->created_at?->format('d/m/Y H:i'),
+            ]);
+
+        return response()->json([
+            'data' => $historial,
+            'meta' => [
+                'personaId' => $personaId,
+                'personaNombre' => trim($persona->apellidos . ' ' . $persona->nombres),
+                'total' => $historial->count(),
+            ],
+        ]);
+    }
+
+    // ── Buscar persona por CUIL o nombre ────────────────────────────────
+
+    public function buscarPersona(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'q' => ['required', 'string', 'min:3', 'max:255'],
+        ]);
+
+        $q = $validated['q'];
+
+        $results = Persona::query()
+            ->with(['estado:id,nombre', 'cliente:id,nombre', 'sucursal:id,nombre'])
+            ->where(function ($query) {
+                $query->whereNull('es_solicitud')->orWhere('es_solicitud', false);
+            })
+            ->where(function ($query) use ($q) {
+                $query->where('cuil', 'like', "%{$q}%")
+                    ->orWhere('apellidos', 'like', "%{$q}%")
+                    ->orWhere('nombres', 'like', "%{$q}%")
+                    ->orWhere('email', 'like', "%{$q}%")
+                    ->orWhere('patente', 'like', "%{$q}%");
+            })
+            ->orderByDesc('id')
+            ->limit(20)
+            ->get()
+            ->map(fn (Persona $p) => $this->formatPersona($p));
+
+        return response()->json(['data' => $results]);
+    }
+
     // ── Helpers ──────────────────────────────────────────────────────────
 
     private function listByEstado(Request $request, string $estadoNormalized): JsonResponse
@@ -318,6 +522,23 @@ class DistriappReadonlyController extends Controller
             'mes' => $cierre->mes,
             'semana' => $cierre->semana,
             'dia' => $cierre->dia,
+        ];
+    }
+
+    private function formatArchivo(Archivo $archivo): array
+    {
+        return [
+            'id' => $archivo->id,
+            'nombreOriginal' => $archivo->nombre_original,
+            'tipoDocumento' => $archivo->tipo?->nombre,
+            'mime' => $archivo->mime,
+            'size' => $archivo->size,
+            'fechaVencimiento' => $archivo->fecha_vencimiento?->toDateString(),
+            'vencido' => $archivo->fecha_vencimiento && $archivo->fecha_vencimiento->isPast(),
+            'enviada' => (bool) $archivo->enviada,
+            'recibido' => (bool) $archivo->recibido,
+            'pagado' => (bool) $archivo->pagado,
+            'createdAt' => $archivo->created_at?->toIso8601String(),
         ];
     }
 

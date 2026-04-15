@@ -1,23 +1,58 @@
 """MCP Server que expone la API read-only de DistriApp como herramientas para Claude."""
 
 import json
+import logging
+import os
+import sys
+import traceback
+from datetime import datetime
+
 import httpx
 from mcp.server.fastmcp import FastMCP
+
+# ── Logging a archivo ────────────────────────────────────────────────
+LOG_DIR = os.path.dirname(os.path.abspath(__file__))
+LOG_FILE = os.path.join(LOG_DIR, "mcp-server.log")
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    handlers=[
+        logging.FileHandler(LOG_FILE, encoding="utf-8"),
+    ],
+)
+log = logging.getLogger("distriapp-mcp")
+
+log.info("=" * 60)
+log.info("MCP Server iniciado - %s", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+log.info("Python: %s", sys.executable)
+log.info("Log file: %s", LOG_FILE)
+log.info("=" * 60)
 
 mcp = FastMCP("distriapp-readonly")
 
 API_BASE = "https://personal.distriapp.com.ar/api/distriapp/readonly"
-API_KEY = "a45a16e45dbf0441c430201d031fa2648ed0cc2a4cd1037d1b008e721df2e524"
+API_KEY = os.environ.get("DISTRIAPP_API_KEY", "")
 TIMEOUT = 15
+
+if not API_KEY:
+    log.error("DISTRIAPP_API_KEY no está configurada. El server no podrá autenticarse.")
 
 HEADERS = {"X-Distriapp-Key": API_KEY, "Accept": "application/json"}
 
 
 def _get(path: str, params: dict | None = None) -> str:
     url = f"{API_BASE}/{path.lstrip('/')}"
-    resp = httpx.get(url, headers=HEADERS, params=params, timeout=TIMEOUT)
-    resp.raise_for_status()
-    return json.dumps(resp.json(), ensure_ascii=False, indent=2)
+    log.info("GET %s params=%s", url, params)
+    try:
+        resp = httpx.get(url, headers=HEADERS, params=params, timeout=TIMEOUT)
+        resp.raise_for_status()
+        log.info("OK %s -> %d bytes", path, len(resp.content))
+        return json.dumps(resp.json(), ensure_ascii=False, indent=2)
+    except Exception as e:
+        log.error("ERROR en GET %s: %s", path, e)
+        log.error(traceback.format_exc())
+        raise
 
 
 @mcp.tool()
@@ -96,3 +131,39 @@ def cierres_diarios(
 def cierres_fechas() -> str:
     """Obtiene las fechas de importacion disponibles en cierres diarios."""
     return _get("cierres-diarios/fechas")
+
+
+@mcp.tool()
+def buscar_persona(q: str) -> str:
+    """Busca distribuidores por CUIL, apellido, nombre, email o patente. Minimo 3 caracteres."""
+    return _get("buscar-persona", {"q": q})
+
+
+@mcp.tool()
+def persona_documentos(persona_id: int, per_page: int = 100, page: int = 1) -> str:
+    """Lista los documentos de un distribuidor por su ID. Incluye tipo, vencimiento, y estado (enviada/recibido/pagado)."""
+    return _get(f"persona/{persona_id}/documentos", {"per_page": per_page, "page": page})
+
+
+@mcp.tool()
+def persona_historial(persona_id: int) -> str:
+    """Obtiene el historial de cambios de un distribuidor: quién cambió qué campo, valor anterior y nuevo."""
+    return _get(f"persona/{persona_id}/historial")
+
+
+@mcp.tool()
+def documentos_vencidos(per_page: int = 100, page: int = 1) -> str:
+    """Lista todos los documentos vencidos del sistema con datos del distribuidor."""
+    return _get("documentos-vencidos", {"per_page": per_page, "page": page})
+
+
+@mcp.tool()
+def vencimientos(dias: int = 30, estado: str = "todos", per_page: int = 100, page: int = 1) -> str:
+    """Consulta vencimientos de documentos. Filtros: dias (próximos N días, default 30), estado ('vencido', 'por_vencer', 'todos'). Incluye resumen con conteo de vencidos y por vencer."""
+    return _get("vencimientos", {"dias": dias, "estado": estado, "per_page": per_page, "page": page})
+
+
+@mcp.tool()
+def tipos_documento() -> str:
+    """Lista los tipos de documentos disponibles y si requieren fecha de vencimiento."""
+    return _get("tipos-documento")
