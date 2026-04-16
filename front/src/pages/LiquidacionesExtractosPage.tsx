@@ -104,6 +104,12 @@ export function LiquidacionesExtractosPage({
   const [uploadSucursal, setUploadSucursal] = useState('');
   const [uploadTipo, setUploadTipo] = useState('');
 
+  // OCASA upload state (3 zonas)
+  const [ocasaTmsFile, setOcasaTmsFile] = useState<File | null>(null);
+  const [ocasaYcc1File, setOcasaYcc1File] = useState<File | null>(null);
+  const [ocasaPdfFiles, setOcasaPdfFiles] = useState<File[]>([]);
+  const [ocasaResumen, setOcasaResumen] = useState<any>(null);
+
   // OCA state
   const [ocaMainPdf, setOcaMainPdf] = useState<File | null>(null);
   const [ocaDistribPdfs, setOcaDistribPdfs] = useState<File[]>([]);
@@ -728,6 +734,32 @@ export function LiquidacionesExtractosPage({
       setError(e instanceof Error ? e.message : 'Error');
     }
   }, [api, newLiqClienteId, newLiqDesde, newLiqHasta, loadLiquidaciones]);
+
+  // OCASA: upload de los 3 archivos
+  const subirArchivosOcasa = useCallback(async () => {
+    if (!ocasaTmsFile || !selectedLiq) return;
+    setUploading(true);
+    setOcasaResumen(null);
+    try {
+      const fd = new FormData();
+      fd.append('liquidacion_cliente_id', String(selectedLiq.id));
+      fd.append('tms_file', ocasaTmsFile);
+      if (ocasaYcc1File) fd.append('ycc1_file', ocasaYcc1File);
+      for (const pdf of ocasaPdfFiles) fd.append('pdf_files[]', pdf);
+      const res = await api.postForm('/liquidaciones/upload-ocasa', fd);
+      setOcasaTmsFile(null);
+      setOcasaYcc1File(null);
+      setOcasaPdfFiles([]);
+      setOcasaResumen(res.data);
+      await openLiq(selectedLiq);
+      const totalOps = res.data?.vinculacion?.ops_total ?? res.data?.archivos?.tms?.operaciones ?? 0;
+      showSuccess(`OCASA procesado: ${totalOps} operaciones`);
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Error procesando archivos OCASA');
+    } finally {
+      setUploading(false);
+    }
+  }, [api, ocasaTmsFile, ocasaYcc1File, ocasaPdfFiles, selectedLiq, openLiq]);
 
   const subirArchivo = useCallback(async () => {
     if (!uploadFile || !selectedLiq) return;
@@ -1735,7 +1767,169 @@ export function LiquidacionesExtractosPage({
                 )}
               </div>
             </div>
+          ) : isOcasaClient ? (
+            /* ── OCASA: Formulario de 3 zonas ───────────────────────── */
+            <div className="dashboard-card" style={{ marginBottom: 16 }}>
+              <header className="card-header"><h3>Cargar archivos OCASA</h3></header>
+              <div className="card-body">
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 16 }}>
+                  {/* Zona TMS */}
+                  <div style={{ padding: 14, background: '#eff6ff', borderRadius: 8, border: '1px solid #bfdbfe' }}>
+                    <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 8, color: '#1e40af' }}>TMS (obligatorio)</div>
+                    <input type="file" accept=".xlsx,.xls" onChange={(e) => setOcasaTmsFile(e.target.files?.[0] ?? null)} style={{ fontSize: 12 }} />
+                    {ocasaTmsFile && (
+                      <div style={{ marginTop: 6, fontSize: 11, color: '#1e40af' }}>
+                        {ocasaTmsFile.name}
+                      </div>
+                    )}
+                    <div style={{ fontSize: 10, color: '#6b7280', marginTop: 6 }}>
+                      Excel con operaciones: Transporte, CostoFijo, CostoKm, CostoProd, Distancia, Licencia
+                    </div>
+                  </div>
+
+                  {/* Zona YCC1 */}
+                  <div style={{ padding: 14, background: '#f0fdf4', borderRadius: 8, border: '1px solid #bbf7d0' }}>
+                    <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 8, color: '#166534' }}>YCC1 (opcional)</div>
+                    <input type="file" accept=".xlsx,.xls" onChange={(e) => setOcasaYcc1File(e.target.files?.[0] ?? null)} style={{ fontSize: 12 }} />
+                    {ocasaYcc1File && (
+                      <div style={{ marginTop: 6, fontSize: 11, color: '#166534' }}>
+                        {ocasaYcc1File.name}
+                      </div>
+                    )}
+                    <div style={{ fontSize: 10, color: '#6b7280', marginTop: 6 }}>
+                      Excel de detalle por parada/bulto. Vincula con TMS por Transporte.
+                    </div>
+                  </div>
+
+                  {/* Zona PDFs */}
+                  <div style={{ padding: 14, background: '#fefce8', borderRadius: 8, border: '1px solid #fde68a' }}>
+                    <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 8, color: '#854d0e' }}>PDFs facturas (opcional)</div>
+                    <input type="file" accept=".pdf" multiple onChange={(e) => setOcasaPdfFiles(Array.from(e.target.files ?? []))} style={{ fontSize: 12 }} />
+                    {ocasaPdfFiles.length > 0 && (
+                      <div style={{ marginTop: 6, fontSize: 11, color: '#854d0e' }}>
+                        {ocasaPdfFiles.length} PDF(s): {ocasaPdfFiles.map(f => f.name).join(', ')}
+                      </div>
+                    )}
+                    <div style={{ fontSize: 10, color: '#6b7280', marginTop: 6 }}>
+                      PDFs del cliente con split Imp.Gravado / Imp.NoGravado por operacion.
+                    </div>
+                  </div>
+                </div>
+
+                <div style={{ marginTop: 14, display: 'flex', gap: 12, alignItems: 'center' }}>
+                  <button type="button" className="btn-primary" onClick={subirArchivosOcasa} disabled={!ocasaTmsFile || uploading}>
+                    {uploading ? 'Procesando archivos OCASA...' : 'Subir y procesar'}
+                  </button>
+                  {!ocasaTmsFile && <span style={{ fontSize: 11, color: '#6b7280' }}>Selecciona al menos el archivo TMS para continuar</span>}
+                  {ocasaTmsFile && !ocasaYcc1File && !ocasaPdfFiles.length && (
+                    <span style={{ fontSize: 11, color: '#d97706' }}>Solo TMS seleccionado. YCC1 y PDFs son opcionales pero recomendados.</span>
+                  )}
+                </div>
+
+                {/* Bug B: Panel de resumen de procesamiento */}
+                {ocasaResumen && (
+                  <div style={{ marginTop: 16, padding: 16, background: '#f9fafb', borderRadius: 8, border: '1px solid #e5e7eb' }}>
+                    <h4 style={{ margin: '0 0 12px', fontSize: 14 }}>Resultado del procesamiento</h4>
+
+                    {/* Estado de archivos */}
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12, marginBottom: 14 }}>
+                      <div style={{ padding: 8, borderRadius: 6, background: ocasaResumen.archivos?.tms?.estado === 'ok' ? '#dcfce7' : '#fee2e2' }}>
+                        <div style={{ fontSize: 12, fontWeight: 600 }}>TMS</div>
+                        <div style={{ fontSize: 18, fontWeight: 700 }}>{ocasaResumen.archivos?.tms?.operaciones ?? 0}</div>
+                        <div style={{ fontSize: 11, color: '#6b7280' }}>operaciones</div>
+                      </div>
+                      <div style={{ padding: 8, borderRadius: 6, background: ocasaResumen.archivos?.ycc1?.estado === 'ok' ? '#dcfce7' : ocasaResumen.archivos?.ycc1?.estado === 'no_cargado' ? '#fefce8' : '#fee2e2' }}>
+                        <div style={{ fontSize: 12, fontWeight: 600 }}>YCC1</div>
+                        {ocasaResumen.archivos?.ycc1?.estado === 'ok' ? (
+                          <>
+                            <div style={{ fontSize: 18, fontWeight: 700 }}>{ocasaResumen.archivos.ycc1.filas?.toLocaleString('es-AR') ?? 0}</div>
+                            <div style={{ fontSize: 11, color: '#6b7280' }}>filas vinculadas</div>
+                          </>
+                        ) : (
+                          <div style={{ fontSize: 12, color: '#92400e' }}>No cargado</div>
+                        )}
+                      </div>
+                      <div style={{ padding: 8, borderRadius: 6, background: ocasaResumen.archivos?.pdfs?.estado === 'ok' ? '#dcfce7' : ocasaResumen.archivos?.pdfs?.estado === 'no_cargado' ? '#fefce8' : '#fee2e2' }}>
+                        <div style={{ fontSize: 12, fontWeight: 600 }}>PDFs</div>
+                        {ocasaResumen.archivos?.pdfs?.estado === 'ok' ? (
+                          <>
+                            <div style={{ fontSize: 18, fontWeight: 700 }}>{ocasaResumen.archivos.pdfs.facturas ?? 0}</div>
+                            <div style={{ fontSize: 11, color: '#6b7280' }}>{ocasaResumen.archivos.pdfs.ops_con_gravado ?? 0} ops con gravado</div>
+                          </>
+                        ) : (
+                          <div style={{ fontSize: 12, color: '#92400e' }}>No cargado</div>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Modelos de tarifa */}
+                    {ocasaResumen.modelos && (
+                      <div style={{ marginBottom: 12 }}>
+                        <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>Modelos de tarifa detectados</div>
+                        <div style={{ display: 'flex', gap: 16, fontSize: 12 }}>
+                          {[['JORNADA', 'Jornada', '#dbeafe', '#1e40af'], ['JORNADA_KM', 'Jornada+KM', '#fef3c7', '#92400e'], ['PRODUCTIVIDAD', 'Productividad', '#d1fae5', '#065f46']].map(([key, label, bg, color]) => {
+                            const m = ocasaResumen.modelos[key];
+                            return m?.cantidad > 0 ? (
+                              <span key={key} style={{ padding: '3px 10px', borderRadius: 6, background: bg as string, color: color as string, fontWeight: 600 }}>
+                                {label}: {m.cantidad} ({m.porcentaje}%)
+                              </span>
+                            ) : null;
+                          })}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Fracciones */}
+                    {ocasaResumen.fracciones && Object.keys(ocasaResumen.fracciones).length > 0 && (
+                      <div style={{ marginBottom: 12 }}>
+                        <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>Fracciones de jornada</div>
+                        <div style={{ display: 'flex', gap: 12, fontSize: 12 }}>
+                          {Object.entries(ocasaResumen.fracciones as Record<string, { cantidad: number; porcentaje: number }>).sort(([a], [b]) => parseFloat(b) - parseFloat(a)).map(([frac, data]) => {
+                            const f = parseFloat(frac);
+                            const label = Math.abs(f - 1.0) < 0.01 ? '1/1' : Math.abs(f - 0.75) < 0.01 ? '3/4' : Math.abs(f - 0.5) < 0.01 ? '1/2' : Math.abs(f - 0.25) < 0.01 ? '1/4' : `${Math.round(f * 100)}%`;
+                            return (
+                              <span key={frac} style={{ padding: '2px 8px', borderRadius: 4, background: '#f3f4f6' }}>
+                                {label}: {data.cantidad} ({data.porcentaje}%)
+                              </span>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Vinculacion */}
+                    {ocasaResumen.vinculacion && (
+                      <div style={{ display: 'flex', gap: 20, fontSize: 12 }}>
+                        <div>
+                          <span style={{ color: '#6b7280' }}>Distribuidores: </span>
+                          <strong style={{ color: '#16a34a' }}>{ocasaResumen.vinculacion.distribuidores_ok}</strong>
+                          {ocasaResumen.vinculacion.distribuidores_sin_match > 0 && (
+                            <span style={{ color: '#dc2626' }}> ({ocasaResumen.vinculacion.distribuidores_sin_match} sin match)</span>
+                          )}
+                        </div>
+                        <div>
+                          <span style={{ color: '#6b7280' }}>Con tarifa: </span>
+                          <strong style={{ color: '#16a34a' }}>{ocasaResumen.vinculacion.ops_con_tarifa}</strong>
+                          <span style={{ color: '#6b7280' }}> / {ocasaResumen.vinculacion.ops_total}</span>
+                          {ocasaResumen.vinculacion.ops_sin_tarifa > 0 && (
+                            <span style={{ color: '#dc2626' }}> ({ocasaResumen.vinculacion.ops_sin_tarifa} sin tarifa)</span>
+                          )}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Errores */}
+                    {ocasaResumen.errores?.length > 0 && (
+                      <div style={{ marginTop: 10, padding: 8, background: '#fee2e2', borderRadius: 6, fontSize: 11, color: '#991b1b' }}>
+                        {ocasaResumen.errores.map((e: string, i: number) => <div key={i}>{e}</div>)}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
           ) : (
+            /* ── Formulario generico (OCA, Urbano, Loginter, etc.) ── */
             <div className="dashboard-card" style={{ marginBottom: 16 }}>
               <header className="card-header"><h3>Cargar archivo de entrada</h3></header>
               <div className="card-body">
@@ -1764,21 +1958,17 @@ export function LiquidacionesExtractosPage({
                   <div>
                     <label style={{ display: 'block', fontSize: 12, marginBottom: 4 }}>Tipo archivo (opcional)</label>
                     <select className="form-input" value={uploadTipo} onChange={(e) => setUploadTipo(e.target.value)} style={{ width: 180 }}>
-                      <option value="">—</option>
+                      <option value="">---</option>
                       {uploadTipoOptions.map((opt) => (
                         <option key={opt.value} value={opt.value}>{opt.label}</option>
                       ))}
                     </select>
                   </div>
                   <div style={{ fontSize: 11, color: '#6b7280', minWidth: 220 }}>
-                    {isOcasaClient ? (
-                      <>Subir <strong>TMS.xlsx</strong> (motor de calculo), <strong>YCC1.xlsx</strong> (detalle) y/o <strong>PDFs cliente</strong> (gravado/no gravado). Se detecta automaticamente el tipo.</>
-                    ) : (
-                      <>Soporta Excel y PDF. Para PDF, el cliente debe tener configurado `pdf_operacion_regex`.</>
-                    )}
+                    Soporta Excel y PDF. Para PDF, el cliente debe tener configurado `pdf_operacion_regex`.
                   </div>
                   <button type="button" className="btn-primary" onClick={subirArchivo} disabled={!uploadFile || uploading}>
-                    {uploading ? 'Procesando…' : 'Subir y procesar'}
+                    {uploading ? 'Procesando...' : 'Subir y procesar'}
                   </button>
                 </div>
               </div>

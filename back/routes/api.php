@@ -250,6 +250,7 @@ Route::middleware('auth.api')->group(function () {
         Route::get('/liquidaciones/{liquidacionCliente}', [LiqExtractosController::class, 'show']);
         Route::delete('/liquidaciones/{liquidacionCliente}', [LiqExtractosController::class, 'destroy']);
         Route::post('/liquidaciones/upload', [LiqExtractosController::class, 'upload']);
+        Route::post('/liquidaciones/upload-ocasa', [LiqExtractosController::class, 'uploadOcasa']);
         Route::post('/liquidaciones/{liquidacionCliente}/generar', [LiqExtractosController::class, 'generarLiquidaciones']);
         Route::get('/liquidaciones/{liquidacionCliente}/operaciones', [LiqExtractosController::class, 'operaciones']);
         Route::delete('/liquidaciones/{liquidacionCliente}/operaciones', [LiqExtractosController::class, 'destroyOperaciones']);

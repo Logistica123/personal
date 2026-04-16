@@ -113,6 +113,193 @@ class LiqExtractosController extends Controller
         }
     }
 
+    /**
+     * POST /liq/liquidaciones/upload-ocasa
+     *
+     * Endpoint especifico para OCASA: acepta TMS (obligatorio) + YCC1 (opcional) + PDFs (opcionales)
+     * en un solo request. Procesa en orden correcto y retorna estadisticas detalladas.
+     */
+    public function uploadOcasa(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'liquidacion_cliente_id' => 'required|exists:liq_liquidaciones_cliente,id',
+            'tms_file' => 'required|file|mimes:xlsx,xls',
+            'ycc1_file' => 'nullable|file|mimes:xlsx,xls',
+            'pdf_files' => 'nullable|array',
+            'pdf_files.*' => 'file|mimes:pdf',
+        ]);
+
+        $liquidacion = LiqLiquidacionCliente::with('cliente')->findOrFail($data['liquidacion_cliente_id']);
+        $config = is_array($liquidacion->cliente?->configuracion_excel) ? $liquidacion->cliente->configuracion_excel : [];
+        $disk = 'local';
+        $dir = "liq/{$liquidacion->cliente_id}/archivos";
+
+        $esquema = \App\Models\LiqEsquemaTarifario::where('cliente_id', $liquidacion->cliente_id)
+            ->where('activo', true)->latest()->first();
+        if (!$esquema) {
+            return response()->json(['error' => 'No hay un esquema tarifario activo para este cliente'], 422);
+        }
+
+        $ocasaProcessor = app(\App\Services\Liq\OcasaExcelProcessor::class);
+        $resultados = ['archivos' => [], 'errores' => []];
+
+        // --- 1. Procesar TMS (obligatorio) ---
+        $tmsFile = $request->file('tms_file');
+        $tmsNombre = (string) Str::uuid() . '.' . $tmsFile->getClientOriginalExtension();
+        $tmsRuta = $tmsFile->storeAs($dir, $tmsNombre, $disk);
+
+        $archivoTms = LiqArchivoEntrada::create([
+            'liquidacion_cliente_id' => $liquidacion->id,
+            'tipo_archivo' => 'DATA_CLIENTE',
+            'nombre_original' => $tmsFile->getClientOriginalName(),
+            'nombre_interno' => $tmsNombre,
+            'disk' => $disk,
+            'ruta_storage' => $tmsRuta,
+            'tamano' => (int) ($tmsFile->getSize() ?? 0),
+        ]);
+
+        try {
+            $tmsResult = $ocasaProcessor->procesarTms($archivoTms, $liquidacion, $esquema, $config);
+            $resultados['archivos']['tms'] = [
+                'estado' => 'ok',
+                'nombre' => $tmsFile->getClientOriginalName(),
+                'operaciones' => $tmsResult['total_filas'] ?? 0,
+                'estados' => $tmsResult['estados'] ?? [],
+            ];
+        } catch (\Throwable $e) {
+            $resultados['archivos']['tms'] = ['estado' => 'error', 'mensaje' => $e->getMessage()];
+            $resultados['errores'][] = 'TMS: ' . $e->getMessage();
+        }
+
+        // --- 2. Procesar YCC1 (opcional) ---
+        if ($request->hasFile('ycc1_file')) {
+            $ycc1File = $request->file('ycc1_file');
+            $ycc1Nombre = (string) Str::uuid() . '.' . $ycc1File->getClientOriginalExtension();
+            $ycc1Ruta = $ycc1File->storeAs($dir, $ycc1Nombre, $disk);
+
+            $archivoYcc1 = LiqArchivoEntrada::create([
+                'liquidacion_cliente_id' => $liquidacion->id,
+                'tipo_archivo' => 'DETALLE_SUCURSAL',
+                'nombre_original' => $ycc1File->getClientOriginalName(),
+                'nombre_interno' => $ycc1Nombre,
+                'disk' => $disk,
+                'ruta_storage' => $ycc1Ruta,
+                'tamano' => (int) ($ycc1File->getSize() ?? 0),
+            ]);
+
+            try {
+                $ycc1Result = $ocasaProcessor->procesarYcc1($archivoYcc1, $liquidacion, $config);
+                $resultados['archivos']['ycc1'] = [
+                    'estado' => 'ok',
+                    'nombre' => $ycc1File->getClientOriginalName(),
+                    'filas' => $ycc1Result['total_filas_detalle'] ?? 0,
+                    'transportes_vinculados' => $ycc1Result['transportes_vinculados'] ?? 0,
+                ];
+            } catch (\Throwable $e) {
+                $resultados['archivos']['ycc1'] = ['estado' => 'error', 'mensaje' => $e->getMessage()];
+                $resultados['errores'][] = 'YCC1: ' . $e->getMessage();
+            }
+        } else {
+            $resultados['archivos']['ycc1'] = ['estado' => 'no_cargado'];
+        }
+
+        // --- 3. Procesar PDFs (opcionales) ---
+        $pdfFiles = $request->file('pdf_files', []);
+        if (!empty($pdfFiles)) {
+            $pdfExtractor = app(\App\Services\FacturaAi\PdfTextExtractor::class);
+            $pdfsOk = 0;
+            $opsConGravado = 0;
+
+            foreach ($pdfFiles as $pdfFile) {
+                $pdfNombre = (string) Str::uuid() . '.pdf';
+                $pdfRuta = $pdfFile->storeAs($dir, $pdfNombre, $disk);
+
+                $archivoPdf = LiqArchivoEntrada::create([
+                    'liquidacion_cliente_id' => $liquidacion->id,
+                    'tipo_archivo' => 'DATA_CLIENTE',
+                    'nombre_original' => $pdfFile->getClientOriginalName(),
+                    'nombre_interno' => $pdfNombre,
+                    'disk' => $disk,
+                    'ruta_storage' => $pdfRuta,
+                    'tamano' => (int) ($pdfFile->getSize() ?? 0),
+                ]);
+
+                try {
+                    $texto = $pdfExtractor->extract(Storage::disk($disk)->path($pdfRuta));
+                    $pdfResult = $ocasaProcessor->procesarPdfCliente($archivoPdf, $liquidacion, $config, $texto);
+                    $pdfsOk++;
+                    $opsConGravado += $pdfResult['operaciones_actualizadas'] ?? 0;
+                } catch (\Throwable $e) {
+                    $resultados['errores'][] = 'PDF ' . $pdfFile->getClientOriginalName() . ': ' . $e->getMessage();
+                }
+            }
+
+            $resultados['archivos']['pdfs'] = [
+                'estado' => $pdfsOk > 0 ? 'ok' : 'error',
+                'facturas' => $pdfsOk,
+                'ops_con_gravado' => $opsConGravado,
+            ];
+        } else {
+            $resultados['archivos']['pdfs'] = ['estado' => 'no_cargado'];
+        }
+
+        // --- 4. Estadisticas detalladas ---
+        $ops = LiqOperacion::where('liquidacion_cliente_id', $liquidacion->id);
+
+        // Modelos de tarifa
+        $modelosCounts = (clone $ops)->whereNotNull('modelo_tarifa')
+            ->selectRaw('modelo_tarifa, COUNT(*) as cantidad')
+            ->groupBy('modelo_tarifa')
+            ->pluck('cantidad', 'modelo_tarifa');
+        $totalOps = $modelosCounts->sum();
+        $resultados['modelos'] = [];
+        foreach (['JORNADA', 'JORNADA_KM', 'PRODUCTIVIDAD'] as $m) {
+            $c = (int) ($modelosCounts[$m] ?? 0);
+            $resultados['modelos'][$m] = [
+                'cantidad' => $c,
+                'porcentaje' => $totalOps > 0 ? round($c / $totalOps * 100, 1) : 0,
+            ];
+        }
+
+        // Fracciones
+        $fraccionesCounts = (clone $ops)->whereIn('modelo_tarifa', ['JORNADA', 'JORNADA_KM'])
+            ->selectRaw('fraccion_jornada, COUNT(*) as cantidad')
+            ->groupBy('fraccion_jornada')
+            ->pluck('cantidad', 'fraccion_jornada');
+        $totalFrac = $fraccionesCounts->sum();
+        $resultados['fracciones'] = [];
+        foreach ($fraccionesCounts as $frac => $cnt) {
+            $resultados['fracciones'][(string) $frac] = [
+                'cantidad' => (int) $cnt,
+                'porcentaje' => $totalFrac > 0 ? round((int) $cnt / $totalFrac * 100, 1) : 0,
+            ];
+        }
+
+        // Vinculacion
+        $estadosCounts = (clone $ops)->selectRaw('estado, COUNT(*) as cantidad')
+            ->groupBy('estado')->pluck('cantidad', 'estado');
+        $distribOk = (clone $ops)->whereNotNull('distribuidor_id')->distinct('distribuidor_id')->count('distribuidor_id');
+        $distribTotal = (clone $ops)->selectRaw('COUNT(DISTINCT COALESCE(distribuidor_id, dominio)) as total')->value('total');
+
+        $resultados['vinculacion'] = [
+            'distribuidores_ok' => $distribOk,
+            'distribuidores_total' => (int) $distribTotal,
+            'distribuidores_sin_match' => (int) ($estadosCounts['sin_distribuidor'] ?? 0),
+            'ops_con_tarifa' => (int) ($estadosCounts['ok'] ?? 0) + (int) ($estadosCounts['diferencia'] ?? 0),
+            'ops_sin_tarifa' => (int) ($estadosCounts['sin_tarifa'] ?? 0),
+            'ops_total' => $totalOps,
+        ];
+
+        $resultados['estados'] = $estadosCounts;
+
+        return response()->json([
+            'data' => $resultados,
+            'message' => empty($resultados['errores'])
+                ? "OCASA procesado: {$totalOps} operaciones"
+                : "OCASA procesado con advertencias: {$totalOps} operaciones",
+        ], 201);
+    }
+
     // GET /liq/liquidaciones/{liquidacionCliente} - detail with summary
     public function show(LiqLiquidacionCliente $liquidacionCliente): JsonResponse
     {
