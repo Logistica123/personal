@@ -153,7 +153,16 @@ class LiqDistribuidorDocumentoController extends Controller
             $doc->save();
         }
 
-        // Historial
+        // Auditoria
+        \App\Models\LiqHistorialAuditoria::registrar(
+            'liquidacion_distribuidor', $liquidacionDistribuidor->id, 'regeneracion_pdf',
+            null,
+            ['documento_id' => $doc->id, 'total' => (float) $liquidacionDistribuidor->total_a_pagar],
+            'PDF generado',
+            $request->user(), $request->ip()
+        );
+
+        // Historial (legacy)
         $distNombre = trim(($liquidacionDistribuidor->distribuidor?->apellidos ?? '') . ' ' . ($liquidacionDistribuidor->distribuidor?->nombres ?? ''));
         LiqHistorialMovimiento::registrar(
             'pdf_generado',

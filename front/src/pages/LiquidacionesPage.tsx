@@ -519,6 +519,17 @@ export const LiquidacionesPage: React.FC<LiquidacionesPageProps> = ({
   const [liqV2DistribuidorLoading, setLiqV2DistribuidorLoading] = useState(false);
   const [liqV2DistribuidorError, setLiqV2DistribuidorError] = useState<string | null>(null);
   const [liqV2Materializing, setLiqV2Materializing] = useState<Set<number>>(() => new Set());
+
+  // Bugfix 18: Edicion de liquidaciones + historial auditoria
+  const [editLiqId, setEditLiqId] = useState<number | null>(null);
+  const [editLiqImporte, setEditLiqImporte] = useState('');
+  const [editLiqEstado, setEditLiqEstado] = useState('');
+  const [editLiqMotivo, setEditLiqMotivo] = useState('');
+  const [editLiqSaving, setEditLiqSaving] = useState(false);
+  const [historialLiq, setHistorialLiq] = useState<any[]>([]);
+  const [historialLoading, setHistorialLoading] = useState(false);
+  const [showHistorial, setShowHistorial] = useState(false);
+
   const [pendingUploads, setPendingUploads] = useState<PendingPersonalUpload[]>([]);
   const [fuelInvoiceUpload, setFuelInvoiceUpload] = useState<PendingPersonalUpload | null>(null);
   const [fuelUploading, setFuelUploading] = useState(false);
@@ -1619,6 +1630,57 @@ export const LiquidacionesPage: React.FC<LiquidacionesPageProps> = ({
       navigate(`/liquidaciones/${selectedPersonaId}`, { replace: true });
     });
   }, [autoMaterializeLiqDistId, materializeLiqV2Document, navigate, selectedPersonaId]);
+
+  // Bugfix 18: Editar liquidacion distribuidor
+  const openEditLiq = useCallback((row: any) => {
+    setEditLiqId(row.id);
+    setEditLiqImporte(String(row.total_a_pagar ?? ''));
+    setEditLiqEstado(row.estado ?? '');
+    setEditLiqMotivo('');
+  }, []);
+
+  const guardarEdicionLiq = useCallback(async () => {
+    if (!editLiqId || !editLiqMotivo || editLiqMotivo.length < 5) {
+      alert('El motivo es obligatorio (minimo 5 caracteres)');
+      return;
+    }
+    setEditLiqSaving(true);
+    try {
+      const body: Record<string, unknown> = { motivo: editLiqMotivo };
+      const importe = parseFloat(editLiqImporte.replace(/\./g, '').replace(',', '.'));
+      if (!isNaN(importe) && importe > 0) body.total_a_pagar = importe;
+      if (editLiqEstado) body.estado = editLiqEstado;
+      const res = await fetch(`${apiBaseUrl}/api/liq/liquidaciones-distribuidor/${editLiqId}/editar`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json', ...actorHeaders },
+        body: JSON.stringify(body),
+      });
+      const json = await res.json();
+      if (!res.ok) { alert(json.error || 'Error al guardar'); return; }
+      setEditLiqId(null);
+      if (selectedPersonaId) {
+        const r = await fetch(`${apiBaseUrl}/api/liq/distribuidores/${selectedPersonaId}/liquidaciones`, { headers: { Accept: 'application/json', ...actorHeaders } });
+        const rj = await r.json();
+        setLiqV2DistribuidorLiquidaciones(rj.data ?? []);
+      }
+    } catch (e: unknown) {
+      alert(e instanceof Error ? e.message : 'Error');
+    } finally {
+      setEditLiqSaving(false);
+    }
+  }, [editLiqId, editLiqImporte, editLiqEstado, editLiqMotivo, apiBaseUrl, actorHeaders, selectedPersonaId]);
+
+  // Bugfix 18: Cargar historial de auditoria del distribuidor
+  const loadHistorialDistribuidor = useCallback(async () => {
+    if (!selectedPersonaId) return;
+    setHistorialLoading(true);
+    try {
+      const r = await fetch(`${apiBaseUrl}/api/liq/distribuidores/${selectedPersonaId}/historial-auditoria`, { headers: { Accept: 'application/json', ...actorHeaders } });
+      const json = await r.json();
+      setHistorialLiq(json.data ?? []);
+    } catch { setHistorialLiq([]); }
+    finally { setHistorialLoading(false); }
+  }, [apiBaseUrl, actorHeaders, selectedPersonaId]);
 
   const handleApplyFuelSelectionAdjustments = useCallback(async () => {
     setFuelAdjustmentError(null);
@@ -5687,6 +5749,16 @@ export const LiquidacionesPage: React.FC<LiquidacionesPageProps> = ({
                                       ? 'Convertir a PDF'
                                       : 'Preparar para subir'}
                               </button>
+                              {row.estado !== 'pagada' && (
+                                <button
+                                  type="button"
+                                  className="secondary-action secondary-action--ghost"
+                                  onClick={() => openEditLiq(row)}
+                                  style={{ fontSize: '0.8rem' }}
+                                >
+                                  Editar
+                                </button>
+                              )}
                             </div>
                           </td>
                         </tr>
@@ -5696,6 +5768,88 @@ export const LiquidacionesPage: React.FC<LiquidacionesPageProps> = ({
                 </table>
               </div>
             )}
+
+            {/* Bugfix 18: Modal edicion */}
+            {editLiqId && (
+              <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
+                <div style={{ background: '#fff', borderRadius: 12, padding: 24, width: 480, maxHeight: '80vh', overflow: 'auto', boxShadow: '0 8px 32px rgba(0,0,0,0.2)' }}>
+                  <h3 style={{ margin: '0 0 16px', fontSize: 16 }}>Editar Liquidacion #{editLiqId}</h3>
+                  <div style={{ marginBottom: 12 }}>
+                    <label style={{ display: 'block', fontSize: 13, marginBottom: 4, fontWeight: 600 }}>Importe total</label>
+                    <input type="text" inputMode="decimal" className="form-input" value={editLiqImporte} onChange={e => setEditLiqImporte(e.target.value)} style={{ width: '100%', fontSize: 14 }} />
+                  </div>
+                  <div style={{ marginBottom: 12 }}>
+                    <label style={{ display: 'block', fontSize: 13, marginBottom: 4, fontWeight: 600 }}>Estado</label>
+                    <select className="form-input" value={editLiqEstado} onChange={e => setEditLiqEstado(e.target.value)} style={{ width: '100%' }}>
+                      <option value="generada">Generada</option>
+                      <option value="aprobada">Aprobada</option>
+                      <option value="anulada">Anulada</option>
+                    </select>
+                  </div>
+                  <div style={{ marginBottom: 12 }}>
+                    <label style={{ display: 'block', fontSize: 13, marginBottom: 4, fontWeight: 600 }}>Motivo de la correccion (obligatorio)</label>
+                    <textarea className="form-input" value={editLiqMotivo} onChange={e => setEditLiqMotivo(e.target.value)} placeholder="Explicar por que se hace el cambio..." rows={3} style={{ width: '100%', fontSize: 13 }} />
+                  </div>
+                  <div style={{ fontSize: 11, color: '#6b7280', marginBottom: 16 }}>
+                    Esta accion quedara registrada en el historial de auditoria.
+                  </div>
+                  <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+                    <button type="button" className="secondary-action" onClick={() => setEditLiqId(null)}>Cancelar</button>
+                    <button type="button" className="primary-action" onClick={guardarEdicionLiq} disabled={editLiqSaving || editLiqMotivo.length < 5}>
+                      {editLiqSaving ? 'Guardando...' : 'Guardar cambios'}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Bugfix 18: Panel historial */}
+            <div style={{ marginTop: 12, borderTop: '1px solid #e5e7eb', paddingTop: 12 }}>
+              <button
+                type="button"
+                className="secondary-action secondary-action--ghost"
+                onClick={() => { if (!showHistorial) { loadHistorialDistribuidor(); } setShowHistorial(!showHistorial); }}
+                style={{ fontSize: '0.85rem' }}
+              >
+                {showHistorial ? 'Ocultar historial' : 'Ver historial de auditoria'}
+              </button>
+              {showHistorial && (
+                <div style={{ marginTop: 12 }}>
+                  {historialLoading ? (
+                    <p style={{ fontSize: 13, color: '#6b7280' }}>Cargando historial...</p>
+                  ) : historialLiq.length === 0 ? (
+                    <p style={{ fontSize: 13, color: '#6b7280' }}>Sin registros de auditoria.</p>
+                  ) : (
+                    <div style={{ maxHeight: 400, overflowY: 'auto' }}>
+                      {historialLiq.map((h: any) => (
+                        <div key={h.id} style={{ padding: '10px 12px', borderBottom: '1px solid #f3f4f6', fontSize: 12 }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+                            <strong style={{ color: h.accion === 'edicion_importe' ? '#d97706' : h.accion === 'creacion' ? '#16a34a' : h.accion === 'borrado' ? '#dc2626' : '#2563eb' }}>
+                              {h.accion === 'creacion' ? 'CREACION' : h.accion === 'edicion_importe' ? 'EDICION IMPORTE' : h.accion === 'edicion_estado' ? 'CAMBIO ESTADO' : h.accion === 'regeneracion_pdf' ? 'PDF GENERADO' : (h.accion ?? '').toUpperCase()}
+                              {' '} - Liq #{h.entidad_id}
+                            </strong>
+                            <span style={{ color: '#6b7280' }}>{h.created_at ? new Date(h.created_at).toLocaleString('es-AR') : ''}</span>
+                          </div>
+                          <div style={{ color: '#374151' }}>
+                            {h.usuario_nombre && <span>{h.usuario_nombre} - </span>}
+                            {h.valores_anteriores?.total_a_pagar != null && h.valores_nuevos?.total_a_pagar != null && (
+                              <span>${Number(h.valores_anteriores.total_a_pagar).toLocaleString('es-AR', { minimumFractionDigits: 2 })} → ${Number(h.valores_nuevos.total_a_pagar).toLocaleString('es-AR', { minimumFractionDigits: 2 })}</span>
+                            )}
+                            {h.valores_anteriores?.estado && h.valores_nuevos?.estado && (
+                              <span>Estado: {h.valores_anteriores.estado} → {h.valores_nuevos.estado}</span>
+                            )}
+                            {h.valores_nuevos?.total != null && !h.valores_anteriores && (
+                              <span>Total: ${Number(h.valores_nuevos.total).toLocaleString('es-AR', { minimumFractionDigits: 2 })}</span>
+                            )}
+                          </div>
+                          {h.motivo && <div style={{ color: '#6b7280', fontStyle: 'italic', marginTop: 2 }}>{h.motivo}</div>}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
           </div>
         ) : null}
 

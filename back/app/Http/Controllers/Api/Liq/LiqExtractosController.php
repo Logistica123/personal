@@ -10,6 +10,7 @@ use App\Models\LiqOperacion;
 use App\Models\LiqLiquidacionDistribuidor;
 use App\Models\LiqConfiguracionGastos;
 use App\Models\LiqEstadoCuentaCliente;
+use App\Models\LiqHistorialAuditoria;
 use App\Services\Liq\LiqIngestService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -473,6 +474,14 @@ class LiqExtractosController extends Controller
                     'estado' => LiqLiquidacionDistribuidor::ESTADO_GENERADA,
                 ]);
                 $created[] = $liqDist->id;
+
+                LiqHistorialAuditoria::registrar(
+                    'liquidacion_distribuidor', $liqDist->id, 'creacion',
+                    null,
+                    ['subtotal' => (float) $liqDist->subtotal, 'gastos' => (float) $liqDist->gastos_administrativos, 'total' => (float) $liqDist->total_a_pagar, 'operaciones' => $ops->count()],
+                    'Generacion automatica',
+                    $request->user(), $request->ip()
+                );
             }
 
             // Crear filas automaticas en Estado de Cuenta por sucursal (cara cliente)
@@ -1248,6 +1257,14 @@ class LiqExtractosController extends Controller
                     'total_linea' => $totalLinea,
                 ]);
             }
+
+            LiqHistorialAuditoria::registrar(
+                'liquidacion_distribuidor', $liqDist->id, 'creacion',
+                null,
+                ['subtotal' => round($subtotal, 2), 'total' => $totalAPagar, 'origen' => 'manual', 'lineas' => count($data['lineas']), 'referencia' => $data['referencia_externa'] ?? null],
+                $data['observaciones'] ?? 'Creacion manual',
+                $request->user(), $request->ip()
+            );
 
             DB::commit();
 

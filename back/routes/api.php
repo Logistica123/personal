@@ -303,6 +303,9 @@ Route::middleware('auth.api')->group(function () {
         // Materializar un documento en el módulo viejo para poder publicar/enviar
         Route::post('/liquidaciones-distribuidor/{liquidacionDistribuidor}/documento', [LiqDistribuidorDocumentoController::class, 'store']);
         Route::get('/liquidaciones-distribuidor/{liquidacionDistribuidor}/pdf', [LiqDistribuidorDocumentoController::class, 'descargarPdf']);
+        Route::put('/liquidaciones-distribuidor/{liquidacionDistribuidor}/editar', [LiqDistribuidorLiquidacionesController::class, 'editar']);
+        Route::get('/liquidaciones-distribuidor/{liquidacionDistribuidor}/historial', [LiqDistribuidorLiquidacionesController::class, 'historial']);
+        Route::get('/distribuidores/{persona}/historial-auditoria', [LiqDistribuidorLiquidacionesController::class, 'historialDistribuidor']);
 
         // Estado de Cuenta de Clientes
         Route::get('/estado-cuenta', [LiqEstadoCuentaController::class, 'index']);
