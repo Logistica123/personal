@@ -3445,6 +3445,9 @@ const DashboardLayout: React.FC<{
               Aprobaciones/solicitudes
             </NavLink>
           ) : null}
+          <a href="http://0.0.0.0:3001/" className="sidebar-link" target="_blank" rel="noopener noreferrer">
+            CRM
+          </a>
           {canAccessLiquidacionesGroup ? (
             <>
               <button
