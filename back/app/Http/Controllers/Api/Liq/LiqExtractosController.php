@@ -542,6 +542,140 @@ class LiqExtractosController extends Controller
         ]);
     }
 
+    // GET /liq/liquidaciones/{liquidacionCliente}/duplicados
+    public function duplicados(LiqLiquidacionCliente $liquidacionCliente): JsonResponse
+    {
+        $dups = LiqOperacion::where('liquidacion_cliente_id', $liquidacionCliente->id)
+            ->where('estado', 'duplicado')
+            ->with('distribuidor:id,apellidos,nombres,patente')
+            ->get()
+            ->map(function ($op) {
+                // Buscar operación existente con mismo id_operacion_cliente
+                $existente = null;
+                if ($op->id_operacion_cliente) {
+                    $existente = LiqOperacion::where('id_operacion_cliente', $op->id_operacion_cliente)
+                        ->where('id', '!=', $op->id)
+                        ->whereNotIn('estado', ['ignorado', 'anulado', 'duplicado'])
+                        ->with('distribuidor:id,apellidos,nombres,patente')
+                        ->first();
+                }
+
+                return [
+                    'id' => $op->id,
+                    'id_operacion_cliente' => $op->id_operacion_cliente,
+                    'importe_nuevo' => (float) $op->valor_cliente,
+                    'concepto' => $op->concepto,
+                    'dominio' => $op->dominio,
+                    'distribuidor' => $op->distribuidor ? trim($op->distribuidor->apellidos . ' ' . $op->distribuidor->nombres) : null,
+                    'existente' => $existente ? [
+                        'id' => $existente->id,
+                        'liquidacion_cliente_id' => $existente->liquidacion_cliente_id,
+                        'importe' => (float) $existente->valor_cliente,
+                        'estado' => $existente->estado,
+                        'distribuidor' => $existente->distribuidor ? trim($existente->distribuidor->apellidos . ' ' . $existente->distribuidor->nombres) : null,
+                    ] : null,
+                    'diferencia' => $existente ? round((float) $op->valor_cliente - (float) $existente->valor_cliente, 2) : 0,
+                ];
+            });
+
+        return response()->json(['data' => $dups, 'total' => $dups->count()]);
+    }
+
+    // POST /liq/liquidaciones/{liquidacionCliente}/resolver-duplicados
+    public function resolverDuplicados(Request $request, LiqLiquidacionCliente $liquidacionCliente): JsonResponse
+    {
+        $data = $request->validate([
+            'resoluciones' => 'required|array',
+            'resoluciones.*.operacion_duplicada_id' => 'required|integer',
+            'resoluciones.*.accion' => 'required|in:actualizar,ajuste,ignorar,anular_recargar',
+        ]);
+
+        $stats = ['actualizadas' => 0, 'ajustes_creados' => 0, 'ignoradas' => 0, 'anuladas_recargadas' => 0];
+
+        DB::beginTransaction();
+        try {
+            foreach ($data['resoluciones'] as $res) {
+                $dupOp = LiqOperacion::where('liquidacion_cliente_id', $liquidacionCliente->id)
+                    ->where('id', $res['operacion_duplicada_id'])
+                    ->where('estado', 'duplicado')
+                    ->first();
+
+                if (!$dupOp || !$dupOp->id_operacion_cliente) continue;
+
+                // Buscar operación existente
+                $existente = LiqOperacion::where('id_operacion_cliente', $dupOp->id_operacion_cliente)
+                    ->where('id', '!=', $dupOp->id)
+                    ->whereNotIn('estado', ['ignorado', 'anulado', 'duplicado'])
+                    ->first();
+
+                switch ($res['accion']) {
+                    case 'actualizar':
+                        // Reemplazar valores de la existente con los nuevos
+                        if ($existente) {
+                            $existente->update([
+                                'valor_cliente' => $dupOp->valor_cliente,
+                                'campos_originales' => $dupOp->campos_originales,
+                                'concepto' => $dupOp->concepto ?? $existente->concepto,
+                            ]);
+                        }
+                        $dupOp->update(['estado' => 'ignorado', 'observaciones' => 'Duplicado resuelto: actualizado en operación #' . ($existente?->id ?? '?')]);
+                        $stats['actualizadas']++;
+                        break;
+
+                    case 'ajuste':
+                        $diffImporte = round((float) $dupOp->valor_cliente - (float) ($existente?->valor_cliente ?? 0), 2);
+                        $dupOp->update([
+                            'estado' => 'ok',
+                            'tipo_operacion' => 'ajuste',
+                            'operacion_referencia_id' => $existente?->id,
+                            'valor_cliente' => $diffImporte,
+                            'observaciones' => 'Ajuste por corrección de ' . $dupOp->id_operacion_cliente . '. Diferencia: $' . number_format($diffImporte, 2),
+                        ]);
+                        $stats['ajustes_creados']++;
+                        break;
+
+                    case 'ignorar':
+                        $dupOp->update(['estado' => 'ignorado', 'observaciones' => 'Duplicado ignorado por operador']);
+                        $stats['ignoradas']++;
+                        break;
+
+                    case 'anular_recargar':
+                        if ($existente) {
+                            $existente->update(['estado' => 'anulado', 'observaciones' => 'Anulada por reemplazo - Op #' . $dupOp->id]);
+                        }
+                        $dupOp->update([
+                            'estado' => 'ok',
+                            'tipo_operacion' => 'reemplazo',
+                            'operacion_referencia_id' => $existente?->id,
+                            'observaciones' => 'Reemplazo de operación #' . ($existente?->id ?? '?'),
+                        ]);
+                        $stats['anuladas_recargadas']++;
+                        break;
+                }
+            }
+
+            DB::commit();
+
+            // Recalcular totales
+            $this->recalcularTotalesLiquidacion($liquidacionCliente);
+
+            return response()->json(['message' => 'Duplicados resueltos', 'data' => $stats]);
+        } catch (\Throwable $e) {
+            DB::rollBack();
+            return response()->json(['error' => 'Error resolviendo duplicados: ' . $e->getMessage()], 500);
+        }
+    }
+
+    private function recalcularTotalesLiquidacion(LiqLiquidacionCliente $liq): void
+    {
+        $ops = LiqOperacion::where('liquidacion_cliente_id', $liq->id)
+            ->whereNotIn('estado', ['ignorado', 'anulado', 'duplicado', 'excluida']);
+        $liq->update([
+            'total_operaciones' => $ops->count(),
+            'total_importe_cliente' => $ops->sum('valor_cliente'),
+        ]);
+    }
+
     // POST /liq/liquidaciones/{liquidacionCliente}/mapear-tarifa — GENÉRICO (Loginter + OCA + futuros)
     public function mapearTarifa(Request $request, LiqLiquidacionCliente $liquidacionCliente): JsonResponse
     {

@@ -19,11 +19,13 @@ class LiqCliente extends Model
         'cuit',
         'activo',
         'configuracion_excel',
+        'configuracion_duplicados',
     ];
 
     protected $casts = [
         'activo' => 'boolean',
         'configuracion_excel' => 'array',
+        'configuracion_duplicados' => 'array',
     ];
 
     // -------------------------------------------------------------------------

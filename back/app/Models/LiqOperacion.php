@@ -31,6 +31,9 @@ class LiqOperacion extends Model
         'excluida',
         'motivo_exclusion',
         'observaciones',
+        'id_operacion_cliente',
+        'tipo_operacion',
+        'operacion_referencia_id',
     ];
 
     protected $casts = [

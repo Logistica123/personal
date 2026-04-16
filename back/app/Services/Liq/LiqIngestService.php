@@ -309,6 +309,14 @@ class LiqIngestService
 
         $operacionesCreadas = 0;
         $idsVistos = [];
+        $duplicados = [];
+
+        // Config de detección de duplicados
+        $dupConfig = $liquidacion->cliente?->configuracion_duplicados;
+        $dupHabilitado = is_array($dupConfig) && ($dupConfig['habilitado'] ?? false);
+        $dupCampoId = $dupConfig['campo_id'] ?? null;
+        $dupFormato = $dupConfig['formato_id'] ?? 'simple';
+        $dupScope = $dupConfig['scope'] ?? 'global';
 
         foreach ($records as $record) {
             $fieldValues = $record['field_values'];
@@ -360,6 +368,26 @@ class LiqIngestService
             $idViaje = $this->firstFieldValue($fieldValues, ['id_viaje', 'viaje_id', 'idviaje']);
             $idViajeNorm = trim((string) ($idViaje ?? ''));
             $estado = 'pendiente';
+
+            // Construir id_operacion_cliente para detección de duplicados
+            $idOpCliente = null;
+            if ($dupHabilitado && $dupCampoId) {
+                $rawIdOp = $this->firstFieldValue($fieldValues, [$dupCampoId, strtolower($dupCampoId)]);
+                if ($rawIdOp !== null && trim((string) $rawIdOp) !== '') {
+                    if ($dupFormato === 'compuesto') {
+                        $scopeCampos = $dupConfig['campos_scope'] ?? [];
+                        $parts = [trim((string) $rawIdOp)];
+                        foreach ($scopeCampos as $sc) {
+                            $parts[] = trim((string) ($this->firstFieldValue($fieldValues, [$sc]) ?? $sucursalFilaResuelta ?? ''));
+                        }
+                        $idOpCliente = implode('|', $parts);
+                    } else {
+                        $idOpCliente = trim((string) $rawIdOp);
+                    }
+                }
+            }
+
+            // Detección duplicados intra-archivo
             if ($idViajeNorm !== '' && isset($idsVistos[$idViajeNorm])) {
                 $estado = 'duplicado';
             } elseif ($idViajeNorm !== '') {
@@ -567,10 +595,43 @@ class LiqIngestService
                 }
             }
 
+            // Detección cross-archivo: buscar si id_operacion_cliente ya existe en otra liquidación
+            $dupExistente = null;
+            if ($dupHabilitado && $idOpCliente && $estado !== 'duplicado') {
+                $dupExistente = LiqOperacion::where('id_operacion_cliente', $idOpCliente)
+                    ->whereIn('liquidacion_cliente_id', function ($q) use ($liquidacion) {
+                        $q->select('id')->from('liq_liquidaciones_cliente')
+                            ->where('cliente_id', $liquidacion->cliente_id);
+                    })
+                    ->whereNotIn('estado', ['ignorado', 'anulado', 'duplicado'])
+                    ->where('liquidacion_cliente_id', '!=', $liquidacion->id)
+                    ->first();
+
+                if ($dupExistente) {
+                    $estado = 'duplicado';
+                    $observaciones = $this->appendObservacion(
+                        $observaciones,
+                        "Duplicado de operación #{$dupExistente->id} en liquidación #{$dupExistente->liquidacion_cliente_id}. " .
+                        "Importe previo: \${$dupExistente->valor_cliente}."
+                    );
+                    $duplicados[] = [
+                        'id_operacion_cliente' => $idOpCliente,
+                        'operacion_existente_id' => $dupExistente->id,
+                        'liquidacion_existente_id' => $dupExistente->liquidacion_cliente_id,
+                        'importe_existente' => (float) $dupExistente->valor_cliente,
+                        'importe_nuevo' => $valor,
+                        'diferencia_importe' => round($valor - (float) $dupExistente->valor_cliente, 2),
+                        'estado_existente' => $dupExistente->estado,
+                        'distribuidor' => $dominio,
+                    ];
+                }
+            }
+
             LiqOperacion::create([
                 'liquidacion_cliente_id' => $liquidacion->id,
                 'archivo_entrada_id' => $archivo->id,
                 'campos_originales' => $camposOriginales,
+                'id_operacion_cliente' => $idOpCliente,
                 'dominio' => $dominio !== '' ? $dominio : null,
                 'concepto' => $concepto !== '' ? $concepto : null,
                 'sucursal_tarifa' => $sucursalPorFila ? $sucursalFilaResuelta : $sucursalTarifa,
@@ -583,6 +644,7 @@ class LiqIngestService
                 'porcentaje_agencia' => $porcentajeAgencia,
                 'diferencia_cliente' => $diferencia,
                 'estado' => $estado,
+                'tipo_operacion' => 'normal',
                 'distribuidor_id' => $distribuidorId,
                 'observaciones' => $observaciones,
             ]);
@@ -596,7 +658,7 @@ class LiqIngestService
 
         $this->recalcularTotales($liquidacion);
 
-        return [
+        $result = [
             'archivo_id' => $archivo->id,
             'total_filas' => $operacionesCreadas,
             'estados' => LiqOperacion::where('liquidacion_cliente_id', $liquidacion->id)
@@ -604,6 +666,15 @@ class LiqIngestService
                 ->groupBy('estado')
                 ->pluck('total', 'estado'),
         ];
+
+        if (!empty($duplicados)) {
+            $result['duplicados'] = [
+                'total' => count($duplicados),
+                'detalle' => $duplicados,
+            ];
+        }
+
+        return $result;
     }
 
     private function autoDetectColumns(array $headers): array

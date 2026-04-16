@@ -124,6 +124,10 @@ export function LiquidacionesExtractosPage({
   const [ocaPersonasResults, setOcaPersonasResults] = useState<OcaPersonaBusqueda[]>([]);
   const [ocaPersonasLoading, setOcaPersonasLoading] = useState(false);
 
+  // Duplicados
+  const [duplicados, setDuplicados] = useState<any[]>([]);
+  const [duplicadosLoading, setDuplicadosLoading] = useState(false);
+
   // Mini-modal mapeo Origen (Loginter)
   const [origenesSinMapear, setOrigenesSinMapear] = useState<string[]>([]);
   const [showOrigenModal, setShowOrigenModal] = useState<string | null>(null);
@@ -302,6 +306,47 @@ export function LiquidacionesExtractosPage({
     }
   }, [api]);
 
+  const loadDuplicados = useCallback(async (liqId: number) => {
+    try {
+      const res = await api.get(`/liquidaciones/${liqId}/duplicados`);
+      setDuplicados(res.data ?? []);
+    } catch {
+      setDuplicados([]);
+    }
+  }, [api]);
+
+  const resolverDuplicadosMasivo = useCallback(async (accion: string, filtro?: (d: any) => boolean) => {
+    if (!selectedLiq) return;
+    const items = filtro ? duplicados.filter(filtro) : duplicados;
+    if (items.length === 0) return;
+    if (!window.confirm(`¿Aplicar "${accion}" a ${items.length} operaciones?`)) return;
+    setDuplicadosLoading(true);
+    try {
+      await api.post(`/liquidaciones/${selectedLiq.id}/resolver-duplicados`, {
+        resoluciones: items.map((d: any) => ({ operacion_duplicada_id: d.id, accion })),
+      });
+      showSuccess(`${items.length} duplicados resueltos`);
+      await loadDuplicados(selectedLiq.id);
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Error resolviendo duplicados');
+    } finally {
+      setDuplicadosLoading(false);
+    }
+  }, [api, selectedLiq, duplicados, loadDuplicados]);
+
+  const resolverDuplicadoUno = useCallback(async (opId: number, accion: string) => {
+    if (!selectedLiq) return;
+    try {
+      await api.post(`/liquidaciones/${selectedLiq.id}/resolver-duplicados`, {
+        resoluciones: [{ operacion_duplicada_id: opId, accion }],
+      });
+      showSuccess('Duplicado resuelto');
+      await loadDuplicados(selectedLiq.id);
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Error');
+    }
+  }, [api, selectedLiq, loadDuplicados]);
+
   const loadOrigenesSinMapear = useCallback(async (liqId: number) => {
     try {
       const res = await api.get(`/liquidaciones/${liqId}/origenes-sin-mapear`);
@@ -464,12 +509,13 @@ export function LiquidacionesExtractosPage({
         setOcaResumen(null);
       }
 
-      // Cargar orígenes sin mapear (Loginter)
+      // Cargar orígenes sin mapear (Loginter) + duplicados
       loadOrigenesSinMapear(liq.id).catch(() => {});
+      loadDuplicados(liq.id).catch(() => {});
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Error cargando detalle');
     }
-  }, [api, clientes, loadOcaVinculaciones, loadOcaResumen, loadOcaTarifas, checkOcaHealth, loadOrigenesSinMapear]);
+  }, [api, clientes, loadOcaVinculaciones, loadOcaResumen, loadOcaTarifas, checkOcaHealth, loadOrigenesSinMapear, loadDuplicados]);
 
   useEffect(() => {
     if (!autoOpenLiqId) return;
@@ -1542,6 +1588,77 @@ export function LiquidacionesExtractosPage({
                   <button type="button" className="btn-primary" onClick={guardarMapeoOrigen} disabled={!origenSucursalCode.trim()}>
                     Guardar mapeo
                   </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Duplicados detectados */}
+          {duplicados.length > 0 && (
+            <div className="dashboard-card" style={{ marginBottom: 16, border: '2px solid #dc2626' }}>
+              <header className="card-header" style={{ background: '#fee2e2' }}>
+                <h3 style={{ color: '#991b1b' }}>Operaciones duplicadas ({duplicados.length})</h3>
+              </header>
+              <div className="card-body">
+                <p style={{ fontSize: 12, color: '#991b1b', marginBottom: 12 }}>
+                  Se detectaron operaciones que ya existen en liquidaciones anteriores. Resolvé cada caso antes de continuar.
+                </p>
+
+                {/* Botones masivos */}
+                {duplicados.length > 3 && (
+                  <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
+                    {(() => { const exactos = duplicados.filter(d => d.diferencia === 0); return exactos.length > 0 ? (
+                      <button type="button" className="btn-sm" style={{ background: '#dcfce7', border: '1px solid #16a34a', color: '#166534' }} onClick={() => resolverDuplicadosMasivo('ignorar', d => d.diferencia === 0)} disabled={duplicadosLoading}>
+                        Ignorar todos los exactos ({exactos.length})
+                      </button>
+                    ) : null; })()}
+                    {(() => { const noPagados = duplicados.filter(d => d.diferencia !== 0 && d.existente?.estado !== 'pagada'); return noPagados.length > 0 ? (
+                      <button type="button" className="btn-sm" style={{ background: '#dbeafe', border: '1px solid #2563eb', color: '#1e40af' }} onClick={() => resolverDuplicadosMasivo('actualizar', d => d.diferencia !== 0 && d.existente?.estado !== 'pagada')} disabled={duplicadosLoading}>
+                        Actualizar todos no pagados ({noPagados.length})
+                      </button>
+                    ) : null; })()}
+                  </div>
+                )}
+
+                <div style={{ overflowX: 'auto' }}>
+                  <table className="table-sm" style={{ width: '100%', fontSize: 12 }}>
+                    <thead>
+                      <tr>
+                        <th>ID Op.</th>
+                        <th>Distribuidor</th>
+                        <th style={{ textAlign: 'right' }}>Imp. previo</th>
+                        <th style={{ textAlign: 'right' }}>Imp. nuevo</th>
+                        <th style={{ textAlign: 'right' }}>Diferencia</th>
+                        <th>Estado previo</th>
+                        <th>Acciones</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {duplicados.map((d) => (
+                        <tr key={d.id} style={{ background: d.diferencia === 0 ? '#f0fdf4' : '#fef9c3' }}>
+                          <td style={{ fontFamily: 'monospace', fontSize: 11 }}>{d.id_operacion_cliente}</td>
+                          <td style={{ fontSize: 11 }}>{d.distribuidor ?? d.dominio ?? '—'}</td>
+                          <td style={{ textAlign: 'right' }}>{d.existente ? `$${Number(d.existente.importe).toLocaleString('es-AR', { minimumFractionDigits: 2 })}` : '—'}</td>
+                          <td style={{ textAlign: 'right' }}>${Number(d.importe_nuevo).toLocaleString('es-AR', { minimumFractionDigits: 2 })}</td>
+                          <td style={{ textAlign: 'right', fontWeight: 600, color: d.diferencia === 0 ? '#16a34a' : '#d97706' }}>
+                            {d.diferencia === 0 ? '$0' : `${d.diferencia > 0 ? '+' : ''}$${Number(d.diferencia).toLocaleString('es-AR', { minimumFractionDigits: 2 })}`}
+                          </td>
+                          <td style={{ fontSize: 11 }}>{d.existente?.estado ?? '—'}</td>
+                          <td style={{ display: 'flex', gap: 4 }}>
+                            {d.diferencia === 0 ? (
+                              <button type="button" className="btn-sm" style={{ background: '#dcfce7', fontSize: 10 }} onClick={() => resolverDuplicadoUno(d.id, 'ignorar')}>Ignorar</button>
+                            ) : (
+                              <>
+                                <button type="button" className="btn-sm" style={{ background: '#dbeafe', fontSize: 10 }} onClick={() => resolverDuplicadoUno(d.id, 'actualizar')}>Actualizar</button>
+                                <button type="button" className="btn-sm" style={{ background: '#fef3c7', fontSize: 10 }} onClick={() => resolverDuplicadoUno(d.id, 'ajuste')}>Ajuste</button>
+                                <button type="button" className="btn-sm" style={{ background: '#f3f4f6', fontSize: 10 }} onClick={() => resolverDuplicadoUno(d.id, 'ignorar')}>Ignorar</button>
+                              </>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
                 </div>
               </div>
             </div>
