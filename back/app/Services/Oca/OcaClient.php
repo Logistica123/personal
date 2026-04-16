@@ -62,6 +62,37 @@ class OcaClient
     }
 
     /**
+     * Procesa PDFs OCA con modo OCR (para PDFs escaneados/imagen).
+     */
+    public function procesarOcr(string $sucursal, UploadedFile $mainPdf, array $distribPdfs): array
+    {
+        $request = Http::timeout(180)
+            ->attach('main_pdf', fopen($mainPdf->getRealPath(), 'r'), $mainPdf->getClientOriginalName());
+
+        foreach ($distribPdfs as $pdf) {
+            $request = $request->attach('distrib_pdfs', fopen($pdf->getRealPath(), 'r'), $pdf->getClientOriginalName());
+        }
+
+        $response = $request->post($this->baseUrl() . '/api/oca/procesar', [
+            'sucursal' => $sucursal,
+            'modo' => 'ocr',
+        ]);
+
+        if (! $response->ok()) {
+            throw new RuntimeException(
+                'Error del servicio OCA (OCR): ' . ($response->json('detail') ?? $response->body())
+            );
+        }
+
+        $data = $response->json();
+        if (! ($data['success'] ?? false)) {
+            throw new RuntimeException('Error OCA OCR: ' . ($data['mensaje'] ?? 'Error desconocido'));
+        }
+
+        return $data['resultado'] ?? [];
+    }
+
+    /**
      * Parsea solo el PDF principal (debug).
      */
     public function parsearPrincipal(UploadedFile $pdf): array

@@ -101,6 +101,135 @@ class LiqOcaController extends Controller
     }
 
     /**
+     * POST /liq/oca/upload-ocr - Sube PDF OCA escaneado y procesa con OCR.
+     *
+     * Cuando el parser normal extrae 0 operaciones de un PDF-imagen,
+     * el frontend llama a este endpoint para intentar OCR con Tesseract.
+     */
+    public function uploadOcr(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'liquidacion_cliente_id' => 'required|exists:liq_liquidaciones_cliente,id',
+            'sucursal' => 'required|string|max:20',
+            'main_pdf' => 'required|file|mimes:pdf',
+            'distrib_pdfs' => 'required|array|min:1',
+            'distrib_pdfs.*' => 'file|mimes:pdf',
+        ]);
+
+        $liquidacion = LiqLiquidacionCliente::with('cliente')->findOrFail($data['liquidacion_cliente_id']);
+        $sucursal = strtoupper(trim($data['sucursal']));
+
+        $mainFile = $request->file('main_pdf');
+        $disk = 'local';
+        $dir = "liq/{$liquidacion->cliente_id}/archivos";
+
+        $mainNombreInterno = Str::uuid() . '.pdf';
+        $mainRuta = $mainFile->storeAs($dir, $mainNombreInterno, $disk);
+
+        $archivoPrincipal = LiqArchivoEntrada::create([
+            'liquidacion_cliente_id' => $liquidacion->id,
+            'tipo_archivo' => 'OCA_PRINCIPAL',
+            'nombre_original' => $mainFile->getClientOriginalName(),
+            'nombre_interno' => $mainNombreInterno,
+            'disk' => $disk,
+            'ruta_storage' => $mainRuta,
+            'tamano' => (int) ($mainFile->getSize() ?? 0),
+            'sucursal' => $sucursal,
+        ]);
+
+        $archivosDistrib = [];
+        foreach ($request->file('distrib_pdfs', []) as $distribFile) {
+            $distribNombreInterno = Str::uuid() . '.pdf';
+            $distribRuta = $distribFile->storeAs($dir, $distribNombreInterno, $disk);
+            $archivosDistrib[] = LiqArchivoEntrada::create([
+                'liquidacion_cliente_id' => $liquidacion->id,
+                'tipo_archivo' => 'OCA_DISTRIBUIDOR',
+                'nombre_original' => $distribFile->getClientOriginalName(),
+                'nombre_interno' => $distribNombreInterno,
+                'disk' => $disk,
+                'ruta_storage' => $distribRuta,
+                'tamano' => (int) ($distribFile->getSize() ?? 0),
+                'sucursal' => $sucursal,
+            ]);
+        }
+
+        try {
+            $result = $this->ocaIngestService->procesarConOcr(
+                liquidacion: $liquidacion,
+                archivoPrincipal: $archivoPrincipal,
+                archivosDistrib: $archivosDistrib,
+                mainPdf: $mainFile,
+                distribPdfs: $request->file('distrib_pdfs', []),
+                sucursal: $sucursal,
+            );
+
+            return response()->json(['data' => $result, 'message' => 'PDFs OCA procesados con OCR'], 201);
+        } catch (\Throwable $e) {
+            return response()->json(['error' => 'Error al procesar con OCR: ' . $e->getMessage()], 422);
+        }
+    }
+
+    /**
+     * POST /liq/oca/{liquidacionCliente}/operaciones-manuales
+     *
+     * Carga manual de operaciones OCA cuando OCR falla o el operador prefiere cargar a mano.
+     * Crea vinculaciones en liq_vinculaciones_oca con origen manual.
+     */
+    public function cargarOperacionesManuales(Request $request, LiqLiquidacionCliente $liquidacionCliente): JsonResponse
+    {
+        $data = $request->validate([
+            'sucursal' => 'required|string|max:20',
+            'operaciones' => 'required|array|min:1',
+            'operaciones.*.fecha' => 'required|date',
+            'operaciones.*.nro_planilla' => 'required|string|max:50',
+            'operaciones.*.cod_contrato' => 'required|string|max:50',
+            'operaciones.*.descripcion' => 'nullable|string|max:200',
+            'operaciones.*.unidad_recorrido' => 'nullable|string|max:100',
+            'operaciones.*.precio_unitario' => 'required|numeric|min:0',
+            'operaciones.*.cantidad' => 'required|numeric|min:0',
+        ]);
+
+        $sucursal = strtoupper(trim($data['sucursal']));
+        $creadas = 0;
+
+        foreach ($data['operaciones'] as $op) {
+            $precio = (float) $op['precio_unitario'];
+            $cantidad = (float) $op['cantidad'];
+            $importe = round($precio * $cantidad, 2);
+
+            LiqVinculacionOca::create([
+                'liquidacion_cliente_id' => $liquidacionCliente->id,
+                'fecha' => $op['fecha'],
+                'nro_planilla' => $op['nro_planilla'],
+                'cod_contrato' => $op['cod_contrato'],
+                'descripcion' => $op['descripcion'] ?? ($op['unidad_recorrido'] ?? null),
+                'precio_original' => $precio,
+                'cantidad' => $cantidad,
+                'importe_original' => $importe,
+                'estado' => 'SIN_ASIGNAR',
+                'formato_origen' => 'MANUAL',
+                'sucursal' => $sucursal,
+            ]);
+            $creadas++;
+        }
+
+        LiqHistorialMovimiento::registrar(
+            'carga_manual',
+            "Cargó manualmente {$creadas} operaciones OCA para sucursal {$sucursal}",
+            $request->user()?->id,
+            $liquidacionCliente->id,
+            null,
+            null,
+            ['sucursal' => $sucursal, 'cantidad' => $creadas]
+        );
+
+        return response()->json([
+            'data' => ['operaciones_creadas' => $creadas, 'sucursal' => $sucursal],
+            'message' => "{$creadas} operaciones cargadas manualmente",
+        ], 201);
+    }
+
+    /**
      * GET /liq/oca/{liquidacionCliente}/vinculaciones - Lista vinculaciones OCA.
      */
     public function vinculaciones(Request $request, LiqLiquidacionCliente $liquidacionCliente): JsonResponse
@@ -499,6 +628,17 @@ class LiqOcaController extends Controller
                 $mapeo = $mapeosDistrib->get($key);
                 if ($mapeo) {
                     $distribuidorId = $mapeo->persona_id;
+                }
+            }
+
+            // Fallback: mapeo sucursal-distribuidor (Feature C)
+            if (!$distribuidorId && $sucursal) {
+                $mapeoSucDist = \App\Models\LiqMapeoSucursalDistribuidor::where('cliente_id', $clienteId)
+                    ->where('sucursal', $sucursal)
+                    ->where('es_unico', true)
+                    ->first();
+                if ($mapeoSucDist) {
+                    $distribuidorId = $mapeoSucDist->persona_id;
                 }
             }
 

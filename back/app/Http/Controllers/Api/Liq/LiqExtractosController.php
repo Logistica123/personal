@@ -840,6 +840,242 @@ class LiqExtractosController extends Controller
         }
     }
 
+    // ── Feature C: Mapeo sucursal-distribuidor (plataforma-wide) ─────────────
+
+    /**
+     * GET /liq/mapeos-sucursal-distribuidor?cliente_id=X
+     */
+    public function mapeosSucursalDistribuidor(Request $request): JsonResponse
+    {
+        $clienteId = $request->integer('cliente_id');
+        if (!$clienteId) {
+            return response()->json(['data' => []]);
+        }
+
+        $mapeos = \App\Models\LiqMapeoSucursalDistribuidor::where('cliente_id', $clienteId)
+            ->with('persona:id,apellidos,nombres,patente,cuil')
+            ->orderBy('sucursal')
+            ->get();
+
+        return response()->json(['data' => $mapeos]);
+    }
+
+    /**
+     * POST /liq/mapeos-sucursal-distribuidor
+     */
+    public function storeMapeoSucursalDistribuidor(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'cliente_id' => 'required|exists:liq_clientes,id',
+            'sucursal' => 'required|string|max:50',
+            'persona_id' => 'required|exists:personas,id',
+            'es_unico' => 'nullable|boolean',
+        ]);
+
+        $mapeo = \App\Models\LiqMapeoSucursalDistribuidor::updateOrCreate(
+            [
+                'cliente_id' => $data['cliente_id'],
+                'sucursal' => $data['sucursal'],
+                'persona_id' => $data['persona_id'],
+            ],
+            [
+                'es_unico' => $data['es_unico'] ?? false,
+                'creado_por' => $request->user()?->id,
+            ]
+        );
+
+        // Si es_unico, desmarcar otros mapeos de la misma sucursal
+        if ($mapeo->es_unico) {
+            \App\Models\LiqMapeoSucursalDistribuidor::where('cliente_id', $data['cliente_id'])
+                ->where('sucursal', $data['sucursal'])
+                ->where('id', '!=', $mapeo->id)
+                ->update(['es_unico' => false]);
+        }
+
+        $mapeo->load('persona:id,apellidos,nombres,patente,cuil');
+
+        return response()->json(['data' => $mapeo, 'message' => 'Mapeo guardado'], 201);
+    }
+
+    /**
+     * DELETE /liq/mapeos-sucursal-distribuidor/{mapeo}
+     */
+    public function destroyMapeoSucursalDistribuidor(\App\Models\LiqMapeoSucursalDistribuidor $mapeo): JsonResponse
+    {
+        $mapeo->delete();
+        return response()->json(['message' => 'Mapeo eliminado']);
+    }
+
+    /**
+     * POST /liq/liquidaciones/{liquidacionCliente}/asignar-distribuidor-masivo
+     *
+     * Asigna un distribuidor a todas las operaciones sin_distribuidor de una sucursal.
+     */
+    public function asignarDistribuidorMasivo(Request $request, LiqLiquidacionCliente $liquidacionCliente): JsonResponse
+    {
+        $data = $request->validate([
+            'sucursal' => 'required|string|max:150',
+            'persona_id' => 'required|exists:personas,id',
+            'recordar' => 'nullable|boolean',
+            'es_unico' => 'nullable|boolean',
+        ]);
+
+        $updated = LiqOperacion::where('liquidacion_cliente_id', $liquidacionCliente->id)
+            ->where('estado', 'sin_distribuidor')
+            ->where('sucursal_tarifa', $data['sucursal'])
+            ->update([
+                'distribuidor_id' => $data['persona_id'],
+                'estado' => 'pendiente',
+                'observaciones' => DB::raw("CONCAT(IFNULL(observaciones, ''), ' Distribuidor asignado manualmente.')"),
+            ]);
+
+        // Persistir mapeo si se pidió recordar
+        if ($data['recordar'] ?? false) {
+            \App\Models\LiqMapeoSucursalDistribuidor::updateOrCreate(
+                [
+                    'cliente_id' => $liquidacionCliente->cliente_id,
+                    'sucursal' => $data['sucursal'],
+                    'persona_id' => $data['persona_id'],
+                ],
+                [
+                    'es_unico' => $data['es_unico'] ?? false,
+                    'creado_por' => $request->user()?->id,
+                ]
+            );
+        }
+
+        return response()->json([
+            'data' => ['operaciones_actualizadas' => $updated],
+            'message' => "{$updated} operaciones asignadas al distribuidor",
+        ]);
+    }
+
+    /**
+     * POST /liq/liquidaciones/{liquidacionCliente}/asignar-distribuidor-individual
+     *
+     * Asigna un distribuidor a operaciones individuales.
+     */
+    public function asignarDistribuidorIndividual(Request $request, LiqLiquidacionCliente $liquidacionCliente): JsonResponse
+    {
+        $data = $request->validate([
+            'asignaciones' => 'required|array|min:1',
+            'asignaciones.*.operacion_id' => 'required|integer',
+            'asignaciones.*.persona_id' => 'required|exists:personas,id',
+        ]);
+
+        $updated = 0;
+        foreach ($data['asignaciones'] as $asig) {
+            $affected = LiqOperacion::where('id', $asig['operacion_id'])
+                ->where('liquidacion_cliente_id', $liquidacionCliente->id)
+                ->where('estado', 'sin_distribuidor')
+                ->update([
+                    'distribuidor_id' => $asig['persona_id'],
+                    'estado' => 'pendiente',
+                    'observaciones' => DB::raw("CONCAT(IFNULL(observaciones, ''), ' Distribuidor asignado manualmente.')"),
+                ]);
+            $updated += $affected;
+        }
+
+        return response()->json([
+            'data' => ['operaciones_actualizadas' => $updated],
+            'message' => "{$updated} operaciones asignadas individualmente",
+        ]);
+    }
+
+    // ── Feature D: Creación manual de liquidación distribuidor ──────────────
+
+    /**
+     * POST /liq/liquidaciones-distribuidor/manual
+     *
+     * Crea una liquidación de distribuidor manualmente sin depender de liquidación cliente.
+     */
+    public function crearLiquidacionManual(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'cliente_id' => 'required|exists:liq_clientes,id',
+            'distribuidor_id' => 'required|exists:personas,id',
+            'periodo_desde' => 'required|date',
+            'periodo_hasta' => 'required|date|after_or_equal:periodo_desde',
+            'sucursal' => 'nullable|string|max:150',
+            'referencia_externa' => 'nullable|string|max:255',
+            'observaciones' => 'nullable|string|max:1000',
+            'lineas' => 'required|array|min:1',
+            'lineas.*.concepto' => 'required|string|max:200',
+            'lineas.*.descripcion' => 'nullable|string|max:500',
+            'lineas.*.cantidad' => 'required|numeric|min:0',
+            'lineas.*.tarifa_unitaria' => 'required|numeric|min:0',
+            'descuentos' => 'nullable|array',
+            'descuentos.*.concepto' => 'required|string|max:200',
+            'descuentos.*.monto' => 'required|numeric|min:0',
+        ]);
+
+        $subtotal = 0;
+        foreach ($data['lineas'] as $linea) {
+            $subtotal += round((float) $linea['cantidad'] * (float) $linea['tarifa_unitaria'], 2);
+        }
+
+        $totalDescuentos = 0;
+        foreach ($data['descuentos'] ?? [] as $desc) {
+            $totalDescuentos += round((float) $desc['monto'], 2);
+        }
+
+        $gastoConfig = LiqConfiguracionGastos::where('cliente_id', $data['cliente_id'])
+            ->where('activo', true)
+            ->where('vigencia_desde', '<=', $data['periodo_hasta'])
+            ->where(function ($q) use ($data) {
+                $q->whereNull('vigencia_hasta')->orWhere('vigencia_hasta', '>=', $data['periodo_desde']);
+            })
+            ->first();
+        $gastosAdmin = $this->resolveGastoAmount($gastoConfig, $subtotal);
+
+        $totalAPagar = round($subtotal - $gastosAdmin - $totalDescuentos, 2);
+
+        DB::beginTransaction();
+        try {
+            $liqDist = LiqLiquidacionDistribuidor::create([
+                'liquidacion_cliente_id' => null,
+                'cliente_id' => $data['cliente_id'],
+                'distribuidor_id' => $data['distribuidor_id'],
+                'periodo_desde' => $data['periodo_desde'],
+                'periodo_hasta' => $data['periodo_hasta'],
+                'fecha_generacion' => now(),
+                'cantidad_operaciones' => count($data['lineas']),
+                'subtotal' => round($subtotal, 2),
+                'gastos_administrativos' => round($gastosAdmin, 2),
+                'beneficio_seguro' => round($totalDescuentos, 2),
+                'total_a_pagar' => $totalAPagar,
+                'estado' => LiqLiquidacionDistribuidor::ESTADO_GENERADA,
+                'origen' => 'manual',
+                'referencia_externa' => $data['referencia_externa'] ?? null,
+                'observaciones_manual' => $data['observaciones'] ?? null,
+            ]);
+
+            foreach ($data['lineas'] as $linea) {
+                $totalLinea = round((float) $linea['cantidad'] * (float) $linea['tarifa_unitaria'], 2);
+                \App\Models\LiqLiquidacionManualDetalle::create([
+                    'liquidacion_distribuidor_id' => $liqDist->id,
+                    'concepto' => $linea['concepto'],
+                    'descripcion' => $linea['descripcion'] ?? null,
+                    'cantidad' => $linea['cantidad'],
+                    'tarifa_unitaria' => $linea['tarifa_unitaria'],
+                    'total_linea' => $totalLinea,
+                ]);
+            }
+
+            DB::commit();
+
+            $liqDist->load('distribuidor:id,apellidos,nombres,patente,cuil');
+
+            return response()->json([
+                'data' => $liqDist,
+                'message' => 'Liquidación manual creada correctamente',
+            ], 201);
+        } catch (\Throwable $e) {
+            DB::rollBack();
+            return response()->json(['error' => 'Error al crear liquidación manual: ' . $e->getMessage()], 500);
+        }
+    }
+
     private function allowedUploadTypesForCliente(?LiqCliente $cliente): array
     {
         $cfg = $cliente?->configuracion_excel;

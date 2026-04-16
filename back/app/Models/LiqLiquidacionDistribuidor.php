@@ -34,6 +34,10 @@ class LiqLiquidacionDistribuidor extends Model
         'pdf_path',
         'beneficio_seguro',
         'subtotal_peajes',
+        'origen',
+        'referencia_externa',
+        'observaciones_manual',
+        'cliente_id',
     ];
 
     protected $casts = [

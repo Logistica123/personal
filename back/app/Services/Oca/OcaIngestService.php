@@ -81,6 +81,50 @@ class OcaIngestService
     }
 
     /**
+     * Procesa PDFs OCA con modo OCR (para PDF-imagen escaneados).
+     */
+    public function procesarConOcr(
+        LiqLiquidacionCliente $liquidacion,
+        LiqArchivoEntrada $archivoPrincipal,
+        array $archivosDistrib,
+        \Illuminate\Http\UploadedFile $mainPdf,
+        array $distribPdfs,
+        string $sucursal,
+    ): array {
+        if (! $this->ocaClient->isAvailable()) {
+            throw new RuntimeException(
+                'El servicio de procesamiento OCA no está disponible.'
+            );
+        }
+
+        $resultado = $this->ocaClient->procesarOcr($sucursal, $mainPdf, $distribPdfs);
+
+        if (empty($resultado)) {
+            throw new RuntimeException('El servicio OCA (OCR) devolvió un resultado vacío');
+        }
+
+        $stats = $this->guardarVinculaciones($liquidacion, $resultado, $sucursal);
+
+        $archivoPrincipal->update([
+            'sucursal' => $sucursal,
+            'cant_registros' => $resultado['total_planillas'] ?? 0,
+        ]);
+
+        return [
+            'sucursal' => $sucursal,
+            'modo' => 'ocr',
+            'formato_distribuidor' => $resultado['formato_distribuidor'] ?? null,
+            'total_planillas' => $resultado['total_planillas'] ?? 0,
+            'total_distribuidores' => $resultado['total_distribuidores'] ?? 0,
+            'dias_procesados' => count($resultado['dias'] ?? []),
+            'vinculaciones_creadas' => $stats['creadas'],
+            'exactos' => $stats['exactos'],
+            'aproximados' => $stats['aproximados'],
+            'sin_asignar' => $stats['sin_asignar'],
+        ];
+    }
+
+    /**
      * Guarda las vinculaciones del resultado Python en la tabla liq_vinculaciones_oca.
      */
     private function guardarVinculaciones(

@@ -275,12 +275,26 @@ Route::middleware('auth.api')->group(function () {
         Route::get('/oca/health', [\App\Http\Controllers\Api\Liq\LiqOcaController::class, 'health']);
         Route::get('/oca/buscar-personas', [\App\Http\Controllers\Api\Liq\LiqOcaController::class, 'buscarPersonas']);
         Route::post('/oca/upload', [\App\Http\Controllers\Api\Liq\LiqOcaController::class, 'upload']);
+        Route::post('/oca/upload-ocr', [\App\Http\Controllers\Api\Liq\LiqOcaController::class, 'uploadOcr']);
+        Route::post('/oca/{liquidacionCliente}/operaciones-manuales', [\App\Http\Controllers\Api\Liq\LiqOcaController::class, 'cargarOperacionesManuales']);
         Route::get('/oca/{liquidacionCliente}/vinculaciones', [\App\Http\Controllers\Api\Liq\LiqOcaController::class, 'vinculaciones']);
         Route::get('/oca/{liquidacionCliente}/resumen', [\App\Http\Controllers\Api\Liq\LiqOcaController::class, 'resumen']);
         Route::get('/oca/{liquidacionCliente}/tarifas-detectadas', [\App\Http\Controllers\Api\Liq\LiqOcaController::class, 'tarifasDetectadas']);
         Route::post('/oca/{liquidacionCliente}/mapear-tarifa', [\App\Http\Controllers\Api\Liq\LiqOcaController::class, 'mapearTarifa']);
         Route::post('/oca/{liquidacionCliente}/generar-operaciones', [\App\Http\Controllers\Api\Liq\LiqOcaController::class, 'generarOperaciones']);
         Route::get('/oca/{liquidacionCliente}/historial', [\App\Http\Controllers\Api\Liq\LiqOcaController::class, 'historial']);
+
+        // Feature C: Mapeos sucursal-distribuidor (plataforma-wide)
+        Route::get('/mapeos-sucursal-distribuidor', [LiqExtractosController::class, 'mapeosSucursalDistribuidor']);
+        Route::post('/mapeos-sucursal-distribuidor', [LiqExtractosController::class, 'storeMapeoSucursalDistribuidor']);
+        Route::delete('/mapeos-sucursal-distribuidor/{mapeo}', [LiqExtractosController::class, 'destroyMapeoSucursalDistribuidor']);
+
+        // Feature C: Asignacion masiva e individual de distribuidores
+        Route::post('/liquidaciones/{liquidacionCliente}/asignar-distribuidor-masivo', [LiqExtractosController::class, 'asignarDistribuidorMasivo']);
+        Route::post('/liquidaciones/{liquidacionCliente}/asignar-distribuidor-individual', [LiqExtractosController::class, 'asignarDistribuidorIndividual']);
+
+        // Feature D: Liquidacion manual de distribuidor
+        Route::post('/liquidaciones-distribuidor/manual', [LiqExtractosController::class, 'crearLiquidacionManual']);
 
         // Vista de proveedor (LiquidacionesPage) - liquidaciones generadas desde extractos (v2)
         Route::get('/distribuidores/{persona}/liquidaciones', [LiqDistribuidorLiquidacionesController::class, 'index']);

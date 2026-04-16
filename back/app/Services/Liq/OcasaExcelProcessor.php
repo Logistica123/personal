@@ -192,8 +192,21 @@ class OcasaExcelProcessor
                 if ($persona) {
                     $distribuidorId = $persona->id;
                 } else {
-                    $estado = 'sin_distribuidor';
-                    $observaciones = $this->appendObs($observaciones, "Patente {$patente} no encontrada en maestro de distribuidores.");
+                    // Fallback: mapeo sucursal-distribuidor (Feature C)
+                    if ($sucursalTarifa) {
+                        $mapeoSucDist = \App\Models\LiqMapeoSucursalDistribuidor::where('cliente_id', $liquidacion->cliente_id)
+                            ->where('sucursal', $sucursalTarifa)
+                            ->where('es_unico', true)
+                            ->first();
+                        if ($mapeoSucDist) {
+                            $distribuidorId = $mapeoSucDist->persona_id;
+                            $observaciones = $this->appendObs($observaciones, 'Distribuidor asignado por mapeo sucursal (unico).');
+                        }
+                    }
+                    if (!$distribuidorId) {
+                        $estado = 'sin_distribuidor';
+                        $observaciones = $this->appendObs($observaciones, "Patente {$patente} no encontrada en maestro de distribuidores.");
+                    }
                 }
             }
 

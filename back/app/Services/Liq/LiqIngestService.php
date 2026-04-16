@@ -449,9 +449,28 @@ class LiqIngestService
                         );
                     }
                 } else {
-                    $estado = 'sin_distribuidor';
-                    if ($matchDistribuidor['reason'] !== null) {
-                        $observaciones = $this->appendObservacion($observaciones, $matchDistribuidor['reason']);
+                    // Fallback: consultar liq_mapeos_sucursal_distribuidor (Feature C)
+                    $sucFallback = $sucursalPorFila ? $sucursalFilaResuelta : $sucursalTarifa;
+                    if ($sucFallback) {
+                        $mapeoSucDist = \App\Models\LiqMapeoSucursalDistribuidor::where('cliente_id', $liquidacion->cliente_id)
+                            ->where('sucursal', $sucFallback)
+                            ->where('es_unico', true)
+                            ->first();
+                        if ($mapeoSucDist) {
+                            $distribuidorId = $mapeoSucDist->persona_id;
+                            $estado = 'pendiente';
+                            $observaciones = $this->appendObservacion(
+                                $observaciones,
+                                'Distribuidor asignado por mapeo sucursal (unico).'
+                            );
+                        }
+                    }
+
+                    if (!$distribuidorId) {
+                        $estado = 'sin_distribuidor';
+                        if ($matchDistribuidor['reason'] !== null) {
+                            $observaciones = $this->appendObservacion($observaciones, $matchDistribuidor['reason']);
+                        }
                     }
                 }
             }

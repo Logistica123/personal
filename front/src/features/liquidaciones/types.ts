@@ -155,6 +155,7 @@ export type LiqOperacion = {
   porcentaje_agencia: string | null;
   diferencia_cliente: string | null;
   estado: 'pendiente' | 'ok' | 'diferencia' | 'sin_tarifa' | 'sin_distribuidor' | 'duplicado' | 'observado' | 'excluida';
+  origen?: 'parser' | 'ocr' | 'manual';
   distribuidor_id: number | null;
   excluida: boolean;
   observaciones: string | null;
@@ -333,6 +334,25 @@ export type LiqConceptoFacturacion = {
   orden: number;
   solo_si_importe: boolean;
   activo: boolean;
+};
+
+export type LiqMapeoSucursalDistribuidor = {
+  id: number;
+  cliente_id: number;
+  sucursal: string;
+  persona_id: number;
+  es_unico: boolean;
+  persona?: { id: number; apellidos: string; nombres: string; patente: string | null; cuil: string | null };
+};
+
+export type LiqLiquidacionManualDetalle = {
+  id: number;
+  liquidacion_distribuidor_id: number;
+  concepto: string;
+  descripcion: string | null;
+  cantidad: string;
+  tarifa_unitaria: string;
+  total_linea: string;
 };
 
 export const FRACCION_LABELS: Record<string, string> = {

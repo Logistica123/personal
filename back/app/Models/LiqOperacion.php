@@ -33,6 +33,7 @@ class LiqOperacion extends Model
         'observaciones',
         'id_operacion_cliente',
         'tipo_operacion',
+        'origen',
         'operacion_referencia_id',
         // OCASA fields
         'modelo_tarifa',

@@ -128,6 +128,36 @@ export function LiquidacionesExtractosPage({
   const [duplicados, setDuplicados] = useState<any[]>([]);
   const [duplicadosLoading, setDuplicadosLoading] = useState(false);
 
+  // Feature A+B: OCA PDF-imagen / carga manual
+  const [ocaUploadFailed, setOcaUploadFailed] = useState(false);
+  const [showManualOcaForm, setShowManualOcaForm] = useState(false);
+  const [manualOcaRows, setManualOcaRows] = useState<Array<{ fecha: string; nro_planilla: string; cod_contrato: string; descripcion: string; precio_unitario: string; cantidad: string }>>([
+    { fecha: '', nro_planilla: '', cod_contrato: '', descripcion: '', precio_unitario: '', cantidad: '' },
+  ]);
+  const [manualOcaSaving, setManualOcaSaving] = useState(false);
+
+  // Feature D: Liquidacion manual distribuidor
+  const [showLiqManualForm, setShowLiqManualForm] = useState(false);
+  const [liqManualDistribId, setLiqManualDistribId] = useState<number | null>(null);
+  const [liqManualDistribLabel, setLiqManualDistribLabel] = useState('');
+  const [liqManualDistribSearch, setLiqManualDistribSearch] = useState('');
+  const [liqManualDistribResults, setLiqManualDistribResults] = useState<Array<{ id: number; label: string }>>([]);
+  const [liqManualRefExterna, setLiqManualRefExterna] = useState('');
+  const [liqManualObs, setLiqManualObs] = useState('');
+  const [liqManualLineas, setLiqManualLineas] = useState<Array<{ concepto: string; descripcion: string; cantidad: string; tarifa: string }>>([
+    { concepto: '', descripcion: '', cantidad: '1', tarifa: '' },
+  ]);
+  const [liqManualSaving, setLiqManualSaving] = useState(false);
+
+  // Feature C: Vinculacion manual distribuidores
+  const [showAsignarDistrib, setShowAsignarDistrib] = useState(false);
+  const [asignarDistribSucursal, setAsignarDistribSucursal] = useState('');
+  const [asignarDistribPersonaId, setAsignarDistribPersonaId] = useState<number | null>(null);
+  const [asignarDistribRecordar, setAsignarDistribRecordar] = useState(true);
+  const [asignarDistribEsUnico, setAsignarDistribEsUnico] = useState(true);
+  const [asignarDistribSearch, setAsignarDistribSearch] = useState('');
+  const [asignarDistribResults, setAsignarDistribResults] = useState<Array<{ id: number; label: string }>>([]);
+
   // Mini-modal mapeo Origen (Loginter)
   const [origenesSinMapear, setOrigenesSinMapear] = useState<string[]>([]);
   const [showOrigenModal, setShowOrigenModal] = useState<string | null>(null);
@@ -725,6 +755,7 @@ export function LiquidacionesExtractosPage({
   const subirArchivosOca = useCallback(async () => {
     if (!ocaMainPdf || ocaDistribPdfs.length === 0 || !selectedLiq || !ocaSucursal) return;
     setUploading(true);
+    setOcaUploadFailed(false);
     try {
       const fd = new FormData();
       fd.append('liquidacion_cliente_id', String(selectedLiq.id));
@@ -734,22 +765,169 @@ export function LiquidacionesExtractosPage({
         fd.append('distrib_pdfs[]', pdf);
       }
       const res = await api.postForm('/oca/upload', fd);
+      const totalPlanillas = res.data?.total_planillas ?? 0;
+      if (totalPlanillas === 0) {
+        // Feature A: PDF-imagen detectado (0 operaciones extraidas)
+        setOcaUploadFailed(true);
+        setError('El PDF principal no contiene texto seleccionable (posible imagen escaneada). Usa OCR o carga manual.');
+      } else {
+        setOcaMainPdf(null);
+        setOcaDistribPdfs([]);
+        showSuccess(
+          `OCA procesado: ${totalPlanillas} planillas, ` +
+          `${res.data?.total_distribuidores ?? 0} distribuidores, ` +
+          `${res.data?.exactos ?? 0} exactos`
+        );
+      }
+      await openLiq(selectedLiq);
+      await loadOcaVinculaciones(selectedLiq.id);
+      await loadOcaResumen(selectedLiq.id);
+    } catch (e: unknown) {
+      setOcaUploadFailed(true);
+      setError(e instanceof Error ? e.message : 'Error procesando PDFs OCA');
+    } finally {
+      setUploading(false);
+    }
+  }, [api, ocaMainPdf, ocaDistribPdfs, selectedLiq, ocaSucursal, openLiq, loadOcaVinculaciones, loadOcaResumen]);
+
+  // Feature A: Intentar OCR
+  const intentarOcr = useCallback(async () => {
+    if (!ocaMainPdf || ocaDistribPdfs.length === 0 || !selectedLiq || !ocaSucursal) return;
+    setUploading(true);
+    try {
+      const fd = new FormData();
+      fd.append('liquidacion_cliente_id', String(selectedLiq.id));
+      fd.append('sucursal', ocaSucursal);
+      fd.append('main_pdf', ocaMainPdf);
+      for (const pdf of ocaDistribPdfs) {
+        fd.append('distrib_pdfs[]', pdf);
+      }
+      const res = await api.postForm('/oca/upload-ocr', fd);
       setOcaMainPdf(null);
       setOcaDistribPdfs([]);
+      setOcaUploadFailed(false);
       showSuccess(
-        `OCA procesado: ${res.data?.total_planillas ?? 0} planillas, ` +
-        `${res.data?.total_distribuidores ?? 0} distribuidores, ` +
+        `OCA (OCR): ${res.data?.total_planillas ?? 0} planillas extraidas, ` +
         `${res.data?.exactos ?? 0} exactos`
       );
       await openLiq(selectedLiq);
       await loadOcaVinculaciones(selectedLiq.id);
       await loadOcaResumen(selectedLiq.id);
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'Error procesando PDFs OCA');
+      setError(e instanceof Error ? e.message : 'Error procesando con OCR');
     } finally {
       setUploading(false);
     }
   }, [api, ocaMainPdf, ocaDistribPdfs, selectedLiq, ocaSucursal, openLiq, loadOcaVinculaciones, loadOcaResumen]);
+
+  // Feature B: Guardar operaciones manuales OCA
+  const guardarOperacionesManualesOca = useCallback(async () => {
+    if (!selectedLiq || !ocaSucursal) return;
+    const validRows = manualOcaRows.filter(r => r.fecha && r.nro_planilla && r.cod_contrato && r.precio_unitario && r.cantidad);
+    if (validRows.length === 0) { setError('Completa al menos una operacion'); return; }
+    setManualOcaSaving(true);
+    try {
+      const res = await api.post(`/oca/${selectedLiq.id}/operaciones-manuales`, {
+        sucursal: ocaSucursal,
+        operaciones: validRows.map(r => ({
+          fecha: r.fecha,
+          nro_planilla: r.nro_planilla,
+          cod_contrato: r.cod_contrato,
+          descripcion: r.descripcion || null,
+          precio_unitario: parseFloat(r.precio_unitario.replace(/\./g, '').replace(',', '.')) || 0,
+          cantidad: parseFloat(r.cantidad.replace(/\./g, '').replace(',', '.')) || 0,
+        })),
+      });
+      showSuccess(res.message ?? 'Operaciones cargadas');
+      setShowManualOcaForm(false);
+      setOcaUploadFailed(false);
+      setManualOcaRows([{ fecha: '', nro_planilla: '', cod_contrato: '', descripcion: '', precio_unitario: '', cantidad: '' }]);
+      await loadOcaVinculaciones(selectedLiq.id);
+      await loadOcaResumen(selectedLiq.id);
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Error guardando operaciones');
+    } finally {
+      setManualOcaSaving(false);
+    }
+  }, [api, selectedLiq, ocaSucursal, manualOcaRows, loadOcaVinculaciones, loadOcaResumen]);
+
+  // Feature D: Buscar distribuidores para liq manual
+  const buscarDistribLiqManual = useCallback(async (q: string) => {
+    setLiqManualDistribSearch(q);
+    if (q.length < 2) { setLiqManualDistribResults([]); return; }
+    try {
+      const res = await api.get(`/oca/buscar-personas?q=${encodeURIComponent(q)}`);
+      setLiqManualDistribResults((res.data ?? []).map((p: any) => ({ id: p.id, label: p.label })));
+    } catch { setLiqManualDistribResults([]); }
+  }, [api]);
+
+  // Feature D: Guardar liquidacion manual
+  const guardarLiqManual = useCallback(async () => {
+    if (!selectedLiq || !liqManualDistribId) { setError('Selecciona un distribuidor'); return; }
+    const validLineas = liqManualLineas.filter(l => l.concepto && l.cantidad && l.tarifa);
+    if (validLineas.length === 0) { setError('Agrega al menos una linea'); return; }
+    setLiqManualSaving(true);
+    try {
+      const res = await api.post('/liquidaciones-distribuidor/manual', {
+        cliente_id: selectedLiq.cliente_id,
+        distribuidor_id: liqManualDistribId,
+        periodo_desde: selectedLiq.periodo_desde,
+        periodo_hasta: selectedLiq.periodo_hasta,
+        referencia_externa: liqManualRefExterna || null,
+        observaciones: liqManualObs || null,
+        lineas: validLineas.map(l => ({
+          concepto: l.concepto,
+          descripcion: l.descripcion || null,
+          cantidad: parseFloat(l.cantidad.replace(/\./g, '').replace(',', '.')) || 1,
+          tarifa_unitaria: parseFloat(l.tarifa.replace(/\./g, '').replace(',', '.')) || 0,
+        })),
+      });
+      showSuccess(res.message ?? 'Liquidacion manual creada');
+      setShowLiqManualForm(false);
+      setLiqManualLineas([{ concepto: '', descripcion: '', cantidad: '1', tarifa: '' }]);
+      setLiqManualDistribId(null);
+      setLiqManualDistribSearch('');
+      setLiqManualRefExterna('');
+      setLiqManualObs('');
+      // Refresh distribuidores
+      const distRes = await api.get(`/liquidaciones/${selectedLiq.id}/distribuidores`);
+      setDistribuidores(distRes.data ?? []);
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Error creando liquidacion manual');
+    } finally {
+      setLiqManualSaving(false);
+    }
+  }, [api, selectedLiq, liqManualDistribId, liqManualLineas, liqManualRefExterna, liqManualObs]);
+
+  // Feature C: Buscar distribuidores para asignacion
+  const buscarDistribAsignar = useCallback(async (q: string) => {
+    setAsignarDistribSearch(q);
+    if (q.length < 2) { setAsignarDistribResults([]); return; }
+    try {
+      const res = await api.get(`/oca/buscar-personas?q=${encodeURIComponent(q)}`);
+      setAsignarDistribResults((res.data ?? []).map((p: any) => ({ id: p.id, label: p.label })));
+    } catch { setAsignarDistribResults([]); }
+  }, [api]);
+
+  // Feature C: Asignar distribuidor masivo a sucursal
+  const asignarDistribuidorMasivo = useCallback(async () => {
+    if (!selectedLiq || !asignarDistribSucursal || !asignarDistribPersonaId) return;
+    try {
+      const res = await api.post(`/liquidaciones/${selectedLiq.id}/asignar-distribuidor-masivo`, {
+        sucursal: asignarDistribSucursal,
+        persona_id: asignarDistribPersonaId,
+        recordar: asignarDistribRecordar,
+        es_unico: asignarDistribEsUnico,
+      });
+      showSuccess(res.message ?? 'Distribuidor asignado');
+      setShowAsignarDistrib(false);
+      setAsignarDistribPersonaId(null);
+      setAsignarDistribSearch('');
+      await openLiq(selectedLiq);
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Error asignando distribuidor');
+    }
+  }, [api, selectedLiq, asignarDistribSucursal, asignarDistribPersonaId, asignarDistribRecordar, asignarDistribEsUnico, openLiq]);
 
   const generarLiquidaciones = useCallback(async () => {
     if (!selectedLiq) return;
@@ -1303,26 +1481,73 @@ export function LiquidacionesExtractosPage({
                 </div>
               )}
 
-              {/* Sin distribuidor agrupado */}
+              {/* Sin distribuidor agrupado + Feature C: vinculacion manual */}
               {auditoria.sin_distribuidor_agrupado.length > 0 && (
                 <div className="dashboard-card">
                   <header className="card-header" style={{ cursor: 'pointer' }} onClick={() => toggleSeccion('sinDistrib')}>
-                    <h3 style={{ color: '#7c3aed' }}>{auditoriaSecciones['sinDistrib'] ? '▾' : '▸'} Sin distribuidor ({auditoria.sin_distribuidor_agrupado.reduce((s, x) => s + x.cantidad, 0)} ops · {auditoria.sin_distribuidor_agrupado.length} patentes únicas)</h3>
+                    <h3 style={{ color: '#7c3aed' }}>{auditoriaSecciones['sinDistrib'] ? '▾' : '▸'} Sin distribuidor ({auditoria.sin_distribuidor_agrupado.reduce((s, x) => s + x.cantidad, 0)} ops · {auditoria.sin_distribuidor_agrupado.length} patentes unicas)</h3>
                   </header>
                   {auditoriaSecciones['sinDistrib'] && (
                     <div className="card-body">
                       <table className="data-table">
-                        <thead><tr><th>Dominio / Patente</th><th>Cantidad</th><th>Total cliente</th></tr></thead>
+                        <thead><tr><th>Dominio / Patente</th><th>Sucursal</th><th>Cantidad</th><th>Total cliente</th><th></th></tr></thead>
                         <tbody>
-                          {auditoria.sin_distribuidor_agrupado.map((s, i) => (
+                          {auditoria.sin_distribuidor_agrupado.map((s: any, i: number) => (
                             <tr key={i}>
-                              <td><code>{s.dominio ?? '—'}</code></td>
+                              <td><code>{s.dominio ?? '-'}</code></td>
+                              <td>{s.sucursal_tarifa ?? '-'}</td>
                               <td>{s.cantidad}</td>
                               <td>{fmt(s.total_cliente)}</td>
+                              <td>
+                                <button type="button" className="btn-sm" style={{ background: '#ede9fe', color: '#6d28d9', border: '1px solid #c4b5fd', fontSize: 11 }}
+                                  onClick={() => { setShowAsignarDistrib(true); setAsignarDistribSucursal(s.sucursal_tarifa ?? s.dominio ?? ''); }}>
+                                  Asignar distribuidor
+                                </button>
+                              </td>
                             </tr>
                           ))}
                         </tbody>
                       </table>
+
+                      {/* Feature C: Modal asignacion masiva */}
+                      {showAsignarDistrib && (
+                        <div style={{ marginTop: 16, padding: 16, background: '#f5f3ff', borderRadius: 8, border: '1px solid #c4b5fd' }}>
+                          <h4 style={{ margin: '0 0 12px', color: '#6d28d9', fontSize: 14 }}>
+                            Asignar distribuidor a sucursal: <strong>{asignarDistribSucursal}</strong>
+                          </h4>
+                          <div style={{ display: 'flex', gap: 12, alignItems: 'flex-end', flexWrap: 'wrap', marginBottom: 12 }}>
+                            <div style={{ flex: 1, minWidth: 250 }}>
+                              <label style={{ display: 'block', fontSize: 12, marginBottom: 4 }}>Buscar distribuidor</label>
+                              <input type="text" className="form-input" placeholder="Nombre, patente o CUIL..." value={asignarDistribSearch}
+                                onChange={e => buscarDistribAsignar(e.target.value)} style={{ width: '100%' }} />
+                              {asignarDistribResults.length > 0 && (
+                                <div style={{ background: '#fff', border: '1px solid #d1d5db', borderRadius: 6, maxHeight: 160, overflowY: 'auto', marginTop: 4 }}>
+                                  {asignarDistribResults.map(p => (
+                                    <div key={p.id} style={{ padding: '6px 10px', cursor: 'pointer', fontSize: 12, borderBottom: '1px solid #f3f4f6', background: asignarDistribPersonaId === p.id ? '#ede9fe' : undefined }}
+                                      onClick={() => { setAsignarDistribPersonaId(p.id); setAsignarDistribSearch(p.label); setAsignarDistribResults([]); }}>
+                                      {p.label}
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                            <label style={{ fontSize: 12, display: 'flex', alignItems: 'center', gap: 4 }}>
+                              <input type="checkbox" checked={asignarDistribRecordar} onChange={e => setAsignarDistribRecordar(e.target.checked)} />
+                              Recordar para proxima vez
+                            </label>
+                            <label style={{ fontSize: 12, display: 'flex', alignItems: 'center', gap: 4 }}>
+                              <input type="checkbox" checked={asignarDistribEsUnico} onChange={e => setAsignarDistribEsUnico(e.target.checked)} />
+                              Es unico distrib. de esta sucursal
+                            </label>
+                          </div>
+                          <div style={{ display: 'flex', gap: 8 }}>
+                            <button type="button" className="btn-primary" onClick={asignarDistribuidorMasivo} disabled={!asignarDistribPersonaId}>
+                              Asignar a todas las ops de {asignarDistribSucursal}
+                            </button>
+                            <button type="button" className="btn-sm" onClick={() => setShowAsignarDistrib(false)}>Cancelar</button>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
@@ -1404,10 +1629,110 @@ export function LiquidacionesExtractosPage({
                   </button>
                   {ocaHealth === false && (
                     <span style={{ marginLeft: 12, fontSize: 12, color: '#dc2626' }}>
-                      El motor Python no está disponible. Inicialo con: cd python && uvicorn app.main:app --port 8100
+                      El motor Python no esta disponible. Inicialo con: cd python && uvicorn app.main:app --port 8100
                     </span>
                   )}
                 </div>
+
+                {/* Feature A: Alerta PDF-imagen */}
+                {ocaUploadFailed && (
+                  <div style={{ marginTop: 16, padding: 16, background: '#fef3c7', borderRadius: 8, border: '1px solid #fcd34d' }}>
+                    <div style={{ fontWeight: 600, marginBottom: 8, color: '#92400e' }}>
+                      PDF sin texto detectado (posible imagen escaneada)
+                    </div>
+                    <p style={{ fontSize: 13, color: '#78350f', marginBottom: 12 }}>
+                      El parser no pudo extraer operaciones del PDF principal. Esto suele pasar con PDFs generados por CamScanner u otras apps de escaneo.
+                    </p>
+                    <div style={{ display: 'flex', gap: 8 }}>
+                      <button type="button" className="btn-primary" onClick={intentarOcr} disabled={uploading || !ocaMainPdf}>
+                        {uploading ? 'Procesando OCR...' : 'Intentar OCR'}
+                      </button>
+                      <button type="button" className="btn-sm" style={{ background: '#fff', border: '1px solid #d1d5db' }} onClick={() => { setShowManualOcaForm(true); setOcaUploadFailed(false); }}>
+                        Cargar manualmente
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Feature B: Formulario carga manual OCA */}
+                {showManualOcaForm && (
+                  <div style={{ marginTop: 16, padding: 16, background: '#f0f9ff', borderRadius: 8, border: '1px solid #bae6fd' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                      <h4 style={{ margin: 0, color: '#0369a1' }}>Carga manual de operaciones OCA — {ocaSucursal}</h4>
+                      <button type="button" className="btn-sm" onClick={() => setShowManualOcaForm(false)} style={{ background: '#e0f2fe' }}>Cerrar</button>
+                    </div>
+                    <div style={{ overflowX: 'auto' }}>
+                      <table className="data-table" style={{ fontSize: 12 }}>
+                        <thead>
+                          <tr>
+                            <th style={{ width: 110 }}>Fecha</th>
+                            <th style={{ width: 100 }}>Nro Planilla</th>
+                            <th style={{ width: 140 }}>Contrato</th>
+                            <th>Descripcion</th>
+                            <th style={{ width: 120 }}>Importe unit.</th>
+                            <th style={{ width: 90 }}>Cantidad</th>
+                            <th style={{ width: 120, textAlign: 'right' }}>Total</th>
+                            <th style={{ width: 70 }}></th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {manualOcaRows.map((row, idx) => {
+                            const precio = parseFloat(row.precio_unitario.replace(/\./g, '').replace(',', '.')) || 0;
+                            const cant = parseFloat(row.cantidad.replace(/\./g, '').replace(',', '.')) || 0;
+                            const total = precio * cant;
+                            return (
+                              <tr key={idx}>
+                                <td><input type="date" className="form-input" style={{ fontSize: 11, width: '100%' }} value={row.fecha} onChange={e => { const rows = [...manualOcaRows]; rows[idx].fecha = e.target.value; setManualOcaRows(rows); }} /></td>
+                                <td><input type="text" className="form-input" style={{ fontSize: 11, width: '100%' }} value={row.nro_planilla} onChange={e => { const rows = [...manualOcaRows]; rows[idx].nro_planilla = e.target.value; setManualOcaRows(rows); }} /></td>
+                                <td>
+                                  <select className="form-input" style={{ fontSize: 11, width: '100%' }} value={row.cod_contrato} onChange={e => { const rows = [...manualOcaRows]; rows[idx].cod_contrato = e.target.value; setManualOcaRows(rows); }}>
+                                    <option value="">Seleccionar...</option>
+                                    <option value="198">198 - GRAL PAQ. INTERIOR</option>
+                                    <option value="200">200 - GRAL KM UTILITARIO</option>
+                                    <option value="195">195 - ADG PICKUP PRINC</option>
+                                    <option value="197">197 - GRAL PAQ. BS AS</option>
+                                    <option value="199">199 - GRAL PAQ. BS AS KM</option>
+                                  </select>
+                                </td>
+                                <td><input type="text" className="form-input" style={{ fontSize: 11, width: '100%' }} value={row.descripcion} onChange={e => { const rows = [...manualOcaRows]; rows[idx].descripcion = e.target.value; setManualOcaRows(rows); }} placeholder="Paq. entregado" /></td>
+                                <td><input type="text" inputMode="decimal" className="form-input" style={{ fontSize: 11, width: '100%' }} value={row.precio_unitario} onChange={e => { const rows = [...manualOcaRows]; rows[idx].precio_unitario = e.target.value; setManualOcaRows(rows); }} placeholder="1.820.000" /></td>
+                                <td><input type="text" inputMode="decimal" className="form-input" style={{ fontSize: 11, width: '100%' }} value={row.cantidad} onChange={e => { const rows = [...manualOcaRows]; rows[idx].cantidad = e.target.value; setManualOcaRows(rows); }} placeholder="45" /></td>
+                                <td style={{ textAlign: 'right', fontWeight: 600, fontSize: 11 }}>{total > 0 ? `$ ${total.toLocaleString('es-AR', { minimumFractionDigits: 0 })}` : '-'}</td>
+                                <td>
+                                  <button type="button" className="btn-sm" style={{ fontSize: 10, marginRight: 2 }} onClick={() => { const rows = [...manualOcaRows]; rows.splice(idx + 1, 0, { ...row }); setManualOcaRows(rows); }} title="Duplicar">Dup</button>
+                                  {manualOcaRows.length > 1 && (
+                                    <button type="button" className="btn-sm btn-danger" style={{ fontSize: 10 }} onClick={() => { const rows = [...manualOcaRows]; rows.splice(idx, 1); setManualOcaRows(rows); }} title="Eliminar">X</button>
+                                  )}
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                        <tfoot>
+                          <tr>
+                            <td colSpan={6} style={{ textAlign: 'right', fontWeight: 600 }}>Total:</td>
+                            <td style={{ textAlign: 'right', fontWeight: 700, fontSize: 13 }}>
+                              $ {manualOcaRows.reduce((sum, r) => {
+                                const p = parseFloat(r.precio_unitario.replace(/\./g, '').replace(',', '.')) || 0;
+                                const c = parseFloat(r.cantidad.replace(/\./g, '').replace(',', '.')) || 0;
+                                return sum + p * c;
+                              }, 0).toLocaleString('es-AR', { minimumFractionDigits: 0 })}
+                            </td>
+                            <td></td>
+                          </tr>
+                        </tfoot>
+                      </table>
+                    </div>
+                    <div style={{ marginTop: 12, display: 'flex', gap: 8 }}>
+                      <button type="button" className="btn-sm" onClick={() => setManualOcaRows(prev => [...prev, { fecha: prev[prev.length - 1]?.fecha || '', nro_planilla: '', cod_contrato: '', descripcion: '', precio_unitario: '', cantidad: '' }])}>
+                        + Agregar fila
+                      </button>
+                      <button type="button" className="btn-primary" onClick={guardarOperacionesManualesOca} disabled={manualOcaSaving}>
+                        {manualOcaSaving ? 'Guardando...' : 'Confirmar carga'}
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           ) : (
@@ -2231,6 +2556,9 @@ export function LiquidacionesExtractosPage({
                 <button type="button" className="btn-primary" onClick={generarLiquidaciones}>
                   Generar liquidaciones
                 </button>
+                <button type="button" className="btn-sm" style={{ background: '#fef3c7', color: '#92400e', border: '1px solid #fcd34d' }} onClick={() => setShowLiqManualForm(true)}>
+                  + Crear manual
+                </button>
                 {distribuidores.length > 0 && distribuidores.some(d => !d.pdf_path) && (
                   <button type="button" className="btn-primary" style={{ background: '#7c3aed' }} onClick={generarYSubirTodas}>
                     Generar y Subir Todas ({distribuidores.filter(d => d.distribuidor_id && !d.pdf_path).length})
@@ -2282,9 +2610,102 @@ export function LiquidacionesExtractosPage({
                       </td>
                     </tr>
                   ))}
-                  {distribuidores.length === 0 && <tr><td colSpan={10} style={{ textAlign: 'center', color: '#6b7280' }}>Sin liquidaciones generadas aún</td></tr>}
+                  {distribuidores.length === 0 && <tr><td colSpan={10} style={{ textAlign: 'center', color: '#6b7280' }}>Sin liquidaciones generadas aun</td></tr>}
                 </tbody>
               </table>
+
+              {/* Feature D: Modal liquidacion manual */}
+              {showLiqManualForm && (
+                <div style={{ marginTop: 16, padding: 20, background: '#fffbeb', borderRadius: 8, border: '1px solid #fcd34d' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+                    <h4 style={{ margin: 0, color: '#92400e' }}>Crear liquidacion manual</h4>
+                    <button type="button" className="btn-sm" onClick={() => setShowLiqManualForm(false)}>Cerrar</button>
+                  </div>
+
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12, marginBottom: 16 }}>
+                    <div>
+                      <label style={{ display: 'block', fontSize: 12, marginBottom: 4, fontWeight: 600 }}>Distribuidor</label>
+                      <input type="text" className="form-input" placeholder="Buscar por nombre, patente o CUIL..." value={liqManualDistribSearch}
+                        onChange={e => buscarDistribLiqManual(e.target.value)} style={{ width: '100%' }} />
+                      {liqManualDistribResults.length > 0 && (
+                        <div style={{ background: '#fff', border: '1px solid #d1d5db', borderRadius: 6, maxHeight: 150, overflowY: 'auto', marginTop: 4 }}>
+                          {liqManualDistribResults.map(p => (
+                            <div key={p.id} style={{ padding: '6px 10px', cursor: 'pointer', fontSize: 12, borderBottom: '1px solid #f3f4f6', background: liqManualDistribId === p.id ? '#fef3c7' : undefined }}
+                              onClick={() => { setLiqManualDistribId(p.id); setLiqManualDistribSearch(p.label); setLiqManualDistribResults([]); }}>
+                              {p.label}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                    <div>
+                      <label style={{ display: 'block', fontSize: 12, marginBottom: 4 }}>Referencia externa</label>
+                      <input type="text" className="form-input" placeholder="Nro liq, factura, etc." value={liqManualRefExterna}
+                        onChange={e => setLiqManualRefExterna(e.target.value)} style={{ width: '100%' }} />
+                    </div>
+                    <div>
+                      <label style={{ display: 'block', fontSize: 12, marginBottom: 4 }}>Observaciones</label>
+                      <input type="text" className="form-input" placeholder="Motivo de carga manual" value={liqManualObs}
+                        onChange={e => setLiqManualObs(e.target.value)} style={{ width: '100%' }} />
+                    </div>
+                  </div>
+
+                  <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 8 }}>Lineas de detalle</div>
+                  <table className="data-table" style={{ fontSize: 12 }}>
+                    <thead>
+                      <tr>
+                        <th>Concepto</th>
+                        <th>Descripcion</th>
+                        <th style={{ width: 90 }}>Cantidad</th>
+                        <th style={{ width: 120 }}>Tarifa unit.</th>
+                        <th style={{ width: 120, textAlign: 'right' }}>Total</th>
+                        <th style={{ width: 60 }}></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {liqManualLineas.map((linea, idx) => {
+                        const cant = parseFloat(linea.cantidad.replace(/\./g, '').replace(',', '.')) || 0;
+                        const tarifa = parseFloat(linea.tarifa.replace(/\./g, '').replace(',', '.')) || 0;
+                        const total = cant * tarifa;
+                        return (
+                          <tr key={idx}>
+                            <td><input type="text" className="form-input" style={{ fontSize: 11, width: '100%' }} value={linea.concepto} placeholder="Ej: Transporte" onChange={e => { const l = [...liqManualLineas]; l[idx].concepto = e.target.value; setLiqManualLineas(l); }} /></td>
+                            <td><input type="text" className="form-input" style={{ fontSize: 11, width: '100%' }} value={linea.descripcion} onChange={e => { const l = [...liqManualLineas]; l[idx].descripcion = e.target.value; setLiqManualLineas(l); }} /></td>
+                            <td><input type="text" inputMode="decimal" className="form-input" style={{ fontSize: 11, width: '100%' }} value={linea.cantidad} onChange={e => { const l = [...liqManualLineas]; l[idx].cantidad = e.target.value; setLiqManualLineas(l); }} /></td>
+                            <td><input type="text" inputMode="decimal" className="form-input" style={{ fontSize: 11, width: '100%' }} value={linea.tarifa} onChange={e => { const l = [...liqManualLineas]; l[idx].tarifa = e.target.value; setLiqManualLineas(l); }} /></td>
+                            <td style={{ textAlign: 'right', fontWeight: 600 }}>{total > 0 ? `$ ${total.toLocaleString('es-AR', { minimumFractionDigits: 0 })}` : '-'}</td>
+                            <td>
+                              <button type="button" className="btn-sm" style={{ fontSize: 10, marginRight: 2 }} onClick={() => { const l = [...liqManualLineas]; l.splice(idx + 1, 0, { ...linea }); setLiqManualLineas(l); }}>Dup</button>
+                              {liqManualLineas.length > 1 && <button type="button" className="btn-sm btn-danger" style={{ fontSize: 10 }} onClick={() => { const l = [...liqManualLineas]; l.splice(idx, 1); setLiqManualLineas(l); }}>X</button>}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                    <tfoot>
+                      <tr>
+                        <td colSpan={4} style={{ textAlign: 'right', fontWeight: 600 }}>Total:</td>
+                        <td style={{ textAlign: 'right', fontWeight: 700, fontSize: 13 }}>
+                          $ {liqManualLineas.reduce((sum, l) => {
+                            const c = parseFloat(l.cantidad.replace(/\./g, '').replace(',', '.')) || 0;
+                            const t = parseFloat(l.tarifa.replace(/\./g, '').replace(',', '.')) || 0;
+                            return sum + c * t;
+                          }, 0).toLocaleString('es-AR', { minimumFractionDigits: 0 })}
+                        </td>
+                        <td></td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                  <div style={{ marginTop: 12, display: 'flex', gap: 8 }}>
+                    <button type="button" className="btn-sm" onClick={() => setLiqManualLineas(prev => [...prev, { concepto: '', descripcion: '', cantidad: '1', tarifa: '' }])}>
+                      + Agregar linea
+                    </button>
+                    <button type="button" className="btn-primary" onClick={guardarLiqManual} disabled={liqManualSaving || !liqManualDistribId}>
+                      {liqManualSaving ? 'Creando...' : 'Crear liquidacion manual'}
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </>
