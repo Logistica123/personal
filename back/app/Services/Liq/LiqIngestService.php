@@ -39,6 +39,7 @@ class LiqIngestService
 
     public function __construct(
         private readonly PdfTextExtractor $pdfTextExtractor,
+        private readonly OcasaExcelProcessor $ocasaProcessor,
     ) {}
 
     /**
@@ -56,6 +57,12 @@ class LiqIngestService
         $cliente = $liquidacion->cliente;
         $config = is_array($cliente?->configuracion_excel) ? $cliente->configuracion_excel : [];
 
+        // OCASA: tipo_archivo = excel_triple → delegar a OcasaExcelProcessor
+        $tipoArchivo = $config['tipo_archivo'] ?? null;
+        if ($tipoArchivo === 'excel_triple') {
+            return $this->procesarArchivoOcasa($archivo, $liquidacion, $config, $path);
+        }
+
         $esquema = LiqEsquemaTarifario::where('cliente_id', $liquidacion->cliente_id)
             ->where('activo', true)
             ->latest()
@@ -69,6 +76,40 @@ class LiqIngestService
             : $this->extractSpreadsheetRecords($path, $config, $esquema);
 
         return $this->procesarRegistros($archivo, $liquidacion, $esquema, $config, $records);
+    }
+
+    /**
+     * Procesar archivo OCASA (TMS, YCC1 o PDF cliente).
+     */
+    private function procesarArchivoOcasa(
+        LiqArchivoEntrada $archivo,
+        LiqLiquidacionCliente $liquidacion,
+        array $config,
+        string $path
+    ): array {
+        $esquema = LiqEsquemaTarifario::where('cliente_id', $liquidacion->cliente_id)
+            ->where('activo', true)
+            ->latest()
+            ->first();
+        if (! $esquema) {
+            throw new RuntimeException('No hay un esquema tarifario activo para este cliente');
+        }
+
+        // PDF del cliente → extraer gravado/no gravado
+        if ($this->isPdfPath($path)) {
+            $texto = $this->pdfTextExtractor->extract($path);
+            return $this->ocasaProcessor->procesarPdfCliente($archivo, $liquidacion, $config, $texto);
+        }
+
+        // Excel: detectar TMS o YCC1
+        $tipo = OcasaExcelProcessor::detectarTipoArchivo($path, $config);
+
+        if ($tipo === 'YCC1') {
+            return $this->ocasaProcessor->procesarYcc1($archivo, $liquidacion, $config);
+        }
+
+        // TMS (default)
+        return $this->ocasaProcessor->procesarTms($archivo, $liquidacion, $esquema, $config);
     }
 
     /**

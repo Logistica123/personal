@@ -254,6 +254,16 @@ class LiqTarifaController extends Controller
             'vigencia_desde' => 'required|date',
             'vigencia_hasta' => 'nullable|date|after_or_equal:vigencia_desde',
             'motivo' => 'required|string|min:3',
+            // OCASA fields
+            'modelo_tarifa' => 'nullable|string|in:JORNADA,JORNADA_KM,PRODUCTIVIDAD',
+            'costo_fijo_base' => 'nullable|numeric|min:0',
+            'tarifa_km_original' => 'nullable|numeric|min:0',
+            'tarifa_km_distribuidor' => 'nullable|numeric|min:0',
+            'umbral_km' => 'nullable|integer|min:0',
+            'modo_productividad' => 'nullable|string|in:porcentaje,por_parada,por_bulto',
+            'tarifa_parada_distrib' => 'nullable|numeric|min:0',
+            'tarifa_bulto_distrib' => 'nullable|numeric|min:0',
+            'capacidad_vehiculo_kg' => 'nullable|integer|min:0',
         ]);
 
         $dimensionesRequeridas = $esquema->dimensiones ?? [];
@@ -284,7 +294,7 @@ class LiqTarifaController extends Controller
 
         $precioDistribuidor = round($data['precio_original'] * (1 - $data['porcentaje_agencia'] / 100), 2);
 
-        $linea = LiqLineaTarifa::create([
+        $lineaData = [
             'esquema_id' => $esquema->id,
             'dimensiones_valores' => $dimensionesValores,
             'precio_original' => $data['precio_original'],
@@ -294,7 +304,18 @@ class LiqTarifaController extends Controller
             'vigencia_hasta' => $data['vigencia_hasta'] ?? null,
             'creado_por' => $request->user()?->id,
             'activo' => true,
-        ]);
+        ];
+
+        // OCASA fields
+        $ocasaFields = ['modelo_tarifa', 'costo_fijo_base', 'tarifa_km_original', 'tarifa_km_distribuidor',
+            'umbral_km', 'modo_productividad', 'tarifa_parada_distrib', 'tarifa_bulto_distrib', 'capacidad_vehiculo_kg'];
+        foreach ($ocasaFields as $field) {
+            if (array_key_exists($field, $data) && $data[$field] !== null) {
+                $lineaData[$field] = $data[$field];
+            }
+        }
+
+        $linea = LiqLineaTarifa::create($lineaData);
 
         // Audit
         LiqAuditoriaTarifa::create([

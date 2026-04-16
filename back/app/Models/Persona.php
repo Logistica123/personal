@@ -51,6 +51,8 @@ class Persona extends Model
         'estado_id',
         'tipo',
         'patente',
+        'capacidad_vehiculo_kg',
+        'paga_peajes',
         'tarifaespecial',
         'observaciontarifa',
         'observaciones',
@@ -74,6 +76,7 @@ class Persona extends Model
 
     protected $casts = [
         'agentes_responsables_ids' => 'array',
+        'paga_peajes' => 'boolean',
     ];
 
     public function cliente()

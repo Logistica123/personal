@@ -24,17 +24,32 @@ class LiqLineaTarifa extends Model
         'aprobado_por',
         'fecha_aprobacion',
         'activo',
+        // OCASA fields
+        'modelo_tarifa',
+        'costo_fijo_base',
+        'tarifa_km_original',
+        'tarifa_km_distribuidor',
+        'umbral_km',
+        'modo_productividad',
+        'tarifa_parada_distrib',
+        'tarifa_bulto_distrib',
+        'capacidad_vehiculo_kg',
     ];
 
     protected $casts = [
-        'dimensiones_valores'  => 'array',
-        'activo'               => 'boolean',
-        'precio_original'      => 'decimal:2',
-        'porcentaje_agencia'   => 'decimal:2',
-        'precio_distribuidor'  => 'decimal:2',
-        'vigencia_desde'       => 'date',
-        'vigencia_hasta'       => 'date',
-        'fecha_aprobacion'     => 'datetime',
+        'dimensiones_valores'    => 'array',
+        'activo'                 => 'boolean',
+        'precio_original'        => 'decimal:2',
+        'porcentaje_agencia'     => 'decimal:2',
+        'precio_distribuidor'    => 'decimal:2',
+        'vigencia_desde'         => 'date',
+        'vigencia_hasta'         => 'date',
+        'fecha_aprobacion'       => 'datetime',
+        'costo_fijo_base'        => 'decimal:2',
+        'tarifa_km_original'     => 'decimal:2',
+        'tarifa_km_distribuidor' => 'decimal:2',
+        'tarifa_parada_distrib'  => 'decimal:2',
+        'tarifa_bulto_distrib'   => 'decimal:2',
     ];
 
     // -------------------------------------------------------------------------

@@ -258,7 +258,18 @@ class LiqExtractosController extends Controller
             foreach ($porDistribuidor as $distribuidorId => $ops) {
                 $subtotal = $ops->sum(fn($op) => (float) $op->valor_tarifa_distribuidor);
                 $montoGasto = $this->resolveGastoAmount($gasto, (float) $subtotal);
-                $total = $subtotal - $montoGasto;
+
+                // OCASA: peajes (Imp.NoGrav) pass-through
+                $distribuidor = \App\Models\Persona::find($distribuidorId);
+                $pagaPeajes = $distribuidor?->paga_peajes ?? true;
+                $subtotalPeajes = $pagaPeajes
+                    ? round($ops->sum(fn($op) => (float) ($op->importe_no_gravado ?? 0)), 2)
+                    : 0;
+
+                // Beneficio seguro: por ahora manual, campo en liq_liquidaciones_distribuidor
+                $beneficioSeguro = 0;
+
+                $total = $subtotal + $subtotalPeajes - $montoGasto - $beneficioSeguro;
 
                 $liqDist = LiqLiquidacionDistribuidor::create([
                     'liquidacion_cliente_id' => $liquidacionCliente->id,
@@ -269,6 +280,8 @@ class LiqExtractosController extends Controller
                     'cantidad_operaciones' => $ops->count(),
                     'subtotal' => round($subtotal, 2),
                     'gastos_administrativos' => round($montoGasto, 2),
+                    'subtotal_peajes' => $subtotalPeajes,
+                    'beneficio_seguro' => $beneficioSeguro,
                     'total_a_pagar' => round($total, 2),
                     'estado' => LiqLiquidacionDistribuidor::ESTADO_GENERADA,
                 ]);

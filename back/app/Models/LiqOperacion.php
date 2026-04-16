@@ -34,6 +34,21 @@ class LiqOperacion extends Model
         'id_operacion_cliente',
         'tipo_operacion',
         'operacion_referencia_id',
+        // OCASA fields
+        'modelo_tarifa',
+        'costo_fijo',
+        'costo_km',
+        'costo_prod',
+        'costo_cant',
+        'distancia_km',
+        'total_paradas',
+        'capacidad_vehiculo_kg',
+        'fraccion_jornada',
+        'tarifa_jornada_distrib',
+        'tarifa_km_distrib_valor',
+        'tarifa_prod_distrib',
+        'importe_gravado',
+        'importe_no_gravado',
     ];
 
     protected $casts = [
@@ -45,6 +60,17 @@ class LiqOperacion extends Model
         'porcentaje_agencia'       => 'decimal:2',
         'diferencia_cliente'       => 'decimal:2',
         'excluida'                 => 'boolean',
+        'costo_fijo'               => 'decimal:2',
+        'costo_km'                 => 'decimal:2',
+        'costo_prod'               => 'decimal:2',
+        'costo_cant'               => 'decimal:2',
+        'distancia_km'             => 'decimal:2',
+        'fraccion_jornada'         => 'decimal:4',
+        'tarifa_jornada_distrib'   => 'decimal:2',
+        'tarifa_km_distrib_valor'  => 'decimal:2',
+        'tarifa_prod_distrib'      => 'decimal:2',
+        'importe_gravado'          => 'decimal:2',
+        'importe_no_gravado'       => 'decimal:2',
     ];
 
     // -------------------------------------------------------------------------
@@ -69,5 +95,10 @@ class LiqOperacion extends Model
     public function distribuidor()
     {
         return $this->belongsTo(\App\Models\Persona::class, 'distribuidor_id');
+    }
+
+    public function detalles()
+    {
+        return $this->hasMany(LiqOperacionDetalle::class, 'operacion_id');
     }
 }

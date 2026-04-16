@@ -32,6 +32,8 @@ class LiqLiquidacionDistribuidor extends Model
         'total_a_pagar',
         'estado',
         'pdf_path',
+        'beneficio_seguro',
+        'subtotal_peajes',
     ];
 
     protected $casts = [
@@ -41,6 +43,8 @@ class LiqLiquidacionDistribuidor extends Model
         'subtotal'               => 'decimal:2',
         'gastos_administrativos' => 'decimal:2',
         'total_a_pagar'          => 'decimal:2',
+        'beneficio_seguro'       => 'decimal:2',
+        'subtotal_peajes'        => 'decimal:2',
     ];
 
     // -------------------------------------------------------------------------

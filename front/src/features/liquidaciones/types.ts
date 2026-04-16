@@ -49,6 +49,16 @@ export type LiqLineaTarifa = {
   created_at: string;
   creado_por_user?: { id: number; name: string; email: string };
   aprobado_por_user?: { id: number; name: string; email: string };
+  // OCASA fields
+  modelo_tarifa?: 'JORNADA' | 'JORNADA_KM' | 'PRODUCTIVIDAD' | null;
+  costo_fijo_base?: string | null;
+  tarifa_km_original?: string | null;
+  tarifa_km_distribuidor?: string | null;
+  umbral_km?: number | null;
+  modo_productividad?: 'porcentaje' | 'por_parada' | 'por_bulto' | null;
+  tarifa_parada_distrib?: string | null;
+  tarifa_bulto_distrib?: string | null;
+  capacidad_vehiculo_kg?: number | null;
 };
 
 export type LiqTarifaPatente = {
@@ -150,6 +160,22 @@ export type LiqOperacion = {
   observaciones: string | null;
   distribuidor?: { id: number; apellidos: string; nombres: string; patente: string; fecha_alta: string | null; fecha_baja: string | null };
   linea_tarifa?: Pick<LiqLineaTarifa, 'id' | 'dimensiones_valores' | 'precio_original' | 'precio_distribuidor' | 'porcentaje_agencia'>;
+  // OCASA fields
+  modelo_tarifa?: 'JORNADA' | 'JORNADA_KM' | 'PRODUCTIVIDAD' | null;
+  costo_fijo?: string | null;
+  costo_km?: string | null;
+  costo_prod?: string | null;
+  costo_cant?: string | null;
+  distancia_km?: string | null;
+  total_paradas?: number | null;
+  capacidad_vehiculo_kg?: number | null;
+  fraccion_jornada?: string | null;
+  tarifa_jornada_distrib?: string | null;
+  tarifa_km_distrib_valor?: string | null;
+  tarifa_prod_distrib?: string | null;
+  importe_gravado?: string | null;
+  importe_no_gravado?: string | null;
+  id_operacion_cliente?: string | null;
 };
 
 export type LiqLiquidacionDistribuidor = {
@@ -165,6 +191,8 @@ export type LiqLiquidacionDistribuidor = {
   total_a_pagar: string;
   estado: 'generada' | 'aprobada' | 'pagada' | 'anulada';
   pdf_path: string | null;
+  beneficio_seguro?: string;
+  subtotal_peajes?: string;
   distribuidor?: { id: number; apellidos: string; nombres: string; patente: string; cbu_alias: string | null; fecha_alta: string | null; fecha_baja: string | null };
 };
 
@@ -279,4 +307,43 @@ export const ESTADO_LIQ_LABELS: Record<LiqLiquidacionCliente['estado'], string> 
   auditada: 'Auditada',
   aprobada: 'Aprobada',
   rechazada: 'Rechazada',
+};
+
+// ── OCASA types ─────────────────────────────────────────────────────────────
+
+export type ModeloTarifa = 'JORNADA' | 'JORNADA_KM' | 'PRODUCTIVIDAD';
+
+export const MODELO_TARIFA_LABELS: Record<ModeloTarifa, string> = {
+  JORNADA: 'Jornada',
+  JORNADA_KM: 'Jornada + KM',
+  PRODUCTIVIDAD: 'Productividad',
+};
+
+export const MODELO_TARIFA_COLOR: Record<ModeloTarifa, string> = {
+  JORNADA: '#3b82f6',
+  JORNADA_KM: '#f59e0b',
+  PRODUCTIVIDAD: '#10b981',
+};
+
+export type LiqConceptoFacturacion = {
+  id: number;
+  cliente_id: number;
+  tipo: 'gravado' | 'no_gravado' | 'otro';
+  concepto_template: string;
+  orden: number;
+  solo_si_importe: boolean;
+  activo: boolean;
+};
+
+export const FRACCION_LABELS: Record<string, string> = {
+  '0.25': '1/4',
+  '0.2500': '1/4',
+  '0.3333': '1/3',
+  '0.50': '1/2',
+  '0.5000': '1/2',
+  '0.6667': '2/3',
+  '0.75': '3/4',
+  '0.7500': '3/4',
+  '1.00': '1/1',
+  '1.0000': '1/1',
 };

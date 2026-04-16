@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useLiqApi } from '../features/liquidaciones/api';
 import type {
   LiqCliente,
@@ -109,6 +109,19 @@ export function LiquidacionesClientePage({
   const [newLineaVigDesde, setNewLineaVigDesde] = useState('');
   const [newLineaVigHasta, setNewLineaVigHasta] = useState('');
   const [newLineaMotivo, setNewLineaMotivo] = useState('Carga inicial');
+  // OCASA tariff fields
+  const [newLineaModeloTarifa, setNewLineaModeloTarifa] = useState<string>('JORNADA');
+  const [newLineaCostoFijoBase, setNewLineaCostoFijoBase] = useState('');
+  const [newLineaTarifaKmDistrib, setNewLineaTarifaKmDistrib] = useState('');
+  const [newLineaUmbralKm, setNewLineaUmbralKm] = useState('240');
+  const [newLineaCapacidadKg, setNewLineaCapacidadKg] = useState('');
+
+  // OCASA detection
+  const isOcasaClient = useMemo(() => {
+    if (!selectedCliente) return false;
+    const cfg = selectedCliente.configuracion_excel;
+    return (cfg as any)?.tipo_archivo === 'excel_triple';
+  }, [selectedCliente]);
 
   // Tarifa por patente (override)
   const [newTPPatente, setNewTPPatente] = useState('');
@@ -849,25 +862,41 @@ export function LiquidacionesClientePage({
     const dimsFaltantes = (selectedEsquema.dimensiones ?? []).filter((d) => !(newLineaDims[d] ?? '').trim());
     if (dimsFaltantes.length > 0) { setError(`Faltan dimensiones: ${dimsFaltantes.join(', ')}`); return; }
     try {
-      await api.post(`/esquemas/${selectedEsquema.id}/lineas`, {
+      const body: Record<string, unknown> = {
         dimensiones_valores: newLineaDims,
         precio_original: precio,
         porcentaje_agencia: pct,
         vigencia_desde: newLineaVigDesde,
         vigencia_hasta: newLineaVigHasta || null,
         motivo: newLineaMotivo,
-      });
+      };
+      // OCASA fields
+      if (isOcasaClient) {
+        body.modelo_tarifa = newLineaModeloTarifa || null;
+        const costoFijoBase = parseMoneyInput(newLineaCostoFijoBase);
+        if (costoFijoBase != null && costoFijoBase > 0) body.costo_fijo_base = costoFijoBase;
+        if (newLineaModeloTarifa === 'JORNADA_KM') {
+          const tarifaKm = parseMoneyInput(newLineaTarifaKmDistrib);
+          if (tarifaKm != null) body.tarifa_km_distribuidor = tarifaKm;
+          body.umbral_km = parseInt(newLineaUmbralKm, 10) || 240;
+        }
+        if (newLineaCapacidadKg) body.capacidad_vehiculo_kg = parseInt(newLineaCapacidadKg, 10);
+      }
+      await api.post(`/esquemas/${selectedEsquema.id}/lineas`, body);
       setNewLineaDims({});
       setNewLineaPrecio('');
       setNewLineaPctAg('');
       setNewLineaDistPrecio('');
+      setNewLineaCostoFijoBase('');
+      setNewLineaTarifaKmDistrib('');
+      setNewLineaCapacidadKg('');
       const res = await api.get(`/esquemas/${selectedEsquema.id}/lineas`);
       setLineas(res.data ?? []);
       showSuccess('Línea creada');
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Error');
     }
-  }, [api, selectedEsquema, newLineaDims, newLineaPrecio, newLineaPctAg, newLineaDistPrecio, newLineaVigDesde, newLineaVigHasta, newLineaMotivo]);
+  }, [api, selectedEsquema, newLineaDims, newLineaPrecio, newLineaPctAg, newLineaDistPrecio, newLineaVigDesde, newLineaVigHasta, newLineaMotivo, isOcasaClient, newLineaModeloTarifa, newLineaCostoFijoBase, newLineaTarifaKmDistrib, newLineaUmbralKm, newLineaCapacidadKg]);
 
   const aprobarLinea = useCallback(async (id: number) => {
     const motivo = window.prompt('Motivo de aprobación:', 'Aprobación manual');
@@ -1602,6 +1631,45 @@ export function LiquidacionesClientePage({
                             <input type="text" className="form-input" value={newLineaMotivo} onChange={(e) => setNewLineaMotivo(e.target.value)} />
                           </div>
                         </div>
+                        {isOcasaClient && (
+                          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: 12, marginBottom: 12, padding: '12px 0', borderTop: '1px dashed #d1d5db' }}>
+                            <div>
+                              <label style={{ display: 'block', fontSize: 12, marginBottom: 4, fontWeight: 600 }}>Modelo tarifa</label>
+                              <select className="form-input" value={newLineaModeloTarifa} onChange={(e) => setNewLineaModeloTarifa(e.target.value)}>
+                                <option value="JORNADA">Jornada</option>
+                                <option value="JORNADA_KM">Jornada + KM</option>
+                                <option value="PRODUCTIVIDAD">Productividad</option>
+                              </select>
+                            </div>
+                            <div>
+                              <label style={{ display: 'block', fontSize: 12, marginBottom: 4 }}>Costo fijo base OCASA</label>
+                              <input type="text" inputMode="decimal" className="form-input" value={newLineaCostoFijoBase} onChange={(e) => setNewLineaCostoFijoBase(e.target.value)} placeholder="Jornada completa" />
+                            </div>
+                            {newLineaModeloTarifa === 'JORNADA_KM' && (
+                              <>
+                                <div>
+                                  <label style={{ display: 'block', fontSize: 12, marginBottom: 4 }}>$/KM distribuidor</label>
+                                  <input type="text" inputMode="decimal" className="form-input" value={newLineaTarifaKmDistrib} onChange={(e) => setNewLineaTarifaKmDistrib(e.target.value)} placeholder="Ej: 223" />
+                                </div>
+                                <div>
+                                  <label style={{ display: 'block', fontSize: 12, marginBottom: 4 }}>Umbral KM (base)</label>
+                                  <input type="text" inputMode="decimal" className="form-input" value={newLineaUmbralKm} onChange={(e) => setNewLineaUmbralKm(e.target.value)} placeholder="240" />
+                                </div>
+                              </>
+                            )}
+                            <div>
+                              <label style={{ display: 'block', fontSize: 12, marginBottom: 4 }}>Capacidad veh. (kg)</label>
+                              <select className="form-input" value={newLineaCapacidadKg} onChange={(e) => setNewLineaCapacidadKg(e.target.value)}>
+                                <option value="">Sin especificar</option>
+                                <option value="100">100 (Moto)</option>
+                                <option value="700">700 (Furgon chico)</option>
+                                <option value="2500">2500 (Utilitario)</option>
+                                <option value="5000">5000 (Camion liviano)</option>
+                                <option value="10000">10000 (Camion)</option>
+                              </select>
+                            </div>
+                          </div>
+                        )}
                         <button type="button" className="btn-primary" onClick={addLinea}>Guardar línea</button>
                       </div>
 

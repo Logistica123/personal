@@ -140,6 +140,13 @@ export function LiquidacionesExtractosPage({
     return (cfg as any)?.formato_entrada === 'PDF_DUAL';
   }, [selectedLiq, clientes]);
 
+  // OCASA: detectar si el cliente usa formato excel_triple (TMS + YCC1 + PDF)
+  const isOcasaClient = useMemo(() => {
+    if (!selectedLiq) return false;
+    const cfg = clientes.find((c) => c.id === selectedLiq.cliente_id)?.configuracion_excel;
+    return (cfg as any)?.tipo_archivo === 'excel_triple';
+  }, [selectedLiq, clientes]);
+
   const ocaSucursalOptions = useMemo(() => {
     if (!selectedLiq) return [];
     const cfg = clientes.find((c) => c.id === selectedLiq.cliente_id)?.configuracion_excel;
@@ -1439,7 +1446,11 @@ export function LiquidacionesExtractosPage({
                     </select>
                   </div>
                   <div style={{ fontSize: 11, color: '#6b7280', minWidth: 220 }}>
-                    Soporta Excel y PDF. Para PDF, el cliente debe tener configurado `pdf_operacion_regex`.
+                    {isOcasaClient ? (
+                      <>Subir <strong>TMS.xlsx</strong> (motor de calculo), <strong>YCC1.xlsx</strong> (detalle) y/o <strong>PDFs cliente</strong> (gravado/no gravado). Se detecta automaticamente el tipo.</>
+                    ) : (
+                      <>Soporta Excel y PDF. Para PDF, el cliente debe tener configurado `pdf_operacion_regex`.</>
+                    )}
                   </div>
                   <button type="button" className="btn-primary" onClick={subirArchivo} disabled={!uploadFile || uploading}>
                     {uploading ? 'Procesando…' : 'Subir y procesar'}
@@ -2024,7 +2035,9 @@ export function LiquidacionesExtractosPage({
                           }}
                         />
                       </th>
-                      <th>Dominio</th><th>Distribuidor</th><th>Fecha</th><th>Concepto</th><th>Sucursal</th><th>Valor cliente</th><th>Tarifa orig.</th><th>Distribuidor</th><th>Diferencia</th><th>Estado</th><th></th>
+                      <th>Dominio</th><th>Distribuidor</th><th>Fecha</th><th>Concepto</th><th>Sucursal</th><th>Valor cliente</th>
+                      {isOcasaClient && <><th>Modelo</th><th>Fraccion</th></>}
+                      <th>Tarifa orig.</th><th>Distribuidor</th><th>Diferencia</th><th>Estado</th><th></th>
                     </tr>
 	                </thead>
 	                <tbody>
@@ -2044,6 +2057,27 @@ export function LiquidacionesExtractosPage({
 	                      <td style={{ fontSize: 12 }}>{op.concepto ?? '—'}</td>
 	                      <td style={{ fontSize: 12 }}>{op.sucursal_tarifa ?? '—'}</td>
                       <td>{fmt(op.valor_cliente)}</td>
+                      {isOcasaClient && (
+                        <>
+                          <td style={{ fontSize: 11 }}>
+                            {op.modelo_tarifa ? (
+                              <span style={{ padding: '1px 6px', borderRadius: 6, fontSize: 10, fontWeight: 600, background: op.modelo_tarifa === 'JORNADA' ? '#dbeafe' : op.modelo_tarifa === 'JORNADA_KM' ? '#fef3c7' : '#d1fae5', color: op.modelo_tarifa === 'JORNADA' ? '#1e40af' : op.modelo_tarifa === 'JORNADA_KM' ? '#92400e' : '#065f46' }}>
+                                {op.modelo_tarifa === 'JORNADA' ? 'Jornada' : op.modelo_tarifa === 'JORNADA_KM' ? 'J+KM' : 'Prod'}
+                              </span>
+                            ) : '-'}
+                          </td>
+                          <td style={{ fontSize: 11, textAlign: 'center' }}>
+                            {op.fraccion_jornada ? (() => {
+                              const f = parseFloat(op.fraccion_jornada);
+                              if (Math.abs(f - 0.25) < 0.01) return '1/4';
+                              if (Math.abs(f - 0.5) < 0.01) return '1/2';
+                              if (Math.abs(f - 0.75) < 0.01) return '3/4';
+                              if (Math.abs(f - 1.0) < 0.01) return '1/1';
+                              return `${Math.round(f * 100)}%`;
+                            })() : '-'}
+                          </td>
+                        </>
+                      )}
                       <td>{op.valor_tarifa_original ? fmt(op.valor_tarifa_original) : '—'}</td>
                       <td>{op.valor_tarifa_distribuidor ? fmt(op.valor_tarifa_distribuidor) : '—'}</td>
                       <td style={{ color: op.diferencia_cliente && parseFloat(op.diferencia_cliente) !== 0 ? '#d97706' : '#16a34a' }}>
@@ -2061,7 +2095,7 @@ export function LiquidacionesExtractosPage({
                       <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
                         {(op.estado === 'sin_tarifa' || op.estado === 'diferencia') && !op.excluida && (
                           <button type="button" className="btn-sm" style={{ marginRight: 4, background: '#fef3c7', color: '#92400e', border: '1px solid #fcd34d' }}
-                            onClick={() => { setHotMapOp(op); setHotMapValorTarifa(''); setHotMapDim(isOcaClient ? 'fijo' : 'porcentaje'); setHotMapValorCliente(String(op.valor_cliente)); }}>
+                            onClick={() => { setHotMapOp(op); setHotMapValorTarifa(''); setHotMapDim((isOcaClient || isOcasaClient) ? 'fijo' : 'porcentaje'); setHotMapValorCliente(String(op.valor_cliente)); }}>
                             + Mapeo
                           </button>
                         )}
@@ -2080,7 +2114,7 @@ export function LiquidacionesExtractosPage({
                       </td>
 	                    </tr>
 	                  ))}
-	                  {operaciones.length === 0 && <tr><td colSpan={13} style={{ textAlign: 'center', color: '#6b7280' }}>Sin operaciones</td></tr>}
+	                  {operaciones.length === 0 && <tr><td colSpan={isOcasaClient ? 15 : 13} style={{ textAlign: 'center', color: '#6b7280' }}>Sin operaciones</td></tr>}
 	                </tbody>
 	              </table>
               {/* Modal de Mapeo Completo (3 secciones) */}
