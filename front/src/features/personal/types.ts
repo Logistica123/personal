@@ -8,6 +8,7 @@ export type LiquidacionSummary = {
   pagado: boolean | null;
   importeFacturar: number | null;
   adjuntos?: Array<{ id: number; nombre: string; downloadUrl: string | null }>;
+  combustibleDocId?: number | null;
 };
 
 export type PersonalRecord = {

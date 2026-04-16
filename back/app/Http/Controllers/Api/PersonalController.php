@@ -974,7 +974,7 @@ class PersonalController extends Controller
                         ->with([
                             'tipo:id,nombre',
                             'children' => function ($childQuery) {
-                                $childQuery->select('id', 'persona_id', 'parent_document_id', 'nombre_original', 'download_url');
+                                $childQuery->select('id', 'persona_id', 'parent_document_id', 'nombre_original', 'download_url', 'tipo_archivo_id');
                             },
                         ])
                         ->withCount('children');
@@ -2528,18 +2528,25 @@ class PersonalController extends Controller
         $liquidacionRecibido = $latestLiquidacion ? ((bool) $latestLiquidacion->recibido || ($latestLiquidacion->children_count > 0)) : null;
         $liquidacionPagado = $latestLiquidacion ? (bool) $latestLiquidacion->pagado : null;
         $liquidacionImporteFacturar = $latestLiquidacion?->importe_facturar;
+        $combustibleTypeId = FileType::where('nombre', 'DESCUENTO_COMBUSTIBLE')->value('id');
         $liquidacionesResumen = $allDocumentos
             ->filter(function (Archivo $documento) {
                 return ! $documento->parent_document_id && $this->isLiquidacionDocument($documento);
             })
-            ->map(function (Archivo $documento) use ($allDocumentos) {
+            ->map(function (Archivo $documento) use ($allDocumentos, $combustibleTypeId) {
                 $date = $this->resolveDocumentDate($documento);
                 $monthKey = $date ? $date->format('Y-m') : 'unknown';
                 $fortnightKey = $date ? $this->determineFortnightKey($documento, $date) : 'NO_DATE';
 
                 $recibido = (bool) $documento->recibido || ($documento->children_count > 0);
 
-                $adjuntos = collect($documento->children ?? [])
+                $adjuntos = collect($documento->children ?? []);
+
+                $combustibleDoc = $combustibleTypeId
+                    ? $adjuntos->first(fn (Archivo $doc) => (int) $doc->tipo_archivo_id === (int) $combustibleTypeId)
+                    : null;
+
+                $adjuntosArray = $adjuntos
                     ->map(fn (Archivo $doc) => [
                         'id' => $doc->id,
                         'nombre' => $doc->nombre_original ?? "Adjunto #{$doc->id}",
@@ -2557,7 +2564,8 @@ class PersonalController extends Controller
                     'recibido' => $recibido,
                     'pagado' => (bool) $documento->pagado,
                     'importeFacturar' => $documento->importe_facturar,
-                    'adjuntos' => $adjuntos,
+                    'adjuntos' => $adjuntosArray,
+                    'combustibleDocId' => $combustibleDoc ? (int) $combustibleDoc->id : null,
                 ];
             })
             ->values();

@@ -5420,6 +5420,15 @@ export const LiquidacionesPage: React.FC<LiquidacionesPageProps> = ({
                                         >
                                           Fac
                                         </button>
+                                        <button
+                                          type="button"
+                                          className={`pagos-action-btn${liq.combustibleDocId ? ' pagos-action-btn--confirm' : ''}`}
+                                          title={liq.combustibleDocId ? 'Ver resumen de descuento de combustible' : 'Sin descuento de combustible'}
+                                          disabled={!liq.combustibleDocId}
+                                          onClick={() => liq.combustibleDocId && window.open(`${apiBaseUrl}/api/personal/${registro.id}/documentos/${liq.combustibleDocId}/descargar?inline=1`, '_blank')}
+                                        >
+                                          Comb
+                                        </button>
                                       </div>
                                     </td>
                                   </tr>
