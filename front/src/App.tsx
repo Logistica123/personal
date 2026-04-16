@@ -3308,6 +3308,9 @@ const DashboardLayout: React.FC<{
 
         <nav className="sidebar-nav" onClick={closeSidebar}>
           <span className="sidebar-title">Acciones</span>
+          <a href="https://crm.distriapp.com.ar/" className="sidebar-link sidebar-link-crm" target="_blank" rel="noopener noreferrer">
+            CRM
+          </a>
           <NavLink to="/llamadas" className={({ isActive }) => `sidebar-link${isActive ? ' is-active' : ''}`}>
             Llamadas WebRTC
           </NavLink>
@@ -3445,9 +3448,6 @@ const DashboardLayout: React.FC<{
               Aprobaciones/solicitudes
             </NavLink>
           ) : null}
-          <a href="https://crm.distriapp.com.ar/" className="sidebar-link" target="_blank" rel="noopener noreferrer">
-            CRM
-          </a>
           {canAccessLiquidacionesGroup ? (
             <>
               <button

@@ -596,6 +596,21 @@ body {
   font-weight: 600;
 }
 
+.sidebar-link-crm {
+  display: flex;
+  justify-content: center;
+  background: linear-gradient(135deg, #1d74f5 0%, #0a4fd1 100%);
+  color: #ffffff !important;
+  font-weight: 600;
+  box-shadow: 0 4px 12px rgba(29, 116, 245, 0.25);
+}
+
+.sidebar-link-crm:hover {
+  background: linear-gradient(135deg, #2a82ff 0%, #0d5be8 100%);
+  color: #ffffff !important;
+  box-shadow: 0 6px 16px rgba(29, 116, 245, 0.35);
+}
+
 .sidebar-submenu {
   display: flex;
   flex-direction: column;
