@@ -83,8 +83,14 @@ class PagosUnificadoService
             });
         }
         if (!empty($filtros['distribuidor'])) {
-            $query->whereHas('distribuidor', function ($q) use ($filtros) {
-                $q->where(DB::raw("CONCAT(apellidos, ' ', nombres)"), 'like', '%' . $filtros['distribuidor'] . '%');
+            $term = '%' . $filtros['distribuidor'] . '%';
+            $query->whereHas('distribuidor', function ($q) use ($term) {
+                $q->where(function ($sub) use ($term) {
+                    $sub->where('apellidos', 'like', $term)
+                        ->orWhere('nombres', 'like', $term)
+                        ->orWhereRaw("CONCAT_WS(' ', apellidos, nombres) like ?", [$term])
+                        ->orWhereRaw("CONCAT_WS(' ', nombres, apellidos) like ?", [$term]);
+                });
             });
         }
         if (!empty($filtros['estado_liq'])) {
@@ -158,8 +164,14 @@ class PagosUnificadoService
             });
         }
         if (!empty($filtros['distribuidor'])) {
-            $query->whereHas('persona', function ($q) use ($filtros) {
-                $q->where(DB::raw("CONCAT(apellidos, ' ', nombres)"), 'like', '%' . $filtros['distribuidor'] . '%');
+            $term = '%' . $filtros['distribuidor'] . '%';
+            $query->whereHas('persona', function ($q) use ($term) {
+                $q->where(function ($sub) use ($term) {
+                    $sub->where('apellidos', 'like', $term)
+                        ->orWhere('nombres', 'like', $term)
+                        ->orWhereRaw("CONCAT_WS(' ', apellidos, nombres) like ?", [$term])
+                        ->orWhereRaw("CONCAT_WS(' ', nombres, apellidos) like ?", [$term]);
+                });
             });
         }
 

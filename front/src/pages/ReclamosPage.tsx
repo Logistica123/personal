@@ -331,11 +331,7 @@ export const ReclamosPage: React.FC<ReclamosPageProps> = ({
   }, []);
 
   const resolveReclamoDescripcion = useCallback((reclamo: ReclamoRecord): string | null => {
-    const isAdelanto = Boolean(reclamo.isReclamoAdelanto) || isReclamoAdelantoTypeName(reclamo.tipo);
-    if (isAdelanto) {
-      return reclamo.concepto ?? reclamo.detalle ?? null;
-    }
-    return reclamo.detalle ?? reclamo.concepto ?? null;
+    return reclamo.detalle ?? null;
   }, []);
 
   useEffect(() => {
@@ -1177,7 +1173,7 @@ export const ReclamosPage: React.FC<ReclamosPageProps> = ({
                   <tr key={reclamo.id}>
                     <td>{reclamo.fechaReclamo ?? '—'}</td>
                     <td>{reclamo.codigo ?? `#${reclamo.id}`}</td>
-                    <td title={resolveReclamoDescripcion(reclamo) ?? undefined}>{truncateText(resolveReclamoDescripcion(reclamo), 80)}</td>
+                    <td title={resolveReclamoDescripcion(reclamo) ?? undefined}>{truncateText(resolveReclamoDescripcion(reclamo), 40)}</td>
                     <td>{reclamo.creator ?? '—'}</td>
                     <td>
                       <span className="transportista-cell" title={transportistaDisplay.tooltip}>
