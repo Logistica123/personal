@@ -988,6 +988,61 @@ const CHAT_CUSTOM_BG_STORAGE_KEY = 'dashboard-chat:custom-bg';
 
 const CHAT_ZUMBIDO_MARKER = '__ZUMBIDO__';
 
+let sharedBuzzAudioContext: AudioContext | null = null;
+const playBuzzSoundGlobal = (): void => {
+  try {
+    if (!sharedBuzzAudioContext) {
+      const Ctor =
+        window.AudioContext ||
+        (window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+      if (!Ctor) return;
+      sharedBuzzAudioContext = new Ctor();
+    }
+    const context = sharedBuzzAudioContext;
+    const playNow = () => {
+      const now = context.currentTime;
+      const duration = 0.9;
+      const osc1 = context.createOscillator();
+      const osc2 = context.createOscillator();
+      const gain = context.createGain();
+      const lfo = context.createOscillator();
+      const lfoGain = context.createGain();
+      osc1.type = 'square';
+      osc1.frequency.setValueAtTime(900, now);
+      osc1.frequency.linearRampToValueAtTime(650, now + duration);
+      osc2.type = 'sawtooth';
+      osc2.frequency.setValueAtTime(1350, now);
+      osc2.frequency.linearRampToValueAtTime(950, now + duration);
+      lfo.type = 'sine';
+      lfo.frequency.setValueAtTime(28, now);
+      lfoGain.gain.setValueAtTime(220, now);
+      lfo.connect(lfoGain);
+      lfoGain.connect(osc1.frequency);
+      lfoGain.connect(osc2.frequency);
+      gain.gain.setValueAtTime(0.001, now);
+      gain.gain.exponentialRampToValueAtTime(0.85, now + 0.03);
+      gain.gain.setValueAtTime(0.85, now + duration - 0.1);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + duration);
+      osc1.connect(gain);
+      osc2.connect(gain);
+      gain.connect(context.destination);
+      osc1.start(now);
+      osc2.start(now);
+      lfo.start(now);
+      osc1.stop(now + duration);
+      osc2.stop(now + duration);
+      lfo.stop(now + duration);
+    };
+    if (context.state === 'suspended') {
+      context.resume().then(playNow).catch(() => playNow());
+    } else {
+      playNow();
+    }
+  } catch {
+    // ignore
+  }
+};
+
 const CHAT_THEME_SEND_ICON: Record<ChatThemeId, string> = {
   whatsapp: '📤',
   futbol: '⚽',
@@ -3087,9 +3142,17 @@ const DashboardLayout: React.FC<{
         (entry) => entry.senderId != null && entry.senderId !== currentUserId
       );
       if (!isInitialFetch && onlyFromOthers.length > 0) {
+        const hasZumbido = onlyFromOthers.some((entry) => entry.text === CHAT_ZUMBIDO_MARKER);
+        if (hasZumbido) {
+          playBuzzSoundGlobal();
+        }
         const latest = onlyFromOthers[onlyFromOthers.length - 1];
+        const toastMessage =
+          latest.text === CHAT_ZUMBIDO_MARKER
+            ? '⚡ ¡Te enviaron un zumbido!'
+            : latest.text?.trim().slice(0, 80) ?? 'Nuevo mensaje';
         setChatToast({
-          message: latest.text?.trim().slice(0, 80) ?? 'Nuevo mensaje',
+          message: toastMessage,
           senderId: latest.senderId,
           createdAt: latest.timestamp,
         });
@@ -4779,63 +4842,8 @@ const ChatPage: React.FC = () => {
     }
   }, []);
 
-  const playBuzzSound = useCallback(() => {
-    try {
-      if (!incomingAudioContextRef.current) {
-        const AudioContextConstructor =
-          window.AudioContext ||
-          (window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-        if (!AudioContextConstructor) return;
-        incomingAudioContextRef.current = new AudioContextConstructor();
-      }
-      const context = incomingAudioContextRef.current;
-      const ensureContext = () => {
-        if (context.state === 'suspended') {
-          return context.resume().catch(() => Promise.resolve());
-        }
-        return Promise.resolve();
-      };
-      void ensureContext().then(() => {
-        const now = context.currentTime;
-        const duration = 0.9;
-        const osc1 = context.createOscillator();
-        const osc2 = context.createOscillator();
-        const gain = context.createGain();
-        const lfo = context.createOscillator();
-        const lfoGain = context.createGain();
-        osc1.type = 'square';
-        osc1.frequency.setValueAtTime(900, now);
-        osc1.frequency.linearRampToValueAtTime(650, now + duration);
-        osc2.type = 'sawtooth';
-        osc2.frequency.setValueAtTime(1350, now);
-        osc2.frequency.linearRampToValueAtTime(950, now + duration);
-        lfo.type = 'sine';
-        lfo.frequency.setValueAtTime(28, now);
-        lfoGain.gain.setValueAtTime(220, now);
-        lfo.connect(lfoGain);
-        lfoGain.connect(osc1.frequency);
-        lfoGain.connect(osc2.frequency);
-        gain.gain.setValueAtTime(0.001, now);
-        gain.gain.exponentialRampToValueAtTime(0.85, now + 0.03);
-        gain.gain.setValueAtTime(0.85, now + duration - 0.1);
-        gain.gain.exponentialRampToValueAtTime(0.0001, now + duration);
-        osc1.connect(gain);
-        osc2.connect(gain);
-        gain.connect(context.destination);
-        osc1.start(now);
-        osc2.start(now);
-        lfo.start(now);
-        osc1.stop(now + duration);
-        osc2.stop(now + duration);
-        lfo.stop(now + duration);
-      });
-    } catch {
-      // ignore
-    }
-  }, []);
-
   const triggerBuzzEffect = useCallback(() => {
-    playBuzzSound();
+    playBuzzSoundGlobal();
     setBuzzActive(true);
     if (buzzTimeoutRef.current) {
       window.clearTimeout(buzzTimeoutRef.current);
@@ -4844,7 +4852,7 @@ const ChatPage: React.FC = () => {
       setBuzzActive(false);
       buzzTimeoutRef.current = null;
     }, 900);
-  }, [playBuzzSound]);
+  }, []);
 
   const navigate = useNavigate();
   const params = useParams<{ contactId?: string }>();
