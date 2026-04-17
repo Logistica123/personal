@@ -80,7 +80,7 @@ export const AuditPage: React.FC<AuditPageProps> = ({
   const [nosisRefreshTick, setNosisRefreshTick] = useState(0);
 
   useEffect(() => {
-    if (userRole !== 'admin') {
+    if (userRole !== 'admin' && userRole !== 'admin2') {
       return;
     }
     const controller = new AbortController();
@@ -116,7 +116,7 @@ export const AuditPage: React.FC<AuditPageProps> = ({
   }, [actorFilter, apiBaseUrl, emailFilter, refreshTick, userRole]);
 
   useEffect(() => {
-    if (userRole !== 'admin') {
+    if (userRole !== 'admin' && userRole !== 'admin2') {
       return;
     }
 
@@ -277,7 +277,7 @@ export const AuditPage: React.FC<AuditPageProps> = ({
     return <span className="badge">{result ?? '—'}</span>;
   };
 
-  if (userRole !== 'admin') {
+  if (userRole !== 'admin' && userRole !== 'admin2') {
     return (
       <DashboardLayout title="Auditoría" subtitle="Acceso restringido">
         <p className="form-info form-info--error">Solo los administradores pueden acceder a Auditoría.</p>
