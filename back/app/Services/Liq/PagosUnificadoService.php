@@ -97,7 +97,7 @@ class PagosUnificadoService
             $query->where('estado', $filtros['estado_liq']);
         }
 
-        return $query->get()->map(function (LiqLiquidacionDistribuidor $liq) {
+        return $query->get()->toBase()->map(function (LiqLiquidacionDistribuidor $liq) {
             $dist = $liq->distribuidor;
             $opDetalle = $liq->ordenPagoDetalle;
             $op = $opDetalle?->ordenPago;
@@ -175,7 +175,7 @@ class PagosUnificadoService
             });
         }
 
-        return $query->get()->map(function (Archivo $archivo) {
+        return $query->get()->toBase()->map(function (Archivo $archivo) {
             $persona = $archivo->persona;
 
             // Verificar si ya está en una OP activa
