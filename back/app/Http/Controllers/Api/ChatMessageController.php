@@ -4,8 +4,10 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\ChatMessage;
+use App\Models\ChatMessageReaction;
 use Illuminate\Http\Request;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\ValidationException;
@@ -60,8 +62,12 @@ class ChatMessageController extends Controller
                 ->sortBy('id')
                 ->values();
 
+            $reactionsByMessage = $this->fetchReactionsForMessages($messages->pluck('id')->all());
+            $typing = $this->fetchTypingPartners($userId);
+
             return response()->json([
-                'data' => $messages->map(fn (ChatMessage $message) => $this->transformMessage($message)),
+                'data' => $messages->map(fn (ChatMessage $message) => $this->transformMessage($message, $reactionsByMessage)),
+                'typing' => $typing,
             ]);
         } catch (\Throwable $exception) {
             report($exception);
@@ -101,9 +107,13 @@ class ChatMessageController extends Controller
                 'image_name' => $validated['imageName'] ?? null,
             ]);
 
+            if (!empty($validated['senderId'])) {
+                $this->clearTyping((int) $validated['senderId'], (int) $validated['recipientId']);
+            }
+
             return response()->json([
                 'message' => 'Mensaje enviado correctamente.',
-                'data' => $this->transformMessage($message),
+                'data' => $this->transformMessage($message, []),
             ], 201);
         } catch (\Throwable $exception) {
             report($exception);
@@ -111,7 +121,118 @@ class ChatMessageController extends Controller
         }
     }
 
-    private function transformMessage(ChatMessage $message): array
+    public function toggleReaction(Request $request, int $messageId)
+    {
+        $validated = $request->validate([
+            'userId' => 'required|integer|min:1',
+            'emoji' => 'required|string|max:16',
+        ]);
+
+        try {
+            if (!Schema::hasTable('chat_message_reactions')) {
+                return response()->json(['message' => 'Reacciones deshabilitadas.'], 503);
+            }
+
+            $existing = ChatMessageReaction::where('message_id', $messageId)
+                ->where('user_id', $validated['userId'])
+                ->where('emoji', $validated['emoji'])
+                ->first();
+
+            if ($existing) {
+                $existing->delete();
+                $action = 'removed';
+            } else {
+                ChatMessageReaction::create([
+                    'message_id' => $messageId,
+                    'user_id' => (int) $validated['userId'],
+                    'emoji' => $validated['emoji'],
+                ]);
+                $action = 'added';
+            }
+
+            $reactions = $this->fetchReactionsForMessages([$messageId])[$messageId] ?? [];
+
+            return response()->json([
+                'action' => $action,
+                'messageId' => $messageId,
+                'reactions' => $reactions,
+            ]);
+        } catch (\Throwable $exception) {
+            report($exception);
+            return response()->json(['message' => 'No se pudo registrar la reacción.'], 500);
+        }
+    }
+
+    public function heartbeatTyping(Request $request)
+    {
+        $validated = $request->validate([
+            'userId' => 'required|integer|min:1',
+            'contactId' => 'required|integer|min:1',
+        ]);
+
+        try {
+            if (!Schema::hasTable('chat_typing')) {
+                return response()->json(['ok' => false, 'reason' => 'disabled']);
+            }
+
+            DB::table('chat_typing')->updateOrInsert(
+                ['user_id' => $validated['userId'], 'contact_id' => $validated['contactId']],
+                ['updated_at' => now()]
+            );
+            return response()->json(['ok' => true]);
+        } catch (\Throwable $exception) {
+            report($exception);
+            return response()->json(['ok' => false], 500);
+        }
+    }
+
+    private function fetchReactionsForMessages(array $messageIds): array
+    {
+        if (empty($messageIds) || !Schema::hasTable('chat_message_reactions')) {
+            return [];
+        }
+        $rows = ChatMessageReaction::whereIn('message_id', $messageIds)->get();
+        $grouped = [];
+        foreach ($rows as $row) {
+            $grouped[$row->message_id][] = [
+                'userId' => (int) $row->user_id,
+                'emoji' => $row->emoji,
+            ];
+        }
+        return $grouped;
+    }
+
+    private function fetchTypingPartners(int $userId): array
+    {
+        if (!Schema::hasTable('chat_typing')) {
+            return [];
+        }
+        $threshold = now()->subSeconds(6);
+        return DB::table('chat_typing')
+            ->where('contact_id', $userId)
+            ->where('updated_at', '>=', $threshold)
+            ->pluck('user_id')
+            ->map(fn ($id) => (int) $id)
+            ->values()
+            ->all();
+    }
+
+    private function clearTyping(int $userId, int $contactId): void
+    {
+        if (!Schema::hasTable('chat_typing')) {
+            return;
+        }
+        try {
+            DB::table('chat_typing')
+                ->where('user_id', $userId)
+                ->where('contact_id', $contactId)
+                ->delete();
+        } catch (\Throwable $exception) {
+            report($exception);
+        }
+    }
+
+    private function transformMessage(ChatMessage $message, array $reactionsByMessage): array
     {
         return [
             'id' => $message->id,
@@ -121,6 +242,7 @@ class ChatMessageController extends Controller
             'imageData' => $message->image_data,
             'imageName' => $message->image_name,
             'createdAt' => optional($message->created_at)->toIso8601String(),
+            'reactions' => $reactionsByMessage[$message->id] ?? [],
         ];
     }
 
@@ -165,6 +287,7 @@ class ChatMessageController extends Controller
 
         return response()->json([
             'data' => $messages,
+            'typing' => [],
         ]);
     }
 
@@ -239,6 +362,7 @@ class ChatMessageController extends Controller
             'imageData' => $message['imageData'] ?? null,
             'imageName' => $message['imageName'] ?? null,
             'createdAt' => $message['createdAt'] ?? now()->toIso8601String(),
+            'reactions' => [],
         ];
     }
 }

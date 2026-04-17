@@ -134,6 +134,9 @@ export function LiquidacionesExtractosPage({
   const [duplicados, setDuplicados] = useState<any[]>([]);
   const [duplicadosLoading, setDuplicadosLoading] = useState(false);
 
+  // BUGFIX 19: Códigos OCA nuevos detectados
+  const [codigosOcaNuevos, setCodigosOcaNuevos] = useState<any[]>([]);
+
   // Feature A+B: OCA PDF-imagen / carga manual
   const [ocaUploadFailed, setOcaUploadFailed] = useState(false);
   const [showManualOcaForm, setShowManualOcaForm] = useState(false);
@@ -811,6 +814,15 @@ export function LiquidacionesExtractosPage({
           `${res.data?.exactos ?? 0} exactos`
         );
       }
+
+      // BUGFIX 19: detectar códigos nuevos en warnings
+      const warnings = res.data?.warnings;
+      if (warnings?.codigos_nuevos?.length > 0) {
+        setCodigosOcaNuevos(warnings.codigos_nuevos);
+      } else {
+        setCodigosOcaNuevos([]);
+      }
+
       await openLiq(selectedLiq);
       await loadOcaVinculaciones(selectedLiq.id);
       await loadOcaResumen(selectedLiq.id);
@@ -2115,6 +2127,41 @@ export function LiquidacionesExtractosPage({
                     Guardar mapeo
                   </button>
                 </div>
+              </div>
+            </div>
+          )}
+
+          {/* BUGFIX 19: Banner códigos OCA nuevos */}
+          {codigosOcaNuevos.length > 0 && (
+            <div className="dashboard-card" style={{ marginBottom: 16, border: '2px solid #f59e0b' }}>
+              <header className="card-header" style={{ background: '#fef9c3' }}>
+                <h3 style={{ color: '#92400e' }}>Códigos OCA no registrados ({codigosOcaNuevos.length})</h3>
+              </header>
+              <div className="card-body">
+                <p style={{ fontSize: 12, color: '#92400e', marginBottom: 10 }}>
+                  Se detectaron códigos de contrato que no están en el catálogo. Registralos antes de generar liquidaciones para que se procesen correctamente.
+                </p>
+                <table className="table-sm" style={{ width: '100%', fontSize: 12 }}>
+                  <thead>
+                    <tr>
+                      <th>Código</th>
+                      <th>Descripción en PDF</th>
+                      <th style={{ textAlign: 'right' }}>Apariciones</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {codigosOcaNuevos.map((c, i) => (
+                      <tr key={i} style={{ background: '#fef3c7' }}>
+                        <td style={{ fontFamily: 'monospace', fontWeight: 600 }}>{c.codigo}</td>
+                        <td>{c.descripcion_cruda}</td>
+                        <td style={{ textAlign: 'right' }}>{c.cantidad_apariciones}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                <p style={{ marginTop: 10, fontSize: 11, color: '#6b7280' }}>
+                  Registrá estos códigos desde Configuración &gt; OCA &gt; Contratos (endpoint <code>POST /api/liq/oca/contratos</code>).
+                </p>
               </div>
             </div>
           )}

@@ -779,6 +779,140 @@ class LiqOcaController extends Controller
         return response()->json(['data' => $query->limit(200)->get()]);
     }
 
+    // ============ BUGFIX 19: Contratos OCA dinamicos + reproceso ============
+
+    // GET /liq/oca/contratos
+    public function listarContratos(Request $request): JsonResponse
+    {
+        $clienteId = $request->integer('cliente_id');
+        if (!$clienteId) {
+            $oca = \App\Models\LiqCliente::where('codigo_corto', 'OCA')->orWhere('nombre_corto', 'OCA')->first();
+            $clienteId = $oca?->id;
+        }
+        if (!$clienteId) {
+            return response()->json(['data' => []]);
+        }
+
+        $contratos = \App\Models\LiqContratoOca::where('cliente_id', $clienteId)
+            ->orderBy('codigo')
+            ->get();
+
+        return response()->json(['data' => $contratos]);
+    }
+
+    // POST /liq/oca/contratos
+    public function crearContrato(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'cliente_id' => 'nullable|integer',
+            'codigo' => 'required|string|max:10',
+            'descripcion_cruda' => 'required|string|max:255',
+            'descripcion_amigable' => 'required|string|max:100',
+            'unidad_recorrido' => 'required|in:paquete,kilometros,horas,pickup,clearing,otro',
+            'activo' => 'nullable|boolean',
+        ]);
+
+        $clienteId = $data['cliente_id'] ?? null;
+        if (!$clienteId) {
+            $oca = \App\Models\LiqCliente::where('codigo_corto', 'OCA')->orWhere('nombre_corto', 'OCA')->first();
+            $clienteId = $oca?->id;
+        }
+        if (!$clienteId) {
+            return response()->json(['error' => 'Cliente OCA no encontrado'], 422);
+        }
+
+        $contrato = \App\Models\LiqContratoOca::updateOrCreate(
+            ['cliente_id' => $clienteId, 'codigo' => $data['codigo']],
+            [
+                'descripcion_cruda' => $data['descripcion_cruda'],
+                'descripcion_amigable' => $data['descripcion_amigable'],
+                'unidad_recorrido' => $data['unidad_recorrido'],
+                'activo' => $data['activo'] ?? true,
+            ]
+        );
+
+        return response()->json(['data' => $contrato, 'message' => 'Contrato guardado'], 201);
+    }
+
+    // PUT /liq/oca/contratos/{id}
+    public function actualizarContrato(Request $request, int $id): JsonResponse
+    {
+        $contrato = \App\Models\LiqContratoOca::findOrFail($id);
+        $data = $request->validate([
+            'descripcion_amigable' => 'nullable|string|max:100',
+            'unidad_recorrido' => 'nullable|in:paquete,kilometros,horas,pickup,clearing,otro',
+            'activo' => 'nullable|boolean',
+        ]);
+        $contrato->update(array_filter($data, fn ($v) => $v !== null));
+        return response()->json(['data' => $contrato]);
+    }
+
+    // DELETE /liq/oca/contratos/{id}
+    public function eliminarContrato(int $id): JsonResponse
+    {
+        $contrato = \App\Models\LiqContratoOca::findOrFail($id);
+        $contrato->delete();
+        return response()->json(['message' => 'Contrato eliminado']);
+    }
+
+    // POST /liq/oca/{liquidacionCliente}/reprocesar
+    // BUGFIX 19 Feature A3: reprocesa PDFs OCA ya subidos con los fixes nuevos
+    public function reprocesar(Request $request, LiqLiquidacionCliente $liquidacionCliente): JsonResponse
+    {
+        $archivos = LiqArchivoEntrada::where('liquidacion_cliente_id', $liquidacionCliente->id)
+            ->whereIn('tipo_archivo', ['OCA_PRINCIPAL', 'OCA_DISTRIBUIDOR'])
+            ->get();
+
+        $main = $archivos->firstWhere('tipo_archivo', 'OCA_PRINCIPAL');
+        $distribs = $archivos->where('tipo_archivo', 'OCA_DISTRIBUIDOR');
+
+        if (!$main) {
+            return response()->json(['error' => 'No se encontró PDF principal OCA en esta liquidación'], 422);
+        }
+
+        // Armar UploadedFile-like para reusar OcaClient
+        $disk = $main->disk ?: 'local';
+        $mainPath = \Storage::disk($disk)->path($main->ruta_storage);
+        if (!file_exists($mainPath)) {
+            return response()->json(['error' => 'Archivo PDF principal no existe en storage'], 422);
+        }
+
+        $mainUpload = new \Illuminate\Http\UploadedFile($mainPath, $main->nombre_original, 'application/pdf', null, true);
+        $distribUploads = [];
+        foreach ($distribs as $d) {
+            $dp = \Storage::disk($d->disk ?: 'local')->path($d->ruta_storage);
+            if (file_exists($dp)) {
+                $distribUploads[] = new \Illuminate\Http\UploadedFile($dp, $d->nombre_original, 'application/pdf', null, true);
+            }
+        }
+
+        $sucursal = $main->sucursal ?? '';
+
+        try {
+            // Borrar vinculaciones previas (reproceso)
+            LiqVinculacionOca::where('liquidacion_cliente_id', $liquidacionCliente->id)->delete();
+
+            $result = $this->ocaIngestService->procesar(
+                liquidacion: $liquidacionCliente,
+                archivoPrincipal: $main,
+                archivosDistrib: $distribs->values()->all(),
+                mainPdf: $mainUpload,
+                distribPdfs: $distribUploads,
+                sucursal: $sucursal,
+            );
+
+            LiqHistorialMovimiento::registrar(
+                'reproceso_oca',
+                'Reproceso tras fix de parser BUGFIX 19',
+                $request->user()?->id, $liquidacionCliente->id, null, null, $result
+            );
+
+            return response()->json(['data' => $result, 'message' => 'Liquidación OCA reprocesada']);
+        } catch (\Throwable $e) {
+            return response()->json(['error' => 'Error reprocesando: ' . $e->getMessage()], 500);
+        }
+    }
+
     /**
      * GET /liq/oca/health - Verifica estado del microservicio Python.
      */

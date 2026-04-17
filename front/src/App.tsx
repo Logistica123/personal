@@ -966,23 +966,243 @@ type ChatContact = {
   matchTimestamp?: string | null;
 };
 
+type ChatReaction = {
+  userId: number;
+  emoji: string;
+};
+
+const CHAT_REACTION_EMOJIS = ['👍', '❤️', '😂', '😮', '😢', '🔥'];
+
+type ChatThemeId = 'whatsapp' | 'futbol' | 'padel' | 'oscuro' | 'pastel';
+
+const CHAT_THEMES: Array<{ id: ChatThemeId; label: string; icon: string }> = [
+  { id: 'whatsapp', label: 'WhatsApp', icon: '💬' },
+  { id: 'futbol', label: 'Fútbol', icon: '⚽' },
+  { id: 'padel', label: 'Pádel', icon: '🎾' },
+  { id: 'oscuro', label: 'Oscuro', icon: '🌙' },
+  { id: 'pastel', label: 'Pastel', icon: '🎨' },
+];
+
+const CHAT_THEME_STORAGE_KEY = 'dashboard-chat:theme';
+const CHAT_CUSTOM_BG_STORAGE_KEY = 'dashboard-chat:custom-bg';
+
+const CHAT_THEME_SEND_ICON: Record<ChatThemeId, string> = {
+  whatsapp: '📤',
+  futbol: '⚽',
+  padel: '🎾',
+  oscuro: '🚀',
+  pastel: '💖',
+};
+
+const CHAT_THEME_VARS: Record<ChatThemeId, Record<string, string>> = {
+  whatsapp: {
+    '--chat-panel-bg': '#efeae2',
+    '--chat-panel-bg-image':
+      "radial-gradient(circle at 20% 20%, rgba(37, 211, 102, 0.07) 0, transparent 55%), radial-gradient(circle at 80% 80%, rgba(37, 211, 102, 0.05) 0, transparent 45%)",
+    '--chat-panel-bg-size': 'cover',
+    '--chat-panel-border': '#d9d2c8',
+    '--chat-panel-color': '#111b21',
+    '--chat-bg': 'transparent',
+    '--chat-bubble-contact-bg': '#ffffff',
+    '--chat-bubble-contact-color': '#111b21',
+    '--chat-bubble-self-bg': 'linear-gradient(135deg, #d9fdd3, #b8f0b0)',
+    '--chat-bubble-self-color': '#0a141b',
+    '--chat-accent': '#25d366',
+    '--chat-time-color': 'rgba(17, 27, 33, 0.45)',
+    '--chat-time-color-self': 'rgba(10, 20, 27, 0.55)',
+    '--chat-reaction-bg': '#ffffff',
+    '--chat-reaction-border': 'rgba(0, 0, 0, 0.08)',
+    '--chat-input-bg': '#f0f2f5',
+    '--chat-input-field-bg': '#ffffff',
+    '--chat-input-color': '#111b21',
+    '--chat-header-border': 'rgba(0, 0, 0, 0.08)',
+    '--chat-header-subtitle': 'rgba(17, 27, 33, 0.6)',
+    '--chat-sidebar-bg': '#ffffff',
+    '--chat-sidebar-bg-image': 'none',
+    '--chat-sidebar-border': '#d9d2c8',
+    '--chat-sidebar-color': '#111b21',
+    '--chat-sidebar-heading': '#111b21',
+    '--chat-sidebar-muted': 'rgba(17, 27, 33, 0.6)',
+    '--chat-sidebar-search-bg': '#f0f2f5',
+    '--chat-sidebar-search-border': 'rgba(0, 0, 0, 0.08)',
+    '--chat-sidebar-hover-bg': 'rgba(37, 211, 102, 0.08)',
+    '--chat-sidebar-active-bg': 'rgba(37, 211, 102, 0.14)',
+    '--chat-sidebar-avatar-bg': '#dfe5df',
+    '--chat-sidebar-avatar-color': '#1d3a28',
+    '--chat-badge-color': '#0a141b',
+  },
+  futbol: {
+    '--chat-panel-bg': '#1a6b2d',
+    '--chat-panel-bg-image':
+      "url(\"data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='260' height='260' viewBox='0 0 260 260'><text x='18' y='70' font-size='48' opacity='0.18'>⚽</text><text x='150' y='130' font-size='38' opacity='0.14'>⚽</text><text x='60' y='210' font-size='42' opacity='0.16'>⚽</text><text x='200' y='230' font-size='30' opacity='0.12'>🥅</text></svg>\"), repeating-linear-gradient(90deg, rgba(255, 255, 255, 0.06) 0 80px, rgba(0, 0, 0, 0.08) 80px 160px), radial-gradient(ellipse 180px 120px at 50% 100%, rgba(255,255,255,0.1) 0, transparent 70%), radial-gradient(circle 60px at 50% 50%, transparent 55px, rgba(255,255,255,0.18) 56px, rgba(255,255,255,0.18) 60px, transparent 61px)",
+    '--chat-panel-bg-size': '260px 260px, cover, cover, cover',
+    '--chat-panel-border': '#0e4a1c',
+    '--chat-panel-color': '#ffffff',
+    '--chat-bg': 'transparent',
+    '--chat-bubble-contact-bg': '#ffffff',
+    '--chat-bubble-contact-color': '#0f2e18',
+    '--chat-bubble-self-bg': 'linear-gradient(135deg, #2fb451, #1f7d37)',
+    '--chat-bubble-self-color': '#ffffff',
+    '--chat-accent': '#9bf28a',
+    '--chat-time-color': 'rgba(15, 46, 24, 0.55)',
+    '--chat-time-color-self': 'rgba(255, 255, 255, 0.8)',
+    '--chat-reaction-bg': '#ffffff',
+    '--chat-reaction-border': 'rgba(0, 0, 0, 0.1)',
+    '--chat-input-bg': '#0e4a1c',
+    '--chat-input-field-bg': '#ffffff',
+    '--chat-input-color': '#111b21',
+    '--chat-header-border': 'rgba(255, 255, 255, 0.15)',
+    '--chat-header-subtitle': 'rgba(255, 255, 255, 0.75)',
+    '--chat-sidebar-bg': '#0e4a1c',
+    '--chat-sidebar-bg-image':
+      "url(\"data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160' viewBox='0 0 160 160'><text x='20' y='60' font-size='28' opacity='0.12'>⚽</text><text x='100' y='130' font-size='26' opacity='0.1'>⚽</text></svg>\")",
+    '--chat-sidebar-bg-size': '160px 160px',
+    '--chat-sidebar-border': '#083513',
+    '--chat-sidebar-color': '#ffffff',
+    '--chat-sidebar-heading': '#ffffff',
+    '--chat-sidebar-muted': 'rgba(255, 255, 255, 0.7)',
+    '--chat-sidebar-search-bg': 'rgba(255, 255, 255, 0.1)',
+    '--chat-sidebar-search-border': 'rgba(255, 255, 255, 0.2)',
+    '--chat-sidebar-hover-bg': 'rgba(255, 255, 255, 0.08)',
+    '--chat-sidebar-active-bg': 'rgba(255, 255, 255, 0.16)',
+    '--chat-sidebar-avatar-bg': '#083513',
+    '--chat-sidebar-avatar-color': '#9bf28a',
+    '--chat-badge-color': '#083513',
+  },
+  padel: {
+    '--chat-panel-bg': '#12406b',
+    '--chat-panel-bg-image':
+      "url(\"data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='260' height='260' viewBox='0 0 260 260'><text x='30' y='70' font-size='44' opacity='0.18'>🎾</text><text x='160' y='120' font-size='40' opacity='0.16'>🏸</text><text x='70' y='210' font-size='42' opacity='0.15'>🎾</text><text x='200' y='230' font-size='36' opacity='0.13'>🏆</text></svg>\"), linear-gradient(180deg, rgba(255, 255, 255, 0.05) 0, transparent 45%, rgba(255, 255, 255, 0.07) 55%, transparent 100%), repeating-linear-gradient(0deg, transparent 0 120px, rgba(255, 255, 255, 0.06) 120px 122px), repeating-linear-gradient(90deg, transparent 0 140px, rgba(255,255,255,0.04) 140px 142px)",
+    '--chat-panel-bg-size': '260px 260px, cover, cover, cover',
+    '--chat-panel-border': '#0b2d4c',
+    '--chat-panel-color': '#ffffff',
+    '--chat-bg': 'transparent',
+    '--chat-bubble-contact-bg': '#eef6ff',
+    '--chat-bubble-contact-color': '#0b253f',
+    '--chat-bubble-self-bg': 'linear-gradient(135deg, #3a89ff, #1e5bbf)',
+    '--chat-bubble-self-color': '#ffffff',
+    '--chat-accent': '#9fd2ff',
+    '--chat-time-color': 'rgba(11, 37, 63, 0.55)',
+    '--chat-time-color-self': 'rgba(255, 255, 255, 0.8)',
+    '--chat-reaction-bg': '#ffffff',
+    '--chat-reaction-border': 'rgba(0, 0, 0, 0.1)',
+    '--chat-input-bg': '#0b2d4c',
+    '--chat-input-field-bg': '#ffffff',
+    '--chat-input-color': '#111b21',
+    '--chat-header-border': 'rgba(255, 255, 255, 0.15)',
+    '--chat-header-subtitle': 'rgba(255, 255, 255, 0.75)',
+    '--chat-sidebar-bg': '#0b2d4c',
+    '--chat-sidebar-bg-image':
+      "url(\"data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160' viewBox='0 0 160 160'><text x='20' y='60' font-size='26' opacity='0.12'>🎾</text><text x='100' y='130' font-size='24' opacity='0.1'>🏸</text></svg>\")",
+    '--chat-sidebar-bg-size': '160px 160px',
+    '--chat-sidebar-border': '#061f35',
+    '--chat-sidebar-color': '#ffffff',
+    '--chat-sidebar-heading': '#ffffff',
+    '--chat-sidebar-muted': 'rgba(255, 255, 255, 0.7)',
+    '--chat-sidebar-search-bg': 'rgba(255, 255, 255, 0.1)',
+    '--chat-sidebar-search-border': 'rgba(255, 255, 255, 0.2)',
+    '--chat-sidebar-hover-bg': 'rgba(255, 255, 255, 0.08)',
+    '--chat-sidebar-active-bg': 'rgba(255, 255, 255, 0.16)',
+    '--chat-sidebar-avatar-bg': '#061f35',
+    '--chat-sidebar-avatar-color': '#9fd2ff',
+    '--chat-badge-color': '#061f35',
+  },
+  oscuro: {
+    '--chat-panel-bg': '#0b141a',
+    '--chat-panel-bg-image': 'none',
+    '--chat-panel-bg-size': 'auto',
+    '--chat-panel-border': '#1f2c33',
+    '--chat-panel-color': '#e9edef',
+    '--chat-bg': 'transparent',
+    '--chat-bubble-contact-bg': '#202c33',
+    '--chat-bubble-contact-color': '#e9edef',
+    '--chat-bubble-self-bg': 'linear-gradient(135deg, #056162, #02403f)',
+    '--chat-bubble-self-color': '#e9edef',
+    '--chat-accent': '#00a884',
+    '--chat-time-color': 'rgba(233, 237, 239, 0.55)',
+    '--chat-time-color-self': 'rgba(233, 237, 239, 0.65)',
+    '--chat-reaction-bg': '#2a3942',
+    '--chat-reaction-border': 'rgba(255, 255, 255, 0.08)',
+    '--chat-input-bg': '#111b21',
+    '--chat-input-field-bg': '#2a3942',
+    '--chat-input-color': '#e9edef',
+    '--chat-header-border': 'rgba(255, 255, 255, 0.08)',
+    '--chat-header-subtitle': 'rgba(255, 255, 255, 0.6)',
+    '--chat-sidebar-bg': '#111b21',
+    '--chat-sidebar-bg-image': 'none',
+    '--chat-sidebar-border': '#1f2c33',
+    '--chat-sidebar-color': '#e9edef',
+    '--chat-sidebar-heading': '#f1f3f4',
+    '--chat-sidebar-muted': 'rgba(255, 255, 255, 0.55)',
+    '--chat-sidebar-search-bg': '#2a3942',
+    '--chat-sidebar-search-border': 'rgba(255, 255, 255, 0.1)',
+    '--chat-sidebar-hover-bg': 'rgba(255, 255, 255, 0.06)',
+    '--chat-sidebar-active-bg': 'rgba(0, 168, 132, 0.18)',
+    '--chat-sidebar-avatar-bg': '#2a3942',
+    '--chat-sidebar-avatar-color': '#e9edef',
+    '--chat-badge-color': '#0a141b',
+  },
+  pastel: {
+    '--chat-panel-bg': '#fff6f9',
+    '--chat-panel-bg-image':
+      "url(\"data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='240' height='240' viewBox='0 0 240 240'><text x='20' y='60' font-size='30' opacity='0.35'>💖</text><text x='140' y='90' font-size='28' opacity='0.3'>✨</text><text x='60' y='150' font-size='26' opacity='0.3'>🌸</text><text x='180' y='180' font-size='30' opacity='0.32'>⭐</text><text x='20' y='220' font-size='24' opacity='0.28'>🦋</text></svg>\"), radial-gradient(circle at 20% 20%, rgba(255, 200, 221, 0.55) 0, transparent 45%), radial-gradient(circle at 80% 75%, rgba(186, 225, 255, 0.55) 0, transparent 45%)",
+    '--chat-panel-bg-size': '240px 240px, cover, cover',
+    '--chat-panel-border': '#f3d8e1',
+    '--chat-panel-color': '#4a2e3a',
+    '--chat-bg': 'transparent',
+    '--chat-bubble-contact-bg': '#ffffff',
+    '--chat-bubble-contact-color': '#4a2e3a',
+    '--chat-bubble-self-bg': 'linear-gradient(135deg, #ffc8dd, #bde0fe)',
+    '--chat-bubble-self-color': '#3b2c3e',
+    '--chat-accent': '#ff8bb0',
+    '--chat-time-color': 'rgba(74, 46, 58, 0.5)',
+    '--chat-time-color-self': 'rgba(59, 44, 62, 0.6)',
+    '--chat-reaction-bg': '#ffffff',
+    '--chat-reaction-border': 'rgba(74, 46, 58, 0.15)',
+    '--chat-input-bg': '#fce7ef',
+    '--chat-input-field-bg': '#ffffff',
+    '--chat-input-color': '#4a2e3a',
+    '--chat-header-border': 'rgba(74, 46, 58, 0.15)',
+    '--chat-header-subtitle': 'rgba(74, 46, 58, 0.6)',
+    '--chat-sidebar-bg': '#fff0f5',
+    '--chat-sidebar-bg-image':
+      "url(\"data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160' viewBox='0 0 160 160'><text x='20' y='60' font-size='22' opacity='0.3'>💖</text><text x='100' y='130' font-size='20' opacity='0.25'>✨</text></svg>\")",
+    '--chat-sidebar-bg-size': '160px 160px',
+    '--chat-sidebar-border': '#f3d8e1',
+    '--chat-sidebar-color': '#4a2e3a',
+    '--chat-sidebar-heading': '#4a2e3a',
+    '--chat-sidebar-muted': 'rgba(74, 46, 58, 0.55)',
+    '--chat-sidebar-search-bg': '#ffffff',
+    '--chat-sidebar-search-border': 'rgba(74, 46, 58, 0.12)',
+    '--chat-sidebar-hover-bg': 'rgba(255, 139, 176, 0.1)',
+    '--chat-sidebar-active-bg': 'rgba(255, 139, 176, 0.2)',
+    '--chat-sidebar-avatar-bg': '#ffdfe9',
+    '--chat-sidebar-avatar-color': '#4a2e3a',
+    '--chat-badge-color': '#ffffff',
+  },
+};
+
 type ChatMessage = {
   id: string;
+  serverId?: number | null;
   author: 'self' | 'contact';
   text: string;
   timestamp: string;
   imageData?: string | null;
   imageName?: string | null;
+  reactions?: ChatReaction[];
 };
 
 type StoredChatMessage = {
   id: string;
+  serverId?: number | null;
   senderId: number | null;
   recipientId: number | null;
   text: string;
   timestamp: string;
   imageData?: string | null;
   imageName?: string | null;
+  reactions?: ChatReaction[];
 };
 
 type ChatToastPayload = {
@@ -1776,14 +1996,21 @@ const normalizeServerMessage = (message: {
   imageData?: string | null;
   imageName?: string | null;
   createdAt?: string | null;
+  reactions?: Array<{ userId?: number; emoji?: string }> | null;
 }): StoredChatMessage => ({
   id: message.id != null ? String(message.id) : uniqueKey(),
+  serverId: typeof message.id === 'number' ? message.id : message.id != null ? Number(message.id) || null : null,
   senderId: message.senderId ?? null,
   recipientId: message.recipientId ?? null,
   text: message.text ?? '',
   timestamp: message.createdAt ?? new Date().toISOString(),
   imageData: message.imageData ?? null,
   imageName: message.imageName ?? null,
+  reactions: Array.isArray(message.reactions)
+    ? message.reactions
+        .filter((r): r is { userId: number; emoji: string } => typeof r?.userId === 'number' && typeof r?.emoji === 'string')
+        .map((r) => ({ userId: r.userId, emoji: r.emoji }))
+    : [],
 });
 
 const computeInitials = (value: string | null | undefined): string => {
@@ -4393,6 +4620,76 @@ const ChatPage: React.FC = () => {
   const [pendingImage, setPendingImage] = useState<{ data: string; name: string | null } | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
+  const [chatTheme, setChatTheme] = useState<ChatThemeId>(() => {
+    try {
+      const stored = window.localStorage.getItem(CHAT_THEME_STORAGE_KEY) as ChatThemeId | null;
+      if (stored && CHAT_THEMES.some((t) => t.id === stored)) {
+        return stored;
+      }
+    } catch {
+      // ignore
+    }
+    return 'whatsapp';
+  });
+  const [showThemePicker, setShowThemePicker] = useState(false);
+  const [customBackground, setCustomBackground] = useState<string | null>(() => {
+    try {
+      return window.localStorage.getItem(CHAT_CUSTOM_BG_STORAGE_KEY);
+    } catch {
+      return null;
+    }
+  });
+  const backgroundInputRef = useRef<HTMLInputElement | null>(null);
+  const [typingContactIds, setTypingContactIds] = useState<Set<number>>(new Set());
+  const [reactionPickerForMessage, setReactionPickerForMessage] = useState<string | null>(null);
+  const typingHeartbeatRef = useRef<number | null>(null);
+  const lastTypingSentRef = useRef<number>(0);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(CHAT_THEME_STORAGE_KEY, chatTheme);
+    } catch {
+      // ignore
+    }
+  }, [chatTheme]);
+
+  const handleUploadBackground = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith('image/')) {
+      window.alert('Seleccioná un archivo de imagen.');
+      event.target.value = '';
+      return;
+    }
+    if (file.size > 3 * 1024 * 1024) {
+      window.alert('La imagen es muy pesada (máx 3 MB).');
+      event.target.value = '';
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = typeof reader.result === 'string' ? reader.result : null;
+      if (!dataUrl) return;
+      setCustomBackground(dataUrl);
+      try {
+        window.localStorage.setItem(CHAT_CUSTOM_BG_STORAGE_KEY, dataUrl);
+      } catch {
+        // localStorage lleno
+      }
+    };
+    reader.readAsDataURL(file);
+    event.target.value = '';
+  }, []);
+
+  const handleClearBackground = useCallback(() => {
+    setCustomBackground(null);
+    try {
+      window.localStorage.removeItem(CHAT_CUSTOM_BG_STORAGE_KEY);
+    } catch {
+      // ignore
+    }
+  }, []);
+
   const quickEmojis = useMemo(
     () => [
       '😀',
@@ -4548,11 +4845,13 @@ const ChatPage: React.FC = () => {
         const author: 'self' | 'contact' = isSender ? 'self' : 'contact';
         (grouped[contactId] ??= []).push({
           id: entry.id,
+          serverId: entry.serverId ?? null,
           author,
           text: entry.text,
           timestamp: entry.timestamp,
           imageData: entry.imageData,
           imageName: entry.imageName,
+          reactions: entry.reactions ?? [],
         });
       });
       Object.keys(grouped).forEach((idKey) => {
@@ -4656,7 +4955,7 @@ const ChatPage: React.FC = () => {
         console.error('chat fetch failed', response.status, response.statusText);
         throw new Error('No se pudieron recuperar los mensajes.');
       }
-      const payload = (await response.json()) as { data?: Array<Record<string, unknown>> };
+      const payload = (await response.json()) as { data?: Array<Record<string, unknown>>; typing?: number[] };
       console.debug('chat fetch response', payload);
       const entries = Array.isArray(payload?.data)
         ? payload.data.map((item) => normalizeServerMessage(item))
@@ -4664,6 +4963,11 @@ const ChatPage: React.FC = () => {
       persistStoredChatMessages(entries, currentUserId);
       persistStoredChatBadge(entries, currentUserId);
       mergeMessagesIntoState(entries, seedContacts);
+      if (Array.isArray(payload?.typing)) {
+        setTypingContactIds(new Set(payload.typing.map((id) => Number(id)).filter((id) => Number.isFinite(id))));
+      } else {
+        setTypingContactIds(new Set());
+      }
     } catch (error) {
       console.error('chat fetch error', error);
       mergeMessagesIntoState(readStoredChatMessages(currentUserId), seedContacts);
@@ -5009,10 +5313,20 @@ const ChatPage: React.FC = () => {
 
   const selectedMessages = selectedContactId ? messagesByContact[selectedContactId] ?? [] : [];
 
-  const layoutClasses = ['chat-layout'];
+  const layoutClasses = ['chat-layout', `chat-theme-${chatTheme}`];
   if (routeContactId) {
     layoutClasses.push('chat-layout--conversation');
   }
+  const themeStyle = useMemo(() => {
+    const base = { ...CHAT_THEME_VARS[chatTheme] } as Record<string, string>;
+    if (customBackground) {
+      base['--chat-panel-bg-image'] = `url("${customBackground}")`;
+      base['--chat-panel-bg-size'] = 'cover';
+      base['--chat-sidebar-bg-image'] = `url("${customBackground}")`;
+      base['--chat-sidebar-bg-size'] = 'cover';
+    }
+    return base as React.CSSProperties;
+  }, [chatTheme, customBackground]);
 
   useEffect(() => {
     if (!messagesByContact) {
@@ -5053,6 +5367,81 @@ const ChatPage: React.FC = () => {
     setShouldAutoScroll(distanceFromBottom <= 40);
   }, []);
 
+  const sendTypingHeartbeat = useCallback(() => {
+    if (currentUserId == null || selectedContactId == null) {
+      return;
+    }
+    const now = Date.now();
+    if (now - lastTypingSentRef.current < 2500) {
+      return;
+    }
+    lastTypingSentRef.current = now;
+    try {
+      void fetch(`${apiBaseUrl}/api/chat/typing`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId: currentUserId, contactId: selectedContactId }),
+      });
+    } catch {
+      // ignore
+    }
+  }, [apiBaseUrl, currentUserId, selectedContactId]);
+
+  const handleMessageInputChange = useCallback(
+    (event: React.ChangeEvent<HTMLTextAreaElement>) => {
+      setMessageInput(event.target.value);
+      if (typingHeartbeatRef.current) {
+        window.clearTimeout(typingHeartbeatRef.current);
+      }
+      typingHeartbeatRef.current = window.setTimeout(() => {
+        sendTypingHeartbeat();
+      }, 250);
+    },
+    [sendTypingHeartbeat]
+  );
+
+  const handleToggleReaction = useCallback(
+    async (message: ChatMessage, emoji: string) => {
+      if (currentUserId == null || !selectedContactId) {
+        return;
+      }
+      const messageServerId = message.serverId ?? Number(message.id);
+      if (!Number.isFinite(messageServerId) || messageServerId <= 0) {
+        return;
+      }
+      setReactionPickerForMessage(null);
+      setMessagesByContact((prev) => {
+        const conv = prev[selectedContactId] ?? [];
+        return {
+          ...prev,
+          [selectedContactId]: conv.map((m) => {
+            if (m.id !== message.id) return m;
+            const existing = m.reactions ?? [];
+            const already = existing.some((r) => r.userId === currentUserId && r.emoji === emoji);
+            const next = already
+              ? existing.filter((r) => !(r.userId === currentUserId && r.emoji === emoji))
+              : [...existing, { userId: currentUserId, emoji }];
+            return { ...m, reactions: next };
+          }),
+        };
+      });
+      try {
+        await fetch(`${apiBaseUrl}/api/chat/messages/${messageServerId}/reactions`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ userId: currentUserId, emoji }),
+        });
+      } catch {
+        // ignore; next poll will reconcile
+      } finally {
+        void fetchMessagesFromServer();
+      }
+    },
+    [apiBaseUrl, currentUserId, selectedContactId, fetchMessagesFromServer]
+  );
+
+  const contactIsTyping = selectedContactId != null && typingContactIds.has(selectedContactId);
+
   useEffect(() => {
     setShouldAutoScroll(true);
   }, [selectedContactId]);
@@ -5068,7 +5457,7 @@ const ChatPage: React.FC = () => {
 
   return (
     <DashboardLayout title="Chat" subtitle="Comunicate con tu equipo en tiempo real">
-      <div className={layoutClasses.join(' ')}>
+      <div className={layoutClasses.join(' ')} style={themeStyle}>
         <aside className="chat-sidebar">
           <div className="chat-sidebar__header">
             <h3>Conversaciones</h3>
@@ -5159,49 +5548,176 @@ const ChatPage: React.FC = () => {
                 <div>
                   <strong>{selectedContact.name}</strong>
                   <small>
-                    {selectedContact.status === 'online' ? 'En línea' : selectedContact.lastSeen}
+                    {contactIsTyping ? (
+                      <span className="chat-typing-indicator">
+                        escribiendo<span className="chat-typing-dots"><span>.</span><span>.</span><span>.</span></span>
+                      </span>
+                    ) : selectedContact.status === 'online' ? (
+                      'En línea'
+                    ) : (
+                      selectedContact.lastSeen
+                    )}
                   </small>
                 </div>
-                <span>{selectedContact.role}</span>
+                <div className="chat-panel__header-actions">
+                  <span className="chat-panel__header-role">{selectedContact.role}</span>
+                  <div className="chat-theme-picker-wrapper">
+                    <button
+                      type="button"
+                      className="chat-tool chat-theme-toggle"
+                      aria-label="Elegir tema"
+                      title="Elegir tema"
+                      onClick={() => setShowThemePicker((v) => !v)}
+                    >
+                      🎨
+                    </button>
+                    {showThemePicker ? (
+                      <div className="chat-theme-picker">
+                        {CHAT_THEMES.map((theme) => (
+                          <button
+                            key={theme.id}
+                            type="button"
+                            className={`chat-theme-picker__item${chatTheme === theme.id ? ' is-active' : ''}`}
+                            onClick={() => {
+                              setChatTheme(theme.id);
+                              setShowThemePicker(false);
+                            }}
+                          >
+                            <span className="chat-theme-picker__icon">{theme.icon}</span>
+                            <span>{theme.label}</span>
+                          </button>
+                        ))}
+                        <div className="chat-theme-picker__divider" />
+                        <input
+                          ref={backgroundInputRef}
+                          type="file"
+                          accept="image/*"
+                          hidden
+                          onChange={handleUploadBackground}
+                        />
+                        <button
+                          type="button"
+                          className="chat-theme-picker__item"
+                          onClick={() => backgroundInputRef.current?.click()}
+                        >
+                          <span className="chat-theme-picker__icon">🖼️</span>
+                          <span>{customBackground ? 'Cambiar fondo' : 'Subir fondo'}</span>
+                        </button>
+                        {customBackground ? (
+                          <button
+                            type="button"
+                            className="chat-theme-picker__item"
+                            onClick={handleClearBackground}
+                          >
+                            <span className="chat-theme-picker__icon">🗑️</span>
+                            <span>Quitar fondo</span>
+                          </button>
+                        ) : null}
+                      </div>
+                    ) : null}
+                  </div>
+                </div>
               </header>
               <div
                 ref={chatMessagesRef}
                 className="chat-messages"
                 onScroll={handleMessagesScroll}
               >
-                {selectedMessages.map((message) => (
-                  <div
-                    key={message.id}
-                    className={`chat-message chat-message--${message.author}`}
-                  >
-                    {message.text ? (
-                      <p>
-                        {message.text.split('\n').map((line, index, array) => (
-                          <React.Fragment key={index}>
-                            {line}
-                            {index < array.length - 1 ? <br /> : null}
-                          </React.Fragment>
-                        ))}
-                      </p>
-                    ) : null}
-                    {message.imageData ? (
-                      <figure className="chat-message__media">
-                        <img src={message.imageData} alt={message.imageName ?? 'Imagen enviada'} />
-                        <figcaption>
-                          {message.imageName ?? 'Archivo adjunto'}
+                {selectedMessages.map((message) => {
+                  const canReact = Number.isFinite(message.serverId ?? Number(message.id)) && (message.serverId ?? Number(message.id)) > 0;
+                  const reactions = message.reactions ?? [];
+                  const grouped = reactions.reduce<Record<string, { count: number; mine: boolean }>>((acc, r) => {
+                    const entry = acc[r.emoji] ?? { count: 0, mine: false };
+                    entry.count += 1;
+                    if (r.userId === currentUserId) entry.mine = true;
+                    acc[r.emoji] = entry;
+                    return acc;
+                  }, {});
+                  const pickerOpen = reactionPickerForMessage === message.id;
+                  return (
+                    <div
+                      key={message.id}
+                      className={`chat-message chat-message--${message.author}`}
+                    >
+                      <div className="chat-message__bubble">
+                        {message.text ? (
+                          <p>
+                            {message.text.split('\n').map((line, index, array) => (
+                              <React.Fragment key={index}>
+                                {line}
+                                {index < array.length - 1 ? <br /> : null}
+                              </React.Fragment>
+                            ))}
+                          </p>
+                        ) : null}
+                        {message.imageData ? (
+                          <figure className="chat-message__media">
+                            <img src={message.imageData} alt={message.imageName ?? 'Imagen enviada'} />
+                            <figcaption>
+                              {message.imageName ?? 'Archivo adjunto'}
+                              <button
+                                type="button"
+                                className="chat-download"
+                                onClick={() => createDownloadLink(message.imageData ?? '', message.imageName ?? 'archivo')}
+                              >
+                                Descargar
+                              </button>
+                            </figcaption>
+                          </figure>
+                        ) : null}
+                        <time>{formatMessageTime(message.timestamp)}</time>
+                        {canReact ? (
                           <button
                             type="button"
-                            className="chat-download"
-                            onClick={() => createDownloadLink(message.imageData ?? '', message.imageName ?? 'archivo')}
+                            className="chat-message__react-btn"
+                            aria-label="Reaccionar"
+                            title="Reaccionar"
+                            onClick={() => setReactionPickerForMessage((curr) => (curr === message.id ? null : message.id))}
                           >
-                            Descargar
+                            😊+
                           </button>
-                        </figcaption>
-                      </figure>
-                    ) : null}
-                    <time>{formatMessageTime(message.timestamp)}</time>
+                        ) : null}
+                        {pickerOpen ? (
+                          <div className="chat-message__reaction-picker">
+                            {CHAT_REACTION_EMOJIS.map((emoji) => (
+                              <button
+                                key={emoji}
+                                type="button"
+                                onClick={() => void handleToggleReaction(message, emoji)}
+                              >
+                                {emoji}
+                              </button>
+                            ))}
+                          </div>
+                        ) : null}
+                      </div>
+                      {Object.keys(grouped).length > 0 ? (
+                        <div className="chat-message__reactions">
+                          {Object.entries(grouped).map(([emoji, info]) => (
+                            <button
+                              key={emoji}
+                              type="button"
+                              className={`chat-reaction${info.mine ? ' is-mine' : ''}`}
+                              onClick={() => void handleToggleReaction(message, emoji)}
+                            >
+                              <span>{emoji}</span>
+                              <span className="chat-reaction__count">{info.count}</span>
+                            </button>
+                          ))}
+                        </div>
+                      ) : null}
+                    </div>
+                  );
+                })}
+                {contactIsTyping ? (
+                  <div className="chat-message chat-message--contact chat-message--typing">
+                    <div className="chat-message__bubble">
+                      <span className="chat-typing-dots chat-typing-dots--bubble">
+                        <span>.</span><span>.</span><span>.</span>
+                      </span>
+                    </div>
                   </div>
-                ))}
+                ) : null}
               </div>
               <footer className="chat-input">
                 <div className="chat-input__tools">
@@ -5262,7 +5778,7 @@ const ChatPage: React.FC = () => {
                     rows={2}
                     placeholder="Escribí un mensaje..."
                     value={messageInput}
-                    onChange={(event) => setMessageInput(event.target.value)}
+                    onChange={handleMessageInputChange}
                     onKeyDown={(event) => {
                       if (event.key === 'Enter' && !event.shiftKey) {
                         event.preventDefault();
@@ -5270,8 +5786,9 @@ const ChatPage: React.FC = () => {
                       }
                     }}
                   />
-                  <button type="button" className="primary-action" onClick={handleSendMessage}>
-                    Enviar
+                  <button type="button" className="primary-action chat-send-btn" onClick={handleSendMessage}>
+                    <span className="chat-send-btn__icon" aria-hidden="true">{CHAT_THEME_SEND_ICON[chatTheme]}</span>
+                    <span>Enviar</span>
                   </button>
                 </div>
               </footer>

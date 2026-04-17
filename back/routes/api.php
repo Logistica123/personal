@@ -275,6 +275,15 @@ Route::middleware('auth.api')->group(function () {
         // OCA - procesamiento PDF con microservicio Python
         Route::get('/oca/health', [\App\Http\Controllers\Api\Liq\LiqOcaController::class, 'health']);
         Route::get('/oca/buscar-personas', [\App\Http\Controllers\Api\Liq\LiqOcaController::class, 'buscarPersonas']);
+
+        // BUGFIX 19: Contratos OCA dinamicos
+        Route::get('/oca/contratos', [\App\Http\Controllers\Api\Liq\LiqOcaController::class, 'listarContratos']);
+        Route::post('/oca/contratos', [\App\Http\Controllers\Api\Liq\LiqOcaController::class, 'crearContrato']);
+        Route::put('/oca/contratos/{id}', [\App\Http\Controllers\Api\Liq\LiqOcaController::class, 'actualizarContrato']);
+        Route::delete('/oca/contratos/{id}', [\App\Http\Controllers\Api\Liq\LiqOcaController::class, 'eliminarContrato']);
+
+        // BUGFIX 19: Reproceso OCA
+        Route::post('/oca/{liquidacionCliente}/reprocesar', [\App\Http\Controllers\Api\Liq\LiqOcaController::class, 'reprocesar']);
         Route::post('/oca/upload', [\App\Http\Controllers\Api\Liq\LiqOcaController::class, 'upload']);
         Route::post('/oca/upload-ocr', [\App\Http\Controllers\Api\Liq\LiqOcaController::class, 'uploadOcr']);
         Route::post('/oca/{liquidacionCliente}/operaciones-manuales', [\App\Http\Controllers\Api\Liq\LiqOcaController::class, 'cargarOperacionesManuales']);
@@ -431,6 +440,8 @@ Route::middleware('auth.api')->group(function () {
 
     Route::get('/chat/messages', [ChatMessageController::class, 'index']);
     Route::post('/chat/messages', [ChatMessageController::class, 'store']);
+    Route::post('/chat/messages/{messageId}/reactions', [ChatMessageController::class, 'toggleReaction']);
+    Route::post('/chat/typing', [ChatMessageController::class, 'heartbeatTyping']);
     Route::get('/nosis/validar-cbu', [NosisController::class, 'validarCbu']);
     Route::get('/nosis/consultar-documento', [NosisController::class, 'consultarDocumento']);
     Route::get('/nosis/auditoria', [NosisController::class, 'auditoria']);

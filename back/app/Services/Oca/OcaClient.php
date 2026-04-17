@@ -58,7 +58,13 @@ class OcaClient
             throw new RuntimeException('Error OCA: ' . ($data['mensaje'] ?? 'Error desconocido'));
         }
 
-        return $data['resultado'] ?? [];
+        // BUGFIX 19: incluir warnings (codigos_nuevos) junto al resultado
+        $resultado = $data['resultado'] ?? [];
+        if (isset($data['warnings'])) {
+            $resultado['_warnings'] = $data['warnings'];
+        }
+
+        return $resultado;
     }
 
     /**

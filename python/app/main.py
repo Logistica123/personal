@@ -22,6 +22,7 @@ from app.procesar_oca import (
     find_best_partition,
     build_excel,
     detect_files,
+    CODIGOS_CONTRATO_CONOCIDOS,
 )
 
 app = FastAPI(
@@ -252,15 +253,40 @@ def _procesar_carpeta(folder: str) -> dict:
             "sin_asignar": sin_asignar_list,
         })
 
-    return {
-        "success": True,
-        "resultado": {
-            "sucursal": sucursal,
-            "formato_distribuidor": formato,
-            "total_planillas": len(planillas),
-            "total_distribuidores": len(dist_names),
-            "dias_exactos": exact_days,
-            "dias_totales": len(all_dates),
-            "dias": dias_resultado,
-        },
+    # BUGFIX 19 Feature 4: warnings de codigos nuevos detectados en el PDF
+    codigos_encontrados = getattr(parse_main_pdf, '_ultimos_codigos', set())
+    codigos_nuevos = []
+    if codigos_encontrados:
+        # Contar apariciones de cada codigo
+        conteo = {}
+        for p in planillas:
+            cod = p.get('cod_contrato')
+            if cod:
+                conteo[cod] = conteo.get(cod, 0) + 1
+
+        for cod in codigos_encontrados:
+            if cod not in CODIGOS_CONTRATO_CONOCIDOS:
+                # Buscar descripcion cruda de la primera aparicion
+                desc_cruda = next((p['desc'] for p in planillas if p.get('cod_contrato') == cod), '')
+                codigos_nuevos.append({
+                    'codigo': cod,
+                    'descripcion_cruda': desc_cruda,
+                    'cantidad_apariciones': conteo.get(cod, 0),
+                })
+
+    resultado = {
+        "sucursal": sucursal,
+        "formato_distribuidor": formato,
+        "total_planillas": len(planillas),
+        "total_distribuidores": len(dist_names),
+        "dias_exactos": exact_days,
+        "dias_totales": len(all_dates),
+        "dias": dias_resultado,
     }
+
+    response = {"success": True, "resultado": resultado}
+
+    if codigos_nuevos:
+        response["warnings"] = {"codigos_nuevos": codigos_nuevos}
+
+    return response

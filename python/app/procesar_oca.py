@@ -54,75 +54,101 @@ def parse_ar_number(s):
 # ============================================================
 # PARSEO DE PDFs
 # ============================================================
+# Codigos de contrato OCA conocidos (14 totales al 17-abr-2026)
+# BUGFIX 19: se agregan 197 (ROS TDC/CLEARING) y 200 (GRAL KM UTILITARIO)
+CODIGOS_CONTRATO_CONOCIDOS = {
+    '170': 'PAQ. ENTREGADO',
+    '171': 'PAQ. MOVISTAR',
+    '152': 'GRAL PICKUP',
+    '181': 'PQN COMP ALTA',
+    '183': 'PQN SERV MOVISTAR',
+    '186': 'PQN PICKUP PRINC',
+    '187': 'PQN PICKUP ADIC',
+    '190': 'ADG COMPL ALTA',
+    '192': 'ADG SERV MOVISTAR',
+    '195': 'ADG PICKUP PRINC',
+    '197': 'ROS TDC/CLEARING',           # NUEVO post-v5
+    '198': 'GRAL PAQ. INTERIOR',
+    '199': 'GRAL HORAS UTILITARIO',
+    '200': 'GRAL KM UTILITARIO',         # NUEVO post-v5
+}
+
+
 def parse_main_pdf(filepath):
-    """Parsea el PDF principal de sucursal con todas las planillas."""
+    """Parsea el PDF principal de sucursal con todas las planillas.
+
+    BUGFIX 19 (Bug 2): regex GENERICO que captura cualquier codigo de contrato.
+    Patron: FECHA HORA PLANILLA COD - TEXTO_CONTRATO $PRECIO QTY $TOTAL
+    Los codigos desconocidos se capturan igual y se reportan como warnings.
+    """
     planillas = []
+    codigos_encontrados = set()
+
+    # Regex generico: captura cualquier codigo numerico
+    generic_regex = re.compile(
+        r'(\d{2}/\d{2}/\d{4})\s+(\d{2}:\d{2})\s+([\w-]+)\s+(\d+)\s*-\s*(.+?)\s+'
+        r'\$?([\d.,]+)\s+([\d.,]+)\s+\$([\d.,]+)\s*$'
+    )
+
     with pdfplumber.open(filepath) as pdf:
         for page in pdf.pages:
             text = page.extract_text()
             if not text:
                 continue
             for line in text.split('\n'):
-                # Filas estandar (Paquete entregado, PICK UP, etc.)
-                row_match = re.match(
-                    r'(\d{2}/\d{2}/\d{4})\s+(\d{2}:\d{2})\s+([\w-]+)\s+(\d+)\s*-\s*(.+?)\s+'
-                    r'(?:Paquete entregado|PICK UP PAQUETE PRINC)\s*\$?([\d.,]+)\s+([\d.,]+)\s+\$([\d.,]+)',
-                    line
-                )
-                if row_match:
-                    qty_raw = parse_ar_number(row_match.group(7))
-                    planillas.append({
-                        'fecha': row_match.group(1),
-                        'hora': row_match.group(2),
-                        'nro_planilla': row_match.group(3),
-                        'cod_contrato': row_match.group(4),
-                        'desc': row_match.group(5).strip(),
-                        'precio': parse_ar_number(row_match.group(6)),
-                        'qty': qty_raw,
-                        'total': parse_ar_number(row_match.group(8)),
-                    })
+                m = generic_regex.match(line.strip())
+                if not m:
+                    # Fallback: PICKUP malformadas (texto pegado sin espacios)
+                    pickup_match = re.match(
+                        r'(\d{2}/\d{2}/\d{4})\s+(\d{2}:\d{2})\s+([\w-]+)\s+(\d+)\s*-\s*.*?PICKUP.*?\s+'
+                        r'([\d.,]+)\s+\$([\d.,]+)',
+                        line
+                    )
+                    if pickup_match:
+                        try:
+                            qty_raw = parse_ar_number(pickup_match.group(5))
+                            total = parse_ar_number(pickup_match.group(6))
+                        except (ValueError, ZeroDivisionError):
+                            continue
+                        desc_text = 'PICKUP PRINC' if 'PRINC' in line else 'PICKUP ADIC' if 'ADIC' in line else 'PICKUP'
+                        codigo = pickup_match.group(4)
+                        codigos_encontrados.add(codigo)
+                        planillas.append({
+                            'fecha': pickup_match.group(1),
+                            'hora': pickup_match.group(2),
+                            'nro_planilla': pickup_match.group(3),
+                            'cod_contrato': codigo,
+                            'desc': desc_text,
+                            'precio': total / qty_raw if qty_raw > 0 else 0,
+                            'qty': qty_raw,
+                            'total': total,
+                        })
                     continue
 
-                # Filas HORAS (contrato 199, formato: ...UTILITARIOHoras o similar)
-                horas_match = re.match(
-                    r'(\d{2}/\d{2}/\d{4})\s+(\d{2}:\d{2})\s+([\w-]+)\s+(\d+)\s*-\s*(.+?)'
-                    r'(?:Horas)\s*\$?([\d.,]+)\s+([\d.,]+)\s+\$([\d.,]+)',
-                    line
-                )
-                if horas_match:
-                    qty_raw = parse_ar_number(horas_match.group(7))
-                    planillas.append({
-                        'fecha': horas_match.group(1),
-                        'hora': horas_match.group(2),
-                        'nro_planilla': horas_match.group(3),
-                        'cod_contrato': horas_match.group(4),
-                        'desc': horas_match.group(5).strip(),
-                        'precio': parse_ar_number(horas_match.group(6)),
-                        'qty': qty_raw,
-                        'total': parse_ar_number(horas_match.group(8)),
-                    })
+                try:
+                    qty_raw = parse_ar_number(m.group(7))
+                    precio = parse_ar_number(m.group(6))
+                    total = parse_ar_number(m.group(8))
+                except ValueError:
                     continue
 
-                # Filas PICKUP malformadas (PRINC y ADIC - texto pegado en el PDF)
-                pickup_match = re.match(
-                    r'(\d{2}/\d{2}/\d{4})\s+(\d{2}:\d{2})\s+([\w-]+)\s+(\d+)\s*-\s*.*?PICKUP.*?\s+'
-                    r'([\d.,]+)\s+\$([\d.,]+)',
-                    line
-                )
-                if pickup_match:
-                    qty_raw = parse_ar_number(pickup_match.group(5))
-                    total = parse_ar_number(pickup_match.group(6))
-                    desc_text = 'PICKUP PRINC' if 'PRINC' in line else 'PICKUP ADIC' if 'ADIC' in line else 'PICKUP'
-                    planillas.append({
-                        'fecha': pickup_match.group(1),
-                        'hora': pickup_match.group(2),
-                        'nro_planilla': pickup_match.group(3),
-                        'cod_contrato': pickup_match.group(4),
-                        'desc': desc_text,
-                        'precio': total / qty_raw if qty_raw > 0 else 0,
-                        'qty': qty_raw,
-                        'total': total,
-                    })
+                codigo = m.group(4)
+                desc_cruda = m.group(5).strip()
+                codigos_encontrados.add(codigo)
+
+                planillas.append({
+                    'fecha': m.group(1),
+                    'hora': m.group(2),
+                    'nro_planilla': m.group(3),
+                    'cod_contrato': codigo,
+                    'desc': desc_cruda,
+                    'precio': precio,
+                    'qty': qty_raw,
+                    'total': total,
+                })
+
+    # Guardar metadata de codigos para warnings
+    parse_main_pdf._ultimos_codigos = codigos_encontrados
     return planillas
 
 
@@ -166,9 +192,26 @@ def parse_distributor_pdf(filepath):
     return daily
 
 
+# BUGFIX 19 (Bug 1): keywords que cierran una seccion de distribuidor.
+# Al encontrar cualquiera de estas, ignorar las siguientes lineas hasta el proximo distribuidor.
+# Esto evita duplicacion 2x en PDFs combinados (ROSARIO, PQO nuevo formato).
+SECTION_CLOSERS = [
+    'Total Unidades',
+    'Total Sucursal',
+    'Planillas Manuales',
+    'Recorridos Fijos',
+]
+
+
 def parse_combined_distributor_pdf(filepath):
     """
     Parsea un PDF UNICO que contiene el desglose de TODOS los distribuidores.
+
+    BUGFIX 19 (Bug 1): solo procesa la PRIMERA seccion de datos de cada distribuidor.
+    Las secciones 'OEP Cantidad Importe' y 'Total Unidades Cantidad Importe' son
+    duplicadas. Al detectar un SECTION_CLOSER, ignora todo hasta el proximo header
+    de distribuidor.
+
     Retorna: dict {nombre_distribuidor: {fecha: {qty, amount}}}
     """
     with pdfplumber.open(filepath) as pdf:
@@ -181,6 +224,7 @@ def parse_combined_distributor_pdf(filepath):
     lines = full_text.split('\n')
     distributors = {}
     current_dist = None
+    dist_section_closed = False  # BUGFIX 19: flag de cierre de seccion
 
     skip_patterns = [
         'Detalle de Unidades de Recorrido',
@@ -188,13 +232,9 @@ def parse_combined_distributor_pdf(filepath):
         'Periodo:',
         'OCA',
         'LOGISTICA ARGENTINA',
-        'Total Unidades',
         'Cantidad Importe',
         'Pagina ',
-        'Total Sucursal',
         'OEP',
-        'Planillas Manuales',
-        'Recorridos Fijos',
     ]
 
     for line in lines:
@@ -205,11 +245,32 @@ def parse_combined_distributor_pdf(filepath):
         if re.match(r'^\$[\d.,]+$', stripped):
             continue
 
+        # Detectar header de distribuidor (texto en mayusculas)
+        if not any(pat in stripped for pat in skip_patterns):
+            if re.match(r'^[A-Z\u00C0-\u00DC][A-Z\u00C0-\u00DC\s.]+$', stripped) and len(stripped) > 3:
+                # Nuevo distribuidor: resetear flag de cierre
+                current_dist = stripped
+                dist_section_closed = False
+                continue
+
+        # Detectar cierre de seccion (BUGFIX 19)
+        if any(closer in stripped for closer in SECTION_CLOSERS):
+            dist_section_closed = True
+            continue
+
+        # Si la seccion del distribuidor actual esta cerrada, ignorar todo
+        if dist_section_closed:
+            continue
+
+        # Parsear linea de datos
         data_match = re.match(r'(\d{2}/\d{2}/\d{4})\s*-\s*(.+?)\s+([\d.,]+)\s+\$([\d.,]+)', stripped)
         if data_match and current_dist:
             fecha = data_match.group(1)
-            qty = parse_ar_number(data_match.group(3))
-            amount = parse_ar_number(data_match.group(4))
+            try:
+                qty = parse_ar_number(data_match.group(3))
+                amount = parse_ar_number(data_match.group(4))
+            except ValueError:
+                continue
             if amount == 0:
                 continue
             if current_dist not in distributors:
@@ -218,12 +279,6 @@ def parse_combined_distributor_pdf(filepath):
                 distributors[current_dist][fecha] = {'qty': 0, 'amount': 0}
             distributors[current_dist][fecha]['qty'] += qty
             distributors[current_dist][fecha]['amount'] += amount
-            continue
-
-        is_skip = any(pat in stripped for pat in skip_patterns)
-        if not is_skip and not data_match:
-            if re.match(r'^[A-Z\u00C0-\u00DC][A-Z\u00C0-\u00DC\s.]+$', stripped) and len(stripped) > 3:
-                current_dist = stripped
 
     return distributors
 

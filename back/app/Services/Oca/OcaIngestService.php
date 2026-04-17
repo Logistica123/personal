@@ -77,6 +77,7 @@ class OcaIngestService
             'exactos' => $stats['exactos'],
             'aproximados' => $stats['aproximados'],
             'sin_asignar' => $stats['sin_asignar'],
+            'warnings' => $resultado['_warnings'] ?? null,
         ];
     }
 
