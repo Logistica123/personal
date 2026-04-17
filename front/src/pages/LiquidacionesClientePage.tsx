@@ -113,6 +113,10 @@ export function LiquidacionesClientePage({
   const [newLineaModeloTarifa, setNewLineaModeloTarifa] = useState<string>('JORNADA');
   const [newLineaCostoFijoBase, setNewLineaCostoFijoBase] = useState('');
   const [newLineaTarifaKmDistrib, setNewLineaTarifaKmDistrib] = useState('');
+  const [newLineaTarifaKmOriginal, setNewLineaTarifaKmOriginal] = useState('');
+  const [newLineaModoProd, setNewLineaModoProd] = useState<'porcentaje' | 'por_parada' | 'por_bulto'>('por_parada');
+  const [newLineaTarifaParada, setNewLineaTarifaParada] = useState('');
+  const [newLineaTarifaBulto, setNewLineaTarifaBulto] = useState('');
   const [newLineaUmbralKm, setNewLineaUmbralKm] = useState('240');
   const [newLineaCapacidadKg, setNewLineaCapacidadKg] = useState('');
 
@@ -876,9 +880,21 @@ export function LiquidacionesClientePage({
         const costoFijoBase = parseMoneyInput(newLineaCostoFijoBase);
         if (costoFijoBase != null && costoFijoBase > 0) body.costo_fijo_base = costoFijoBase;
         if (newLineaModeloTarifa === 'JORNADA_KM') {
+          const tarifaKmOrig = parseMoneyInput(newLineaTarifaKmOriginal);
+          if (tarifaKmOrig != null) body.tarifa_km_original = tarifaKmOrig;
           const tarifaKm = parseMoneyInput(newLineaTarifaKmDistrib);
           if (tarifaKm != null) body.tarifa_km_distribuidor = tarifaKm;
           body.umbral_km = parseInt(newLineaUmbralKm, 10) || 240;
+        }
+        if (newLineaModeloTarifa === 'PRODUCTIVIDAD') {
+          body.modo_productividad = newLineaModoProd;
+          if (newLineaModoProd === 'por_parada') {
+            const tp = parseMoneyInput(newLineaTarifaParada);
+            if (tp != null) body.tarifa_parada_distrib = tp;
+          } else if (newLineaModoProd === 'por_bulto') {
+            const tb = parseMoneyInput(newLineaTarifaBulto);
+            if (tb != null) body.tarifa_bulto_distrib = tb;
+          }
         }
         if (newLineaCapacidadKg) body.capacidad_vehiculo_kg = parseInt(newLineaCapacidadKg, 10);
       }
@@ -889,6 +905,9 @@ export function LiquidacionesClientePage({
       setNewLineaDistPrecio('');
       setNewLineaCostoFijoBase('');
       setNewLineaTarifaKmDistrib('');
+      setNewLineaTarifaKmOriginal('');
+      setNewLineaTarifaParada('');
+      setNewLineaTarifaBulto('');
       setNewLineaCapacidadKg('');
       const res = await api.get(`/esquemas/${selectedEsquema.id}/lineas`);
       setLineas(res.data ?? []);
@@ -896,7 +915,7 @@ export function LiquidacionesClientePage({
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Error');
     }
-  }, [api, selectedEsquema, newLineaDims, newLineaPrecio, newLineaPctAg, newLineaDistPrecio, newLineaVigDesde, newLineaVigHasta, newLineaMotivo, isOcasaClient, newLineaModeloTarifa, newLineaCostoFijoBase, newLineaTarifaKmDistrib, newLineaUmbralKm, newLineaCapacidadKg]);
+  }, [api, selectedEsquema, newLineaDims, newLineaPrecio, newLineaPctAg, newLineaDistPrecio, newLineaVigDesde, newLineaVigHasta, newLineaMotivo, isOcasaClient, newLineaModeloTarifa, newLineaCostoFijoBase, newLineaTarifaKmDistrib, newLineaTarifaKmOriginal, newLineaUmbralKm, newLineaCapacidadKg, newLineaModoProd, newLineaTarifaParada, newLineaTarifaBulto]);
 
   const aprobarLinea = useCallback(async (id: number) => {
     const motivo = window.prompt('Motivo de aprobación:', 'Aprobación manual');
@@ -1648,13 +1667,41 @@ export function LiquidacionesClientePage({
                             {newLineaModeloTarifa === 'JORNADA_KM' && (
                               <>
                                 <div>
+                                  <label style={{ display: 'block', fontSize: 12, marginBottom: 4 }}>$/KM original</label>
+                                  <input type="text" inputMode="decimal" className="form-input" value={newLineaTarifaKmOriginal} onChange={(e) => setNewLineaTarifaKmOriginal(e.target.value)} placeholder="Ej: 275" />
+                                </div>
+                                <div>
                                   <label style={{ display: 'block', fontSize: 12, marginBottom: 4 }}>$/KM distribuidor</label>
                                   <input type="text" inputMode="decimal" className="form-input" value={newLineaTarifaKmDistrib} onChange={(e) => setNewLineaTarifaKmDistrib(e.target.value)} placeholder="Ej: 223" />
                                 </div>
                                 <div>
-                                  <label style={{ display: 'block', fontSize: 12, marginBottom: 4 }}>Umbral KM (base)</label>
+                                  <label style={{ display: 'block', fontSize: 12, marginBottom: 4 }}>Umbral KM</label>
                                   <input type="text" inputMode="decimal" className="form-input" value={newLineaUmbralKm} onChange={(e) => setNewLineaUmbralKm(e.target.value)} placeholder="240" />
                                 </div>
+                              </>
+                            )}
+                            {newLineaModeloTarifa === 'PRODUCTIVIDAD' && (
+                              <>
+                                <div>
+                                  <label style={{ display: 'block', fontSize: 12, marginBottom: 4 }}>Modo productividad</label>
+                                  <select className="form-input" value={newLineaModoProd} onChange={(e) => setNewLineaModoProd(e.target.value as any)}>
+                                    <option value="por_parada">Por parada</option>
+                                    <option value="por_bulto">Por bulto</option>
+                                    <option value="porcentaje">Porcentaje</option>
+                                  </select>
+                                </div>
+                                {newLineaModoProd === 'por_parada' && (
+                                  <div>
+                                    <label style={{ display: 'block', fontSize: 12, marginBottom: 4 }}>$ por parada</label>
+                                    <input type="text" inputMode="decimal" className="form-input" value={newLineaTarifaParada} onChange={(e) => setNewLineaTarifaParada(e.target.value)} placeholder="Ej: 850" />
+                                  </div>
+                                )}
+                                {newLineaModoProd === 'por_bulto' && (
+                                  <div>
+                                    <label style={{ display: 'block', fontSize: 12, marginBottom: 4 }}>$ por bulto</label>
+                                    <input type="text" inputMode="decimal" className="form-input" value={newLineaTarifaBulto} onChange={(e) => setNewLineaTarifaBulto(e.target.value)} placeholder="Ej: 150" />
+                                  </div>
+                                )}
                               </>
                             )}
                             <div>

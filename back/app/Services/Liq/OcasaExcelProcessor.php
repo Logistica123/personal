@@ -84,8 +84,11 @@ class OcasaExcelProcessor
         // Invertir mapeo de columnas: nombre_config => nombre_header => col_index
         $colMap = $this->mapearColumnas($headers, $columnas);
 
-        // Resolver distribuidores
-        $distribuidoresLookup = $this->buildDistribuidoresLookup();
+        // Resolver distribuidores (BUGFIX 20 D: filtrar por periodo)
+        $distribuidoresLookup = $this->buildDistribuidoresLookup(
+            $liquidacion->periodo_desde?->toDateString(),
+            $liquidacion->periodo_hasta?->toDateString()
+        );
 
         // Mapeos de sucursal
         $mapeosSucursal = LiqMapeoSucursal::where('cliente_id', $liquidacion->cliente_id)
@@ -879,11 +882,22 @@ class OcasaExcelProcessor
         }
     }
 
-    private function buildDistribuidoresLookup(): array
+    private function buildDistribuidoresLookup(?string $periodoDesde = null, ?string $periodoHasta = null): array
     {
         $lookup = [];
-        $personas = Persona::with('patentesAdicionales:id,persona_id,patente,patente_norm,activo')
-            ->get(['id', 'patente']);
+        $query = Persona::with('patentesAdicionales:id,persona_id,patente,patente_norm,activo');
+
+        if ($periodoDesde && $periodoHasta) {
+            $query->where(function ($q) use ($periodoDesde, $periodoHasta) {
+                $q->where(function ($q2) use ($periodoHasta) {
+                    $q2->whereNull('fecha_alta')->orWhere('fecha_alta', '<=', $periodoHasta);
+                })->where(function ($q2) use ($periodoDesde) {
+                    $q2->whereNull('fecha_baja')->orWhere('fecha_baja', '>=', $periodoDesde);
+                });
+            });
+        }
+
+        $personas = $query->get(['id', 'patente', 'fecha_alta', 'fecha_baja']);
 
         foreach ($personas as $persona) {
             foreach (PersonaPatenteHelper::normalizedDomainsForPersona($persona) as $patente) {

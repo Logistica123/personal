@@ -1338,6 +1338,17 @@ export function LiquidacionesExtractosPage({
                 >
                   {auditoriaLoading ? 'Cargando…' : showAuditoria ? 'Ocultar auditoría' : 'Ver auditoría'}
                 </button>
+                <button type="button" className="btn-sm" style={{ background: '#dbeafe', color: '#1e40af', border: '1px solid #93c5fd' }} onClick={async () => {
+                  if (!selectedLiq) return;
+                  if (!window.confirm('¿Revincular operaciones sin_distribuidor? (sin reprocesar archivos)')) return;
+                  try {
+                    const res = await api.post(`/liquidaciones/${selectedLiq.id}/revincular-distribuidores`, {});
+                    showSuccess(res.message ?? 'Revinculado');
+                    await loadOps(selectedLiq.id, opFiltroEstado, 1);
+                  } catch (e: unknown) { setError(e instanceof Error ? e.message : 'Error'); }
+                }}>
+                  Revincular distribuidores
+                </button>
                 <button type="button" className="btn-sm btn-danger" onClick={eliminarLiquidacionDesdeDetalle}>
                   Eliminar liquidación
                 </button>
@@ -2614,7 +2625,19 @@ export function LiquidacionesExtractosPage({
                           />
                         </td>
 	                      <td><code>{op.dominio ?? '—'}</code></td>
-	                      <td style={{ fontSize: 12 }}>{op.distribuidor ? `${op.distribuidor.apellidos}, ${op.distribuidor.nombres}` : '—'}</td>
+	                      <td style={{ fontSize: 12 }}>
+                            {op.distribuidor ? (
+                              <span>
+                                {op.distribuidor.apellidos}, {op.distribuidor.nombres}
+                                {op.distribuidor.fecha_baja && (
+                                  <span title={`Baja: ${op.distribuidor.fecha_baja}`} style={{ marginLeft: 4, padding: '1px 6px', borderRadius: 8, background: '#e5e7eb', color: '#4b5563', fontSize: 10, fontWeight: 600 }}>Baja</span>
+                                )}
+                                {(op.distribuidor as any).retener_pago && (
+                                  <span style={{ marginLeft: 4, padding: '1px 6px', borderRadius: 8, background: '#fee2e2', color: '#991b1b', fontSize: 10, fontWeight: 600 }}>Pago retenido</span>
+                                )}
+                              </span>
+                            ) : '—'}
+                          </td>
 	                      <td style={{ fontSize: 12 }}>{(() => { const raw = (op.campos_originales as any)?.fecha ?? (op.campos_originales as any)?.fecha_viaje ?? (op.campos_originales as any)?.FechaViaje; if (!raw) return '—'; const s = String(raw); const dateOnly = s.includes('T') ? s.split('T')[0] : s.slice(0, 10); const parts = dateOnly.split('-'); return parts.length === 3 ? `${parts[2]}/${parts[1]}/${parts[0]}` : s; })()}</td>
 	                      <td style={{ fontSize: 12 }}>{op.concepto ?? '—'}</td>
 	                      <td style={{ fontSize: 12 }}>{op.sucursal_tarifa ?? '—'}</td>
@@ -2655,7 +2678,7 @@ export function LiquidacionesExtractosPage({
                         </span>
                       </td>
                       <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
-                        {(op.estado === 'sin_tarifa' || op.estado === 'diferencia') && !op.excluida && (
+                        {!op.excluida && (
                           <button type="button" className="btn-sm" style={{ marginRight: 4, background: '#fef3c7', color: '#92400e', border: '1px solid #fcd34d' }}
                             onClick={() => { setHotMapOp(op); setHotMapValorTarifa(''); setHotMapDim((isOcaClient || isOcasaClient) ? 'fijo' : 'porcentaje'); setHotMapValorCliente(String(op.valor_cliente)); }}>
                             + Mapeo

@@ -62,6 +62,8 @@ class Persona extends Model
         'fecha_alta',
         'fecha_baja',
         'es_solicitud',
+        'retener_pago',
+        'retener_pago_motivo',
     ];
 
     protected $dates = [

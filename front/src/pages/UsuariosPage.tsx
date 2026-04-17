@@ -346,7 +346,7 @@ export const UsuariosPage: React.FC<{
 
   return (
     <DashboardLayout title="Gestionar usuarios" subtitle="Gestionar usuarios" headerContent={headerContent}>
-      <div className="table-wrapper">
+      <div className="table-wrapper table-wrapper--responsive">
         <table>
           <thead>
             <tr>
@@ -389,11 +389,11 @@ export const UsuariosPage: React.FC<{
 
                 return (
                   <tr key={usuario.id}>
-                    <td>{usuario.id}</td>
-                    <td>{usuario.name ?? '—'}</td>
-                    <td>{usuario.email ?? '—'}</td>
-                    <td>{usuario.created_at ?? '—'}</td>
-                    <td>
+                    <td data-label="ID">{usuario.id}</td>
+                    <td data-label="Nombre">{usuario.name ?? '—'}</td>
+                    <td data-label="Email">{usuario.email ?? '—'}</td>
+                    <td data-label="Creado">{usuario.created_at ?? '—'}</td>
+                    <td data-label="Rol">
                       <select
                         value={normalizedRole}
                         onChange={(event) => void handleRoleChange(usuario, event.target.value)}
@@ -406,12 +406,12 @@ export const UsuariosPage: React.FC<{
                         ))}
                       </select>
                     </td>
-                    <td>
+                    <td data-label="Estado">
                       <span className={`status-badge${statusValue === 'inactivo' ? ' is-inactive' : ''}`}>
                         {statusLabel}
                       </span>
                     </td>
-                    <td>
+                    <td data-label="Acciones">
                       <div className="action-buttons">
                         <button
                           type="button"

@@ -457,6 +457,42 @@ class PersonalController extends Controller
         return false;
     }
 
+    // BUGFIX 20 Feature E: toggle retener_pago del distribuidor
+    public function retenerPago(Request $request, Persona $persona): JsonResponse
+    {
+        $data = $request->validate([
+            'retener' => 'required|boolean',
+            'motivo' => 'required|string|min:5',
+        ]);
+
+        $valorAnterior = $persona->retener_pago;
+        $motivoAnterior = $persona->retener_pago_motivo;
+
+        $persona->update([
+            'retener_pago' => $data['retener'],
+            'retener_pago_motivo' => $data['retener'] ? $data['motivo'] : null,
+        ]);
+
+        // Auditoría
+        if (class_exists(\App\Models\LiqHistorialMovimiento::class)) {
+            \App\Models\LiqHistorialMovimiento::registrar(
+                $data['retener'] ? 'retener_pago' : 'liberar_pago',
+                sprintf('%s pago de %s %s. Motivo: %s',
+                    $data['retener'] ? 'Retenido' : 'Liberado',
+                    $persona->apellidos, $persona->nombres,
+                    $data['motivo']
+                ),
+                $request->user()?->id, null, null, $persona->id,
+                ['anterior' => $valorAnterior, 'nuevo' => $data['retener'], 'motivo_anterior' => $motivoAnterior]
+            );
+        }
+
+        return response()->json([
+            'message' => $data['retener'] ? 'Pago retenido' : 'Pago liberado',
+            'data' => ['retener_pago' => $persona->retener_pago, 'retener_pago_motivo' => $persona->retener_pago_motivo],
+        ]);
+    }
+
     public function combustible(Request $request, Persona $persona): JsonResponse
     {
         $domains = $this->getPersonaDomains($persona);

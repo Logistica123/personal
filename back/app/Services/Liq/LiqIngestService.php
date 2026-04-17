@@ -324,7 +324,10 @@ class LiqIngestService
         }
 
         $matchingStrategies = $this->resolveMatchingStrategies($liquidacion->cliente);
-        $distribuidoresLookup = $this->buildDistribuidoresLookup();
+        $distribuidoresLookup = $this->buildDistribuidoresLookup(
+            $liquidacion->periodo_desde?->toDateString(),
+            $liquidacion->periodo_hasta?->toDateString()
+        );
 
         $conceptosValorVariable = $config['conceptos_valor_variable'] ?? [];
         $conceptosValorVariableNorm = [];
@@ -1035,7 +1038,7 @@ class LiqIngestService
         return ['patente'];
     }
 
-    private function buildDistribuidoresLookup(): array
+    private function buildDistribuidoresLookup(?string $periodoDesde = null, ?string $periodoHasta = null): array
     {
         $lookup = [
             'by_patente' => [],
@@ -1045,8 +1048,23 @@ class LiqIngestService
             'nombre_candidatos' => [],
         ];
 
-        $personas = Persona::with('patentesAdicionales:id,persona_id,patente,patente_norm,activo')
-            ->get(['id', 'patente', 'cuil', 'legajo', 'nombres', 'apellidos']);
+        $query = Persona::with('patentesAdicionales:id,persona_id,patente,patente_norm,activo');
+
+        // BUGFIX 20 Feature D: filtrar por periodo (distribuidor valido para el periodo)
+        if ($periodoDesde && $periodoHasta) {
+            $query->where(function ($q) use ($periodoDesde, $periodoHasta) {
+                // fecha_alta nula o <= periodo_hasta
+                $q->where(function ($q2) use ($periodoHasta) {
+                    $q2->whereNull('fecha_alta')->orWhere('fecha_alta', '<=', $periodoHasta);
+                })
+                // fecha_baja nula o >= periodo_desde
+                ->where(function ($q2) use ($periodoDesde) {
+                    $q2->whereNull('fecha_baja')->orWhere('fecha_baja', '>=', $periodoDesde);
+                });
+            });
+        }
+
+        $personas = $query->get(['id', 'patente', 'cuil', 'legajo', 'nombres', 'apellidos', 'fecha_alta', 'fecha_baja']);
         foreach ($personas as $persona) {
             foreach (PersonaPatenteHelper::normalizedDomainsForPersona($persona) as $patente) {
                 if ($patente === '') {

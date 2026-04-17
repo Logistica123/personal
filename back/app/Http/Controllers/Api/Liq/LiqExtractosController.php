@@ -369,7 +369,7 @@ class LiqExtractosController extends Controller
     public function operaciones(Request $request, LiqLiquidacionCliente $liquidacionCliente): JsonResponse
     {
         $query = LiqOperacion::where('liquidacion_cliente_id', $liquidacionCliente->id)
-            ->with(['distribuidor:id,apellidos,nombres,patente,fecha_alta,fecha_baja', 'lineaTarifa:id,dimensiones_valores,precio_original,precio_distribuidor,porcentaje_agencia']);
+            ->with(['distribuidor:id,apellidos,nombres,patente,fecha_alta,fecha_baja,estado_id,retener_pago', 'lineaTarifa:id,dimensiones_valores,precio_original,precio_distribuidor,porcentaje_agencia']);
         if ($request->filled('estado')) {
             $query->where('estado', $request->string('estado'));
         }
@@ -450,6 +450,8 @@ class LiqExtractosController extends Controller
                 // OCASA: peajes (Imp.NoGrav) pass-through
                 $distribuidor = \App\Models\Persona::find($distribuidorId);
                 $pagaPeajes = $distribuidor?->paga_peajes ?? true;
+                // BUGFIX 20 Feature E: flag pago_retenido del distribuidor
+                $pagoRetenido = (bool) ($distribuidor?->retener_pago ?? false);
                 $subtotalPeajes = $pagaPeajes
                     ? round($ops->sum(fn($op) => (float) ($op->importe_no_gravado ?? 0)), 2)
                     : 0;
@@ -556,7 +558,7 @@ class LiqExtractosController extends Controller
         // ── 2. Operaciones con diferencia (fuera de tolerancia) ───────────────
         $diferencias = LiqOperacion::where('liquidacion_cliente_id', $liqId)
             ->where('estado', 'diferencia')
-            ->with('distribuidor:id,apellidos,nombres,patente,fecha_alta,fecha_baja')
+            ->with('distribuidor:id,apellidos,nombres,patente,fecha_alta,fecha_baja,estado_id,retener_pago')
             ->orderByRaw('ABS(diferencia_cliente) DESC')
             ->limit(200)
             ->get(['id', 'dominio', 'concepto', 'sucursal_tarifa', 'valor_cliente', 'valor_tarifa_original', 'diferencia_cliente', 'distribuidor_id', 'campos_originales']);
@@ -597,7 +599,7 @@ class LiqExtractosController extends Controller
         // ── 5. Duplicados ─────────────────────────────────────────────────────
         $duplicados = LiqOperacion::where('liquidacion_cliente_id', $liqId)
             ->where('estado', 'duplicado')
-            ->with('distribuidor:id,apellidos,nombres,patente,fecha_alta,fecha_baja')
+            ->with('distribuidor:id,apellidos,nombres,patente,fecha_alta,fecha_baja,estado_id,retener_pago')
             ->limit(100)
             ->get(['id', 'dominio', 'concepto', 'valor_cliente', 'distribuidor_id', 'campos_originales']);
 
@@ -615,7 +617,7 @@ class LiqExtractosController extends Controller
                 SUM(diferencia_cliente) as total_diferencia
             ')
             ->groupBy('distribuidor_id')
-            ->with('distribuidor:id,apellidos,nombres,patente,fecha_alta,fecha_baja')
+            ->with('distribuidor:id,apellidos,nombres,patente,fecha_alta,fecha_baja,estado_id,retener_pago')
             ->orderByRaw('SUM(valor_tarifa_distribuidor) DESC')
             ->get()
             ->map(fn($row) => [
@@ -749,6 +751,89 @@ class LiqExtractosController extends Controller
             'total_origenes' => $todosOrigenes->count(),
             'sin_mapear' => $sinMapear->count(),
         ]);
+    }
+
+    // POST /liq/liquidaciones/{liquidacionCliente}/revincular-distribuidores
+    // BUGFIX 20 Feature G: re-match distribuidores sin_distribuidor consultando personas
+    public function revincularDistribuidores(Request $request, LiqLiquidacionCliente $liquidacionCliente): JsonResponse
+    {
+        $opsSinDist = LiqOperacion::where('liquidacion_cliente_id', $liquidacionCliente->id)
+            ->where('estado', 'sin_distribuidor')
+            ->get();
+
+        if ($opsSinDist->isEmpty()) {
+            return response()->json(['data' => ['total' => 0, 'vinculadas' => 0, 'sin_match' => 0], 'message' => 'No hay operaciones sin_distribuidor']);
+        }
+
+        $periodoDesde = $liquidacionCliente->periodo_desde?->toDateString();
+        $periodoHasta = $liquidacionCliente->periodo_hasta?->toDateString();
+
+        // Cargar personas válidas para el periodo
+        $query = \App\Models\Persona::with('patentesAdicionales:id,persona_id,patente,patente_norm,activo');
+        if ($periodoDesde && $periodoHasta) {
+            $query->where(function ($q) use ($periodoDesde, $periodoHasta) {
+                $q->where(function ($q2) use ($periodoHasta) {
+                    $q2->whereNull('fecha_alta')->orWhere('fecha_alta', '<=', $periodoHasta);
+                })->where(function ($q2) use ($periodoDesde) {
+                    $q2->whereNull('fecha_baja')->orWhere('fecha_baja', '>=', $periodoDesde);
+                });
+            });
+        }
+        $personas = $query->get(['id', 'patente', 'cuil', 'apellidos', 'nombres']);
+
+        // Construir lookup por patente
+        $lookup = [];
+        foreach ($personas as $p) {
+            $patentes = \App\Support\Personal\PersonaPatenteHelper::normalizedDomainsForPersona($p);
+            foreach ($patentes as $pat) {
+                if ($pat !== '') {
+                    $lookup[$pat][] = $p;
+                }
+            }
+        }
+
+        $vinculadas = 0;
+        $sinMatch = 0;
+        DB::beginTransaction();
+        try {
+            foreach ($opsSinDist as $op) {
+                $dominio = $op->dominio ? strtoupper(preg_replace('/[^A-Z0-9]/', '', $op->dominio)) : '';
+                if ($dominio === '') { $sinMatch++; continue; }
+
+                $candidates = $lookup[$dominio] ?? [];
+                if (count($candidates) === 1) {
+                    $op->update([
+                        'distribuidor_id' => $candidates[0]->id,
+                        'estado' => $op->linea_tarifa_id ? 'ok' : 'sin_tarifa',
+                        'observaciones' => 'Vinculado via revincular-distribuidores (BUGFIX 20 G)',
+                    ]);
+                    $vinculadas++;
+                } else {
+                    $sinMatch++;
+                }
+            }
+
+            // Recalcular totales
+            $this->recalcularTotalesLiquidacion($liquidacionCliente);
+
+            if (class_exists(\App\Models\LiqHistorialMovimiento::class)) {
+                \App\Models\LiqHistorialMovimiento::registrar(
+                    'revincular_distribuidores',
+                    "Revincular: {$vinculadas} vinculadas, {$sinMatch} sin match de " . $opsSinDist->count() . " totales",
+                    $request->user()?->id, $liquidacionCliente->id, null, null,
+                    ['vinculadas' => $vinculadas, 'sin_match' => $sinMatch, 'total' => $opsSinDist->count()]
+                );
+            }
+
+            DB::commit();
+            return response()->json([
+                'data' => ['total' => $opsSinDist->count(), 'vinculadas' => $vinculadas, 'sin_match' => $sinMatch],
+                'message' => "{$vinculadas} operaciones vinculadas, {$sinMatch} quedaron sin match.",
+            ]);
+        } catch (\Throwable $e) {
+            DB::rollBack();
+            return response()->json(['error' => 'Error revinculando: ' . $e->getMessage()], 500);
+        }
     }
 
     // GET /liq/liquidaciones/{liquidacionCliente}/duplicados

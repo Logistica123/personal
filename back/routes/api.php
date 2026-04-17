@@ -67,6 +67,7 @@ Route::middleware('auth.api')->group(function () {
     Route::post('/documentos/pagado', [PersonalDocumentController::class, 'updatePagadoBulk']);
     Route::put('/personal/{persona}/documentos/{documento}', [PersonalDocumentController::class, 'updateDocument']);
     Route::delete('/personal/{persona}/documentos/{documento}', [PersonalDocumentController::class, 'destroy']);
+    Route::put('/personal/{persona}/retener-pago', [PersonalController::class, 'retenerPago']);
     Route::get('/personal/{persona}/combustible', [PersonalController::class, 'combustible']);
     Route::get('/personal/{persona}/combustible-reportes', [PersonalController::class, 'combustibleReports']);
     Route::get('/personal/{persona}/combustible-proyeccion', [PersonalController::class, 'combustibleProjection']);
@@ -219,6 +220,7 @@ Route::middleware('auth.api')->group(function () {
         Route::post('/esquemas/{esquema}/aumento-aplicar', [LiqTarifaController::class, 'aumentoAplicar']);
         Route::post('/esquemas/{esquema}/lineas/aprobar-todas', [LiqTarifaController::class, 'aprobarTodasLineas']);
         Route::put('/lineas/{lineaTarifa}/aprobar', [LiqTarifaController::class, 'aprobarLinea']);
+        Route::put('/lineas/{lineaTarifa}', [LiqTarifaController::class, 'updateLinea']);
         Route::put('/lineas/{lineaTarifa}/desactivar', [LiqTarifaController::class, 'desactivarLinea']);
 
         // Tarifa por patente (override de línea por combinación)
@@ -257,6 +259,7 @@ Route::middleware('auth.api')->group(function () {
         Route::get('/liquidaciones/{liquidacionCliente}/distribuidores', [LiqExtractosController::class, 'distribuidores']);
         Route::get('/liquidaciones/{liquidacionCliente}/auditoria', [LiqExtractosController::class, 'auditoria']);
         Route::get('/liquidaciones/{liquidacionCliente}/origenes-sin-mapear', [LiqExtractosController::class, 'origenesSinMapear']);
+        Route::post('/liquidaciones/{liquidacionCliente}/revincular-distribuidores', [LiqExtractosController::class, 'revincularDistribuidores']);
         Route::get('/liquidaciones/{liquidacionCliente}/duplicados', [LiqExtractosController::class, 'duplicados']);
         Route::post('/liquidaciones/{liquidacionCliente}/resolver-duplicados', [LiqExtractosController::class, 'resolverDuplicados']);
         Route::post('/liquidaciones/{liquidacionCliente}/mapear-tarifa', [LiqExtractosController::class, 'mapearTarifa']);

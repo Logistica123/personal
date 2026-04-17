@@ -331,6 +331,91 @@ class LiqTarifaController extends Controller
         return response()->json(['data' => $linea, 'message' => 'Línea de tarifa creada'], 201);
     }
 
+    // PUT /liq/lineas/{lineaTarifa} — Feature B: editar línea existente
+    public function updateLinea(Request $request, LiqLineaTarifa $lineaTarifa): JsonResponse
+    {
+        $data = $request->validate([
+            'precio_original' => 'nullable|numeric|min:0.01',
+            'precio_distribuidor' => 'nullable|numeric|min:0',
+            'porcentaje_agencia' => 'nullable|numeric|min:0|max:99.99',
+            'modelo_tarifa' => 'nullable|string|in:JORNADA,JORNADA_KM,PRODUCTIVIDAD',
+            'tarifa_km_original' => 'nullable|numeric|min:0',
+            'tarifa_km_distribuidor' => 'nullable|numeric|min:0',
+            'umbral_km' => 'nullable|integer|min:0',
+            'modo_productividad' => 'nullable|string|in:porcentaje,por_parada,por_bulto',
+            'tarifa_parada_distrib' => 'nullable|numeric|min:0',
+            'tarifa_bulto_distrib' => 'nullable|numeric|min:0',
+            'costo_fijo_base' => 'nullable|numeric|min:0',
+            'capacidad_vehiculo_kg' => 'nullable|integer|min:0',
+            'vigencia_desde' => 'nullable|date',
+            'vigencia_hasta' => 'nullable|date|after_or_equal:vigencia_desde',
+            'motivo' => 'required|string|min:5',
+        ]);
+
+        $valoresAnteriores = $lineaTarifa->toArray();
+
+        // Recalcular precio_distribuidor o porcentaje según cuál venga
+        $precioOriginal = $data['precio_original'] ?? (float) $lineaTarifa->precio_original;
+        if (isset($data['precio_distribuidor']) && $data['precio_distribuidor'] > 0) {
+            $pctAgencia = $precioOriginal > 0
+                ? round((1 - $data['precio_distribuidor'] / $precioOriginal) * 100, 4)
+                : 0;
+            $precioDistribuidor = (float) $data['precio_distribuidor'];
+        } elseif (isset($data['porcentaje_agencia'])) {
+            $pctAgencia = (float) $data['porcentaje_agencia'];
+            $precioDistribuidor = round($precioOriginal * (1 - $pctAgencia / 100), 2);
+        } else {
+            $pctAgencia = (float) $lineaTarifa->porcentaje_agencia;
+            $precioDistribuidor = (float) $lineaTarifa->precio_distribuidor;
+        }
+
+        $updateData = [
+            'precio_original' => $precioOriginal,
+            'porcentaje_agencia' => $pctAgencia,
+            'precio_distribuidor' => $precioDistribuidor,
+        ];
+
+        if (isset($data['vigencia_desde'])) $updateData['vigencia_desde'] = $data['vigencia_desde'];
+        if (isset($data['vigencia_hasta'])) $updateData['vigencia_hasta'] = $data['vigencia_hasta'];
+
+        // Campos OCASA opcionales
+        $ocasaFields = ['modelo_tarifa', 'costo_fijo_base', 'tarifa_km_original', 'tarifa_km_distribuidor',
+            'umbral_km', 'modo_productividad', 'tarifa_parada_distrib', 'tarifa_bulto_distrib', 'capacidad_vehiculo_kg'];
+        foreach ($ocasaFields as $field) {
+            if (array_key_exists($field, $data) && $data[$field] !== null) {
+                $updateData[$field] = $data[$field];
+            }
+        }
+
+        // Si estaba aprobada, vuelve a borrador
+        $volvioABorrador = false;
+        if ($lineaTarifa->aprobado_por) {
+            $updateData['aprobado_por'] = null;
+            $updateData['fecha_aprobacion'] = null;
+            $volvioABorrador = true;
+        }
+
+        $lineaTarifa->update($updateData);
+
+        // Auditoría
+        LiqAuditoriaTarifa::create([
+            'linea_tarifa_id' => $lineaTarifa->id,
+            'accion' => 'edicion',
+            'valores_anteriores' => $valoresAnteriores,
+            'valores_nuevos' => $lineaTarifa->fresh()->toArray(),
+            'usuario_id' => $request->user()?->id,
+            'motivo' => $data['motivo'],
+            'created_at' => now(),
+        ]);
+
+        return response()->json([
+            'data' => $lineaTarifa->fresh(),
+            'message' => $volvioABorrador
+                ? 'Línea actualizada. Volvió a borrador y requiere aprobación.'
+                : 'Línea actualizada.',
+        ]);
+    }
+
     // POST /liq/esquemas/{esquema}/importar-excel - importar líneas/dimensiones desde un Excel (asistido)
     public function importarExcel(Request $request, LiqEsquemaTarifario $esquema): JsonResponse
     {

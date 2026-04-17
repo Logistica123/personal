@@ -3467,7 +3467,11 @@ const DashboardLayout: React.FC<{
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       const target = event.target as HTMLElement;
-      if (!target.closest('.user-chip') && !target.closest('.user-menu')) {
+      if (
+        !target.closest('.user-chip') &&
+        !target.closest('.user-menu') &&
+        !target.closest('.mobile-user-chip')
+      ) {
         setShowUserMenu(false);
       }
     };
@@ -3939,6 +3943,7 @@ const DashboardLayout: React.FC<{
           >
             <span />
           </button>
+          <div className="mobile-controls-right">
           <div className="notification-anchor notification-anchor--mobile">
             <button
               className="topbar-button notification"
@@ -3977,6 +3982,32 @@ const DashboardLayout: React.FC<{
                 </button>
               </div>
             ) : null}
+          </div>
+          <div className="mobile-user-chip">
+            <button
+              type="button"
+              className={`mobile-user-avatar${showUserMenu ? ' is-open' : ''}`}
+              onClick={() => setShowUserMenu((prev) => !prev)}
+              aria-label="Abrir menú de usuario"
+              aria-expanded={showUserMenu}
+            >
+              {avatarInitials}
+            </button>
+            {showUserMenu ? (
+              <div className="user-menu user-menu--mobile" role="menu">
+                <div className="user-menu__header">
+                  <strong>{displayName}</strong>
+                  <small>{roleLabel}</small>
+                </div>
+                <button type="button" onClick={() => { toggleTheme(); setShowUserMenu(false); }}>
+                  {themeMode === 'dark' ? '☀️ Modo claro' : '🌙 Modo oscuro'}
+                </button>
+                <button type="button" onClick={handleLogout}>
+                  Cerrar sesión
+                </button>
+              </div>
+            ) : null}
+          </div>
           </div>
         </div>
         <header className="dashboard-topbar">
@@ -4086,6 +4117,9 @@ const DashboardLayout: React.FC<{
             </button>
             {showUserMenu ? (
               <div className="user-menu" role="menu">
+                <button type="button" onClick={() => { toggleTheme(); setShowUserMenu(false); }}>
+                  {themeMode === 'dark' ? '☀️ Modo claro' : '🌙 Modo oscuro'}
+                </button>
                 <button type="button" onClick={handleLogout}>
                   Cerrar sesión
                 </button>
@@ -8420,7 +8454,7 @@ const DashboardPage: React.FC<{
 
       {!showPersonalPanel && !isTarifasView && !isBasesView ? (
         <>
-          <div className="table-wrapper">
+          <div className="table-wrapper table-wrapper--responsive">
             <table>
               <thead>
                 <tr>
@@ -8483,11 +8517,11 @@ const DashboardPage: React.FC<{
                         </>
                       ) : (
                         <>
-                          <td>{cliente.codigo ?? '—'}</td>
-                          <td>{cliente.nombre ?? '—'}</td>
-                          <td>{cliente.documento_fiscal ?? '—'}</td>
-                          <td>{cliente.direccion ?? '—'}</td>
-                          <td>
+                          <td data-label="Código">{cliente.codigo ?? '—'}</td>
+                          <td data-label="Nombre">{cliente.nombre ?? '—'}</td>
+                          <td data-label="CUIT">{cliente.documento_fiscal ?? '—'}</td>
+                          <td data-label="Dirección">{cliente.direccion ?? '—'}</td>
+                          <td data-label="Sucursales">
                             {cliente.sucursales.length > 0 ? (
                               <div className="tag-list">
                                 {cliente.sucursales.map((sucursal) => (
@@ -8501,7 +8535,7 @@ const DashboardPage: React.FC<{
                               '—'
                             )}
                           </td>
-                          <td>
+                          <td data-label="Acciones">
                             <div className="action-buttons">
                               <button
                                 type="button"

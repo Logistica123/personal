@@ -159,7 +159,7 @@ export type LiqOperacion = {
   distribuidor_id: number | null;
   excluida: boolean;
   observaciones: string | null;
-  distribuidor?: { id: number; apellidos: string; nombres: string; patente: string; fecha_alta: string | null; fecha_baja: string | null };
+  distribuidor?: { id: number; apellidos: string; nombres: string; patente: string; fecha_alta: string | null; fecha_baja: string | null; estado_id?: number | null; retener_pago?: boolean };
   linea_tarifa?: Pick<LiqLineaTarifa, 'id' | 'dimensiones_valores' | 'precio_original' | 'precio_distribuidor' | 'porcentaje_agencia'>;
   // OCASA fields
   modelo_tarifa?: 'JORNADA' | 'JORNADA_KM' | 'PRODUCTIVIDAD' | null;

@@ -144,7 +144,7 @@ export const UnidadesPage: React.FC<{
 
   return (
     <DashboardLayout title="Gestionar unidades" subtitle="Gestionar unidades" headerContent={headerContent}>
-      <div className="table-wrapper">
+      <div className="table-wrapper table-wrapper--responsive">
         <table>
           <thead>
             <tr>
@@ -181,12 +181,12 @@ export const UnidadesPage: React.FC<{
               !error &&
               filteredUnidades.map((unidad) => (
                 <tr key={unidad.id}>
-                  <td>{unidad.matricula ?? '—'}</td>
-                  <td>{unidad.marca ?? '—'}</td>
-                  <td>{unidad.modelo ?? '—'}</td>
-                  <td>{unidad.anio ?? '—'}</td>
-                  <td>{unidad.observacion ?? '—'}</td>
-                  <td>
+                  <td data-label="Matrícula">{unidad.matricula ?? '—'}</td>
+                  <td data-label="Marca">{unidad.marca ?? '—'}</td>
+                  <td data-label="Modelo">{unidad.modelo ?? '—'}</td>
+                  <td data-label="Año">{unidad.anio ?? '—'}</td>
+                  <td data-label="Observación">{unidad.observacion ?? '—'}</td>
+                  <td data-label="Acciones">
                     <div className="action-buttons">
                       <button
                         type="button"

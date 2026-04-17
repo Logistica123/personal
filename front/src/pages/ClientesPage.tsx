@@ -157,7 +157,7 @@ export const ClientesPage: React.FC<{
 
   return (
     <DashboardLayout title="Gestionar clientes" subtitle="Gestionar clientes" headerContent={headerContent}>
-      <div className="table-wrapper">
+      <div className="table-wrapper table-wrapper--responsive">
         <table>
           <thead>
             <tr>
@@ -194,11 +194,11 @@ export const ClientesPage: React.FC<{
               !error &&
               filteredClientes.map((cliente) => (
                 <tr key={cliente.id}>
-                  <td>{cliente.codigo ?? '—'}</td>
-                  <td>{cliente.nombre ?? '—'}</td>
-                  <td>{cliente.documento_fiscal ?? '—'}</td>
-                  <td>{cliente.direccion ?? '—'}</td>
-                  <td>
+                  <td data-label="Código">{cliente.codigo ?? '—'}</td>
+                  <td data-label="Nombre">{cliente.nombre ?? '—'}</td>
+                  <td data-label="CUIT">{cliente.documento_fiscal ?? '—'}</td>
+                  <td data-label="Dirección">{cliente.direccion ?? '—'}</td>
+                  <td data-label="Sucursales">
                     {cliente.sucursales.length > 0 ? (
                       <div className="tag-list">
                         {cliente.sucursales.map((sucursal, index) => (
@@ -211,7 +211,7 @@ export const ClientesPage: React.FC<{
                       '—'
                     )}
                   </td>
-                  <td>
+                  <td data-label="Acciones">
                     <div className="action-buttons">
                       <button
                         type="button"
