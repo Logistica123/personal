@@ -5454,14 +5454,7 @@ export const LiquidacionesPage: React.FC<LiquidacionesPageProps> = ({
                                     <td>{periodo}</td>
                                     <td>{renderLiquidacionStatus(liq.enviada)}</td>
                                     <td>
-                                      <button
-                                        type="button"
-                                        className="status-toggle-btn"
-                                        title="Clic para cambiar estado de facturación"
-                                        onClick={() => void handleToggleRecibido(registro.id, liq.id, liq.recibido)}
-                                      >
-                                        {renderLiquidacionStatus(liq.recibido)}
-                                      </button>
+                                      {renderLiquidacionStatus(liq.recibido)}
                                     </td>
                                     <td>
                                       <div className="pagos-actions-cell">
@@ -5917,14 +5910,7 @@ export const LiquidacionesPage: React.FC<LiquidacionesPageProps> = ({
                                 </td>
                                 <td>{renderLiquidacionStatus(group.main.enviada)}</td>
                                 <td>
-                                  <button
-                                    type="button"
-                                    className="status-toggle-btn"
-                                    title="Clic para cambiar estado de facturación"
-                                    onClick={() => void handleToggleRecibido(selectedPersonaId!, group.main.id, group.main.recibido ?? null)}
-                                  >
-                                    {renderLiquidacionStatus(group.main.recibido)}
-                                  </button>
+                                  {renderLiquidacionStatus(group.main.recibido)}
                                 </td>
                                 <td>{renderAiValidationStatus(group.main)}</td>
                                 <td className="table-actions">
