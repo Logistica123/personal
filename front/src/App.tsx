@@ -986,6 +986,8 @@ const CHAT_THEMES: Array<{ id: ChatThemeId; label: string; icon: string }> = [
 const CHAT_THEME_STORAGE_KEY = 'dashboard-chat:theme';
 const CHAT_CUSTOM_BG_STORAGE_KEY = 'dashboard-chat:custom-bg';
 
+const CHAT_ZUMBIDO_MARKER = '__ZUMBIDO__';
+
 const CHAT_THEME_SEND_ICON: Record<ChatThemeId, string> = {
   whatsapp: '📤',
   futbol: '⚽',
@@ -4727,6 +4729,8 @@ const ChatPage: React.FC = () => {
   );
   const incomingAudioContextRef = useRef<AudioContext | null>(null);
   const lastMessageCountRef = useRef<Record<number, number>>({});
+  const [buzzActive, setBuzzActive] = useState(false);
+  const buzzTimeoutRef = useRef<number | null>(null);
 
   const playIncomingTone = useCallback(() => {
     try {
@@ -4774,6 +4778,74 @@ const ChatPage: React.FC = () => {
       // ignore audio errors
     }
   }, []);
+
+  const playBuzzSound = useCallback(() => {
+    try {
+      if (!incomingAudioContextRef.current) {
+        const AudioContextConstructor =
+          window.AudioContext ||
+          (window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+        if (!AudioContextConstructor) return;
+        incomingAudioContextRef.current = new AudioContextConstructor();
+      }
+      const context = incomingAudioContextRef.current;
+      const ensureContext = () => {
+        if (context.state === 'suspended') {
+          return context.resume().catch(() => Promise.resolve());
+        }
+        return Promise.resolve();
+      };
+      void ensureContext().then(() => {
+        const now = context.currentTime;
+        const duration = 0.9;
+        const osc1 = context.createOscillator();
+        const osc2 = context.createOscillator();
+        const gain = context.createGain();
+        const lfo = context.createOscillator();
+        const lfoGain = context.createGain();
+        osc1.type = 'square';
+        osc1.frequency.setValueAtTime(900, now);
+        osc1.frequency.linearRampToValueAtTime(650, now + duration);
+        osc2.type = 'sawtooth';
+        osc2.frequency.setValueAtTime(1350, now);
+        osc2.frequency.linearRampToValueAtTime(950, now + duration);
+        lfo.type = 'sine';
+        lfo.frequency.setValueAtTime(28, now);
+        lfoGain.gain.setValueAtTime(220, now);
+        lfo.connect(lfoGain);
+        lfoGain.connect(osc1.frequency);
+        lfoGain.connect(osc2.frequency);
+        gain.gain.setValueAtTime(0.001, now);
+        gain.gain.exponentialRampToValueAtTime(0.85, now + 0.03);
+        gain.gain.setValueAtTime(0.85, now + duration - 0.1);
+        gain.gain.exponentialRampToValueAtTime(0.0001, now + duration);
+        osc1.connect(gain);
+        osc2.connect(gain);
+        gain.connect(context.destination);
+        osc1.start(now);
+        osc2.start(now);
+        lfo.start(now);
+        osc1.stop(now + duration);
+        osc2.stop(now + duration);
+        lfo.stop(now + duration);
+      });
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  const triggerBuzzEffect = useCallback(() => {
+    playBuzzSound();
+    setBuzzActive(true);
+    if (buzzTimeoutRef.current) {
+      window.clearTimeout(buzzTimeoutRef.current);
+    }
+    buzzTimeoutRef.current = window.setTimeout(() => {
+      setBuzzActive(false);
+      buzzTimeoutRef.current = null;
+    }, 900);
+  }, [playBuzzSound]);
+
   const navigate = useNavigate();
   const params = useParams<{ contactId?: string }>();
   const routeContactId = useMemo(() => {
@@ -5304,6 +5376,56 @@ const ChatPage: React.FC = () => {
     }
   };
 
+  const handleSendBuzz = useCallback(async () => {
+    if (!selectedContactId || currentUserId == null) return;
+    const targetContact = contacts.find((contact) => contact.id === selectedContactId);
+    if (!targetContact) return;
+
+    triggerBuzzEffect();
+
+    const timestamp = new Date().toISOString();
+    const newMessage: ChatMessage = {
+      id: uniqueKey(),
+      author: 'self',
+      text: CHAT_ZUMBIDO_MARKER,
+      timestamp,
+    };
+    setMessagesByContact((prev) => {
+      const current = prev[selectedContactId] ?? [];
+      return { ...prev, [selectedContactId]: [...current, newMessage] };
+    });
+
+    const storedEntry: StoredChatMessage = {
+      id: newMessage.id,
+      senderId: currentUserId,
+      recipientId: targetContact.id,
+      text: CHAT_ZUMBIDO_MARKER,
+      timestamp,
+      imageData: null,
+      imageName: null,
+    };
+    appendStoredChatMessage(storedEntry, currentUserId);
+    appendStoredChatMessage(storedEntry, targetContact.id);
+
+    try {
+      await fetch(`${apiBaseUrl}/api/chat/messages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          senderId: currentUserId,
+          recipientId: targetContact.id,
+          text: CHAT_ZUMBIDO_MARKER,
+          imageData: null,
+          imageName: null,
+        }),
+      });
+    } catch {
+      // ignore
+    } finally {
+      void fetchMessagesFromServer();
+    }
+  }, [apiBaseUrl, contacts, currentUserId, fetchMessagesFromServer, selectedContactId, triggerBuzzEffect]);
+
   const openConversation = useCallback((contactId: number) => {
     navigate(`/chat/${contactId}`);
   }, [navigate]);
@@ -5316,6 +5438,9 @@ const ChatPage: React.FC = () => {
   const layoutClasses = ['chat-layout', `chat-theme-${chatTheme}`];
   if (routeContactId) {
     layoutClasses.push('chat-layout--conversation');
+  }
+  if (buzzActive) {
+    layoutClasses.push('chat-layout--buzzing');
   }
   const themeStyle = useMemo(() => {
     const base = { ...CHAT_THEME_VARS[chatTheme] } as Record<string, string>;
@@ -5333,19 +5458,29 @@ const ChatPage: React.FC = () => {
       return;
     }
     let tonePlayed = false;
+    let buzzPlayed = false;
     Object.entries(messagesByContact).forEach(([idKey, conversation]) => {
       const contactId = Number(idKey);
       const previousCount = lastMessageCountRef.current[contactId] ?? 0;
       if (conversation.length > previousCount) {
         const newMessages = conversation.slice(previousCount);
-        if (!tonePlayed && newMessages.some((message) => message.author === 'contact')) {
+        const incomingBuzz = newMessages.some(
+          (m) => m.author === 'contact' && m.text === CHAT_ZUMBIDO_MARKER
+        );
+        if (!buzzPlayed && incomingBuzz) {
+          triggerBuzzEffect();
+          buzzPlayed = true;
+        } else if (
+          !tonePlayed &&
+          newMessages.some((m) => m.author === 'contact' && m.text !== CHAT_ZUMBIDO_MARKER)
+        ) {
           playIncomingTone();
           tonePlayed = true;
         }
       }
       lastMessageCountRef.current[contactId] = conversation.length;
     });
-  }, [messagesByContact, playIncomingTone]);
+  }, [messagesByContact, playIncomingTone, triggerBuzzEffect]);
 
   const { promoLogoSrc } = useBranding();
 
@@ -5624,6 +5759,15 @@ const ChatPage: React.FC = () => {
                 onScroll={handleMessagesScroll}
               >
                 {selectedMessages.map((message) => {
+                  if (message.text === CHAT_ZUMBIDO_MARKER) {
+                    return (
+                      <div key={message.id} className="chat-zumbido-notice">
+                        <span>⚡</span>
+                        <span>{message.author === 'self' ? 'Enviaste un zumbido' : '¡Te enviaron un zumbido!'}</span>
+                        <time>{formatMessageTime(message.timestamp)}</time>
+                      </div>
+                    );
+                  }
                   const canReact = Number.isFinite(message.serverId ?? Number(message.id)) && (message.serverId ?? Number(message.id)) > 0;
                   const reactions = message.reactions ?? [];
                   const grouped = reactions.reduce<Record<string, { count: number; mine: boolean }>>((acc, r) => {
@@ -5735,6 +5879,15 @@ const ChatPage: React.FC = () => {
                     onClick={() => fileInputRef.current?.click()}
                   >
                     📎
+                  </button>
+                  <button
+                    type="button"
+                    className="chat-tool chat-tool--buzz"
+                    aria-label="Enviar zumbido"
+                    title="Enviar zumbido"
+                    onClick={() => void handleSendBuzz()}
+                  >
+                    ⚡
                   </button>
                   <div className="emoji-picker-wrapper">
                     <button
