@@ -38,6 +38,9 @@ class LiqLiquidacionDistribuidor extends Model
         'referencia_externa',
         'observaciones_manual',
         'cliente_id',
+        'total_reembolso_peajes',
+        'peajes_autorizados_at',
+        'peajes_autorizados_por',
     ];
 
     protected $casts = [

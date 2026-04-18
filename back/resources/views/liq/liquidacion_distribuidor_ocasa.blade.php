@@ -179,10 +179,15 @@
         <td class="k">SubTotal Operaciones</td>
         <td class="v">{{ $fmtMoney($liq['subtotal'] ?? null) }}</td>
       </tr>
-      @if(($liq['peajes'] ?? 0) > 0)
+      @if(($liq['reembolso_peajes'] ?? 0) > 0)
         <tr>
-          <td class="k">Peajes (Imp. No Gravado)</td>
-          <td class="v">{{ $fmtMoney($liq['peajes']) }}</td>
+          <td class="k">Reembolso de peajes autorizados</td>
+          <td class="v">{{ $fmtMoney($liq['reembolso_peajes']) }}</td>
+        </tr>
+      @elseif(($liq['peajes'] ?? 0) > 0)
+        <tr>
+          <td class="k" style="color:#888">Peajes informados (no autorizados)</td>
+          <td class="v" style="color:#888">{{ $fmtMoney($liq['peajes']) }}</td>
         </tr>
       @endif
       <tr>

@@ -24,6 +24,7 @@ from app.procesar_oca import (
     detect_files,
     CODIGOS_CONTRATO_CONOCIDOS,
 )
+from app.parsers.pdf_ocasa import parse_pdf_ocasa
 
 app = FastAPI(
     title="OCA PDF Processor",
@@ -105,6 +106,22 @@ async def procesar_pdfs(
 # ---------------------------------------------------------------------------
 # Parsear solo PDF principal (debug)
 # ---------------------------------------------------------------------------
+
+# BUGFIX 22 A: Parser de PDFs facturables OCASA
+@app.post("/api/ocasa/parse-pdf")
+async def parse_pdf_ocasa_endpoint(pdf: UploadFile = File(...)):
+    """Parsea un PDF OCASA y devuelve las operaciones con Imp.Grav/Imp.NoGrav."""
+    with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
+        content = await pdf.read()
+        tmp.write(content)
+        tmp_path = tmp.name
+
+    try:
+        result = parse_pdf_ocasa(tmp_path, nombre_archivo=pdf.filename)
+        return result
+    finally:
+        os.unlink(tmp_path)
+
 
 @app.post("/api/oca/parsear-principal")
 async def parsear_principal(pdf: UploadFile = File(...)):

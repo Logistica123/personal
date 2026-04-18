@@ -77,6 +77,62 @@ class LiqOperacionController extends Controller
         return response()->json(['message' => 'Operación excluida', 'data' => $operacion->fresh()]);
     }
 
+    // PUT /liq/operaciones/{operacion}/editar-importes (BUGFIX 22 H)
+    // Permite editar manualmente importe_gravado/importe_no_gravado con motivo obligatorio
+    public function editarImportes(Request $request, LiqOperacion $operacion): JsonResponse
+    {
+        $data = $request->validate([
+            'importe_gravado'     => 'nullable|numeric|min:0',
+            'importe_no_gravado'  => 'nullable|numeric|min:0',
+            'motivo'              => 'required|string|min:3|max:500',
+        ]);
+
+        if (!array_key_exists('importe_gravado', $data) && !array_key_exists('importe_no_gravado', $data)) {
+            return response()->json(['error' => 'Debe especificar al menos un importe a modificar'], 422);
+        }
+
+        $previos = [
+            'importe_gravado'    => (float) $operacion->importe_gravado,
+            'importe_no_gravado' => (float) $operacion->importe_no_gravado,
+        ];
+
+        DB::beginTransaction();
+        try {
+            $updates = [];
+            if (array_key_exists('importe_gravado', $data)) {
+                $updates['importe_gravado'] = $data['importe_gravado'];
+            }
+            if (array_key_exists('importe_no_gravado', $data)) {
+                $updates['importe_no_gravado'] = $data['importe_no_gravado'];
+            }
+
+            $operacion->update($updates);
+
+            // Registrar auditoría en historial
+            if (class_exists(\App\Models\LiqHistorialAuditoria::class)) {
+                \App\Models\LiqHistorialAuditoria::registrar(
+                    'operacion',
+                    $operacion->id,
+                    'edicion_importes_manual',
+                    $previos,
+                    $updates + ['motivo' => $data['motivo']],
+                    $data['motivo'],
+                    $request->user(),
+                    $request->ip()
+                );
+            }
+
+            // Invalidar liquidaciones de distribuidor generadas
+            LiqLiquidacionDistribuidor::where('liquidacion_cliente_id', $operacion->liquidacion_cliente_id)->delete();
+
+            DB::commit();
+            return response()->json(['message' => 'Importes actualizados', 'data' => $operacion->fresh()]);
+        } catch (\Throwable $e) {
+            DB::rollBack();
+            return response()->json(['error' => 'Error al actualizar: ' . $e->getMessage()], 500);
+        }
+    }
+
     // PUT /liq/operaciones/{operacion}/incluir
     public function incluir(LiqOperacion $operacion): JsonResponse
     {

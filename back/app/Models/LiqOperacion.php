@@ -32,9 +32,13 @@ class LiqOperacion extends Model
         'motivo_exclusion',
         'observaciones',
         'id_operacion_cliente',
+        'id_liquidacion_cliente_externo',
         'tipo_operacion',
         'origen',
         'operacion_referencia_id',
+        'peaje_autorizado',
+        'peaje_monto_ajustado',
+        'peaje_motivo',
         // OCASA fields
         'modelo_tarifa',
         'costo_fijo',

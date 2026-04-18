@@ -204,12 +204,14 @@ class LiqExtractosController extends Controller
             $resultados['archivos']['ycc1'] = ['estado' => 'no_cargado'];
         }
 
-        // --- 3. Procesar PDFs (opcionales) ---
+        // --- 3. Procesar PDFs (opcionales) — BUGFIX 22 A: usa OcasaPdfProcessor con microservicio Python ---
         $pdfFiles = $request->file('pdf_files', []);
         if (!empty($pdfFiles)) {
-            $pdfExtractor = app(\App\Services\FacturaAi\PdfTextExtractor::class);
+            $ocasaPdfProcessor = app(\App\Services\Liq\OcasaPdfProcessor::class);
             $pdfsOk = 0;
-            $opsConGravado = 0;
+            $opsActualizadas = 0;
+            $opsHuerfanas = 0;
+            $warningsAll = [];
 
             foreach ($pdfFiles as $pdfFile) {
                 $pdfNombre = (string) Str::uuid() . '.pdf';
@@ -226,10 +228,13 @@ class LiqExtractosController extends Controller
                 ]);
 
                 try {
-                    $texto = $pdfExtractor->extract(Storage::disk($disk)->path($pdfRuta));
-                    $pdfResult = $ocasaProcessor->procesarPdfCliente($archivoPdf, $liquidacion, $config, $texto);
+                    $pdfResult = $ocasaPdfProcessor->procesarArchivo($archivoPdf, $liquidacion);
                     $pdfsOk++;
-                    $opsConGravado += $pdfResult['operaciones_actualizadas'] ?? 0;
+                    $opsActualizadas += $pdfResult['operaciones_actualizadas'] ?? 0;
+                    $opsHuerfanas += $pdfResult['operaciones_huerfanas'] ?? 0;
+                    if (!empty($pdfResult['warnings'])) {
+                        $warningsAll[$pdfFile->getClientOriginalName()] = $pdfResult['warnings'];
+                    }
                 } catch (\Throwable $e) {
                     $resultados['errores'][] = 'PDF ' . $pdfFile->getClientOriginalName() . ': ' . $e->getMessage();
                 }
@@ -238,7 +243,9 @@ class LiqExtractosController extends Controller
             $resultados['archivos']['pdfs'] = [
                 'estado' => $pdfsOk > 0 ? 'ok' : 'error',
                 'facturas' => $pdfsOk,
-                'ops_con_gravado' => $opsConGravado,
+                'ops_actualizadas' => $opsActualizadas,
+                'ops_huerfanas' => $opsHuerfanas,
+                'warnings' => $warningsAll ?: null,
             ];
         } else {
             $resultados['archivos']['pdfs'] = ['estado' => 'no_cargado'];
@@ -419,6 +426,25 @@ class LiqExtractosController extends Controller
             return response()->json(['error' => 'Solo se pueden generar liquidaciones en estado auditada, pendiente o en proceso'], 422);
         }
 
+        // BUGFIX 22 F10: contar peajes pendientes de autorizar como warning
+        $peajesPendientes = LiqOperacion::where('liquidacion_cliente_id', $liquidacionCliente->id)
+            ->whereIn('estado', ['ok', 'diferencia'])
+            ->where('excluida', false)
+            ->where('importe_no_gravado', '>', 0)
+            ->where('peaje_autorizado', false)
+            ->whereNull('peaje_motivo')
+            ->count();
+
+        $confirmarSinAutorizar = (bool) $request->input('confirmar_sin_autorizar', false);
+        if ($peajesPendientes > 0 && !$confirmarSinAutorizar) {
+            return response()->json([
+                'error' => 'peajes_pendientes',
+                'message' => "Hay {$peajesPendientes} operaciones con peajes sin autorizar. Estas no se incluirán en el reembolso.",
+                'peajes_pendientes' => $peajesPendientes,
+                'requiere_confirmacion' => true,
+            ], 409);
+        }
+
         DB::beginTransaction();
         try {
             // Delete existing generated distributor liquidations for this liquidacion
@@ -452,14 +478,23 @@ class LiqExtractosController extends Controller
                 $pagaPeajes = $distribuidor?->paga_peajes ?? true;
                 // BUGFIX 20 Feature E: flag pago_retenido del distribuidor
                 $pagoRetenido = (bool) ($distribuidor?->retener_pago ?? false);
-                $subtotalPeajes = $pagaPeajes
-                    ? round($ops->sum(fn($op) => (float) ($op->importe_no_gravado ?? 0)), 2)
+
+                // BUGFIX 22 Feature F11: distinguir subtotal informativo vs. reembolso autorizado
+                //   subtotal_peajes   = total bruto desde TMS (informativo)
+                //   total_reembolso_peajes = sólo peajes autorizados (lo que efectivamente se paga)
+                $subtotalPeajes = round($ops->sum(fn($op) => (float) ($op->importe_no_gravado ?? 0)), 2);
+
+                $totalReembolsoPeajes = $pagaPeajes
+                    ? round($ops->sum(function ($op) {
+                        if (!$op->peaje_autorizado) return 0;
+                        return (float) ($op->peaje_monto_ajustado ?? $op->importe_no_gravado ?? 0);
+                    }), 2)
                     : 0;
 
                 // Beneficio seguro: por ahora manual, campo en liq_liquidaciones_distribuidor
                 $beneficioSeguro = 0;
 
-                $total = $subtotal + $subtotalPeajes - $montoGasto - $beneficioSeguro;
+                $total = $subtotal + $totalReembolsoPeajes - $montoGasto - $beneficioSeguro;
 
                 $liqDist = LiqLiquidacionDistribuidor::create([
                     'liquidacion_cliente_id' => $liquidacionCliente->id,
@@ -471,6 +506,7 @@ class LiqExtractosController extends Controller
                     'subtotal' => round($subtotal, 2),
                     'gastos_administrativos' => round($montoGasto, 2),
                     'subtotal_peajes' => $subtotalPeajes,
+                    'total_reembolso_peajes' => $totalReembolsoPeajes,
                     'beneficio_seguro' => $beneficioSeguro,
                     'total_a_pagar' => round($total, 2),
                     'estado' => LiqLiquidacionDistribuidor::ESTADO_GENERADA,
@@ -505,6 +541,7 @@ class LiqExtractosController extends Controller
                     'ids' => $created,
                     'estado_cuenta_generadas' => count($estadoCuentaIds),
                     'estado_cuenta_ids' => $estadoCuentaIds,
+                    'peajes_pendientes' => $peajesPendientes,
                 ],
                 'message' => count($created) . ' liquidaciones de distribuidores generadas, ' . count($estadoCuentaIds) . ' filas de estado de cuenta creadas'
             ]);
@@ -705,6 +742,633 @@ class LiqExtractosController extends Controller
         return response()->json([
             'data'    => $liquidacionCliente->fresh(['cliente:id,nombre_corto,razon_social']),
             'message' => "Estado actualizado a {$nuevo}",
+        ]);
+    }
+
+    // GET /liq/liquidaciones/{liquidacionCliente}/totales-por-sucursal (BUGFIX 22 B)
+    public function totalesPorSucursal(LiqLiquidacionCliente $liquidacionCliente): JsonResponse
+    {
+        $totales = \DB::table('liq_liquidacion_sucursal_totales')
+            ->where('liquidacion_cliente_id', $liquidacionCliente->id)
+            ->orderBy('sucursal')
+            ->get();
+
+        $totalGlobal = [
+            'total_importe' => 0,
+            'total_gravado' => 0,
+            'total_no_gravado' => 0,
+            'cantidad_operaciones' => 0,
+        ];
+
+        foreach ($totales as $t) {
+            $totalGlobal['total_importe'] += (float) $t->total_importe;
+            $totalGlobal['total_gravado'] += (float) $t->total_gravado;
+            $totalGlobal['total_no_gravado'] += (float) $t->total_no_gravado;
+            $totalGlobal['cantidad_operaciones'] += (int) $t->cantidad_operaciones;
+        }
+
+        return response()->json([
+            'data' => [
+                'por_sucursal' => $totales,
+                'total_global' => $totalGlobal,
+            ],
+        ]);
+    }
+
+    // POST /liq/liquidaciones/{liquidacionCliente}/recalcular-totales-sucursal (BUGFIX 22 B)
+    public function recalcularTotalesSucursal(LiqLiquidacionCliente $liquidacionCliente): JsonResponse
+    {
+        $processor = app(\App\Services\Liq\OcasaPdfProcessor::class);
+        $sucursales = LiqOperacion::where('liquidacion_cliente_id', $liquidacionCliente->id)
+            ->whereNotNull('sucursal_tarifa')
+            ->distinct()
+            ->pluck('sucursal_tarifa');
+
+        foreach ($sucursales as $suc) {
+            $processor->recalcularTotalSucursal($liquidacionCliente->id, $suc);
+        }
+
+        return response()->json([
+            'message' => count($sucursales) . ' sucursales recalculadas',
+            'sucursales' => $sucursales->values(),
+        ]);
+    }
+
+    // GET /liq/liquidaciones/{liquidacionCliente}/peajes (BUGFIX 22 F)
+    // Lista peajes agrupados por distribuidor con estado de autorización
+    public function peajes(LiqLiquidacionCliente $liquidacionCliente): JsonResponse
+    {
+        // Agrupar operaciones con peajes por distribuidor
+        $ops = LiqOperacion::where('liquidacion_cliente_id', $liquidacionCliente->id)
+            ->whereNotIn('estado', ['ignorado', 'anulado', 'excluida'])
+            ->where('importe_no_gravado', '>', 0)
+            ->with('distribuidor:id,apellidos,nombres,patente')
+            ->get();
+
+        $porDistrib = [];
+        foreach ($ops as $op) {
+            if (!$op->distribuidor_id) continue;
+            $key = $op->distribuidor_id;
+            if (!isset($porDistrib[$key])) {
+                $porDistrib[$key] = [
+                    'distribuidor_id' => $op->distribuidor_id,
+                    'distribuidor' => $op->distribuidor ? "{$op->distribuidor->apellidos} {$op->distribuidor->nombres}" : null,
+                    'patente' => $op->distribuidor?->patente,
+                    'sucursales' => [],
+                    'ops_con_peajes' => 0,
+                    'ops_totales' => 0,
+                    'total_peajes_pdf' => 0,
+                    'total_peajes_autorizado' => 0,
+                    'total_tarifa' => 0,
+                    'pendientes' => 0,
+                    'autorizadas' => 0,
+                    'rechazadas' => 0,
+                ];
+            }
+            $porDistrib[$key]['ops_con_peajes']++;
+            $porDistrib[$key]['total_peajes_pdf'] += (float) $op->importe_no_gravado;
+            $porDistrib[$key]['total_tarifa'] += (float) $op->valor_tarifa_distribuidor;
+            $montoEfectivo = $op->peaje_autorizado
+                ? ($op->peaje_monto_ajustado ?? (float) $op->importe_no_gravado)
+                : 0;
+            $porDistrib[$key]['total_peajes_autorizado'] += $montoEfectivo;
+            if ($op->peaje_autorizado) {
+                $porDistrib[$key]['autorizadas']++;
+            } elseif ($op->peaje_motivo) {
+                $porDistrib[$key]['rechazadas']++;
+            } else {
+                $porDistrib[$key]['pendientes']++;
+            }
+            if ($op->sucursal_tarifa && !in_array($op->sucursal_tarifa, $porDistrib[$key]['sucursales'])) {
+                $porDistrib[$key]['sucursales'][] = $op->sucursal_tarifa;
+            }
+        }
+
+        // Contar ops totales por distribuidor (incluyendo las sin peajes)
+        $opsTotalesPorDist = LiqOperacion::where('liquidacion_cliente_id', $liquidacionCliente->id)
+            ->whereNotIn('estado', ['ignorado', 'anulado', 'excluida'])
+            ->whereNotNull('distribuidor_id')
+            ->selectRaw('distribuidor_id, COUNT(*) as total')
+            ->groupBy('distribuidor_id')
+            ->pluck('total', 'distribuidor_id');
+
+        foreach ($porDistrib as $k => &$d) {
+            $d['ops_totales'] = (int) ($opsTotalesPorDist[$k] ?? 0);
+            $d['total_peajes_pdf'] = round($d['total_peajes_pdf'], 2);
+            $d['total_peajes_autorizado'] = round($d['total_peajes_autorizado'], 2);
+            $d['total_tarifa'] = round($d['total_tarifa'], 2);
+
+            if ($d['pendientes'] > 0) $d['estado'] = 'pendiente';
+            elseif ($d['autorizadas'] > 0 && $d['rechazadas'] === 0) $d['estado'] = 'autorizado';
+            elseif ($d['rechazadas'] > 0 && $d['autorizadas'] === 0) $d['estado'] = 'rechazado';
+            else $d['estado'] = 'mixto';
+        }
+        unset($d);
+
+        return response()->json(['data' => array_values($porDistrib)]);
+    }
+
+    // GET /liq/liquidaciones/{liquidacionCliente}/peajes/distribuidor/{distribuidorId}
+    public function peajesDistribuidor(LiqLiquidacionCliente $liquidacionCliente, int $distribuidorId): JsonResponse
+    {
+        $ops = LiqOperacion::where('liquidacion_cliente_id', $liquidacionCliente->id)
+            ->where('distribuidor_id', $distribuidorId)
+            ->where('importe_no_gravado', '>', 0)
+            ->whereNotIn('estado', ['ignorado', 'anulado', 'excluida'])
+            ->orderBy('id')
+            ->get();
+
+        return response()->json([
+            'data' => $ops->map(fn ($op) => [
+                'id' => $op->id,
+                'fecha' => $op->campos_originales['fecha'] ?? null,
+                'id_operacion_cliente' => $op->id_operacion_cliente,
+                'ruta' => $op->campos_originales['ruta'] ?? $op->concepto,
+                'importe_total' => (float) $op->valor_cliente,
+                'importe_gravado' => (float) $op->importe_gravado,
+                'importe_no_gravado' => (float) $op->importe_no_gravado,
+                'peaje_autorizado' => (bool) $op->peaje_autorizado,
+                'peaje_monto_ajustado' => $op->peaje_monto_ajustado,
+                'peaje_motivo' => $op->peaje_motivo,
+            ]),
+        ]);
+    }
+
+    // POST /liq/liquidaciones/{liquidacionCliente}/peajes/autorizar (BUGFIX 22 F)
+    public function autorizarPeajes(Request $request, LiqLiquidacionCliente $liquidacionCliente): JsonResponse
+    {
+        $data = $request->validate([
+            'resoluciones' => 'required|array',
+            'resoluciones.*.operacion_id' => 'required|integer',
+            'resoluciones.*.accion' => 'required|in:autorizar,rechazar,ajustar',
+            'resoluciones.*.monto_ajustado' => 'nullable|numeric|min:0',
+            'resoluciones.*.motivo' => 'nullable|string|max:255',
+        ]);
+
+        $stats = ['autorizadas' => 0, 'rechazadas' => 0, 'ajustadas' => 0];
+
+        \DB::beginTransaction();
+        try {
+            foreach ($data['resoluciones'] as $res) {
+                $op = LiqOperacion::where('liquidacion_cliente_id', $liquidacionCliente->id)
+                    ->find($res['operacion_id']);
+                if (!$op) continue;
+
+                switch ($res['accion']) {
+                    case 'autorizar':
+                        $op->update([
+                            'peaje_autorizado' => true,
+                            'peaje_monto_ajustado' => null,
+                            'peaje_motivo' => $res['motivo'] ?? 'Autorizado',
+                        ]);
+                        $stats['autorizadas']++;
+                        break;
+                    case 'rechazar':
+                        $op->update([
+                            'peaje_autorizado' => false,
+                            'peaje_monto_ajustado' => 0,
+                            'peaje_motivo' => $res['motivo'] ?? 'Rechazado',
+                        ]);
+                        $stats['rechazadas']++;
+                        break;
+                    case 'ajustar':
+                        $op->update([
+                            'peaje_autorizado' => true,
+                            'peaje_monto_ajustado' => $res['monto_ajustado'],
+                            'peaje_motivo' => $res['motivo'] ?? 'Ajustado',
+                        ]);
+                        $stats['ajustadas']++;
+                        break;
+                }
+
+                // Auditoría
+                if (class_exists(\App\Models\LiqHistorialMovimiento::class)) {
+                    \App\Models\LiqHistorialMovimiento::registrar(
+                        'autorizar_peaje_' . $res['accion'],
+                        "Peaje op#{$op->id} — " . ($res['motivo'] ?? $res['accion']),
+                        $request->user()?->id, $liquidacionCliente->id, null, $op->distribuidor_id,
+                        ['operacion_id' => $op->id, 'accion' => $res['accion'], 'monto_ajustado' => $res['monto_ajustado'] ?? null]
+                    );
+                }
+            }
+
+            \DB::commit();
+            return response()->json(['message' => 'Peajes actualizados', 'data' => $stats]);
+        } catch (\Throwable $e) {
+            \DB::rollBack();
+            return response()->json(['error' => 'Error: ' . $e->getMessage()], 500);
+        }
+    }
+
+    // GET /liq/peajes/dashboard (BUGFIX 22 G)
+    // Métricas agregadas cross-liquidación con filtros
+    public function dashboardPeajes(Request $request): JsonResponse
+    {
+        $filters = $request->validate([
+            'cliente_id'      => 'nullable|integer|exists:liq_clientes,id',
+            'distribuidor_id' => 'nullable|integer',
+            'desde'           => 'nullable|date',
+            'hasta'           => 'nullable|date',
+            'estado'          => 'nullable|in:autorizado,rechazado,pendiente',
+        ]);
+
+        $q = LiqOperacion::query()
+            ->join('liq_liquidaciones_cliente as lc', 'lc.id', '=', 'liq_operaciones.liquidacion_cliente_id')
+            ->leftJoin('personas as p', 'p.id', '=', 'liq_operaciones.distribuidor_id')
+            ->where('liq_operaciones.importe_no_gravado', '>', 0)
+            ->whereNotIn('liq_operaciones.estado', ['ignorado', 'anulado', 'excluida']);
+
+        if (!empty($filters['cliente_id'])) {
+            $q->where('lc.cliente_id', $filters['cliente_id']);
+        }
+        if (!empty($filters['distribuidor_id'])) {
+            $q->where('liq_operaciones.distribuidor_id', $filters['distribuidor_id']);
+        }
+        if (!empty($filters['desde'])) {
+            $q->whereDate('lc.periodo_desde', '>=', $filters['desde']);
+        }
+        if (!empty($filters['hasta'])) {
+            $q->whereDate('lc.periodo_hasta', '<=', $filters['hasta']);
+        }
+        if (!empty($filters['estado'])) {
+            switch ($filters['estado']) {
+                case 'autorizado':
+                    $q->where('liq_operaciones.peaje_autorizado', true);
+                    break;
+                case 'rechazado':
+                    $q->where('liq_operaciones.peaje_autorizado', false)
+                      ->whereNotNull('liq_operaciones.peaje_motivo');
+                    break;
+                case 'pendiente':
+                    $q->where('liq_operaciones.peaje_autorizado', false)
+                      ->whereNull('liq_operaciones.peaje_motivo');
+                    break;
+            }
+        }
+
+        $base = (clone $q);
+
+        // Métricas globales
+        $metrics = (clone $base)
+            ->selectRaw("
+                COUNT(*) as total_ops,
+                COALESCE(SUM(liq_operaciones.importe_no_gravado), 0) as total_bruto,
+                COALESCE(SUM(CASE WHEN liq_operaciones.peaje_autorizado = 1
+                    THEN COALESCE(liq_operaciones.peaje_monto_ajustado, liq_operaciones.importe_no_gravado)
+                    ELSE 0 END), 0) as total_autorizado,
+                COALESCE(SUM(CASE WHEN liq_operaciones.peaje_autorizado = 0 AND liq_operaciones.peaje_motivo IS NOT NULL
+                    THEN liq_operaciones.importe_no_gravado ELSE 0 END), 0) as total_rechazado,
+                COALESCE(SUM(CASE WHEN liq_operaciones.peaje_autorizado = 0 AND liq_operaciones.peaje_motivo IS NULL
+                    THEN liq_operaciones.importe_no_gravado ELSE 0 END), 0) as total_pendiente,
+                SUM(CASE WHEN liq_operaciones.peaje_autorizado = 1 THEN 1 ELSE 0 END) as ops_autorizadas,
+                SUM(CASE WHEN liq_operaciones.peaje_autorizado = 0 AND liq_operaciones.peaje_motivo IS NOT NULL THEN 1 ELSE 0 END) as ops_rechazadas,
+                SUM(CASE WHEN liq_operaciones.peaje_autorizado = 0 AND liq_operaciones.peaje_motivo IS NULL THEN 1 ELSE 0 END) as ops_pendientes
+            ")
+            ->first();
+
+        $totalOps = (int) ($metrics->total_ops ?? 0);
+        $porcentajeAutorizacion = $totalOps > 0
+            ? round((float) ($metrics->ops_autorizadas ?? 0) / $totalOps * 100, 2)
+            : 0;
+
+        // Top 10 distribuidores por monto autorizado
+        $topDistribuidores = (clone $base)
+            ->selectRaw("
+                liq_operaciones.distribuidor_id,
+                COALESCE(CONCAT(p.apellidos, ' ', p.nombres), 'Sin distribuidor') as distribuidor,
+                p.patente,
+                COUNT(*) as ops,
+                COALESCE(SUM(CASE WHEN liq_operaciones.peaje_autorizado = 1
+                    THEN COALESCE(liq_operaciones.peaje_monto_ajustado, liq_operaciones.importe_no_gravado)
+                    ELSE 0 END), 0) as total_autorizado,
+                COALESCE(SUM(liq_operaciones.importe_no_gravado), 0) as total_bruto
+            ")
+            ->groupBy('liq_operaciones.distribuidor_id', 'p.apellidos', 'p.nombres', 'p.patente')
+            ->orderByDesc('total_autorizado')
+            ->limit(10)
+            ->get();
+
+        // Serie temporal: por mes (YYYY-MM de periodo_desde)
+        $serie = (clone $base)
+            ->selectRaw("
+                DATE_FORMAT(lc.periodo_desde, '%Y-%m') as mes,
+                COUNT(*) as ops,
+                COALESCE(SUM(CASE WHEN liq_operaciones.peaje_autorizado = 1
+                    THEN COALESCE(liq_operaciones.peaje_monto_ajustado, liq_operaciones.importe_no_gravado)
+                    ELSE 0 END), 0) as total_autorizado,
+                COALESCE(SUM(liq_operaciones.importe_no_gravado), 0) as total_bruto
+            ")
+            ->groupBy('mes')
+            ->orderBy('mes')
+            ->get();
+
+        // Motivos de rechazo/ajuste más frecuentes
+        $motivos = (clone $base)
+            ->whereNotNull('liq_operaciones.peaje_motivo')
+            ->selectRaw('liq_operaciones.peaje_motivo as motivo, COUNT(*) as cantidad, COALESCE(SUM(liq_operaciones.importe_no_gravado), 0) as monto')
+            ->groupBy('liq_operaciones.peaje_motivo')
+            ->orderByDesc('cantidad')
+            ->limit(10)
+            ->get();
+
+        return response()->json([
+            'data' => [
+                'metricas' => [
+                    'total_ops'             => $totalOps,
+                    'total_bruto'           => round((float) ($metrics->total_bruto ?? 0), 2),
+                    'total_autorizado'      => round((float) ($metrics->total_autorizado ?? 0), 2),
+                    'total_rechazado'       => round((float) ($metrics->total_rechazado ?? 0), 2),
+                    'total_pendiente'       => round((float) ($metrics->total_pendiente ?? 0), 2),
+                    'ops_autorizadas'       => (int) ($metrics->ops_autorizadas ?? 0),
+                    'ops_rechazadas'        => (int) ($metrics->ops_rechazadas ?? 0),
+                    'ops_pendientes'        => (int) ($metrics->ops_pendientes ?? 0),
+                    'porcentaje_autorizacion' => $porcentajeAutorizacion,
+                ],
+                'top_distribuidores' => $topDistribuidores,
+                'serie_temporal'     => $serie,
+                'motivos'            => $motivos,
+            ],
+        ]);
+    }
+
+    // GET /liq/peajes/dashboard/export (BUGFIX 22 G)
+    // Export detallado a Excel de operaciones con peajes aplicando mismos filtros
+    public function exportDashboardPeajes(Request $request)
+    {
+        $filters = $request->validate([
+            'cliente_id'      => 'nullable|integer|exists:liq_clientes,id',
+            'distribuidor_id' => 'nullable|integer',
+            'desde'           => 'nullable|date',
+            'hasta'           => 'nullable|date',
+            'estado'          => 'nullable|in:autorizado,rechazado,pendiente',
+        ]);
+
+        $q = LiqOperacion::query()
+            ->join('liq_liquidaciones_cliente as lc', 'lc.id', '=', 'liq_operaciones.liquidacion_cliente_id')
+            ->leftJoin('personas as p', 'p.id', '=', 'liq_operaciones.distribuidor_id')
+            ->leftJoin('liq_clientes as c', 'c.id', '=', 'lc.cliente_id')
+            ->where('liq_operaciones.importe_no_gravado', '>', 0)
+            ->whereNotIn('liq_operaciones.estado', ['ignorado', 'anulado', 'excluida']);
+
+        if (!empty($filters['cliente_id'])) {
+            $q->where('lc.cliente_id', $filters['cliente_id']);
+        }
+        if (!empty($filters['distribuidor_id'])) {
+            $q->where('liq_operaciones.distribuidor_id', $filters['distribuidor_id']);
+        }
+        if (!empty($filters['desde'])) {
+            $q->whereDate('lc.periodo_desde', '>=', $filters['desde']);
+        }
+        if (!empty($filters['hasta'])) {
+            $q->whereDate('lc.periodo_hasta', '<=', $filters['hasta']);
+        }
+        if (!empty($filters['estado'])) {
+            switch ($filters['estado']) {
+                case 'autorizado':
+                    $q->where('liq_operaciones.peaje_autorizado', true);
+                    break;
+                case 'rechazado':
+                    $q->where('liq_operaciones.peaje_autorizado', false)
+                      ->whereNotNull('liq_operaciones.peaje_motivo');
+                    break;
+                case 'pendiente':
+                    $q->where('liq_operaciones.peaje_autorizado', false)
+                      ->whereNull('liq_operaciones.peaje_motivo');
+                    break;
+            }
+        }
+
+        $rows = $q->select(
+            'liq_operaciones.id',
+            'lc.id as liquidacion_id',
+            'c.nombre_corto as cliente',
+            'lc.periodo_desde',
+            'lc.periodo_hasta',
+            'liq_operaciones.dominio',
+            'liq_operaciones.sucursal_tarifa',
+            'liq_operaciones.concepto',
+            'liq_operaciones.id_operacion_cliente',
+            'p.apellidos',
+            'p.nombres',
+            'p.patente',
+            'liq_operaciones.importe_gravado',
+            'liq_operaciones.importe_no_gravado',
+            'liq_operaciones.peaje_autorizado',
+            'liq_operaciones.peaje_monto_ajustado',
+            'liq_operaciones.peaje_motivo'
+        )->orderBy('lc.periodo_desde', 'desc')->get();
+
+        $header = [
+            'Op ID', 'Liq ID', 'Cliente', 'Periodo Desde', 'Periodo Hasta',
+            'Dominio', 'Sucursal', 'Concepto', 'Id Op Cliente',
+            'Distribuidor', 'Patente',
+            'Imp. Gravado', 'Imp. No Gravado',
+            'Autorizado', 'Monto Ajustado', 'Motivo',
+        ];
+
+        $out = fopen('php://temp', 'r+');
+        fputcsv($out, $header, ';');
+        foreach ($rows as $r) {
+            fputcsv($out, [
+                $r->id,
+                $r->liquidacion_id,
+                $r->cliente,
+                optional($r->periodo_desde)->format('Y-m-d') ?? $r->periodo_desde,
+                optional($r->periodo_hasta)->format('Y-m-d') ?? $r->periodo_hasta,
+                $r->dominio,
+                $r->sucursal_tarifa,
+                $r->concepto,
+                $r->id_operacion_cliente,
+                trim(($r->apellidos ?? '') . ' ' . ($r->nombres ?? '')),
+                $r->patente,
+                number_format((float) $r->importe_gravado, 2, ',', ''),
+                number_format((float) $r->importe_no_gravado, 2, ',', ''),
+                $r->peaje_autorizado ? 'Si' : 'No',
+                $r->peaje_monto_ajustado !== null ? number_format((float) $r->peaje_monto_ajustado, 2, ',', '') : '',
+                $r->peaje_motivo,
+            ], ';');
+        }
+        rewind($out);
+        $csv = stream_get_contents($out);
+        fclose($out);
+
+        $filename = 'peajes_dashboard_' . now()->format('Ymd_His') . '.csv';
+        return response($csv, 200, [
+            'Content-Type'        => 'text/csv; charset=UTF-8',
+            'Content-Disposition' => 'attachment; filename="' . $filename . '"',
+        ]);
+    }
+
+    // GET /liq/liquidaciones/{liquidacionCliente}/factura-lista (BUGFIX 22 E)
+    public function facturaLista(LiqLiquidacionCliente $liquidacionCliente): JsonResponse
+    {
+        $tolerancia = (float) ($liquidacionCliente->cliente?->tolerancia_facturacion ?? 100.0);
+
+        // 1. Sin tarifa?
+        $sinTarifa = LiqOperacion::where('liquidacion_cliente_id', $liquidacionCliente->id)
+            ->where('estado', 'sin_tarifa')
+            ->count();
+
+        // 2. Sin distribuidor?
+        $sinDistribuidor = LiqOperacion::where('liquidacion_cliente_id', $liquidacionCliente->id)
+            ->where('estado', 'sin_distribuidor')
+            ->count();
+
+        // 3. Sucursales con ops pero sin totales de PDF
+        $sucursalesConOps = LiqOperacion::where('liquidacion_cliente_id', $liquidacionCliente->id)
+            ->whereNotIn('estado', ['ignorado', 'anulado', 'excluida'])
+            ->whereNotNull('sucursal_tarifa')
+            ->distinct()
+            ->pluck('sucursal_tarifa');
+
+        $sucursalesConPdf = \DB::table('liq_liquidacion_sucursal_totales')
+            ->where('liquidacion_cliente_id', $liquidacionCliente->id)
+            ->where('total_gravado', '>', 0)
+            ->pluck('sucursal');
+
+        $sucursalesFaltantesPdf = $sucursalesConOps->diff($sucursalesConPdf)->values();
+
+        // 4. Discrepancias TMS vs PDF
+        $discrepancias = 0;
+        $porSuc = LiqOperacion::where('liquidacion_cliente_id', $liquidacionCliente->id)
+            ->whereNotIn('estado', ['ignorado', 'anulado', 'excluida'])
+            ->selectRaw('sucursal_tarifa, COALESCE(SUM(valor_cliente),0) as t1, COALESCE(SUM(importe_gravado + importe_no_gravado),0) as t2')
+            ->groupBy('sucursal_tarifa')
+            ->get();
+        foreach ($porSuc as $s) {
+            if ((float) $s->t2 > 0 && abs((float) $s->t1 - (float) $s->t2) > $tolerancia) {
+                $discrepancias++;
+            }
+        }
+
+        // Estado final
+        $bloqueos = [];
+        if ($sinTarifa > 0) $bloqueos[] = "{$sinTarifa} operaciones sin tarifa";
+        if ($sinDistribuidor > 0) $bloqueos[] = "{$sinDistribuidor} operaciones sin distribuidor";
+        if ($sucursalesFaltantesPdf->isNotEmpty()) $bloqueos[] = 'Faltan PDFs de sucursales: ' . $sucursalesFaltantesPdf->join(', ');
+        if ($discrepancias > 0) $bloqueos[] = "Discrepancias TMS vs PDF en {$discrepancias} sucursales";
+
+        $lista = empty($bloqueos);
+        $badgeColor = $lista ? 'verde' : (count($bloqueos) > 2 ? 'rojo' : 'naranja');
+
+        return response()->json([
+            'data' => [
+                'lista' => $lista,
+                'badge_color' => $badgeColor,
+                'bloqueos' => $bloqueos,
+                'checks' => [
+                    'sin_tarifa' => $sinTarifa,
+                    'sin_distribuidor' => $sinDistribuidor,
+                    'sucursales_faltantes_pdf' => $sucursalesFaltantesPdf->values(),
+                    'discrepancias' => $discrepancias,
+                ],
+            ],
+        ]);
+    }
+
+    // GET /liq/liquidaciones/{liquidacionCliente}/discrepancias-tms-pdf (BUGFIX 22 D)
+    public function discrepanciasTmsPdf(LiqLiquidacionCliente $liquidacionCliente): JsonResponse
+    {
+        $tolerancia = (float) ($liquidacionCliente->cliente?->tolerancia_facturacion ?? 100.0);
+
+        // Operaciones con importe en PDF distinto al TMS (valor_cliente)
+        $ops = LiqOperacion::where('liquidacion_cliente_id', $liquidacionCliente->id)
+            ->whereNotIn('estado', ['ignorado', 'anulado', 'excluida'])
+            ->whereNotNull('importe_gravado')
+            ->with('distribuidor:id,apellidos,nombres,patente')
+            ->get();
+
+        $discrepancias = [];
+        foreach ($ops as $op) {
+            $valorTms = (float) $op->valor_cliente;
+            $totalPdf = (float) $op->importe_gravado + (float) $op->importe_no_gravado;
+            $diff = abs($valorTms - $totalPdf);
+
+            if ($diff > $tolerancia) {
+                $discrepancias[] = [
+                    'operacion_id' => $op->id,
+                    'id_operacion_cliente' => $op->id_operacion_cliente,
+                    'sucursal' => $op->sucursal_tarifa,
+                    'fecha' => $op->campos_originales['fecha'] ?? null,
+                    'distribuidor' => $op->distribuidor ? "{$op->distribuidor->apellidos} {$op->distribuidor->nombres}" : null,
+                    'dominio' => $op->dominio,
+                    'valor_tms' => round($valorTms, 2),
+                    'valor_pdf' => round($totalPdf, 2),
+                    'imp_gravado' => (float) $op->importe_gravado,
+                    'imp_no_gravado' => (float) $op->importe_no_gravado,
+                    'diferencia' => round($valorTms - $totalPdf, 2),
+                ];
+            }
+        }
+
+        // Agregado por sucursal
+        $porSucursalTms = LiqOperacion::where('liquidacion_cliente_id', $liquidacionCliente->id)
+            ->whereNotIn('estado', ['ignorado', 'anulado', 'excluida'])
+            ->selectRaw('sucursal_tarifa as sucursal, COALESCE(SUM(valor_cliente),0) as total_tms, COALESCE(SUM(importe_gravado + importe_no_gravado),0) as total_pdf')
+            ->groupBy('sucursal_tarifa')
+            ->get()
+            ->map(fn ($s) => [
+                'sucursal' => $s->sucursal,
+                'total_tms' => round((float) $s->total_tms, 2),
+                'total_pdf' => round((float) $s->total_pdf, 2),
+                'diferencia' => round((float) $s->total_tms - (float) $s->total_pdf, 2),
+                'ok' => abs((float) $s->total_tms - (float) $s->total_pdf) <= $tolerancia,
+            ]);
+
+        return response()->json([
+            'data' => [
+                'tolerancia' => $tolerancia,
+                'total_discrepancias' => count($discrepancias),
+                'discrepancias' => $discrepancias,
+                'por_sucursal' => $porSucursalTms,
+            ],
+        ]);
+    }
+
+    // GET /liq/liquidaciones/{liquidacionCliente}/pre-factura (BUGFIX 22 C)
+    // Devuelve totales listos para pre-poblar el formulario de factura del Estado de Cuenta
+    public function preFactura(LiqLiquidacionCliente $liquidacionCliente): JsonResponse
+    {
+        $porSucursal = \DB::table('liq_liquidacion_sucursal_totales')
+            ->where('liquidacion_cliente_id', $liquidacionCliente->id)
+            ->orderBy('sucursal')
+            ->get();
+
+        // Si no hay totales calculados, recalcular on-demand desde liq_operaciones
+        if ($porSucursal->isEmpty()) {
+            $porSucursal = LiqOperacion::where('liquidacion_cliente_id', $liquidacionCliente->id)
+                ->whereNotIn('estado', ['ignorado', 'anulado', 'excluida'])
+                ->whereNotNull('sucursal_tarifa')
+                ->selectRaw('sucursal_tarifa as sucursal, COUNT(*) as cantidad_operaciones, COALESCE(SUM(valor_cliente),0) as total_importe, COALESCE(SUM(importe_gravado),0) as total_gravado, COALESCE(SUM(importe_no_gravado),0) as total_no_gravado')
+                ->groupBy('sucursal_tarifa')
+                ->orderBy('sucursal_tarifa')
+                ->get();
+        }
+
+        $totalGravado = 0;
+        $totalNoGravado = 0;
+        $totalOps = 0;
+        foreach ($porSucursal as $s) {
+            $totalGravado += (float) $s->total_gravado;
+            $totalNoGravado += (float) $s->total_no_gravado;
+            $totalOps += (int) $s->cantidad_operaciones;
+        }
+
+        $iva = round($totalGravado * 0.21, 2);
+        $totalFacturado = round($totalGravado + $iva + $totalNoGravado, 2);
+
+        return response()->json([
+            'data' => [
+                'periodo_desde' => $liquidacionCliente->periodo_desde?->toDateString(),
+                'periodo_hasta' => $liquidacionCliente->periodo_hasta?->toDateString(),
+                'cliente_id' => $liquidacionCliente->cliente_id,
+                'cantidad_operaciones' => $totalOps,
+                'neto_gravado' => round($totalGravado, 2),
+                'iva' => $iva,
+                'no_gravado' => round($totalNoGravado, 2),
+                'importe_a_cobrar' => $totalFacturado,
+                'desglose_sucursal' => $porSucursal,
+            ],
         ]);
     }
 

@@ -23,6 +23,7 @@ import {
   ESTADO_TARIFA_COLOR,
   ESTADO_TARIFA_LABEL,
 } from '../features/liquidaciones/types';
+import { PeajesPanel } from '../features/liquidaciones/PeajesPanel';
 
 type Props = {
   DashboardLayout: React.ComponentType<{ title: string; subtitle?: string; children: React.ReactNode }>;
@@ -76,6 +77,12 @@ export function LiquidacionesExtractosPage({
   const [hotMapPersonaLabel, setHotMapPersonaLabel] = useState('');
   const [hotMapPersonaSearch, setHotMapPersonaSearch] = useState('');
   const [hotMapRecordar, setHotMapRecordar] = useState(false);
+  // BUGFIX 22 H: edición manual de importes (gravado / no gravado)
+  const [editImporteAbierto, setEditImporteAbierto] = useState(false);
+  const [editImporteGravado, setEditImporteGravado] = useState('');
+  const [editImporteNoGravado, setEditImporteNoGravado] = useState('');
+  const [editImporteMotivo, setEditImporteMotivo] = useState('');
+  const [editImporteSaving, setEditImporteSaving] = useState(false);
 
   type AuditoriaData = {
     resumen: {
@@ -1073,6 +1080,47 @@ export function LiquidacionesExtractosPage({
       setError(e instanceof Error ? e.message : 'Error guardando mapeo');
     }
   }, [api, selectedLiq, hotMapOp, hotMapValorTarifa, hotMapDim, hotMapValorCliente]);
+
+  // BUGFIX 22 H: editar importes manualmente (grav/no_grav) con motivo + auditoría
+  const guardarEditImportes = useCallback(async () => {
+    if (!hotMapOp) return;
+    if (!editImporteMotivo.trim() || editImporteMotivo.trim().length < 3) {
+      setError('El motivo es obligatorio (mín. 3 caracteres)');
+      return;
+    }
+    const grav = editImporteGravado.trim();
+    const noGrav = editImporteNoGravado.trim();
+    if (!grav && !noGrav) {
+      setError('Ingresá al menos un importe a modificar');
+      return;
+    }
+    const payload: Record<string, unknown> = { motivo: editImporteMotivo.trim() };
+    if (grav) {
+      const n = parseFloat(grav.replace(',', '.'));
+      if (!(n >= 0)) { setError('Importe gravado inválido'); return; }
+      payload.importe_gravado = n;
+    }
+    if (noGrav) {
+      const n = parseFloat(noGrav.replace(',', '.'));
+      if (!(n >= 0)) { setError('Importe no gravado inválido'); return; }
+      payload.importe_no_gravado = n;
+    }
+
+    setEditImporteSaving(true);
+    try {
+      await api.put(`/operaciones/${hotMapOp.id}/editar-importes`, payload);
+      showSuccess('Importes actualizados. Liquidaciones de distribuidor invalidadas (regenerar).');
+      setEditImporteAbierto(false);
+      setEditImporteGravado('');
+      setEditImporteNoGravado('');
+      setEditImporteMotivo('');
+      if (selectedLiq) await loadOps(selectedLiq.id, opFiltroEstado, opPage.current);
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Error al editar importes');
+    } finally {
+      setEditImporteSaving(false);
+    }
+  }, [api, hotMapOp, editImporteGravado, editImporteNoGravado, editImporteMotivo, selectedLiq, opFiltroEstado, opPage]);
 
   const generarPdf = useCallback(async (liqDistId: number) => {
     setPdfGenerating((prev) => ({ ...prev, [liqDistId]: true }));
@@ -2838,8 +2886,76 @@ export function LiquidacionesExtractosPage({
                       </div>
                     </div>
 
+                    {/* BUGFIX 22 H: Editar importes manualmente (gravado / no gravado) */}
+                    <div style={{ marginBottom: 16, padding: 12, background: '#fef2f2', borderRadius: 8, border: '1px solid #fecaca' }}>
+                      <button type="button"
+                        onClick={() => {
+                          setEditImporteAbierto(v => !v);
+                          if (!editImporteAbierto) {
+                            setEditImporteGravado(String(hotMapOp.importe_gravado ?? ''));
+                            setEditImporteNoGravado(String(hotMapOp.importe_no_gravado ?? ''));
+                            setEditImporteMotivo('');
+                          }
+                        }}
+                        style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', width: '100%', textAlign: 'left' }}
+                      >
+                        <h4 style={{ fontSize: 13, fontWeight: 600, margin: 0, color: '#991b1b' }}>
+                          {editImporteAbierto ? '▼' : '▶'} Editar importes manualmente (peajes/gravado)
+                        </h4>
+                      </button>
+                      {editImporteAbierto && (
+                        <div style={{ marginTop: 10 }}>
+                          <div style={{ fontSize: 11, color: '#991b1b', marginBottom: 8 }}>
+                            ⚠️ Al guardar, se invalidan las liquidaciones de distribuidor generadas. Requiere regenerarlas.
+                          </div>
+                          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, fontSize: 12, marginBottom: 8 }}>
+                            <div>
+                              <label style={{ display: 'block', marginBottom: 3 }}>Imp. Gravado actual:</label>
+                              <div style={{ fontSize: 11, color: '#6b7280', marginBottom: 2 }}>
+                                {hotMapOp.importe_gravado ?? '—'}
+                              </div>
+                              <input type="text" inputMode="decimal" className="form-input"
+                                value={editImporteGravado}
+                                onChange={(e) => setEditImporteGravado(e.target.value)}
+                                style={{ width: '100%', fontSize: 12 }}
+                                placeholder="Nuevo valor"
+                              />
+                            </div>
+                            <div>
+                              <label style={{ display: 'block', marginBottom: 3 }}>Imp. No Gravado (peaje) actual:</label>
+                              <div style={{ fontSize: 11, color: '#6b7280', marginBottom: 2 }}>
+                                {hotMapOp.importe_no_gravado ?? '—'}
+                              </div>
+                              <input type="text" inputMode="decimal" className="form-input"
+                                value={editImporteNoGravado}
+                                onChange={(e) => setEditImporteNoGravado(e.target.value)}
+                                style={{ width: '100%', fontSize: 12 }}
+                                placeholder="Nuevo valor"
+                              />
+                            </div>
+                          </div>
+                          <label style={{ display: 'block', fontSize: 12, marginBottom: 3 }}>Motivo (obligatorio, min. 3 car.):</label>
+                          <textarea className="form-input" rows={2}
+                            value={editImporteMotivo}
+                            onChange={(e) => setEditImporteMotivo(e.target.value)}
+                            style={{ width: '100%', fontSize: 12, marginBottom: 8 }}
+                            placeholder="Ej: peaje facturado con monto incorrecto según constancia adjunta"
+                          />
+                          <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
+                            <button type="button" className="btn-sm"
+                              disabled={editImporteSaving}
+                              onClick={() => void guardarEditImportes()}
+                              style={{ background: '#991b1b', color: '#fff' }}
+                            >
+                              {editImporteSaving ? 'Guardando...' : 'Guardar cambio de importes'}
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
                     <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-                      <button type="button" className="btn-sm" onClick={() => setHotMapOp(null)}>Cancelar</button>
+                      <button type="button" className="btn-sm" onClick={() => { setHotMapOp(null); setEditImporteAbierto(false); }}>Cancelar</button>
                       <button type="button" className="btn-primary" onClick={() => void guardarHotMapeo()}>Guardar mapeo</button>
                     </div>
                     <p style={{ margin: '8px 0 0 0', fontSize: 11, color: '#6b7280' }}>
@@ -2857,6 +2973,11 @@ export function LiquidacionesExtractosPage({
               )}
             </div>
           </div>
+
+          {/* BUGFIX 22 F: Panel de autorización de peajes */}
+          {selectedLiq && (
+            <PeajesPanel api={api} liquidacionId={selectedLiq.id} onChanged={() => { if (selectedLiq) void openLiq(selectedLiq); }} />
+          )}
 
           {/* Distributor liquidations */}
           <div className="dashboard-card">

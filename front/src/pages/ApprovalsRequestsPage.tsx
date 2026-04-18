@@ -92,6 +92,7 @@ type AltaRequestForm = {
   agenteResponsableId: string;
   agenteResponsableIds: string[];
   unidadId: string;
+  capacidadVehiculoKg: string;
   estadoId: string;
   fechaAltaVinculacion: string;
   observaciones: string;
@@ -1135,6 +1136,7 @@ export const ApprovalsRequestsPage: React.FC<ApprovalsRequestsPageProps> = ({
     agenteResponsableId: '',
     agenteResponsableIds: [],
     unidadId: '',
+    capacidadVehiculoKg: '',
     estadoId: '',
     fechaAltaVinculacion: '',
     observaciones: '',
@@ -2002,6 +2004,7 @@ export const ApprovalsRequestsPage: React.FC<ApprovalsRequestsPageProps> = ({
         : '',
       agenteResponsableIds: responsableIdsFromDetail.map((id: unknown) => String(id)),
       unidadId: reviewPersonaDetail.unidadId ? String(reviewPersonaDetail.unidadId) : '',
+      capacidadVehiculoKg: (reviewPersonaDetail as any).capacidadVehiculoKg ? String((reviewPersonaDetail as any).capacidadVehiculoKg) : '',
       estadoId: reviewPersonaDetail.estadoId ? String(reviewPersonaDetail.estadoId) : '',
       observaciones: reviewPersonaDetail.observaciones ?? '',
       duenoNombre: reviewPersonaDetail.duenoNombre ?? '',
@@ -2758,6 +2761,7 @@ const sucursalOptions = useMemo(() => {
         return unique.length > 0 ? unique : null;
       })(),
       unidadId: form.unidadId ? Number(form.unidadId) : null,
+      capacidadVehiculoKg: form.capacidadVehiculoKg ? Number(form.capacidadVehiculoKg) : null,
       estadoId: form.estadoId ? Number(form.estadoId) : null,
       observaciones: form.observaciones.trim() || null,
       duenoNombre,
@@ -3011,6 +3015,7 @@ const sucursalOptions = useMemo(() => {
         agenteResponsableId: '',
         agenteResponsableIds: [],
         unidadId: '',
+        capacidadVehiculoKg: '',
         estadoId: '',
         fechaAltaVinculacion: '',
         observaciones: '',
@@ -7345,7 +7350,16 @@ const sucursalOptions = useMemo(() => {
               </label>
               <label className="input-control">
                 <span>Unidad</span>
-                <select value={altaForm.unidadId} onChange={handleAltaFieldChange('unidadId')}>
+                <select value={altaForm.unidadId} onChange={(e) => {
+                  const val = e.target.value;
+                  // BUGFIX 22 J: auto-completar capacidad default según unidad
+                  const capDefault: Record<string, string> = { '1': '700', '2': '2500', '3': '5000', '4': '100' };
+                  setAltaForm(prev => ({
+                    ...prev,
+                    unidadId: val,
+                    capacidadVehiculoKg: capDefault[val] ?? prev.capacidadVehiculoKg,
+                  }));
+                }}>
                   <option value="">Seleccionar</option>
                   {(meta?.unidades ?? []).map((unidad) => {
                     const label = [unidad.matricula, unidad.marca, unidad.modelo].filter(Boolean).join(' · ');
@@ -7356,6 +7370,20 @@ const sucursalOptions = useMemo(() => {
                     );
                   })}
                 </select>
+              </label>
+              <label className="input-control">
+                <span>Capacidad vehículo (kg)</span>
+                <select value={altaForm.capacidadVehiculoKg} onChange={handleAltaFieldChange('capacidadVehiculoKg')}>
+                  <option value="">Seleccionar</option>
+                  <option value="100">100 (Moto)</option>
+                  <option value="700">700 (Chico — Fiorino, Kangoo)</option>
+                  <option value="1500">1500 (Mediano chico)</option>
+                  <option value="2500">2500 (Mediano — Master, Ducato)</option>
+                  <option value="5000">5000 (Grande liviano)</option>
+                  <option value="7500">7500 (Grande medio)</option>
+                  <option value="10000">10000 (Grande pesado)</option>
+                </select>
+                <small>Se usa para aplicar tarifa por capacidad. Default auto según unidad.</small>
               </label>
               <label className="input-control">
                 <span>Estado</span>

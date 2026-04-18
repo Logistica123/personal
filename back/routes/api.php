@@ -259,6 +259,16 @@ Route::middleware('auth.api')->group(function () {
         Route::get('/liquidaciones/{liquidacionCliente}/distribuidores', [LiqExtractosController::class, 'distribuidores']);
         Route::get('/liquidaciones/{liquidacionCliente}/auditoria', [LiqExtractosController::class, 'auditoria']);
         Route::get('/liquidaciones/{liquidacionCliente}/origenes-sin-mapear', [LiqExtractosController::class, 'origenesSinMapear']);
+        Route::get('/liquidaciones/{liquidacionCliente}/totales-por-sucursal', [LiqExtractosController::class, 'totalesPorSucursal']);
+        Route::get('/liquidaciones/{liquidacionCliente}/pre-factura', [LiqExtractosController::class, 'preFactura']);
+        Route::get('/liquidaciones/{liquidacionCliente}/discrepancias-tms-pdf', [LiqExtractosController::class, 'discrepanciasTmsPdf']);
+        Route::get('/liquidaciones/{liquidacionCliente}/factura-lista', [LiqExtractosController::class, 'facturaLista']);
+        Route::get('/liquidaciones/{liquidacionCliente}/peajes', [LiqExtractosController::class, 'peajes']);
+        Route::get('/liquidaciones/{liquidacionCliente}/peajes/distribuidor/{distribuidorId}', [LiqExtractosController::class, 'peajesDistribuidor']);
+        Route::post('/liquidaciones/{liquidacionCliente}/peajes/autorizar', [LiqExtractosController::class, 'autorizarPeajes']);
+        Route::get('/peajes/dashboard', [LiqExtractosController::class, 'dashboardPeajes']);
+        Route::get('/peajes/dashboard/export', [LiqExtractosController::class, 'exportDashboardPeajes']);
+        Route::post('/liquidaciones/{liquidacionCliente}/recalcular-totales-sucursal', [LiqExtractosController::class, 'recalcularTotalesSucursal']);
         Route::post('/liquidaciones/{liquidacionCliente}/revincular-distribuidores', [LiqExtractosController::class, 'revincularDistribuidores']);
         Route::get('/liquidaciones/{liquidacionCliente}/duplicados', [LiqExtractosController::class, 'duplicados']);
         Route::post('/liquidaciones/{liquidacionCliente}/resolver-duplicados', [LiqExtractosController::class, 'resolverDuplicados']);
@@ -267,6 +277,7 @@ Route::middleware('auth.api')->group(function () {
         Route::patch('/liquidaciones/{liquidacionCliente}/estado', [LiqExtractosController::class, 'cambiarEstado']);
         Route::put('/operaciones/{operacion}/excluir', [\App\Http\Controllers\Api\Liq\LiqOperacionController::class, 'excluir']);
         Route::put('/operaciones/{operacion}/incluir', [\App\Http\Controllers\Api\Liq\LiqOperacionController::class, 'incluir']);
+        Route::put('/operaciones/{operacion}/editar-importes', [\App\Http\Controllers\Api\Liq\LiqOperacionController::class, 'editarImportes']);
         Route::put('/gastos/{gasto}/desactivar', [LiqClienteController::class, 'desactivarGasto']);
 
         // Archivos de entrada

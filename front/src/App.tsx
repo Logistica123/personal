@@ -54,6 +54,7 @@ import { LiquidacionesPage } from './pages/LiquidacionesPage';
 import { LiquidacionesClientePage } from './pages/LiquidacionesClientePage';
 import { LiquidacionesEstadoCuentaPage } from './pages/LiquidacionesEstadoCuentaPage';
 import { LiquidacionesExtractosPage } from './pages/LiquidacionesExtractosPage';
+import { PeajesDashboardPage } from './pages/PeajesDashboardPage';
 import { PagosPage } from './pages/PagosPage';
 import { RecibosPage } from './pages/RecibosPage';
 import { DocumentTypesPage } from './pages/DocumentTypesPage';
@@ -2542,6 +2543,7 @@ const DashboardLayout: React.FC<{
   const isLiquidacionesExtractosRoute = location.pathname.startsWith('/liquidaciones/extractos');
   const isLiquidacionesClienteConfigRoute = location.pathname.startsWith('/liquidaciones/cliente');
   const isLiquidacionesEstadoCuentaRoute = location.pathname.startsWith('/liquidaciones/estado-cuenta');
+  const isLiquidacionesPeajesRoute = location.pathname.startsWith('/liquidaciones/peajes');
   const isLiquidacionesRoute =
     (location.pathname === '/liquidaciones' || /^\/liquidaciones\/\d+$/.test(location.pathname)) &&
     !isRecibosRoute;
@@ -3799,6 +3801,15 @@ const DashboardLayout: React.FC<{
 	                  {canAccessSection(userRole, 'liquidaciones', authUser?.permissions) ? (
 	                    <button
 	                      type="button"
+	                      className={`sidebar-sublink${isLiquidacionesPeajesRoute ? ' is-active' : ''}`}
+	                      onClick={() => navigate('/liquidaciones/peajes')}
+                    >
+                      Dashboard Peajes
+                    </button>
+                  ) : null}
+                  {canAccessSection(userRole, 'liquidaciones', authUser?.permissions) ? (
+                    <button
+                      type="button"
 	                      className={`sidebar-sublink${isRecibosRoute ? ' is-active' : ''}`}
 	                      onClick={() => navigate('/liquidaciones/recibos')}
                     >
@@ -21093,6 +21104,19 @@ const AppRoutes: React.FC = () => {
         element={
           <RequireAccess section="liquidaciones">
             <LiquidacionesExtractosPage
+              DashboardLayout={DashboardLayout}
+              resolveApiBaseUrl={resolveApiBaseUrl}
+              useStoredAuthUser={useStoredAuthUser}
+              buildActorHeaders={buildActorHeaders}
+            />
+          </RequireAccess>
+        }
+      />
+      <Route
+        path="/liquidaciones/peajes"
+        element={
+          <RequireAccess section="liquidaciones">
+            <PeajesDashboardPage
               DashboardLayout={DashboardLayout}
               resolveApiBaseUrl={resolveApiBaseUrl}
               useStoredAuthUser={useStoredAuthUser}

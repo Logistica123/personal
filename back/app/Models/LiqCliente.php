@@ -20,6 +20,7 @@ class LiqCliente extends Model
         'activo',
         'configuracion_excel',
         'configuracion_duplicados',
+        'tolerancia_facturacion',
     ];
 
     protected $casts = [
