@@ -887,13 +887,10 @@ class OcasaExcelProcessor
         $lookup = [];
         $query = Persona::with('patentesAdicionales:id,persona_id,patente,patente_norm,activo');
 
-        if ($periodoDesde && $periodoHasta) {
-            $query->where(function ($q) use ($periodoDesde, $periodoHasta) {
-                $q->where(function ($q2) use ($periodoHasta) {
-                    $q2->whereNull('fecha_alta')->orWhere('fecha_alta', '<=', $periodoHasta);
-                })->where(function ($q2) use ($periodoDesde) {
-                    $q2->whereNull('fecha_baja')->orWhere('fecha_baja', '>=', $periodoDesde);
-                });
+        // BUGFIX 21 B: solo fecha_baja, no fecha_alta (permite altas retroactivas)
+        if ($periodoDesde) {
+            $query->where(function ($q) use ($periodoDesde) {
+                $q->whereNull('fecha_baja')->orWhere('fecha_baja', '>=', $periodoDesde);
             });
         }
 

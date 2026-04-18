@@ -71,6 +71,11 @@ export function LiquidacionesExtractosPage({
   const [hotMapValorTarifa, setHotMapValorTarifa] = useState('');
   const [hotMapDim, setHotMapDim] = useState('concepto');
   const [hotMapValorCliente, setHotMapValorCliente] = useState('');
+  // BUGFIX 21 C: vincular proveedor desde modal
+  const [hotMapPersonaId, setHotMapPersonaId] = useState<number | null>(null);
+  const [hotMapPersonaLabel, setHotMapPersonaLabel] = useState('');
+  const [hotMapPersonaSearch, setHotMapPersonaSearch] = useState('');
+  const [hotMapRecordar, setHotMapRecordar] = useState(false);
 
   type AuditoriaData = {
     resumen: {
@@ -1050,7 +1055,7 @@ export function LiquidacionesExtractosPage({
       const res = await api.post(`/liquidaciones/${selectedLiq.id}/mapear-tarifa`, {
         operacion_id: hotMapOp.id,
         patente: hotMapOp.dominio ?? '',
-        persona_id: hotMapOp.distribuidor_id,
+        persona_id: hotMapPersonaId ?? hotMapOp.distribuidor_id,
         sucursal: hotMapOp.sucursal_tarifa ?? '',
         concepto: concepto,
         valor_cliente: parseFloat(hotMapValorCliente.replace(',', '.')) || Number(hotMapOp.valor_cliente),
@@ -2680,7 +2685,17 @@ export function LiquidacionesExtractosPage({
                       <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
                         {!op.excluida && (
                           <button type="button" className="btn-sm" style={{ marginRight: 4, background: '#fef3c7', color: '#92400e', border: '1px solid #fcd34d' }}
-                            onClick={() => { setHotMapOp(op); setHotMapValorTarifa(''); setHotMapDim((isOcaClient || isOcasaClient) ? 'fijo' : 'porcentaje'); setHotMapValorCliente(String(op.valor_cliente)); }}>
+                            onClick={() => {
+                              setHotMapOp(op);
+                              setHotMapValorTarifa('');
+                              setHotMapDim((isOcaClient || isOcasaClient) ? 'fijo' : 'porcentaje');
+                              setHotMapValorCliente(String(op.valor_cliente));
+                              setHotMapPersonaId(op.distribuidor_id);
+                              setHotMapPersonaLabel(op.distribuidor ? `${op.distribuidor.apellidos} ${op.distribuidor.nombres}` : '');
+                              setHotMapPersonaSearch('');
+                              setHotMapRecordar(false);
+                              setOcaPersonasResults([]);
+                            }}>
                             + Mapeo
                           </button>
                         )}
@@ -2757,23 +2772,58 @@ export function LiquidacionesExtractosPage({
                       </div>
                     </div>
 
-                    {/* Sección 3: Distribuidor Asignado */}
+                    {/* Sección 3: Distribuidor Asignado (BUGFIX 21 C: dropdown funcional) */}
                     <div style={{ marginBottom: 16, padding: 12, background: '#fdf2f8', borderRadius: 8 }}>
                       <h4 style={{ fontSize: 13, fontWeight: 600, margin: '0 0 8px' }}>Distribuidor Asignado</h4>
                       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, fontSize: 13, alignItems: 'center' }}>
                         <div>Nombre en archivo:</div>
-                        <div style={{ fontWeight: 600 }}>{hotMapOp.distribuidor ? `${hotMapOp.distribuidor.apellidos} ${hotMapOp.distribuidor.nombres}` : (hotMapOp.campos_originales as any)?.conductor ?? (hotMapOp.campos_originales as any)?.nombre ?? '—'}</div>
+                        <div style={{ fontWeight: 600 }}>{(hotMapOp.campos_originales as any)?.conductor ?? (hotMapOp.campos_originales as any)?.nombre ?? '—'}</div>
                         <div>Patente:</div>
                         <div style={{ fontWeight: 600 }}>{hotMapOp.dominio ?? '—'}</div>
                         <div>Proveedor vinculado:</div>
                         <div>
-                          {hotMapOp.distribuidor_id ? (
-                            <span style={{ color: '#16a34a', fontWeight: 600 }}>{hotMapOp.distribuidor ? `${hotMapOp.distribuidor.apellidos} ${hotMapOp.distribuidor.nombres}` : `ID ${hotMapOp.distribuidor_id}`}</span>
+                          {hotMapPersonaId ? (
+                            <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                              <span style={{ fontWeight: 600, color: '#16a34a' }}>{hotMapPersonaLabel}</span>
+                              <button type="button" style={{ fontSize: 10, color: '#dc2626', cursor: 'pointer', border: 'none', background: 'none' }} onClick={() => { setHotMapPersonaId(null); setHotMapPersonaLabel(''); }}>×</button>
+                            </div>
                           ) : (
-                            <span style={{ color: '#dc2626' }}>Sin vincular — usar Mapeo de Distribuidores en la sección de arriba</span>
+                            <div style={{ position: 'relative' }}>
+                              <input
+                                type="text"
+                                className="form-input"
+                                value={hotMapPersonaSearch}
+                                onChange={(e) => { setHotMapPersonaSearch(e.target.value); buscarPersonasOca(e.target.value); }}
+                                placeholder="Buscar por nombre, patente, CUIL..."
+                                style={{ fontSize: 12, width: '100%' }}
+                              />
+                              {ocaPersonasResults.length > 0 && (
+                                <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, background: '#fff', border: '1px solid #d1d5db', borderRadius: 6, maxHeight: 200, overflowY: 'auto', zIndex: 10, boxShadow: '0 4px 12px rgba(0,0,0,0.15)' }}>
+                                  {ocaPersonasResults.map((p) => (
+                                    <div key={p.id} style={{ padding: '6px 10px', cursor: 'pointer', fontSize: 12, borderBottom: '1px solid #f3f4f6' }}
+                                      onMouseDown={() => {
+                                        setHotMapPersonaId(p.id);
+                                        setHotMapPersonaLabel(p.label);
+                                        setHotMapPersonaSearch('');
+                                        setOcaPersonasResults([]);
+                                      }}
+                                    >
+                                      <strong>{p.apellidos} {p.nombres}</strong>
+                                      {p.patente && <span style={{ color: '#6b7280' }}> — {p.patente}</span>}
+                                      {p.cuil && <span style={{ color: '#9ca3af' }}> — {p.cuil}</span>}
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
                           )}
                         </div>
                       </div>
+                      {/* Checkbox recordar vínculo */}
+                      <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, marginTop: 8, color: '#6b7280', cursor: 'pointer' }}>
+                        <input type="checkbox" checked={hotMapRecordar} onChange={(e) => setHotMapRecordar(e.target.checked)} />
+                        Recordar este vínculo para futuras liquidaciones con esta patente
+                      </label>
                     </div>
 
                     {/* Mapeo de concepto */}

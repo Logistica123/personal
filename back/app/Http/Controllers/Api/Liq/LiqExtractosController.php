@@ -770,13 +770,10 @@ class LiqExtractosController extends Controller
 
         // Cargar personas válidas para el periodo
         $query = \App\Models\Persona::with('patentesAdicionales:id,persona_id,patente,patente_norm,activo');
-        if ($periodoDesde && $periodoHasta) {
-            $query->where(function ($q) use ($periodoDesde, $periodoHasta) {
-                $q->where(function ($q2) use ($periodoHasta) {
-                    $q2->whereNull('fecha_alta')->orWhere('fecha_alta', '<=', $periodoHasta);
-                })->where(function ($q2) use ($periodoDesde) {
-                    $q2->whereNull('fecha_baja')->orWhere('fecha_baja', '>=', $periodoDesde);
-                });
+        // BUGFIX 21 B: solo fecha_baja
+        if ($periodoDesde) {
+            $query->where(function ($q) use ($periodoDesde) {
+                $q->whereNull('fecha_baja')->orWhere('fecha_baja', '>=', $periodoDesde);
             });
         }
         $personas = $query->get(['id', 'patente', 'cuil', 'apellidos', 'nombres']);
@@ -1089,10 +1086,24 @@ class LiqExtractosController extends Controller
 
             // Paso 6: vincular distribuidor si se indicó persona_id
             if ($data['persona_id']) {
+                // BUGFIX 21 A: asociar proveedor al override de tarifa
+                $tarifaPatente->update(['proveedor_id' => $data['persona_id']]);
+
                 \App\Models\LiqMapeoDistribuidor::updateOrCreate(
                     ['cliente_id' => $clienteId, 'nombre_pdf' => $patenteNorm, 'sucursal' => null],
                     ['persona_id' => $data['persona_id'], 'creado_por' => $request->user()?->id]
                 );
+
+                // BUGFIX 21 C: actualizar distribuidor_id en la operación si cambió
+                if ($data['operacion_id']) {
+                    $op = LiqOperacion::find($data['operacion_id']);
+                    if ($op && $op->distribuidor_id !== (int) $data['persona_id']) {
+                        $op->update([
+                            'distribuidor_id' => $data['persona_id'],
+                            'estado' => $op->linea_tarifa_id ? 'ok' : ($op->estado === 'sin_distribuidor' ? 'sin_tarifa' : $op->estado),
+                        ]);
+                    }
+                }
             }
 
             // Historial

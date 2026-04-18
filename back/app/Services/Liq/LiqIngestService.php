@@ -541,7 +541,8 @@ class LiqIngestService
                             $dominio,
                             $dimensionesValores,
                             $liquidacion->periodo_desde->toDateString(),
-                            $liquidacion->cliente_id
+                            $liquidacion->cliente_id,
+                            $distribuidorId  // BUGFIX 21 A: proveedor específico
                         );
                         if ($tpResult) {
                             $linea = $tpResult['linea'];
@@ -827,11 +828,32 @@ class LiqIngestService
     /**
      * @return array{linea: LiqLineaTarifa, override: LiqTarifaPatente}|null
      */
-    private function buscarLineaTarifaPorPatenteYDimensiones(int $esquemaId, string $patenteNorm, array $dimensionesValores, string $fecha, ?int $clienteId = null): ?array
+    private function buscarLineaTarifaPorPatenteYDimensiones(int $esquemaId, string $patenteNorm, array $dimensionesValores, string $fecha, ?int $clienteId = null, ?int $proveedorId = null): ?array
+    {
+        // BUGFIX 21 A: buscar primero override con proveedor_id específico, luego genérico (NULL)
+        $attempts = [];
+        if ($proveedorId) {
+            $attempts[] = $proveedorId;
+        }
+        $attempts[] = null; // sin proveedor (legacy)
+
+        foreach ($attempts as $attemptProveedorId) {
+            $result = $this->queryOverridePatente($esquemaId, $patenteNorm, $dimensionesValores, $fecha, $clienteId, $attemptProveedorId);
+            if ($result !== null) return $result;
+        }
+        return null;
+    }
+
+    private function queryOverridePatente(int $esquemaId, string $patenteNorm, array $dimensionesValores, string $fecha, ?int $clienteId, ?int $proveedorId): ?array
     {
         $q = LiqTarifaPatente::where('esquema_id', $esquemaId)
             ->where('activo', true)
             ->where('patente_norm', $patenteNorm);
+        if ($proveedorId) {
+            $q->where('proveedor_id', $proveedorId);
+        } else {
+            $q->whereNull('proveedor_id');
+        }
         if ($clienteId) {
             $q->where(function ($q2) use ($clienteId) {
                 $q2->where('liq_cliente_id', $clienteId)->orWhereNull('liq_cliente_id');
@@ -1050,17 +1072,11 @@ class LiqIngestService
 
         $query = Persona::with('patentesAdicionales:id,persona_id,patente,patente_norm,activo');
 
-        // BUGFIX 20 Feature D: filtrar por periodo (distribuidor valido para el periodo)
-        if ($periodoDesde && $periodoHasta) {
-            $query->where(function ($q) use ($periodoDesde, $periodoHasta) {
-                // fecha_alta nula o <= periodo_hasta
-                $q->where(function ($q2) use ($periodoHasta) {
-                    $q2->whereNull('fecha_alta')->orWhere('fecha_alta', '<=', $periodoHasta);
-                })
-                // fecha_baja nula o >= periodo_desde
-                ->where(function ($q2) use ($periodoDesde) {
-                    $q2->whereNull('fecha_baja')->orWhere('fecha_baja', '>=', $periodoDesde);
-                });
+        // BUGFIX 21 B: solo filtrar por fecha_baja (permitir altas retroactivas)
+        // Ya NO se filtra por fecha_alta: si la persona existe hoy, puede recibir liquidaciones retroactivas
+        if ($periodoDesde) {
+            $query->where(function ($q) use ($periodoDesde) {
+                $q->whereNull('fecha_baja')->orWhere('fecha_baja', '>=', $periodoDesde);
             });
         }
 

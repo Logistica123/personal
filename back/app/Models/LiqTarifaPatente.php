@@ -25,7 +25,13 @@ class LiqTarifaPatente extends Model
         'valor_referencia',
         'precio_original',
         'requiere_revision',
+        'proveedor_id',
     ];
+
+    public function proveedor()
+    {
+        return $this->belongsTo(Persona::class, 'proveedor_id');
+    }
 
     protected $casts = [
         'dimensiones_valores' => 'array',
