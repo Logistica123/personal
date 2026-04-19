@@ -1,0 +1,32 @@
+[Unit]
+Description=Liq Python Microservice (pdfplumber + FastAPI) — parsea PDFs OCA/OCASA para backend Laravel
+After=network.target
+
+[Service]
+Type=simple
+
+# AJUSTAR ESTOS 3 VALORES AL SERVER DE PROD:
+#   User       = usuario unix del deploy (típicamente 'www-data', 'deploy', o el mismo de Laravel)
+#   WorkingDirectory = path absoluto al directorio python/ del repo en prod
+#   ExecStart  = path al uvicorn dentro del venv
+User=www-data
+WorkingDirectory=/var/www/apppersonal/python
+ExecStart=/var/www/apppersonal/python/venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8100 --log-level info
+
+# Reinicio automático si crashea
+Restart=on-failure
+RestartSec=5
+StartLimitInterval=60
+StartLimitBurst=3
+
+# Logs a journald (ver con: journalctl -u liq-python -f)
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=liq-python
+
+# Endurecimiento mínimo
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

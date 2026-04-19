@@ -821,6 +821,25 @@ class LiqExtractosController extends Controller
     // antes de que existiera el trigger automático, o cuando el microservicio Python estaba caído.
     public function reparsearPdfsOcasa(LiqLiquidacionCliente $liquidacionCliente): JsonResponse
     {
+        // Validar que el cliente sea OCASA antes de invocar al procesador OCASA
+        $liquidacionCliente->loadMissing('cliente');
+        if (!$this->clienteEsOcasa($liquidacionCliente->cliente)) {
+            $nombre = $liquidacionCliente->cliente?->nombre_corto ?? $liquidacionCliente->cliente?->razon_social ?? '?';
+            return response()->json([
+                'error' => "Esta liquidación es del cliente '{$nombre}', no OCASA. El parser OCASA solo aplica a PDFs del formato OCASA (columnas Id Liquidacion, Transporte, CUIT, Imp.Grav, Imp.NoGrav). Si es OCA usá el flujo de carga OCA con PDF principal + distribuidores.",
+            ], 422);
+        }
+
+        // Verificar que el microservicio Python esté disponible
+        try {
+            $ping = \Illuminate\Support\Facades\Http::timeout(3)->get(rtrim((string) config('services.oca.base_url', 'http://localhost:8100'), '/') . '/docs');
+            if (!$ping->ok()) {
+                return response()->json(['error' => 'Microservicio Python no responde en ' . config('services.oca.base_url', 'http://localhost:8100') . '. Verificá que esté corriendo (uvicorn app.main:app --port 8100).'], 503);
+            }
+        } catch (\Throwable $e) {
+            return response()->json(['error' => 'Microservicio Python no accesible: ' . $e->getMessage()], 503);
+        }
+
         $processor = app(\App\Services\Liq\OcasaPdfProcessor::class);
 
         $pdfs = LiqArchivoEntrada::where('liquidacion_cliente_id', $liquidacionCliente->id)
