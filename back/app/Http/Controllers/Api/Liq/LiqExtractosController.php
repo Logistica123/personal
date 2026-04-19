@@ -106,12 +106,34 @@ class LiqExtractosController extends Controller
         ]);
 
         try {
+            // BUGFIX 22 Addendum A: si es PDF + cliente OCASA, usar OcasaPdfProcessor
+            $ext = strtolower((string) $file->getClientOriginalExtension());
+            $esOcasa = $this->clienteEsOcasa($liquidacion->cliente);
+            if ($ext === 'pdf' && $esOcasa) {
+                $ocasaPdfProcessor = app(\App\Services\Liq\OcasaPdfProcessor::class);
+                $pdfResult = $ocasaPdfProcessor->procesarArchivo($archivo, $liquidacion);
+                return response()->json(['data' => $pdfResult, 'message' => 'PDF OCASA procesado correctamente'], 201);
+            }
+
             $result = $this->ingestService->procesarArchivo($archivo, $liquidacion);
             return response()->json(['data' => $result, 'message' => 'Archivo procesado correctamente'], 201);
         } catch (\Throwable $e) {
-            // No hay columnas de estado/error en esta tabla; dejamos el registro creado y devolvemos el error.
             return response()->json(['error' => 'Error al procesar el archivo: ' . $e->getMessage()], 422);
         }
+    }
+
+    /**
+     * Heurística rápida para detectar cliente OCASA.
+     * Usa configuracion_excel.formato === 'OCASA' si está disponible, si no por nombre.
+     */
+    private function clienteEsOcasa(?LiqCliente $cliente): bool
+    {
+        if (!$cliente) return false;
+        $config = is_array($cliente->configuracion_excel) ? $cliente->configuracion_excel : [];
+        $formato = strtoupper((string) ($config['formato'] ?? ''));
+        if ($formato === 'OCASA') return true;
+        $nombre = strtoupper((string) ($cliente->nombre_corto ?? $cliente->razon_social ?? ''));
+        return str_contains($nombre, 'OCASA');
     }
 
     /**
@@ -791,6 +813,63 @@ class LiqExtractosController extends Controller
         return response()->json([
             'message' => count($sucursales) . ' sucursales recalculadas',
             'sucursales' => $sucursales->values(),
+        ]);
+    }
+
+    // POST /liq/liquidaciones/{liquidacionCliente}/reparsear-pdfs-ocasa (BUGFIX 22 Addendum A)
+    // Reprocesa PDFs existentes vía OcasaPdfProcessor. Útil cuando los PDFs fueron subidos
+    // antes de que existiera el trigger automático, o cuando el microservicio Python estaba caído.
+    public function reparsearPdfsOcasa(LiqLiquidacionCliente $liquidacionCliente): JsonResponse
+    {
+        $processor = app(\App\Services\Liq\OcasaPdfProcessor::class);
+
+        $pdfs = LiqArchivoEntrada::where('liquidacion_cliente_id', $liquidacionCliente->id)
+            ->where(function ($q) {
+                $q->where('nombre_original', 'like', '%.pdf')
+                  ->orWhere('nombre_interno', 'like', '%.pdf');
+            })
+            ->get();
+
+        if ($pdfs->isEmpty()) {
+            return response()->json([
+                'message' => 'No hay PDFs para reparsear en esta liquidación',
+                'data' => ['pdfs_total' => 0, 'pdfs_ok' => 0, 'pdfs_error' => 0, 'ops_actualizadas' => 0, 'ops_huerfanas' => 0],
+            ]);
+        }
+
+        $pdfsOk = 0;
+        $pdfsError = 0;
+        $opsActualizadas = 0;
+        $opsHuerfanas = 0;
+        $warnings = [];
+        $errores = [];
+
+        foreach ($pdfs as $pdf) {
+            try {
+                $r = $processor->procesarArchivo($pdf, $liquidacionCliente);
+                $pdfsOk++;
+                $opsActualizadas += $r['operaciones_actualizadas'] ?? 0;
+                $opsHuerfanas += $r['operaciones_huerfanas'] ?? 0;
+                if (!empty($r['warnings'])) {
+                    $warnings[$pdf->nombre_original] = $r['warnings'];
+                }
+            } catch (\Throwable $e) {
+                $pdfsError++;
+                $errores[] = ($pdf->nombre_original ?? '#' . $pdf->id) . ': ' . $e->getMessage();
+            }
+        }
+
+        return response()->json([
+            'message' => "Reparseo: {$pdfsOk}/{$pdfs->count()} PDFs OK, {$opsActualizadas} ops actualizadas",
+            'data' => [
+                'pdfs_total' => $pdfs->count(),
+                'pdfs_ok' => $pdfsOk,
+                'pdfs_error' => $pdfsError,
+                'ops_actualizadas' => $opsActualizadas,
+                'ops_huerfanas' => $opsHuerfanas,
+                'warnings' => $warnings ?: null,
+                'errores' => $errores ?: null,
+            ],
         ]);
     }
 

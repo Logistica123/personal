@@ -266,6 +266,7 @@ Route::middleware('auth.api')->group(function () {
         Route::get('/liquidaciones/{liquidacionCliente}/peajes', [LiqExtractosController::class, 'peajes']);
         Route::get('/liquidaciones/{liquidacionCliente}/peajes/distribuidor/{distribuidorId}', [LiqExtractosController::class, 'peajesDistribuidor']);
         Route::post('/liquidaciones/{liquidacionCliente}/peajes/autorizar', [LiqExtractosController::class, 'autorizarPeajes']);
+        Route::post('/liquidaciones/{liquidacionCliente}/reparsear-pdfs-ocasa', [LiqExtractosController::class, 'reparsearPdfsOcasa']);
         Route::get('/peajes/dashboard', [LiqExtractosController::class, 'dashboardPeajes']);
         Route::get('/peajes/dashboard/export', [LiqExtractosController::class, 'exportDashboardPeajes']);
         Route::post('/liquidaciones/{liquidacionCliente}/recalcular-totales-sucursal', [LiqExtractosController::class, 'recalcularTotalesSucursal']);

@@ -1402,6 +1402,17 @@ export function LiquidacionesExtractosPage({
                 }}>
                   Revincular distribuidores
                 </button>
+                <button type="button" className="btn-sm" style={{ background: '#fef3c7', color: '#92400e', border: '1px solid #fcd34d' }} onClick={async () => {
+                  if (!selectedLiq) return;
+                  if (!window.confirm('¿Reparsear los PDFs OCASA ya subidos? Llama al microservicio Python y puebla imp_gravado / imp_no_gravado sobre operaciones existentes.')) return;
+                  try {
+                    const res = await api.post(`/liquidaciones/${selectedLiq.id}/reparsear-pdfs-ocasa`, {});
+                    showSuccess(res.message ?? 'PDFs reparseados');
+                    await openLiq(selectedLiq);
+                  } catch (e: unknown) { setError(e instanceof Error ? e.message : 'Error al reparsear PDFs'); }
+                }}>
+                  Reparsear PDFs OCASA
+                </button>
                 <button type="button" className="btn-sm btn-danger" onClick={eliminarLiquidacionDesdeDetalle}>
                   Eliminar liquidación
                 </button>

@@ -205,6 +205,7 @@ export const ProveedorNuevoPage: React.FC<ProveedorNuevoPageProps> = ({
     sucursalId: '',
     agenteId: '',
     unidadId: '',
+    capacidadVehiculoKg: '',
     estadoId: '',
     fechaAlta: '',
     fechaBaja: '',
@@ -512,6 +513,7 @@ export const ProveedorNuevoPage: React.FC<ProveedorNuevoPageProps> = ({
           sucursalId: formValues.sucursalId ? Number(formValues.sucursalId) : null,
           agenteId: formValues.agenteId ? Number(formValues.agenteId) : null,
           unidadId: formValues.unidadId ? Number(formValues.unidadId) : null,
+          capacidadVehiculoKg: formValues.capacidadVehiculoKg ? Number(formValues.capacidadVehiculoKg) : null,
           estadoId:
             formValues.estadoId && formValues.estadoId !== syntheticPreActivoEstadoId
               ? Number(formValues.estadoId)
@@ -932,7 +934,19 @@ export const ProveedorNuevoPage: React.FC<ProveedorNuevoPageProps> = ({
           </label>
           <label className="input-control">
             <span>Unidad</span>
-            <select value={formValues.unidadId} onChange={handleSelectChange('unidadId')}>
+            <select
+              value={formValues.unidadId}
+              onChange={(event) => {
+                const newUnidadId = event.target.value;
+                // BUGFIX 22 J: sync Unidad → Capacidad si capacidad está vacía
+                const capacidadDefault: Record<string, string> = { '1': '700', '2': '2500', '3': '5000', '4': '100' };
+                setFormValues((prev) => ({
+                  ...prev,
+                  unidadId: newUnidadId,
+                  capacidadVehiculoKg: (!prev.capacidadVehiculoKg && capacidadDefault[newUnidadId]) ? capacidadDefault[newUnidadId] : prev.capacidadVehiculoKg,
+                }));
+              }}
+            >
               <option value="">Seleccionar</option>
               {meta.unidades.map((unidad) => (
                 <option key={unidad.id} value={unidad.id}>
@@ -940,6 +954,17 @@ export const ProveedorNuevoPage: React.FC<ProveedorNuevoPageProps> = ({
                 </option>
               ))}
             </select>
+          </label>
+          <label className="input-control">
+            <span>Capacidad vehículo (kg)</span>
+            <input
+              type="number"
+              min={0}
+              step={50}
+              value={formValues.capacidadVehiculoKg}
+              onChange={(event) => setFormValues((prev) => ({ ...prev, capacidadVehiculoKg: event.target.value }))}
+              placeholder="Ej: 2500"
+            />
           </label>
           <label className="input-control">
             <span>Estado</span>

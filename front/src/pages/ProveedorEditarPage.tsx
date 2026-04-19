@@ -281,6 +281,7 @@ export const ProveedorEditarPage: React.FC<ProveedorEditarPageProps> = ({
     clienteId: '',
     sucursalId: '',
     unidadId: '',
+    capacidadVehiculoKg: '',
     estadoId: '',
     fechaAlta: '',
     pago: '',
@@ -1009,6 +1010,7 @@ export const ProveedorEditarPage: React.FC<ProveedorEditarPageProps> = ({
         clienteId: payload.data.clienteId ? String(payload.data.clienteId) : '',
         sucursalId: payload.data.sucursalId ? String(payload.data.sucursalId) : '',
         unidadId: payload.data.unidadId ? String(payload.data.unidadId) : '',
+        capacidadVehiculoKg: payload.data.capacidadVehiculoKg != null ? String(payload.data.capacidadVehiculoKg) : '',
         estadoId: payload.data.estadoId ? String(payload.data.estadoId) : '',
         fechaAlta: payload.data.fechaAlta ?? '',
         pago: normalizePagoValue(payload.data.pago ?? solicitudAltaForm?.pago ?? ''),
@@ -1573,6 +1575,7 @@ export const ProveedorEditarPage: React.FC<ProveedorEditarPageProps> = ({
           clienteId: formValues.clienteId ? Number(formValues.clienteId) : null,
           sucursalId: formValues.sucursalId ? Number(formValues.sucursalId) : null,
           unidadId: formValues.unidadId ? Number(formValues.unidadId) : null,
+          capacidadVehiculoKg: formValues.capacidadVehiculoKg ? Number(formValues.capacidadVehiculoKg) : null,
           estadoId: formValues.estadoId ? Number(formValues.estadoId) : null,
           fechaAlta: formValues.fechaAlta || null,
           fechaBaja,
@@ -1743,6 +1746,7 @@ export const ProveedorEditarPage: React.FC<ProveedorEditarPageProps> = ({
           clienteId: payload.data.clienteId ? String(payload.data.clienteId) : '',
           sucursalId: payload.data.sucursalId ? String(payload.data.sucursalId) : '',
           unidadId: payload.data.unidadId ? String(payload.data.unidadId) : '',
+          capacidadVehiculoKg: payload.data.capacidadVehiculoKg != null ? String(payload.data.capacidadVehiculoKg) : '',
           estadoId: payload.data.estadoId ? String(payload.data.estadoId) : '',
           fechaAlta: payload.data.fechaAlta ?? '',
           pago: normalizePagoValue(payload.data.pago ?? ''),
@@ -2348,7 +2352,16 @@ export const ProveedorEditarPage: React.FC<ProveedorEditarPageProps> = ({
             <span>Unidad</span>
             <select
               value={formValues.unidadId}
-              onChange={(event) => setFormValues((prev) => ({ ...prev, unidadId: event.target.value }))}
+              onChange={(event) => {
+                const newUnidadId = event.target.value;
+                // BUGFIX 22 J: sync Unidad → Capacidad si capacidad está vacía
+                const capacidadDefault: Record<string, string> = { '1': '700', '2': '2500', '3': '5000', '4': '100' };
+                setFormValues((prev) => ({
+                  ...prev,
+                  unidadId: newUnidadId,
+                  capacidadVehiculoKg: (!prev.capacidadVehiculoKg && capacidadDefault[newUnidadId]) ? capacidadDefault[newUnidadId] : prev.capacidadVehiculoKg,
+                }));
+              }}
               disabled={metaLoading || !meta}
             >
               <option value="">Sin asignar</option>
@@ -2361,6 +2374,17 @@ export const ProveedorEditarPage: React.FC<ProveedorEditarPageProps> = ({
                 );
               })}
             </select>
+          </label>
+          <label className="input-control">
+            <span>Capacidad vehículo (kg)</span>
+            <input
+              type="number"
+              min={0}
+              step={50}
+              value={formValues.capacidadVehiculoKg}
+              onChange={(event) => setFormValues((prev) => ({ ...prev, capacidadVehiculoKg: event.target.value }))}
+              placeholder="Ej: 2500"
+            />
           </label>
           <label className="input-control">
             <span>Estado</span>
