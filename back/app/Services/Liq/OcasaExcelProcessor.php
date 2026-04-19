@@ -190,10 +190,12 @@ class OcasaExcelProcessor
 
             // Resolver distribuidor por patente
             $distribuidorId = null;
+            $capacidadDistribuidor = null;  // BUGFIX 22 L: fallback cuando TMS no trae capacidad
             if ($estado !== 'duplicado' && $patente !== '') {
                 $persona = $this->buscarDistribuidorPorPatente($patente, $distribuidoresLookup);
                 if ($persona) {
                     $distribuidorId = $persona->id;
+                    $capacidadDistribuidor = $persona->capacidad_vehiculo_kg ?? null;
                 } else {
                     // Fallback: mapeo sucursal-distribuidor (Feature C)
                     if ($sucursalTarifa) {
@@ -203,6 +205,7 @@ class OcasaExcelProcessor
                             ->first();
                         if ($mapeoSucDist) {
                             $distribuidorId = $mapeoSucDist->persona_id;
+                            $capacidadDistribuidor = \App\Models\Persona::whereKey($distribuidorId)->value('capacidad_vehiculo_kg');
                             $observaciones = $this->appendObs($observaciones, 'Distribuidor asignado por mapeo sucursal (unico).');
                         }
                     }
@@ -230,6 +233,12 @@ class OcasaExcelProcessor
             }
             if ($capacidadKg) {
                 $dimensionesValores['capacidad_vehiculo'] = (string) $capacidadKg;
+            } elseif ($capacidadDistribuidor) {
+                // BUGFIX 22 L: TMS no trajo capacidad → usar la del distribuidor (personas.capacidad_vehiculo_kg)
+                // Evita que el matching tome la primera línea ambigua (ej. CBNT01+700 en vez de CBNT01+2500).
+                $dimensionesValores['capacidad_vehiculo'] = (string) $capacidadDistribuidor;
+                $capacidadKg = (int) $capacidadDistribuidor;
+                $observaciones = $this->appendObs($observaciones, "Capacidad tomada del distribuidor ({$capacidadDistribuidor}kg).");
             }
 
             if ($estado === 'pendiente' && $distribuidorId) {
