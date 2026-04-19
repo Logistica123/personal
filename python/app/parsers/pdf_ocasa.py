@@ -41,11 +41,11 @@ def _parse_monto_ar(raw: str) -> float:
 
 
 def _parse_fecha(raw: str) -> Optional[str]:
-    """Parsea fecha en formato DD/MM/YYYY → YYYY-MM-DD."""
+    """Parsea fecha argentina → YYYY-MM-DD. Acepta DD.MM.YYYY (OCASA), DD/MM/YYYY, DD-MM-YYYY, YYYY-MM-DD."""
     raw = (raw or '').strip()
     if not raw:
         return None
-    for fmt in ('%d/%m/%Y', '%d-%m-%Y', '%Y-%m-%d'):
+    for fmt in ('%d.%m.%Y', '%d/%m/%Y', '%d-%m-%Y', '%Y-%m-%d'):
         try:
             return datetime.strptime(raw, fmt).date().isoformat()
         except ValueError:
@@ -66,19 +66,20 @@ def _extraer_sucursal_de_nombre(nombre_archivo: str) -> Optional[str]:
 # Parser principal
 # ---------------------------------------------------------------------------
 
-# Regex genérico para una línea de operación OCASA:
-# ID_LIQ TRANSPORTE CUIT PERIODO FECHA ID_SAP RAZON_SOCIAL DOMINIO RUTA $IMPORTE $IMP_GRAV $IMP_NOGRAV
-# Separamos con espacios (pdfplumber devuelve texto con espacios entre columnas)
+# Regex para una línea de operación OCASA real.
+# Ejemplo:
+#   202603A00530717060985 10054722 30717060985 03.2026 02.03.2026 102008890 LOGISTICA ARGENTINA SRL DTC856 COR301 153.542,56 153.542,56 0,00
+# Orden: ID_LIQ TRANSPORTE CUIT PERIODO(MM.YYYY) FECHA(DD.MM.YYYY) ID_SAP RAZON_SOCIAL DOMINIO RUTA IMPORTE IMP_GRAV IMP_NOGRAV
 _RE_LINEA = re.compile(
-    r'^(\d+)\s+'                          # 1: ID Liquidacion
-    r'(\d+)\s+'                           # 2: Transporte
-    r'(\d{2}-\d{8}-\d|\d{11})\s+'         # 3: CUIT (formato con o sin guión)
-    r'(\d{6})\s+'                         # 4: Periodo YYYYMM
-    r'(\d{2}/\d{2}/\d{4})\s+'             # 5: Fecha
-    r'(\w+)\s+'                           # 6: ID SAP
-    r'(.+?)\s+'                           # 7: Razon Social (lazy)
+    r'^(\S+)\s+'                          # 1: ID Liquidacion (alfanumérico: 202603A00530717060985)
+    r'(\d+)\s+'                           # 2: Transporte (numérico)
+    r'(\d{2}-\d{8}-\d|\d{11})\s+'         # 3: CUIT (con o sin guión)
+    r'(\d{2}\.\d{4})\s+'                  # 4: Periodo MM.YYYY (ej: 03.2026)
+    r'(\d{2}\.\d{2}\.\d{4})\s+'           # 5: Fecha DD.MM.YYYY (ej: 02.03.2026)
+    r'(\S+)\s+'                           # 6: ID SAP
+    r'(.+?)\s+'                           # 7: Razon Social (lazy, acepta "LOGISTICA ARGENTINA SRL")
     r'([A-Z0-9]{5,8})\s+'                 # 8: Dominio (patente)
-    r'([A-Z0-9]{3,10})\s+'                # 9: Ruta (ROS001, COR225, etc.)
+    r'([A-Z0-9]{3,10})\s+'                # 9: Ruta (COR301, ROS001, etc.)
     r'\$?([\d.,]+)\s+'                    # 10: Importe
     r'\$?([\d.,]+)\s+'                    # 11: Imp.Grav
     r'\$?([\d.,]+)\s*$'                   # 12: Imp.NoGrav
@@ -140,8 +141,8 @@ def parse_pdf_ocasa(filepath: str, nombre_archivo: Optional[str] = None) -> dict
 
                     m = _RE_LINEA.match(line)
                     if not m:
-                        # Probable línea de encabezado o subtotal, no reportar como warning si no tiene numeros
-                        if re.search(r'\d{6}.*\d{2}/\d{2}/\d{4}', line):
+                        # Probable línea de encabezado o subtotal; sólo reportar como no parseada si tiene pinta de datos
+                        if re.search(r'\d{2}\.\d{2}\.\d{4}', line) or re.search(r'\d{2}/\d{2}/\d{4}', line):
                             lineas_no_parseadas += 1
                         continue
 
