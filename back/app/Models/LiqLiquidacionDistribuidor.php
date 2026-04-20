@@ -41,17 +41,23 @@ class LiqLiquidacionDistribuidor extends Model
         'total_reembolso_peajes',
         'peajes_autorizados_at',
         'peajes_autorizados_por',
+        'eficiencia_pct',
+        'eficiencia_detalle',
+        'eficiencia_calculada_at',
     ];
 
     protected $casts = [
-        'periodo_desde'          => 'date',
-        'periodo_hasta'          => 'date',
-        'fecha_generacion'       => 'datetime',
-        'subtotal'               => 'decimal:2',
-        'gastos_administrativos' => 'decimal:2',
-        'total_a_pagar'          => 'decimal:2',
-        'beneficio_seguro'       => 'decimal:2',
-        'subtotal_peajes'        => 'decimal:2',
+        'periodo_desde'           => 'date',
+        'periodo_hasta'           => 'date',
+        'fecha_generacion'        => 'datetime',
+        'subtotal'                => 'decimal:2',
+        'gastos_administrativos'  => 'decimal:2',
+        'total_a_pagar'           => 'decimal:2',
+        'beneficio_seguro'        => 'decimal:2',
+        'subtotal_peajes'         => 'decimal:2',
+        'eficiencia_pct'          => 'decimal:2',
+        'eficiencia_detalle'      => 'array',
+        'eficiencia_calculada_at' => 'datetime',
     ];
 
     // -------------------------------------------------------------------------

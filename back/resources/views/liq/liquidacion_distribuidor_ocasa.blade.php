@@ -174,6 +174,37 @@
       </tbody>
     </table>
 
+    {{-- BUGFIX 24 C: Eficiencia del Período --}}
+    @if(!empty($liq['mostrar_eficiencia']) && isset($liq['eficiencia_pct']) && $liq['eficiencia_pct'] !== null)
+      @php
+        $ef = (float) $liq['eficiencia_pct'];
+        if ($ef > 100)      { $efColor='#1e40af'; $efBg='#dbeafe'; $efLabel='Sobrecumplimiento'; }
+        elseif ($ef >= 90)  { $efColor='#166534'; $efBg='#dcfce7'; $efLabel='Excelente'; }
+        elseif ($ef >= 75)  { $efColor='#3f6212'; $efBg='#ecfccb'; $efLabel='Bueno'; }
+        elseif ($ef >= 50)  { $efColor='#92400e'; $efBg='#fef3c7'; $efLabel='Regular'; }
+        elseif ($ef >= 25)  { $efColor='#9a3412'; $efBg='#ffedd5'; $efLabel='Área de mejora'; }
+        else                { $efColor='#991b1b'; $efBg='#fee2e2'; $efLabel='Crítico'; }
+        $detalle = $liq['eficiencia_detalle'] ?? [];
+      @endphp
+      <div style="margin:18px 0; padding:14px; border-radius:8px; background:{{ $efBg }}; border:1px solid {{ $efColor }}22;">
+        <div style="font-size:11px; color:{{ $efColor }}; text-transform:uppercase; letter-spacing:0.5px; font-weight:600;">Eficiencia del Período</div>
+        <div style="display:flex; align-items:baseline; gap:12px; margin-top:4px;">
+          <div style="font-size:28px; font-weight:700; color:{{ $efColor }};">{{ number_format($ef, 2, ',', '.') }}%</div>
+          <div style="font-size:13px; color:{{ $efColor }}; font-weight:600;">{{ $efLabel }}</div>
+        </div>
+        @if(!empty($detalle['formula']))
+          <div style="font-size:10px; color:#374151; margin-top:6px;">{{ $detalle['formula'] }}</div>
+        @endif
+        @if(isset($detalle['ops_contables']) && isset($detalle['ops_total']))
+          <div style="font-size:10px; color:#374151; margin-top:2px;">
+            Basado en {{ $detalle['ops_contables'] }} de {{ $detalle['ops_total'] }} operaciones del período
+            @if(!empty($detalle['ops_fraccion_alta'])) — {{ $detalle['ops_fraccion_alta'] }} excluidas (fracción > 1) @endif
+            @if(!empty($detalle['ops_productividad'])) — {{ $detalle['ops_productividad'] }} productividad (no medidas en v1) @endif
+          </div>
+        @endif
+      </div>
+    @endif
+
     <table class="totals">
       <tr>
         <td class="k">SubTotal Operaciones</td>

@@ -535,6 +535,14 @@ class LiqExtractosController extends Controller
                 ]);
                 $created[] = $liqDist->id;
 
+                // BUGFIX 24: calcular eficiencia al momento de crear la liquidación distribuidor
+                try {
+                    app(\App\Services\Liq\LiqEficienciaService::class)->calcular($liqDist);
+                } catch (\Throwable $e) {
+                    // No bloquear la generación si falla el cálculo — se puede recalcular luego
+                    \Log::warning('Eficiencia no calculada para liqDist #' . $liqDist->id . ': ' . $e->getMessage());
+                }
+
                 LiqHistorialAuditoria::registrar(
                     'liquidacion_distribuidor', $liqDist->id, 'creacion',
                     null,
@@ -814,6 +822,24 @@ class LiqExtractosController extends Controller
             'message' => count($sucursales) . ' sucursales recalculadas',
             'sucursales' => $sucursales->values(),
         ]);
+    }
+
+    // POST /liq/liquidaciones-distribuidor/{id}/recalcular-eficiencia (BUGFIX 24 A5)
+    public function recalcularEficiencia(LiqLiquidacionDistribuidor $liquidacionDistribuidor): JsonResponse
+    {
+        try {
+            $pct = app(\App\Services\Liq\LiqEficienciaService::class)->calcular($liquidacionDistribuidor);
+            return response()->json([
+                'message' => 'Eficiencia recalculada',
+                'data' => [
+                    'eficiencia_pct'     => $pct,
+                    'eficiencia_detalle' => $liquidacionDistribuidor->fresh()->eficiencia_detalle,
+                    'calculada_at'       => $liquidacionDistribuidor->fresh()->eficiencia_calculada_at,
+                ],
+            ]);
+        } catch (\Throwable $e) {
+            return response()->json(['error' => 'Error al calcular eficiencia: ' . $e->getMessage()], 500);
+        }
     }
 
     // POST /liq/liquidaciones/{liquidacionCliente}/reparsear-pdfs-ocasa (BUGFIX 22 Addendum A)

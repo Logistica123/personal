@@ -194,6 +194,10 @@ export type LiqLiquidacionDistribuidor = {
   pdf_path: string | null;
   beneficio_seguro?: string;
   subtotal_peajes?: string;
+  total_reembolso_peajes?: string | null;
+  eficiencia_pct?: string | number | null;
+  eficiencia_detalle?: Record<string, unknown> | null;
+  eficiencia_calculada_at?: string | null;
   distribuidor?: { id: number; apellidos: string; nombres: string; patente: string; cbu_alias: string | null; fecha_alta: string | null; fecha_baja: string | null };
 };
 

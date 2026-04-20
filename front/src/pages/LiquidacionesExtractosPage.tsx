@@ -24,6 +24,7 @@ import {
   ESTADO_TARIFA_LABEL,
 } from '../features/liquidaciones/types';
 import { PeajesPanel } from '../features/liquidaciones/PeajesPanel';
+import { EficienciaBadge } from '../features/liquidaciones/EficienciaBadge';
 
 type Props = {
   DashboardLayout: React.ComponentType<{ title: string; subtitle?: string; children: React.ReactNode }>;
@@ -3011,7 +3012,7 @@ export function LiquidacionesExtractosPage({
             <div className="card-body">
               <table className="data-table">
                 <thead>
-                  <tr><th>Distribuidor</th><th>Patente</th><th>Alta</th><th>Baja</th><th>Operaciones</th><th>Subtotal</th><th>Gastos</th><th>Total a pagar</th><th>Estado</th><th></th></tr>
+                  <tr><th>Distribuidor</th><th>Patente</th><th>Alta</th><th>Baja</th><th>Operaciones</th><th>Subtotal</th><th>Gastos</th><th>Total a pagar</th><th>Eficiencia</th><th>Estado</th><th></th></tr>
                 </thead>
                 <tbody>
                   {distribuidores.map((d) => (
@@ -3024,6 +3025,22 @@ export function LiquidacionesExtractosPage({
                       <td>{fmt(d.subtotal)}</td>
                       <td style={{ color: '#dc2626' }}>{fmt(d.gastos_administrativos)}</td>
                       <td><strong>{fmt(d.total_a_pagar)}</strong></td>
+                      <td style={{ textAlign: 'center' }}>
+                        <div style={{ display: 'flex', gap: 4, alignItems: 'center', justifyContent: 'center' }}>
+                          <EficienciaBadge pct={d.eficiencia_pct ?? null} detalle={d.eficiencia_detalle ?? null} calculadaAt={d.eficiencia_calculada_at ?? null} />
+                          <button type="button" className="btn-sm" title="Recalcular eficiencia"
+                            style={{ padding: '0 6px', fontSize: 10 }}
+                            onClick={async () => {
+                              try {
+                                await api.post(`/liquidaciones-distribuidor/${d.id}/recalcular-eficiencia`, {});
+                                if (selectedLiq) await openLiq(selectedLiq);
+                              } catch (e: unknown) {
+                                setError(e instanceof Error ? e.message : 'Error al recalcular eficiencia');
+                              }
+                            }}
+                          >↻</button>
+                        </div>
+                      </td>
                       <td style={{ fontSize: 12 }}>{d.estado}</td>
                       <td style={{ textAlign: 'right', whiteSpace: 'nowrap', display: 'flex', gap: 4, justifyContent: 'flex-end' }}>
                         <button
@@ -3052,7 +3069,7 @@ export function LiquidacionesExtractosPage({
                       </td>
                     </tr>
                   ))}
-                  {distribuidores.length === 0 && <tr><td colSpan={10} style={{ textAlign: 'center', color: '#6b7280' }}>Sin liquidaciones generadas aun</td></tr>}
+                  {distribuidores.length === 0 && <tr><td colSpan={11} style={{ textAlign: 'center', color: '#6b7280' }}>Sin liquidaciones generadas aun</td></tr>}
                 </tbody>
               </table>
 

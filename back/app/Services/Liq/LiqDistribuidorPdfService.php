@@ -185,6 +185,10 @@ class LiqDistribuidorPdfService
                 'gastos' => (float) $liqDist->gastos_administrativos,
                 'peajes' => (float) ($liqDist->subtotal_peajes ?? 0),
                 'reembolso_peajes' => (float) ($liqDist->total_reembolso_peajes ?? 0),
+                // BUGFIX 24 C
+                'eficiencia_pct' => $liqDist->eficiencia_pct !== null ? (float) $liqDist->eficiencia_pct : null,
+                'eficiencia_detalle' => $liqDist->eficiencia_detalle,
+                'mostrar_eficiencia' => (bool) ($liqDist->liquidacionCliente?->cliente?->mostrar_eficiencia_en_pdf ?? true),
                 'beneficio_seguro' => (float) ($liqDist->beneficio_seguro ?? 0),
                 'total' => (float) $liqDist->total_a_pagar,
                 'sucursal' => $operaciones->first()?->sucursal_tarifa,

@@ -328,6 +328,7 @@ Route::middleware('auth.api')->group(function () {
         Route::post('/liquidaciones-distribuidor/{liquidacionDistribuidor}/documento', [LiqDistribuidorDocumentoController::class, 'store']);
         Route::get('/liquidaciones-distribuidor/{liquidacionDistribuidor}/pdf', [LiqDistribuidorDocumentoController::class, 'descargarPdf']);
         Route::put('/liquidaciones-distribuidor/{liquidacionDistribuidor}/editar', [LiqDistribuidorLiquidacionesController::class, 'editar']);
+        Route::post('/liquidaciones-distribuidor/{liquidacionDistribuidor}/recalcular-eficiencia', [LiqExtractosController::class, 'recalcularEficiencia']);
         Route::get('/liquidaciones-distribuidor/{liquidacionDistribuidor}/historial', [LiqDistribuidorLiquidacionesController::class, 'historial']);
         Route::get('/distribuidores/{persona}/historial-auditoria', [LiqDistribuidorLiquidacionesController::class, 'historialDistribuidor']);
 
