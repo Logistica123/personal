@@ -23,6 +23,7 @@ class LiqCliente extends Model
         'tolerancia_facturacion',
         'mostrar_eficiencia_en_pdf',
         'pagar_peajes_a_distribuidor',
+        'split_fiscal_por_sucursal',
     ];
 
     protected $casts = [
@@ -31,6 +32,7 @@ class LiqCliente extends Model
         'configuracion_duplicados' => 'array',
         'mostrar_eficiencia_en_pdf' => 'boolean',
         'pagar_peajes_a_distribuidor' => 'boolean',
+        'split_fiscal_por_sucursal' => 'boolean',
     ];
 
     // -------------------------------------------------------------------------

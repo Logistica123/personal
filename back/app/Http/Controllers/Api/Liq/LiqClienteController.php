@@ -39,7 +39,12 @@ class LiqClienteController extends Controller
         }
 
         try {
-            $clientes = $query->get(['id', 'distriapp_cliente_id', 'razon_social', 'nombre_corto', 'cuit', 'activo', 'configuracion_excel']);
+            $columns = ['id', 'distriapp_cliente_id', 'razon_social', 'nombre_corto', 'cuit', 'activo', 'configuracion_excel'];
+            // BUGFIX 25/26: incluir flags fiscales/operativos si existen (son opcionales por orden de migraciones)
+            foreach (['pagar_peajes_a_distribuidor', 'split_fiscal_por_sucursal', 'mostrar_eficiencia_en_pdf', 'tolerancia_facturacion'] as $opt) {
+                if (Schema::hasColumn('liq_clientes', $opt)) $columns[] = $opt;
+            }
+            $clientes = $query->get($columns);
             return response()->json(['data' => $clientes]);
         } catch (QueryException $e) {
             return response()->json([

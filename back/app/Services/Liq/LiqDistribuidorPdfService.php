@@ -17,7 +17,8 @@ class LiqDistribuidorPdfService
     public function renderPdf(LiqLiquidacionDistribuidor $liqDist, Collection $operaciones): string
     {
         $liqDist->loadMissing([
-            'distribuidor:id,apellidos,nombres,cuil,email,telefono,patente',
+            'distribuidor:id,apellidos,nombres,cuil,email,telefono,patente,sucursal_id',
+            'distribuidor.sucursal:id,codigo_corto,nombre',
             'liquidacionCliente:id,cliente_id,periodo_desde,periodo_hasta',
             'liquidacionCliente.cliente:id,nombre_corto,razon_social,cuit',
         ]);
@@ -144,6 +145,7 @@ class LiqDistribuidorPdfService
                     'fecha' => $this->formatDate($fecha),
                     'transporte' => $op->id_operacion_cliente,
                     'ruta' => $op->concepto,
+                    'sucursal_op' => $op->sucursal_tarifa,  // BUGFIX 26.1
                     'modelo' => $op->modelo_tarifa,
                     'fraccion' => (float) ($op->fraccion_jornada ?? 1.0),
                     'tarifa_jornada' => $op->tarifa_jornada_distrib !== null ? (float) $op->tarifa_jornada_distrib : null,
@@ -159,6 +161,23 @@ class LiqDistribuidorPdfService
                 return ($row['fecha'] ?? '') . '|' . ($row['ruta'] ?? '') . '|' . (string) ($row['id'] ?? 0);
             })
             ->values();
+
+        // BUGFIX 26.1: resolver sucursal "principal" del distribuidor.
+        //   Preferencia: persona.sucursal (FK), si no aparece se usa la sucursal dominante de las ops.
+        $sucursalPrincipal = null;
+        if ($distribuidor?->sucursal) {
+            $codigo = $distribuidor->sucursal->codigo_corto;
+            $nombre = $distribuidor->sucursal->nombre;
+            $sucursalPrincipal = trim(($codigo ? $codigo . ' · ' : '') . ($nombre ?? ''));
+        }
+        if (!$sucursalPrincipal) {
+            $sucursalesDistintas = $operaciones->pluck('sucursal_tarifa')->filter()->unique();
+            if ($sucursalesDistintas->count() === 1) {
+                $sucursalPrincipal = $sucursalesDistintas->first();
+            } elseif ($sucursalesDistintas->count() > 1) {
+                $sucursalPrincipal = 'Múltiples (' . $sucursalesDistintas->count() . ')';
+            }
+        }
 
         $html = view('liq.liquidacion_distribuidor_ocasa', [
             'logoDataUri' => $logoDataUri,
@@ -193,7 +212,7 @@ class LiqDistribuidorPdfService
                 'mostrar_eficiencia' => (bool) ($liqDist->liquidacionCliente?->cliente?->mostrar_eficiencia_en_pdf ?? true),
                 'beneficio_seguro' => (float) ($liqDist->beneficio_seguro ?? 0),
                 'total' => (float) $liqDist->total_a_pagar,
-                'sucursal' => $operaciones->first()?->sucursal_tarifa,
+                'sucursal' => $sucursalPrincipal,  // BUGFIX 26.1: sucursal del distribuidor
             ],
             'operaciones' => $ops,
         ])->render();

@@ -893,6 +893,102 @@ class LiqExtractosController extends Controller
         ]);
     }
 
+    // GET /liq/facturacion-clientes/{cliente}/periodo/{yyyymm}/split-por-sucursal (BUGFIX 26 Feature 26.2)
+    // Desglose por sucursal con importe gravado / no gravado / IVA 21% / total factura.
+    public function splitPorSucursalCliente(Request $request, int $clienteId, string $periodo): JsonResponse
+    {
+        $cliente = LiqCliente::findOrFail($clienteId);
+        if (!($cliente->split_fiscal_por_sucursal ?? false)) {
+            return response()->json([
+                'error' => 'split_no_habilitado',
+                'message' => "El cliente '{$cliente->nombre_corto}' no tiene habilitado el split fiscal por sucursal.",
+            ], 422);
+        }
+
+        if (!preg_match('/^\d{4}-?\d{2}$/', $periodo)) {
+            return response()->json(['error' => 'Formato de período inválido. Usar YYYY-MM o YYYYMM.'], 422);
+        }
+        $periodo = preg_replace('/[^\d]/', '', $periodo);
+        $y = (int) substr($periodo, 0, 4);
+        $m = (int) substr($periodo, 4, 2);
+        $from = sprintf('%04d-%02d-01', $y, $m);
+        $to   = date('Y-m-t', strtotime($from));
+
+        $ivaRate = 0.21;
+
+        $filas = LiqOperacion::query()
+            ->join('liq_liquidaciones_cliente as lc', 'lc.id', '=', 'liq_operaciones.liquidacion_cliente_id')
+            ->where('lc.cliente_id', $clienteId)
+            ->whereBetween('lc.periodo_desde', [$from, $to])
+            ->whereNotIn('liq_operaciones.estado', ['ignorado', 'anulado', 'excluida'])
+            ->selectRaw('
+                liq_operaciones.sucursal_tarifa as codigo_sucursal,
+                COUNT(*)                                             as operaciones,
+                COALESCE(SUM(liq_operaciones.valor_cliente), 0)      as importe_total,
+                COALESCE(SUM(liq_operaciones.importe_gravado), 0)    as gravado,
+                COALESCE(SUM(liq_operaciones.importe_no_gravado), 0) as no_gravado,
+                SUM(CASE WHEN liq_operaciones.importe_gravado IS NULL OR liq_operaciones.importe_no_gravado IS NULL THEN 1 ELSE 0 END) as ops_sin_split
+            ')
+            ->groupBy('liq_operaciones.sucursal_tarifa')
+            ->orderBy('liq_operaciones.sucursal_tarifa')
+            ->get();
+
+        // Join con tabla sucursals para nombre legible (matchea por codigo_corto)
+        $codigos = $filas->pluck('codigo_sucursal')->filter()->unique();
+        $sucursalesCatalog = \DB::table('sucursals')
+            ->whereIn('codigo_corto', $codigos)
+            ->whereNull('deleted_at')
+            ->pluck('nombre', 'codigo_corto');
+
+        $sucursales = $filas->map(function ($r) use ($ivaRate, $sucursalesCatalog) {
+            $gravado   = round((float) $r->gravado, 2);
+            $noGrav    = round((float) $r->no_gravado, 2);
+            $importe   = round((float) $r->importe_total, 2);
+            $iva       = round($gravado * $ivaRate, 2);
+            $totalFac  = round($gravado + $iva + $noGrav, 2);
+            $diff      = round($importe - ($gravado + $noGrav), 2);
+            return [
+                'codigo'          => $r->codigo_sucursal,
+                'nombre'          => $sucursalesCatalog[$r->codigo_sucursal] ?? null,
+                'operaciones'     => (int) $r->operaciones,
+                'ops_sin_split'   => (int) $r->ops_sin_split,
+                'importe_total'   => $importe,
+                'gravado'         => $gravado,
+                'no_gravado'      => $noGrav,
+                'iva_21'          => $iva,
+                'total_factura'   => $totalFac,
+                'consistencia_diff' => $diff,
+                'consistente'     => abs($diff) <= 0.01,
+            ];
+        });
+
+        $totImp   = round($sucursales->sum('importe_total'), 2);
+        $totGrav  = round($sucursales->sum('gravado'), 2);
+        $totNG    = round($sucursales->sum('no_gravado'), 2);
+        $totIVA   = round($totGrav * $ivaRate, 2);
+        $totFac   = round($totGrav + $totIVA + $totNG, 2);
+
+        return response()->json([
+            'data' => [
+                'cliente_id' => $cliente->id,
+                'cliente'    => $cliente->nombre_corto ?? $cliente->razon_social,
+                'periodo'    => sprintf('%04d-%02d', $y, $m),
+                'iva_rate'   => $ivaRate,
+                'sucursales' => $sucursales->values(),
+                'totales' => [
+                    'operaciones'     => (int) $sucursales->sum('operaciones'),
+                    'ops_sin_split'   => (int) $sucursales->sum('ops_sin_split'),
+                    'importe_total'   => $totImp,
+                    'gravado'         => $totGrav,
+                    'no_gravado'      => $totNG,
+                    'iva_21'          => $totIVA,
+                    'total_factura'   => $totFac,
+                    'consistente'     => abs(round($totImp - ($totGrav + $totNG), 2)) <= 1.0,
+                ],
+            ],
+        ]);
+    }
+
     // POST /liq/liquidaciones-distribuidor/{id}/recalcular-eficiencia (BUGFIX 24 A5)
     public function recalcularEficiencia(LiqLiquidacionDistribuidor $liquidacionDistribuidor): JsonResponse
     {

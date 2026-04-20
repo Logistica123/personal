@@ -1,4 +1,5 @@
 @php
+  // --- Helpers ---
   $fmtMoney = function ($value) {
     if ($value === null || $value === '') return '-';
     $n = is_numeric($value) ? (float) $value : 0.0;
@@ -44,197 +45,242 @@
     $periodoStr = ($liq['periodo_desde'] ?? '') . ' al ' . ($liq['periodo_hasta'] ?? '');
   }
 
-  // Determinar si hay operaciones con KM o Productividad
-  $hasKm = collect($operaciones)->contains(fn ($op) => ($op['modelo'] ?? '') === 'JORNADA_KM' && ($op['km_excedente'] ?? 0) > 0);
-  $hasProd = collect($operaciones)->contains(fn ($op) => ($op['modelo'] ?? '') === 'PRODUCTIVIDAD');
+  // --- Eficiencia (badge compacto, BUGFIX 26.1) ---
+  $efPct = $liq['eficiencia_pct'] ?? null;
+  $efShow = !empty($liq['mostrar_eficiencia']) && $efPct !== null;
+  $efLabel = '-';
+  $efColor = '#6b7280';
+  $efBg = '#e5e7eb';
+  if ($efShow) {
+    $ef = (float) $efPct;
+    if ($ef >= 90)      { $efColor='#166534'; $efBg='#dcfce7'; $efLabel='Excelente'; }
+    elseif ($ef >= 70)  { $efColor='#92400e'; $efBg='#fef3c7'; $efLabel='Bueno'; }
+    elseif ($ef >= 50)  { $efColor='#9a3412'; $efBg='#ffedd5'; $efLabel='Regular'; }
+    else                { $efColor='#991b1b'; $efBg='#fee2e2'; $efLabel='Bajo'; }
+  }
+  $efOpsFrac = null;
+  if (!empty($liq['eficiencia_detalle']['ops_contables']) && !empty($liq['eficiencia_detalle']['ops_total'])) {
+    $efOpsFrac = $liq['eficiencia_detalle']['ops_contables'] . '/' . $liq['eficiencia_detalle']['ops_total'] . ' ops';
+  } elseif (!empty($liq['cantidad_operaciones'])) {
+    $efOpsFrac = $liq['cantidad_operaciones'] . ' ops';
+  }
+
+  // --- Totales ---
+  $subtotal = (float) ($liq['subtotal'] ?? 0);
+  $gastos = (float) ($liq['gastos'] ?? 0);
+  $beneficio = (float) ($liq['beneficio_seguro'] ?? 0);
+  $reembolsoPeajes = (float) ($liq['reembolso_peajes'] ?? 0);
+  $clientePagaPeajes = !empty($liq['cliente_paga_peajes']);
+  $total = (float) ($liq['total'] ?? 0);
 @endphp
 <!doctype html>
 <html lang="es">
   <head>
     <meta charset="utf-8" />
-    <title>Liquidacion OCASA</title>
+    <title>Liquidacion {{ $fmtText($cliente['nombre'] ?? 'Cliente') }}</title>
     <style>
-      @page { margin: 22px 26px; }
-      body { font-family: DejaVu Sans, sans-serif; font-size: 10px; color: #111827; }
-      .header { width: 100%; margin-bottom: 12px; }
+      @page { margin: 14mm 14mm; }
+      body { font-family: DejaVu Sans, sans-serif; font-size: 8.5pt; color: #111827; }
+
+      /* ---------- HEADER: logo (izq) + cartel (der) ---------- */
+      .header { width: 100%; margin-bottom: 6mm; }
       .header-table { width: 100%; border-collapse: collapse; }
-      .logo { width: 150px; }
-      .title { font-size: 17px; font-weight: 700; text-align: right; }
-      .subtitle { font-size: 11px; color: #4b5563; text-align: right; margin-top: 3px; }
-      .meta { width: 100%; border: 1px solid #e5e7eb; border-radius: 10px; padding: 8px 10px; margin-bottom: 12px; }
-      .meta-grid { width: 100%; border-collapse: collapse; }
-      .meta-grid td { padding: 2px 0; vertical-align: top; }
-      .label { color: #6b7280; width: 100px; }
-      .value { font-weight: 600; }
-      .section-title { font-weight: 700; margin: 8px 0 4px; font-size: 11px; }
-      table.ops { width: 100%; border-collapse: collapse; }
-      table.ops th { background: #f3f4f6; text-align: left; padding: 5px 4px; border: 1px solid #e5e7eb; font-size: 9px; }
-      table.ops td { padding: 4px 4px; border: 1px solid #e5e7eb; font-size: 9px; }
+      .header-table td { vertical-align: middle; padding: 0; }
+      .logo-cell { width: 62mm; }
+      .logo-cell img { width: 60mm; display: block; }
+      .cartel-cell { text-align: right; }
+      .cartel-title { font-size: 12pt; font-weight: 700; color: #1F3864; line-height: 1.1; }
+      .cartel-sub { font-size: 10pt; color: #595959; margin-top: 1mm; }
+
+      /* ---------- META: datos distribuidor (izq) + badge eficiencia (der) ---------- */
+      .meta-row { width: 100%; border-collapse: collapse; margin-bottom: 4mm; }
+      .meta-row td { vertical-align: top; padding: 0; }
+      .meta-left { width: 140mm; padding-right: 4mm; }
+      .meta-right { width: 42mm; }
+      .meta-grid { width: 100%; border-collapse: collapse; border: 1px solid #D6DCE7; border-radius: 3mm; background: #FBFCFE; }
+      .meta-grid td { padding: 1.8mm 2.5mm; font-size: 8.5pt; vertical-align: top; border-right: 1px solid #E5E7EB; border-bottom: 1px solid #E5E7EB; }
+      .meta-grid td:last-child { border-right: none; }
+      .meta-grid tr:last-child td { border-bottom: none; }
+      .meta-label { color: #6b7280; font-size: 7.5pt; text-transform: uppercase; letter-spacing: 0.3px; }
+      .meta-value { font-weight: 700; font-size: 9pt; color: #1F2937; margin-top: 0.5mm; }
+
+      /* ---------- Badge eficiencia compacto ---------- */
+      .ef-badge { width: 42mm; height: 22mm; border-radius: 3mm; padding: 2mm; text-align: center; color: #fff; }
+      .ef-title { font-size: 7.5pt; font-weight: 700; letter-spacing: 0.5px; text-transform: uppercase; opacity: 0.85; }
+      .ef-value { font-size: 18pt; font-weight: 700; line-height: 1; margin-top: 1mm; }
+      .ef-sub { font-size: 7pt; margin-top: 0.5mm; }
+
+      /* ---------- Tabla de operaciones ---------- */
+      table.ops { width: 100%; border-collapse: collapse; margin-top: 1mm; }
+      table.ops thead th {
+        background: #1F3864; color: #fff; font-size: 9pt; font-weight: 700;
+        padding: 2mm 1.5mm; border: 0.3pt solid #BFBFBF;
+      }
+      table.ops tbody td { padding: 1.4mm 1.5mm; border: 0.3pt solid #BFBFBF; font-size: 8.5pt; }
+      table.ops tbody tr:nth-child(even) td { background: #F7F9FC; }
       .right { text-align: right; }
       .center { text-align: center; }
-      .totals { width: 100%; margin-top: 8px; border-collapse: collapse; }
-      .totals td { padding: 4px 0; }
-      .totals .k { color: #6b7280; }
-      .totals .v { font-weight: 700; text-align: right; }
-      .totals .grand { font-size: 13px; }
-      .footer { margin-top: 12px; font-size: 8px; color: #6b7280; }
-      .tag { display: inline-block; padding: 1px 5px; border-radius: 4px; font-size: 8px; font-weight: 600; }
-      .tag-j { background: #dbeafe; color: #1e40af; }
-      .tag-jk { background: #fef3c7; color: #92400e; }
-      .tag-p { background: #d1fae5; color: #065f46; }
+      .left { text-align: left; }
+
+      /* ---------- Totales ---------- */
+      .totals-wrap { margin-top: 5mm; width: 100%; }
+      .totals { margin-left: auto; border-collapse: collapse; min-width: 85mm; }
+      .totals td { padding: 1.2mm 2mm; font-size: 9.5pt; }
+      .totals td.k { color: #4b5563; }
+      .totals td.v { font-weight: 700; text-align: right; }
+      .totals tr.sep td { border-top: 0.6pt solid #1F3864; }
+      .totals tr.grand td { font-size: 11pt; font-weight: 700; color: #1F3864; padding-top: 1.5mm; }
+
+      /* ---------- Footer ---------- */
+      .footer { margin-top: 10mm; font-size: 8pt; color: #6b7280; font-style: italic; text-align: center; }
     </style>
   </head>
   <body>
+
+    {{-- ╔════════════════════════════════════════════════════════════╗
+         ║  1) HEADER: logo corporativo + cartel con título           ║
+         ╚════════════════════════════════════════════════════════════╝ --}}
     <div class="header">
       <table class="header-table">
         <tr>
-          <td class="logo">
+          <td class="logo-cell">
             @if(!empty($logoDataUri))
-              <img src="{{ $logoDataUri }}" style="height: 40px;" alt="Logo" />
+              <img src="{{ $logoDataUri }}" alt="Logística Argentina SRL" />
+            @else
+              <div style="font-size:11pt;font-weight:700;color:#1F3864;">LOGÍSTICA ARGENTINA SRL</div>
             @endif
           </td>
-          <td>
-            <div class="title">Liquidacion OCASA</div>
-            <div class="subtitle">{{ $fmtText($cliente['nombre'] ?? null) }} - {{ $periodoStr }}</div>
+          <td class="cartel-cell">
+            <div class="cartel-title">Liquidación {{ strtoupper($fmtText($cliente['nombre'] ?? '')) }}</div>
+            <div class="cartel-sub">Período {{ $periodoStr }}</div>
           </td>
         </tr>
       </table>
     </div>
 
-    <div class="meta">
-      <table class="meta-grid">
-        <tr>
-          <td style="width: 55%;">
-            <div class="section-title">Distribuidor</div>
-            <table class="meta-grid">
-              <tr><td class="label">Nombre</td><td class="value">{{ $fmtText($distribuidor['nombre'] ?? null) }}</td></tr>
-              <tr><td class="label">CUIT/CUIL</td><td>{{ $fmtText($distribuidor['cuil'] ?? null) }}</td></tr>
-              <tr><td class="label">Patente</td><td>{{ $fmtText($distribuidor['patente'] ?? null) }}</td></tr>
-            </table>
-          </td>
-          <td style="width: 45%;">
-            <div class="section-title">Datos</div>
-            <table class="meta-grid">
-              <tr><td class="label">Sucursal</td><td class="value">{{ $fmtText($liq['sucursal'] ?? null) }}</td></tr>
-              <tr><td class="label">Operaciones</td><td>{{ $fmtText($liq['cantidad_operaciones'] ?? null) }}</td></tr>
-              <tr><td class="label">Periodo</td><td class="value">{{ $periodoStr }}</td></tr>
-            </table>
-          </td>
-        </tr>
-      </table>
-    </div>
+    {{-- ╔════════════════════════════════════════════════════════════╗
+         ║  2) META: datos distribuidor (izq) + badge eficiencia (der) ║
+         ╚════════════════════════════════════════════════════════════╝ --}}
+    <table class="meta-row">
+      <tr>
+        <td class="meta-left">
+          <table class="meta-grid">
+            <tr>
+              <td>
+                <div class="meta-label">Distribuidor</div>
+                <div class="meta-value">{{ $fmtText($distribuidor['nombre'] ?? null) }}</div>
+              </td>
+              <td>
+                <div class="meta-label">Sucursal</div>
+                <div class="meta-value">{{ $fmtText($liq['sucursal'] ?? null) }}</div>
+              </td>
+            </tr>
+            <tr>
+              <td>
+                <div class="meta-label">CUIT/CUIL</div>
+                <div class="meta-value">{{ $fmtText($distribuidor['cuil'] ?? null) }}</div>
+              </td>
+              <td>
+                <div class="meta-label">Patente</div>
+                <div class="meta-value">{{ $fmtText($distribuidor['patente'] ?? null) }}</div>
+              </td>
+            </tr>
+            <tr>
+              <td>
+                <div class="meta-label">Período</div>
+                <div class="meta-value">{{ $periodoStr }}</div>
+              </td>
+              <td>
+                <div class="meta-label">Operaciones</div>
+                <div class="meta-value">{{ $fmtText($liq['cantidad_operaciones'] ?? null) }}</div>
+              </td>
+            </tr>
+          </table>
+        </td>
+        <td class="meta-right">
+          @if($efShow)
+            <div class="ef-badge" style="background: {{ $efColor }};">
+              <div class="ef-title">Eficiencia</div>
+              <div class="ef-value">{{ number_format((float) $efPct, 1, ',', '.') }}%</div>
+              <div class="ef-sub">{{ $efLabel }}</div>
+              @if($efOpsFrac)
+                <div class="ef-sub" style="opacity:0.85;">{{ $efOpsFrac }}</div>
+              @endif
+            </div>
+          @endif
+        </td>
+      </tr>
+    </table>
 
-    <div class="section-title">Detalle de Operaciones</div>
+    {{-- ╔════════════════════════════════════════════════════════════╗
+         ║  3) TABLA de operaciones con columna Sucursal              ║
+         ╚════════════════════════════════════════════════════════════╝ --}}
     <table class="ops">
       <thead>
         <tr>
-          <th style="width: 22px;">#</th>
-          <th style="width: 62px;">Fecha</th>
-          <th style="width: 70px;">Transporte</th>
-          <th>Ruta</th>
-          <th style="width: 38px;" class="center">Fracc.</th>
-          <th style="width: 74px;" class="right">$/Jornada</th>
-          @if($hasKm)
-            <th style="width: 44px;" class="right">KM Exc.</th>
-            <th style="width: 56px;" class="right">$/KM</th>
-            <th style="width: 64px;" class="right">Valor KM</th>
-          @endif
-          @if($hasProd)
-            <th style="width: 42px;" class="center">Paradas</th>
-            <th style="width: 68px;" class="right">$/Prod</th>
-          @endif
-          <th style="width: 78px;" class="right">Importe</th>
+          <th style="width: 8mm;"  class="center">#</th>
+          <th style="width: 20mm;" class="center">Fecha</th>
+          <th style="width: 22mm;" class="center">Transporte</th>
+          <th style="width: 36mm;" class="left">Sucursal</th>
+          <th style="width: 15mm;" class="center">Ruta</th>
+          <th style="width: 11mm;" class="center">Fracc</th>
+          <th style="width: 32mm;" class="right">$/Jornada</th>
+          <th class="right">Importe</th>
         </tr>
       </thead>
       <tbody>
         @forelse($operaciones as $i => $op)
           <tr>
-            <td>{{ $i + 1 }}</td>
-            <td>{{ $fmtText($op['fecha'] ?? null) }}</td>
-            <td>{{ $fmtText($op['transporte'] ?? null) }}</td>
-            <td>{{ $fmtText($op['ruta'] ?? null) }}</td>
+            <td class="center">{{ $i + 1 }}</td>
+            <td class="center">{{ $fmtText($op['fecha'] ?? null) }}</td>
+            <td class="center">{{ $fmtText($op['transporte'] ?? null) }}</td>
+            <td class="left">{{ $fmtText($op['sucursal_op'] ?? null) }}</td>
+            <td class="center">{{ $fmtText($op['ruta'] ?? null) }}</td>
             <td class="center">{{ $fmtFraccion($op['fraccion'] ?? 1.0) }}</td>
             <td class="right">{{ ($op['modelo'] ?? '') !== 'PRODUCTIVIDAD' ? $fmtMoney($op['tarifa_jornada'] ?? null) : '-' }}</td>
-            @if($hasKm)
-              <td class="right">{{ ($op['km_excedente'] ?? 0) > 0 ? $fmtNum($op['km_excedente'], 0) : '-' }}</td>
-              <td class="right">{{ ($op['tarifa_km'] ?? 0) > 0 ? $fmtMoney($op['tarifa_km']) : '-' }}</td>
-              <td class="right">{{ ($op['valor_km'] ?? 0) > 0 ? $fmtMoney($op['valor_km']) : '-' }}</td>
-            @endif
-            @if($hasProd)
-              <td class="center">{{ ($op['modelo'] ?? '') === 'PRODUCTIVIDAD' ? $fmtNum($op['paradas'] ?? 0, 0) : '-' }}</td>
-              <td class="right">{{ ($op['modelo'] ?? '') === 'PRODUCTIVIDAD' ? $fmtMoney($op['tarifa_prod'] ?? null) : '-' }}</td>
-            @endif
             <td class="right">{{ $fmtMoney($op['importe'] ?? null) }}</td>
           </tr>
         @empty
-          <tr>
-            <td colspan="{{ 6 + ($hasKm ? 3 : 0) + ($hasProd ? 2 : 0) }}">No hay operaciones para mostrar.</td>
-          </tr>
+          <tr><td colspan="8" class="center" style="padding:6mm;">No hay operaciones para mostrar.</td></tr>
         @endforelse
       </tbody>
     </table>
 
-    {{-- BUGFIX 24 C: Eficiencia del Período --}}
-    @if(!empty($liq['mostrar_eficiencia']) && isset($liq['eficiencia_pct']) && $liq['eficiencia_pct'] !== null)
-      @php
-        $ef = (float) $liq['eficiencia_pct'];
-        if ($ef > 100)      { $efColor='#1e40af'; $efBg='#dbeafe'; $efLabel='Sobrecumplimiento'; }
-        elseif ($ef >= 90)  { $efColor='#166534'; $efBg='#dcfce7'; $efLabel='Excelente'; }
-        elseif ($ef >= 75)  { $efColor='#3f6212'; $efBg='#ecfccb'; $efLabel='Bueno'; }
-        elseif ($ef >= 50)  { $efColor='#92400e'; $efBg='#fef3c7'; $efLabel='Regular'; }
-        elseif ($ef >= 25)  { $efColor='#9a3412'; $efBg='#ffedd5'; $efLabel='Área de mejora'; }
-        else                { $efColor='#991b1b'; $efBg='#fee2e2'; $efLabel='Crítico'; }
-        $detalle = $liq['eficiencia_detalle'] ?? [];
-      @endphp
-      <div style="margin:18px 0; padding:14px; border-radius:8px; background:{{ $efBg }}; border:1px solid {{ $efColor }}22;">
-        <div style="font-size:11px; color:{{ $efColor }}; text-transform:uppercase; letter-spacing:0.5px; font-weight:600;">Eficiencia del Período</div>
-        <div style="display:flex; align-items:baseline; gap:12px; margin-top:4px;">
-          <div style="font-size:28px; font-weight:700; color:{{ $efColor }};">{{ number_format($ef, 2, ',', '.') }}%</div>
-          <div style="font-size:13px; color:{{ $efColor }}; font-weight:600;">{{ $efLabel }}</div>
-        </div>
-        @if(!empty($detalle['formula']))
-          <div style="font-size:10px; color:#374151; margin-top:6px;">{{ $detalle['formula'] }}</div>
-        @endif
-        @if(isset($detalle['ops_contables']) && isset($detalle['ops_total']))
-          <div style="font-size:10px; color:#374151; margin-top:2px;">
-            Basado en {{ $detalle['ops_contables'] }} de {{ $detalle['ops_total'] }} operaciones del período
-            @if(!empty($detalle['ops_fraccion_alta'])) — {{ $detalle['ops_fraccion_alta'] }} excluidas (fracción > 1) @endif
-            @if(!empty($detalle['ops_productividad'])) — {{ $detalle['ops_productividad'] }} productividad (no medidas en v1) @endif
-          </div>
-        @endif
-      </div>
-    @endif
-
-    <table class="totals">
-      <tr>
-        <td class="k">SubTotal Operaciones</td>
-        <td class="v">{{ $fmtMoney($liq['subtotal'] ?? null) }}</td>
-      </tr>
-      {{-- BUGFIX 25: el bloque de peajes sólo aplica para clientes que reembolsan peajes al distribuidor. --}}
-      @if(!empty($liq['cliente_paga_peajes']) && ($liq['reembolso_peajes'] ?? 0) > 0)
+    {{-- ╔════════════════════════════════════════════════════════════╗
+         ║  4) TOTALES                                                ║
+         ╚════════════════════════════════════════════════════════════╝ --}}
+    <div class="totals-wrap">
+      <table class="totals">
         <tr>
-          <td class="k">Reembolso de peajes autorizados</td>
-          <td class="v">{{ $fmtMoney($liq['reembolso_peajes']) }}</td>
+          <td class="k">SubTotal Operaciones</td>
+          <td class="v">{{ $fmtMoney($subtotal) }}</td>
         </tr>
-      @endif
-      <tr>
-        <td class="k">Gastos Administrativos</td>
-        <td class="v">- {{ $fmtMoney($liq['gastos'] ?? null) }}</td>
-      </tr>
-      @if(($liq['beneficio_seguro'] ?? 0) > 0)
+        {{-- Reembolso de peajes: sólo si el cliente reembolsa peajes (BUGFIX 25) --}}
+        @if($clientePagaPeajes && $reembolsoPeajes > 0)
+          <tr>
+            <td class="k">Reembolso de peajes autorizados</td>
+            <td class="v">{{ $fmtMoney($reembolsoPeajes) }}</td>
+          </tr>
+        @endif
         <tr>
-          <td class="k">Beneficio Seguro Vehiculo</td>
-          <td class="v">- {{ $fmtMoney($liq['beneficio_seguro']) }}</td>
+          <td class="k">Gastos Administrativos</td>
+          <td class="v">- {{ $fmtMoney($gastos) }}</td>
         </tr>
-      @endif
-      <tr>
-        <td class="k grand" style="font-size: 14px; font-weight: 700;">Importe a Facturar</td>
-        <td class="v grand" style="font-size: 14px; font-weight: 700;">{{ $fmtMoney($liq['total'] ?? null) }}</td>
-      </tr>
-    </table>
+        @if($beneficio > 0)
+          <tr>
+            <td class="k">Beneficio Seguro Vehículo</td>
+            <td class="v">- {{ $fmtMoney($beneficio) }}</td>
+          </tr>
+        @endif
+        <tr class="sep grand">
+          <td class="k">Importe a Facturar</td>
+          <td class="v">{{ $fmtMoney($total) }}</td>
+        </tr>
+      </table>
+    </div>
 
     <div class="footer">
-      Documento generado automaticamente - {{ $fmtText($empresa['razon_social'] ?? 'Logistica Argentina SRL') }}
+      Documento generado automáticamente · {{ strtoupper($fmtText($empresa['razon_social'] ?? 'LOGÍSTICA ARGENTINA SRL')) }}
     </div>
   </body>
 </html>

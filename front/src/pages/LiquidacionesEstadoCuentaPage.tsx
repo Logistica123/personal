@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useLiqApi } from '../features/liquidaciones/api';
+import { SplitFiscalPorSucursal } from '../features/liquidaciones/SplitFiscalPorSucursal';
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */
@@ -40,7 +41,7 @@ type EstadoCuentaRow = {
 };
 
 type Jurisdiccion = { id: number; nombre: string };
-type LiqCliente = { id: number; nombre_corto?: string | null; razon_social?: string | null };
+type LiqCliente = { id: number; nombre_corto?: string | null; razon_social?: string | null; split_fiscal_por_sucursal?: boolean };
 
 type Props = {
   DashboardLayout: React.ComponentType<{ title: string; subtitle?: string; children: React.ReactNode }>;
@@ -320,6 +321,21 @@ export function LiquidacionesEstadoCuentaPage({
       {/* Messages */}
       {error && <div className="form-info form-info--error" style={{ margin: '0 0 16px' }}>{error}</div>}
       {successMsg && <div className="form-info" style={{ margin: '0 0 16px', background: '#e8f5e9', color: '#1b5e20' }}>{successMsg}</div>}
+
+      {/* BUGFIX 26.2: pestaña Split Fiscal por Sucursal — sólo clientes con flag activo y con cliente filtrado */}
+      {(() => {
+        const cliSel = filterCliente ? clientes.find(c => String(c.id) === String(filterCliente)) : null;
+        if (!cliSel || !cliSel.split_fiscal_por_sucursal) return null;
+        // Derivar período YYYY-MM desde el filtro tipo "mar-26" es frágil — dejamos que el componente
+        // use su propio selector con mes corriente por default.
+        return (
+          <SplitFiscalPorSucursal
+            api={api}
+            clienteId={cliSel.id}
+            clienteNombre={cliSel.nombre_corto ?? cliSel.razon_social ?? undefined}
+          />
+        );
+      })()}
 
       {/* Summary cards */}
       <section className="summary-grid" style={{ marginBottom: 20 }}>

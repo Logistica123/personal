@@ -331,6 +331,8 @@ Route::middleware('auth.api')->group(function () {
         Route::post('/liquidaciones-distribuidor/{liquidacionDistribuidor}/recalcular-eficiencia', [LiqExtractosController::class, 'recalcularEficiencia']);
         // BUGFIX 25 Feature 25.3: resumen fiscal para facturar LA → cliente
         Route::get('/facturacion-clientes/{clienteId}/periodo/{periodo}/resumen-fiscal', [LiqExtractosController::class, 'resumenFiscalCliente']);
+        // BUGFIX 26 Feature 26.2: split por sucursal con IVA
+        Route::get('/facturacion-clientes/{clienteId}/periodo/{periodo}/split-por-sucursal', [LiqExtractosController::class, 'splitPorSucursalCliente']);
         Route::get('/liquidaciones-distribuidor/{liquidacionDistribuidor}/historial', [LiqDistribuidorLiquidacionesController::class, 'historial']);
         Route::get('/distribuidores/{persona}/historial-auditoria', [LiqDistribuidorLiquidacionesController::class, 'historialDistribuidor']);
 
