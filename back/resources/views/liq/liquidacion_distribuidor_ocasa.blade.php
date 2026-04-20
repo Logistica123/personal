@@ -210,15 +210,11 @@
         <td class="k">SubTotal Operaciones</td>
         <td class="v">{{ $fmtMoney($liq['subtotal'] ?? null) }}</td>
       </tr>
-      @if(($liq['reembolso_peajes'] ?? 0) > 0)
+      {{-- BUGFIX 25: el bloque de peajes sólo aplica para clientes que reembolsan peajes al distribuidor. --}}
+      @if(!empty($liq['cliente_paga_peajes']) && ($liq['reembolso_peajes'] ?? 0) > 0)
         <tr>
           <td class="k">Reembolso de peajes autorizados</td>
           <td class="v">{{ $fmtMoney($liq['reembolso_peajes']) }}</td>
-        </tr>
-      @elseif(($liq['peajes'] ?? 0) > 0)
-        <tr>
-          <td class="k" style="color:#888">Peajes informados (no autorizados)</td>
-          <td class="v" style="color:#888">{{ $fmtMoney($liq['peajes']) }}</td>
         </tr>
       @endif
       <tr>

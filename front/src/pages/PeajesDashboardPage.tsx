@@ -122,7 +122,10 @@ export function PeajesDashboardPage({
   const maxBruto = Math.max(1, ...serie.map(s => s.total_bruto));
 
   return (
-    <DashboardLayout title="Dashboard de peajes" subtitle="Métricas de autorización de peajes (Imp. No Gravado) cross-liquidación">
+    <DashboardLayout title="Dashboard de peajes" subtitle="Métricas del split Imp.Gravado / No Gravado cross-liquidación">
+      <div style={{ background: '#eff6ff', border: '1px solid #bfdbfe', color: '#1e40af', padding: 10, borderRadius: 6, marginBottom: 12, fontSize: 13 }}>
+        <strong>Nota (BUGFIX 25):</strong> para OCASA, el Imp.No Gravado es clasificación fiscal interna del cliente — se usa para facturar LA → OCASA, no se paga al distribuidor. El panel de autorización por liquidación sólo aparece para clientes con <code>pagar_peajes_a_distribuidor=true</code>.
+      </div>
       {error && <div style={{ color: '#991b1b', background: '#fee2e2', padding: 10, borderRadius: 6, marginBottom: 12 }}>{error}</div>}
 
       <div className="dashboard-card" style={{ marginBottom: 16 }}>

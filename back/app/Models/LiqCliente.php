@@ -21,12 +21,16 @@ class LiqCliente extends Model
         'configuracion_excel',
         'configuracion_duplicados',
         'tolerancia_facturacion',
+        'mostrar_eficiencia_en_pdf',
+        'pagar_peajes_a_distribuidor',
     ];
 
     protected $casts = [
         'activo' => 'boolean',
         'configuracion_excel' => 'array',
         'configuracion_duplicados' => 'array',
+        'mostrar_eficiencia_en_pdf' => 'boolean',
+        'pagar_peajes_a_distribuidor' => 'boolean',
     ];
 
     // -------------------------------------------------------------------------

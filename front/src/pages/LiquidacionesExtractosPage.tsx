@@ -2986,8 +2986,8 @@ export function LiquidacionesExtractosPage({
             </div>
           </div>
 
-          {/* BUGFIX 22 F: Panel de autorización de peajes */}
-          {selectedLiq && (
+          {/* BUGFIX 22 F: Panel de autorización de peajes — gateado por BUGFIX 25 */}
+          {selectedLiq && (clientes.find(c => c.id === selectedLiq.cliente_id)?.pagar_peajes_a_distribuidor ?? false) && (
             <PeajesPanel api={api} liquidacionId={selectedLiq.id} onChanged={() => { if (selectedLiq) void openLiq(selectedLiq); }} />
           )}
 

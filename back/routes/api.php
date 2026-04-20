@@ -329,6 +329,8 @@ Route::middleware('auth.api')->group(function () {
         Route::get('/liquidaciones-distribuidor/{liquidacionDistribuidor}/pdf', [LiqDistribuidorDocumentoController::class, 'descargarPdf']);
         Route::put('/liquidaciones-distribuidor/{liquidacionDistribuidor}/editar', [LiqDistribuidorLiquidacionesController::class, 'editar']);
         Route::post('/liquidaciones-distribuidor/{liquidacionDistribuidor}/recalcular-eficiencia', [LiqExtractosController::class, 'recalcularEficiencia']);
+        // BUGFIX 25 Feature 25.3: resumen fiscal para facturar LA → cliente
+        Route::get('/facturacion-clientes/{clienteId}/periodo/{periodo}/resumen-fiscal', [LiqExtractosController::class, 'resumenFiscalCliente']);
         Route::get('/liquidaciones-distribuidor/{liquidacionDistribuidor}/historial', [LiqDistribuidorLiquidacionesController::class, 'historial']);
         Route::get('/distribuidores/{persona}/historial-auditoria', [LiqDistribuidorLiquidacionesController::class, 'historialDistribuidor']);
 

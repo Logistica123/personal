@@ -185,6 +185,8 @@ class LiqDistribuidorPdfService
                 'gastos' => (float) $liqDist->gastos_administrativos,
                 'peajes' => (float) ($liqDist->subtotal_peajes ?? 0),
                 'reembolso_peajes' => (float) ($liqDist->total_reembolso_peajes ?? 0),
+                // BUGFIX 25: solo renderizar bloque de peajes si el cliente los reembolsa
+                'cliente_paga_peajes' => (bool) ($liqDist->liquidacionCliente?->cliente?->pagar_peajes_a_distribuidor ?? false),
                 // BUGFIX 24 C
                 'eficiencia_pct' => $liqDist->eficiencia_pct !== null ? (float) $liqDist->eficiencia_pct : null,
                 'eficiencia_detalle' => $liqDist->eficiencia_detalle,

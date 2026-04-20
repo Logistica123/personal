@@ -10,6 +10,9 @@ export type LiqCliente = {
   activo: boolean;
   configuracion_excel: Record<string, unknown> | null;
   esquemas_count?: number;
+  tolerancia_facturacion?: number | string | null;
+  mostrar_eficiencia_en_pdf?: boolean;
+  pagar_peajes_a_distribuidor?: boolean;
 };
 
 export type LiqEsquemaTarifario = {

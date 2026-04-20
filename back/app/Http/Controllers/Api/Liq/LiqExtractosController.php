@@ -448,23 +448,32 @@ class LiqExtractosController extends Controller
             return response()->json(['error' => 'Solo se pueden generar liquidaciones en estado auditada, pendiente o en proceso'], 422);
         }
 
-        // BUGFIX 22 F10: contar peajes pendientes de autorizar como warning
-        $peajesPendientes = LiqOperacion::where('liquidacion_cliente_id', $liquidacionCliente->id)
-            ->whereIn('estado', ['ok', 'diferencia'])
-            ->where('excluida', false)
-            ->where('importe_no_gravado', '>', 0)
-            ->where('peaje_autorizado', false)
-            ->whereNull('peaje_motivo')
-            ->count();
+        // BUGFIX 25: pagar peajes al distribuidor sólo si el cliente tiene el flag activo.
+        //   Para OCASA (flag=false) el split grav/no_grav es puramente fiscal y no se
+        //   reembolsa al distribuidor — se omite la validación y el cálculo de peajes.
+        $liquidacionCliente->loadMissing('cliente');
+        $clientePagaPeajes = (bool) ($liquidacionCliente->cliente?->pagar_peajes_a_distribuidor ?? false);
 
-        $confirmarSinAutorizar = (bool) $request->input('confirmar_sin_autorizar', false);
-        if ($peajesPendientes > 0 && !$confirmarSinAutorizar) {
-            return response()->json([
-                'error' => 'peajes_pendientes',
-                'message' => "Hay {$peajesPendientes} operaciones con peajes sin autorizar. Estas no se incluirán en el reembolso.",
-                'peajes_pendientes' => $peajesPendientes,
-                'requiere_confirmacion' => true,
-            ], 409);
+        // BUGFIX 22 F10: contar peajes pendientes de autorizar como warning (sólo si el cliente paga peajes)
+        $peajesPendientes = 0;
+        if ($clientePagaPeajes) {
+            $peajesPendientes = LiqOperacion::where('liquidacion_cliente_id', $liquidacionCliente->id)
+                ->whereIn('estado', ['ok', 'diferencia'])
+                ->where('excluida', false)
+                ->where('importe_no_gravado', '>', 0)
+                ->where('peaje_autorizado', false)
+                ->whereNull('peaje_motivo')
+                ->count();
+
+            $confirmarSinAutorizar = (bool) $request->input('confirmar_sin_autorizar', false);
+            if ($peajesPendientes > 0 && !$confirmarSinAutorizar) {
+                return response()->json([
+                    'error' => 'peajes_pendientes',
+                    'message' => "Hay {$peajesPendientes} operaciones con peajes sin autorizar. Estas no se incluirán en el reembolso.",
+                    'peajes_pendientes' => $peajesPendientes,
+                    'requiere_confirmacion' => true,
+                ], 409);
+            }
         }
 
         DB::beginTransaction();
@@ -495,18 +504,17 @@ class LiqExtractosController extends Controller
                 $subtotal = $ops->sum(fn($op) => (float) $op->valor_tarifa_distribuidor);
                 $montoGasto = $this->resolveGastoAmount($gasto, (float) $subtotal);
 
-                // OCASA: peajes (Imp.NoGrav) pass-through
                 $distribuidor = \App\Models\Persona::find($distribuidorId);
-                $pagaPeajes = $distribuidor?->paga_peajes ?? true;
                 // BUGFIX 20 Feature E: flag pago_retenido del distribuidor
                 $pagoRetenido = (bool) ($distribuidor?->retener_pago ?? false);
 
-                // BUGFIX 22 Feature F11: distinguir subtotal informativo vs. reembolso autorizado
-                //   subtotal_peajes   = total bruto desde TMS (informativo)
-                //   total_reembolso_peajes = sólo peajes autorizados (lo que efectivamente se paga)
+                // BUGFIX 25: subtotal_peajes queda como dato informativo (para la facturación cliente).
+                //   total_reembolso_peajes = 0 salvo que el cliente tenga pagar_peajes_a_distribuidor=true
+                //   Para OCASA nunca se reembolsa: el imp_no_gravado es clasificación fiscal, no peaje.
                 $subtotalPeajes = round($ops->sum(fn($op) => (float) ($op->importe_no_gravado ?? 0)), 2);
 
-                $totalReembolsoPeajes = $pagaPeajes
+                $distribuidorPagaPeajes = $distribuidor?->paga_peajes ?? true;
+                $totalReembolsoPeajes = ($clientePagaPeajes && $distribuidorPagaPeajes)
                     ? round($ops->sum(function ($op) {
                         if (!$op->peaje_autorizado) return 0;
                         return (float) ($op->peaje_monto_ajustado ?? $op->importe_no_gravado ?? 0);
@@ -824,6 +832,67 @@ class LiqExtractosController extends Controller
         ]);
     }
 
+    // GET /liq/facturacion-clientes/{cliente}/periodo/{yyyymm}/resumen-fiscal (BUGFIX 25 Feature 25.3)
+    // Devuelve el split Gravado / NoGravado por sucursal para facturar LA → cliente.
+    public function resumenFiscalCliente(Request $request, int $clienteId, string $periodo): JsonResponse
+    {
+        if (!preg_match('/^\d{4}-?\d{2}$/', $periodo)) {
+            return response()->json(['error' => 'Formato de período inválido. Usar YYYY-MM o YYYYMM.'], 422);
+        }
+        $periodo = preg_replace('/[^\d]/', '', $periodo);
+        $y = (int) substr($periodo, 0, 4);
+        $m = (int) substr($periodo, 4, 2);
+        $from = sprintf('%04d-%02d-01', $y, $m);
+        $to   = date('Y-m-t', strtotime($from));
+
+        $cliente = LiqCliente::findOrFail($clienteId);
+
+        $ops = LiqOperacion::query()
+            ->join('liq_liquidaciones_cliente as lc', 'lc.id', '=', 'liq_operaciones.liquidacion_cliente_id')
+            ->where('lc.cliente_id', $clienteId)
+            ->whereBetween('lc.periodo_desde', [$from, $to])
+            ->whereNotIn('liq_operaciones.estado', ['ignorado', 'anulado', 'excluida'])
+            ->selectRaw('
+                liq_operaciones.sucursal_tarifa as sucursal,
+                COUNT(*) as cantidad,
+                COALESCE(SUM(liq_operaciones.valor_cliente), 0)         as total_importe,
+                COALESCE(SUM(liq_operaciones.importe_gravado), 0)       as total_gravado,
+                COALESCE(SUM(liq_operaciones.importe_no_gravado), 0)    as total_no_gravado
+            ')
+            ->groupBy('liq_operaciones.sucursal_tarifa')
+            ->orderBy('liq_operaciones.sucursal_tarifa')
+            ->get();
+
+        $totales = [
+            'total_operaciones'   => (int) $ops->sum('cantidad'),
+            'total_importe'       => round((float) $ops->sum('total_importe'), 2),
+            'total_gravado'       => round((float) $ops->sum('total_gravado'), 2),
+            'total_no_gravado'    => round((float) $ops->sum('total_no_gravado'), 2),
+        ];
+
+        // Consistencia: gravado + no_gravado debería igualar el importe (tolerancia 1 peso/mes)
+        $diff = round($totales['total_importe'] - ($totales['total_gravado'] + $totales['total_no_gravado']), 2);
+        $consistente = abs($diff) <= 1.0;
+
+        return response()->json([
+            'data' => [
+                'cliente'            => $cliente->nombre_corto ?? $cliente->razon_social,
+                'cliente_id'         => $cliente->id,
+                'periodo'            => sprintf('%04d-%02d', $y, $m),
+                'totales'            => $totales,
+                'consistente'        => $consistente,
+                'diferencia_total'   => $diff,
+                'desglose_por_sucursal' => $ops->map(fn ($r) => [
+                    'sucursal'     => $r->sucursal,
+                    'cantidad'     => (int) $r->cantidad,
+                    'importe'      => round((float) $r->total_importe, 2),
+                    'gravado'      => round((float) $r->total_gravado, 2),
+                    'no_gravado'   => round((float) $r->total_no_gravado, 2),
+                ])->values(),
+            ],
+        ]);
+    }
+
     // POST /liq/liquidaciones-distribuidor/{id}/recalcular-eficiencia (BUGFIX 24 A5)
     public function recalcularEficiencia(LiqLiquidacionDistribuidor $liquidacionDistribuidor): JsonResponse
     {
@@ -918,10 +987,20 @@ class LiqExtractosController extends Controller
         ]);
     }
 
-    // GET /liq/liquidaciones/{liquidacionCliente}/peajes (BUGFIX 22 F)
+    // GET /liq/liquidaciones/{liquidacionCliente}/peajes (BUGFIX 22 F; gateado por BUGFIX 25)
     // Lista peajes agrupados por distribuidor con estado de autorización
     public function peajes(LiqLiquidacionCliente $liquidacionCliente): JsonResponse
     {
+        // BUGFIX 25: gateado por flag del cliente. Si el cliente no paga peajes, no se habilita el panel.
+        $liquidacionCliente->loadMissing('cliente');
+        if (!($liquidacionCliente->cliente?->pagar_peajes_a_distribuidor ?? false)) {
+            return response()->json([
+                'data' => [],
+                'disabled' => true,
+                'message' => 'Panel de peajes desactivado para este cliente (BUGFIX 25). El split Imp.Gravado/No Gravado sólo se usa para facturación cliente, no para pago a distribuidor.',
+            ]);
+        }
+
         // Agrupar operaciones con peajes por distribuidor
         $ops = LiqOperacion::where('liquidacion_cliente_id', $liquidacionCliente->id)
             ->whereNotIn('estado', ['ignorado', 'anulado', 'excluida'])
@@ -1018,9 +1097,18 @@ class LiqExtractosController extends Controller
         ]);
     }
 
-    // POST /liq/liquidaciones/{liquidacionCliente}/peajes/autorizar (BUGFIX 22 F)
+    // POST /liq/liquidaciones/{liquidacionCliente}/peajes/autorizar (BUGFIX 22 F; gateado por BUGFIX 25)
     public function autorizarPeajes(Request $request, LiqLiquidacionCliente $liquidacionCliente): JsonResponse
     {
+        // BUGFIX 25: no se permite autorizar peajes si el cliente no los paga al distribuidor.
+        $liquidacionCliente->loadMissing('cliente');
+        if (!($liquidacionCliente->cliente?->pagar_peajes_a_distribuidor ?? false)) {
+            return response()->json([
+                'error' => 'peajes_desactivados',
+                'message' => 'Este cliente no reembolsa peajes al distribuidor. El split grav/no_grav se preserva sólo para facturación cliente.',
+            ], 410);
+        }
+
         $data = $request->validate([
             'resoluciones' => 'required|array',
             'resoluciones.*.operacion_id' => 'required|integer',
