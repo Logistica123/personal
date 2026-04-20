@@ -828,31 +828,13 @@ class PersonalDocumentController extends Controller
             }
         }
 
-        if (array_key_exists('importeFacturar', $validated)) {
-            $liquidacionTypeIds = $this->resolveLiquidacionTypeIds();
-
-            $importeQuery = $persona->documentos()
-                ->where('es_pendiente', false)
-                ->whereNull('parent_document_id')
-                ;
-
-            if ($liquidacionTypeIds->isNotEmpty()) {
-                $importeQuery->whereIn('tipo_archivo_id', $liquidacionTypeIds);
-            } else {
-                $importeQuery->where(function ($inner) {
-                    $inner
-                        ->whereRaw('LOWER(nombre_original) LIKE ?', ['%liquid%'])
-                        ->orWhereRaw('LOWER(ruta) LIKE ?', ['%liquid%']);
-                });
-            }
-
-            if (! empty($validated['documentIds'])) {
-                $importeQuery->whereIn('id', $validated['documentIds']);
-            }
-
-            $importeQuery->update([
-                'importe_facturar' => $validated['importeFacturar'],
-            ]);
+        if (array_key_exists('importeFacturar', $validated) && $publishedLiquidaciones->isNotEmpty()) {
+            // Solo actualiza las liquidaciones recien publicadas en esta llamada.
+            // Antes caia en un UPDATE masivo cuando documentIds venia vacio, pisando
+            // el importe_facturar de TODAS las liquidaciones del personal (todas las quincenas).
+            $persona->documentos()
+                ->whereIn('id', $publishedLiquidaciones->pluck('id'))
+                ->update(['importe_facturar' => $validated['importeFacturar']]);
         }
 
         return response()->json([
