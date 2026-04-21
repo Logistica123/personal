@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import type { PersonalRecord } from '../features/personal/types';
+import { PeriodoAccordion } from '../features/liquidaciones/PeriodoAccordion';
 
 type DashboardLayoutProps = {
   title: string;
@@ -63,6 +64,10 @@ type PersonalDocument = {
   validacionIaEstado?: string | null;
   validacionIaMotivo?: string | null;
   validacionIaMensaje?: string | null;
+  // BUGFIX 27.2: estado del extracto/liquidación asociado. Si vale 'anulada'/'rechazada'/'borrada'
+  // el documento se considera no vigente y no debe aparecer en dropdowns operativos (combustible, etc.).
+  estado?: string | null;
+  anulada?: boolean | null;
 };
 
 type PersonalDetail = {
@@ -1608,6 +1613,80 @@ export const LiquidacionesPage: React.FC<LiquidacionesPageProps> = ({
     [apiBaseUrl, actorHeaders, refreshPersonaDetail, selectedPersonaId]
   );
 
+  // BUGFIX 27.1: Marcar liquidación distribuidor como 'preparada' (estado oficial)
+  const marcarPreparadaLiqV2 = useCallback(
+    async (liqDistId: number) => {
+      try {
+        const r = await fetch(`${apiBaseUrl}/api/liq/liquidaciones-distribuidor/${liqDistId}/preparar`, {
+          method: 'POST',
+          credentials: 'include',
+          headers: { Accept: 'application/json', 'Content-Type': 'application/json', ...actorHeaders },
+          body: JSON.stringify({}),
+        });
+        const json = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(json?.message || json?.error || `Error ${r.status}`);
+        await refreshPersonaDetail({ silent: true });
+        setUploadStatus({ type: 'success', message: 'Liquidación marcada como preparada.' });
+      } catch (e: unknown) {
+        setUploadStatus({ type: 'error', message: e instanceof Error ? e.message : 'Error al preparar' });
+      }
+    },
+    [apiBaseUrl, actorHeaders, refreshPersonaDetail]
+  );
+
+  // BUGFIX 27.1: Anular liquidación distribuidor (requiere motivo)
+  const anularLiqV2 = useCallback(
+    async (liqDistId: number) => {
+      const motivo = window.prompt('Motivo de anulación (mínimo 10 caracteres):');
+      if (!motivo || motivo.trim().length < 10) {
+        if (motivo !== null) setUploadStatus({ type: 'error', message: 'El motivo debe tener al menos 10 caracteres.' });
+        return;
+      }
+      try {
+        const r = await fetch(`${apiBaseUrl}/api/liq/liquidaciones-distribuidor/${liqDistId}/anular`, {
+          method: 'PATCH',
+          credentials: 'include',
+          headers: { Accept: 'application/json', 'Content-Type': 'application/json', ...actorHeaders },
+          body: JSON.stringify({ motivo: motivo.trim() }),
+        });
+        const json = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(json?.message || json?.error || `Error ${r.status}`);
+        await refreshPersonaDetail({ silent: true });
+        setUploadStatus({ type: 'success', message: 'Liquidación anulada.' });
+      } catch (e: unknown) {
+        setUploadStatus({ type: 'error', message: e instanceof Error ? e.message : 'Error al anular' });
+      }
+    },
+    [apiBaseUrl, actorHeaders, refreshPersonaDetail]
+  );
+
+  // BUGFIX 27.1: Borrar (soft delete) liquidación distribuidor
+  const borrarLiqV2 = useCallback(
+    async (liqDistId: number) => {
+      const motivo = window.prompt('Motivo del borrado (mínimo 10 caracteres). Esto oculta la liquidación del listado (soft delete):');
+      if (!motivo || motivo.trim().length < 10) {
+        if (motivo !== null) setUploadStatus({ type: 'error', message: 'El motivo debe tener al menos 10 caracteres.' });
+        return;
+      }
+      if (!window.confirm('¿Confirmás borrar esta liquidación? Podrás recuperarla desde admin si hace falta.')) return;
+      try {
+        const r = await fetch(`${apiBaseUrl}/api/liq/liquidaciones-distribuidor/${liqDistId}/soft`, {
+          method: 'DELETE',
+          credentials: 'include',
+          headers: { Accept: 'application/json', 'Content-Type': 'application/json', ...actorHeaders },
+          body: JSON.stringify({ motivo: motivo.trim() }),
+        });
+        const json = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(json?.message || json?.error || `Error ${r.status}`);
+        await refreshPersonaDetail({ silent: true });
+        setUploadStatus({ type: 'success', message: 'Liquidación borrada.' });
+      } catch (e: unknown) {
+        setUploadStatus({ type: 'error', message: e instanceof Error ? e.message : 'Error al borrar' });
+      }
+    },
+    [apiBaseUrl, actorHeaders, refreshPersonaDetail]
+  );
+
   const prepareAllLiqV2Documents = useCallback(async () => {
     if (!selectedPersonaId) return;
     const toPrepare = liqV2DistribuidorLiquidaciones
@@ -3114,7 +3193,19 @@ export const LiquidacionesPage: React.FC<LiquidacionesPageProps> = ({
   );
 
   const liquidacionGroupsForSelect = useMemo(
-    () => buildLiquidacionGroups(allLiquidacionDocuments),
+    () => {
+      // BUGFIX 27.2: filtrar extractos/liquidaciones no vigentes (anulada/rechazada/borrada).
+      // El backend puede devolver `estado` del extracto asociado y/o un flag `anulada`.
+      // Con los campos actuales (pendiente, deleted_at) un anulado SÍ aparece en el select — los ocultamos acá.
+      const NO_VIGENTE = new Set(['anulada', 'rechazada', 'borrada', 'cancelada']);
+      const vigentes = allLiquidacionDocuments.filter(doc => {
+        if (doc.anulada === true) return false;
+        const estado = (doc.estado ?? '').toLowerCase();
+        if (estado && NO_VIGENTE.has(estado)) return false;
+        return true;
+      });
+      return buildLiquidacionGroups(vigentes);
+    },
     [buildLiquidacionGroups, allLiquidacionDocuments]
   );
 
@@ -5678,7 +5769,25 @@ export const LiquidacionesPage: React.FC<LiquidacionesPageProps> = ({
             ) : liqV2DistribuidorLiquidaciones.length === 0 ? (
               <p className="form-info">Todavía no hay liquidaciones generadas desde Extractos para este proveedor.</p>
             ) : (
-              <div className="table-wrapper">
+              <>
+                {/* BUGFIX 27.3: Accordion por {cliente, mes, quincena} — vista consolidada con acciones de ciclo de vida */}
+                <PeriodoAccordion
+                  rows={liqV2DistribuidorLiquidaciones}
+                  materializingIds={liqV2Materializing}
+                  formatCurrency={formatCurrency}
+                  onVerExtracto={(liqId) => navigate(`/liquidaciones/extractos?liq=${liqId}`)}
+                  onPreparar={marcarPreparadaLiqV2}
+                  onAnular={anularLiqV2}
+                  onBorrar={borrarLiqV2}
+                  onMaterializarPdf={materializeLiqV2Document}
+                  onEditar={openEditLiq}
+                />
+
+                <details style={{ marginTop: 12 }}>
+                  <summary style={{ cursor: 'pointer', fontSize: 12, color: '#6b7280', padding: '4px 0' }}>
+                    Mostrar tabla clásica (legacy)
+                  </summary>
+              <div className="table-wrapper" style={{ marginTop: 8 }}>
                 <table>
                   <thead>
                     <tr>
@@ -5752,6 +5861,40 @@ export const LiquidacionesPage: React.FC<LiquidacionesPageProps> = ({
                                   Editar
                                 </button>
                               )}
+                              {/* BUGFIX 27.1: ciclo de vida (preparar / anular / borrar) */}
+                              {row.estado === 'generada' && (
+                                <button
+                                  type="button"
+                                  className="primary-action"
+                                  onClick={() => void marcarPreparadaLiqV2(row.id)}
+                                  style={{ fontSize: '0.8rem', background: '#166534', color: '#fff' }}
+                                  title="Promueve a liquidación oficial (estado='preparada'). Lista para que el distribuidor cargue factura."
+                                >
+                                  Marcar Preparado
+                                </button>
+                              )}
+                              {!['anulada', 'pagada'].includes(row.estado) && (
+                                <button
+                                  type="button"
+                                  className="secondary-action secondary-action--ghost"
+                                  onClick={() => void anularLiqV2(row.id)}
+                                  style={{ fontSize: '0.8rem', color: '#92400e' }}
+                                  title="Cambia el estado a 'anulada' con motivo. Reversible."
+                                >
+                                  Anular
+                                </button>
+                              )}
+                              {!['aprobada', 'pagada'].includes(row.estado) && (
+                                <button
+                                  type="button"
+                                  className="secondary-action secondary-action--ghost"
+                                  onClick={() => void borrarLiqV2(row.id)}
+                                  style={{ fontSize: '0.8rem', color: '#991b1b' }}
+                                  title="Soft delete con motivo. Oculta del listado pero preserva auditoría."
+                                >
+                                  Borrar
+                                </button>
+                              )}
                             </div>
                           </td>
                         </tr>
@@ -5760,6 +5903,8 @@ export const LiquidacionesPage: React.FC<LiquidacionesPageProps> = ({
                   </tbody>
                 </table>
               </div>
+                </details>
+              </>
             )}
 
             {/* Bugfix 18: Modal edicion */}
@@ -6336,8 +6481,16 @@ export const LiquidacionesPage: React.FC<LiquidacionesPageProps> = ({
             </p>
             <label className="input-control">
               <span>Liquidación destino</span>
-              <select value={fuelParentDocumentId} onChange={(event) => setFuelParentDocumentId(event.target.value)}>
-                <option value="">Seleccioná la liquidación</option>
+              <select
+                value={fuelParentDocumentId}
+                onChange={(event) => setFuelParentDocumentId(event.target.value)}
+                disabled={liquidacionGroupsForSelect.length === 0}
+              >
+                <option value="">
+                  {liquidacionGroupsForSelect.length === 0
+                    ? 'No hay liquidación vigente para descontar combustible'
+                    : 'Seleccioná la liquidación'}
+                </option>
                 {liquidacionGroupsForSelect.map((group) => (
                   <option key={`fuel-liq-${group.main.id}`} value={group.main.id}>
                     {group.main.nombre ?? `Liquidación #${group.main.id}`} {group.main.fechaCarga ?? ''}
@@ -6345,6 +6498,22 @@ export const LiquidacionesPage: React.FC<LiquidacionesPageProps> = ({
                 ))}
               </select>
             </label>
+            {/* BUGFIX 27.2: placeholder cuando no hay vigentes */}
+            {liquidacionGroupsForSelect.length === 0 && (
+              <div style={{
+                background: '#fef3c7', border: '1px solid #fcd34d', color: '#92400e',
+                borderRadius: 8, padding: '10px 12px', marginTop: 8, fontSize: 13, lineHeight: 1.5,
+              }}>
+                <strong>⚠ No hay liquidación vigente para descontar combustible.</strong>
+                <div style={{ marginTop: 6 }}>
+                  Para descontar combustible necesitás primero:
+                  <ol style={{ margin: '6px 0 0 18px', padding: 0 }}>
+                    <li>Generar un extracto del período.</li>
+                    <li>Preparar el extracto para promoverlo a liquidación oficial.</li>
+                  </ol>
+                </div>
+              </div>
+            )}
             <div className="summary-cards" style={{ marginTop: '0.75rem' }}>
               <div className="summary-card">
                 <span className="summary-card__label">Dominio</span>

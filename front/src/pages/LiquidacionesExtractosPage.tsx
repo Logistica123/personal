@@ -733,12 +733,13 @@ export function LiquidacionesExtractosPage({
     }
   }, [api, selectedLiq, openLiq]);
 
-  const crearLiquidacion = useCallback(async () => {
+  const crearLiquidacion = useCallback(async (opts: { ignorarDuplicados?: boolean } = {}) => {
     try {
       await api.post('/liquidaciones', {
         cliente_id: parseInt(newLiqClienteId),
         periodo_desde: newLiqDesde,
         periodo_hasta: newLiqHasta,
+        ...(opts.ignorarDuplicados ? { ignorar_duplicados: true } : {}),
       });
       setShowNewForm(false);
       setNewLiqClienteId('');
@@ -747,7 +748,27 @@ export function LiquidacionesExtractosPage({
       await loadLiquidaciones();
       showSuccess('Liquidación creada');
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'Error');
+      // BUGFIX 27.4: manejar 409 DUPLICATE_PERIOD con confirm + opción de forzar
+      const err = e as { status?: number; data?: any; message?: string };
+      if (err?.status === 409 && err?.data?.error === 'DUPLICATE_PERIOD') {
+        const existente = err.data.liquidacion_existente ?? {};
+        const confirmar = window.confirm(
+          `⚠ Ya existe una liquidación vigente para este cliente y período:\n\n` +
+          `  • ID: #${existente.id ?? '?'}\n` +
+          `  • Estado: ${existente.estado ?? '?'}\n` +
+          `  • Período: ${existente.periodo_desde ?? '?'} → ${existente.periodo_hasta ?? '?'}\n\n` +
+          `Opciones recomendadas:\n` +
+          `  1) Cancelar y abrir la existente (recomendado).\n` +
+          `  2) Rechazar la existente y luego volver a crearla.\n\n` +
+          `¿Forzar creación de una nueva liquidación para el mismo período de todas formas?\n` +
+          `(Esto dejará 2 vigentes y puede causar duplicados en el Estado de Cuenta.)`
+        );
+        if (confirmar) {
+          await crearLiquidacion({ ignorarDuplicados: true });
+        }
+        return;
+      }
+      setError(err?.message ?? 'Error');
     }
   }, [api, newLiqClienteId, newLiqDesde, newLiqHasta, loadLiquidaciones]);
 
@@ -1252,7 +1273,7 @@ export function LiquidacionesExtractosPage({
                     <input type="date" className="form-input" value={newLiqHasta} onChange={(e) => setNewLiqHasta(e.target.value)} />
                   </div>
                 </div>
-                <button type="button" className="btn-primary" onClick={crearLiquidacion} disabled={!newLiqClienteId || !newLiqDesde || !newLiqHasta}>
+                <button type="button" className="btn-primary" onClick={() => void crearLiquidacion()} disabled={!newLiqClienteId || !newLiqDesde || !newLiqHasta}>
                   Crear
                 </button>
               </div>
@@ -1413,6 +1434,17 @@ export function LiquidacionesExtractosPage({
                   } catch (e: unknown) { setError(e instanceof Error ? e.message : 'Error al reparsear PDFs'); }
                 }}>
                   Reparsear PDFs OCASA
+                </button>
+                {/* BUGFIX 28: regenerar estado de cuenta (upsert por sucursal, respeta filas facturadas) */}
+                <button type="button" className="btn-sm" style={{ background: '#e0f2fe', color: '#0369a1', border: '1px solid #7dd3fc' }} onClick={async () => {
+                  if (!selectedLiq) return;
+                  if (!window.confirm('¿Regenerar el Estado de Cuenta del cliente para este período? Crea/actualiza filas por sucursal. Respeta filas ya FACTURADAS/COBRADAS.')) return;
+                  try {
+                    const res = await api.post(`/liquidaciones/${selectedLiq.id}/regenerar-estado-cuenta`, { forzar: true });
+                    showSuccess(res.message ?? 'Estado de cuenta regenerado');
+                  } catch (e: unknown) { setError(e instanceof Error ? e.message : 'Error al regenerar estado de cuenta'); }
+                }}>
+                  Regenerar Estado de Cuenta
                 </button>
                 <button type="button" className="btn-sm btn-danger" onClick={eliminarLiquidacionDesdeDetalle}>
                   Eliminar liquidación

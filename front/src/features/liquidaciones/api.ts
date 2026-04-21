@@ -70,7 +70,12 @@ export function useLiqApi(deps: ApiDeps) {
         body: JSON.stringify(body),
       });
       const json = await r.json().catch(() => ({}));
-      if (!r.ok) throw new Error(extractApiErrorMessage(json, `Error ${r.status}`));
+      if (!r.ok) {
+        const err: Error & { status?: number; data?: unknown } = new Error(extractApiErrorMessage(json, `Error ${r.status}`));
+        err.status = r.status;
+        err.data = json;
+        throw err;
+      }
       return json;
     },
     [headers]

@@ -53,7 +53,41 @@ class LiqExtractosController extends Controller
             'periodo_hasta' => 'required|date|after_or_equal:periodo_desde',
             'archivo_origen' => 'nullable|string|max:255',
             'sucursal_tarifa' => 'nullable|string|max:255',
+            'ignorar_duplicados' => 'sometimes|boolean',   // escape hatch manual
         ]);
+
+        // BUGFIX 27.4: bloquear duplicados vigentes por {cliente, período}.
+        //   Vigente = estado != 'rechazada'. Si existe una ya, se devuelve 409 con ids y opciones.
+        $ignorarDup = (bool) ($data['ignorar_duplicados'] ?? false);
+        if (!$ignorarDup) {
+            $existente = LiqLiquidacionCliente::where('cliente_id', $data['cliente_id'])
+                ->where('periodo_desde', $data['periodo_desde'])
+                ->where('periodo_hasta', $data['periodo_hasta'])
+                ->where('estado', '!=', LiqLiquidacionCliente::ESTADO_RECHAZADA)
+                ->orderByDesc('id')
+                ->first();
+
+            if ($existente) {
+                return response()->json([
+                    'error'   => 'DUPLICATE_PERIOD',
+                    'message' => "Ya existe una liquidación vigente para este cliente y período (id #{$existente->id}, estado '{$existente->estado}').",
+                    'liquidacion_existente' => [
+                        'id'             => $existente->id,
+                        'estado'         => $existente->estado,
+                        'cliente_id'     => $existente->cliente_id,
+                        'periodo_desde'  => $existente->periodo_desde?->toDateString() ?? (string) $existente->periodo_desde,
+                        'periodo_hasta'  => $existente->periodo_hasta?->toDateString() ?? (string) $existente->periodo_hasta,
+                        'fecha_carga'    => $existente->fecha_carga?->toDateTimeString(),
+                    ],
+                    'sugerencias' => [
+                        'abrir_existente'   => "GET /api/liq/liquidaciones/{$existente->id}",
+                        'rechazar_existente' => "PATCH /api/liq/liquidaciones/{$existente->id}/estado con estado='rechazada' para liberar el período",
+                        'forzar_creacion'   => "POST /api/liq/liquidaciones con ignorar_duplicados=true (sólo si sabés lo que hacés)",
+                    ],
+                ], 409);
+            }
+        }
+
         $liquidacion = LiqLiquidacionCliente::create([
             'cliente_id' => $data['cliente_id'],
             'periodo_desde' => $data['periodo_desde'],
@@ -560,14 +594,14 @@ class LiqExtractosController extends Controller
                 );
             }
 
-            // Crear filas automaticas en Estado de Cuenta por sucursal (cara cliente)
-            LiqEstadoCuentaCliente::where('liquidacion_cliente_id', $liquidacionCliente->id)->delete();
-            $estadoCuentaIds = LiqEstadoCuentaController::crearFilasDesdeOperaciones(
-                $liquidacionCliente->id,
-                $liquidacionCliente->cliente_id,
-                $liquidacionCliente->periodo_desde->format('Y-m-d'),
-                $liquidacionCliente->periodo_hasta->format('Y-m-d'),
-                $request->user()?->id
+            // BUGFIX 28: usar servicio dedicado. Upsert seguro; respeta filas ya facturadas.
+            //   - Para OCASA (split_fiscal_por_sucursal=true): usa importe_gravado/importe_no_gravado reales.
+            //   - Para clientes sin split: trata valor_cliente como totalmente gravado (compatibilidad).
+            $estadoCuentaResult = app(\App\Services\Liq\LiqEstadoCuentaGeneratorService::class)
+                ->generarDesdeLiquidacionCliente($liquidacionCliente, $request->user()?->id, forzarRegeneracion: true);
+            $estadoCuentaIds = array_map(
+                fn ($s) => $s['row_id'] ?? null,
+                array_filter($estadoCuentaResult['sucursales'] ?? [], fn ($s) => isset($s['row_id']))
             );
 
             $liquidacionCliente->update(['estado' => LiqLiquidacionCliente::ESTADO_AUDITADA]);
@@ -891,6 +925,33 @@ class LiqExtractosController extends Controller
                 ])->values(),
             ],
         ]);
+    }
+
+    // POST /liq/liquidaciones/{liquidacionCliente}/regenerar-estado-cuenta (BUGFIX 28)
+    // Reejecuta la agregación por sucursal en liq_estado_cuenta_cliente. Upsert seguro:
+    //   - crea sucursales faltantes
+    //   - actualiza importes si difieren (solo en filas PENDIENTE)
+    //   - omite filas FACTURADA/COBRADA/NC_EMITIDA con log warning
+    public function regenerarEstadoCuenta(Request $request, LiqLiquidacionCliente $liquidacionCliente): JsonResponse
+    {
+        $forzar = (bool) $request->input('forzar', false);
+        try {
+            $result = app(\App\Services\Liq\LiqEstadoCuentaGeneratorService::class)
+                ->generarDesdeLiquidacionCliente($liquidacionCliente, $request->user()?->id, forzarRegeneracion: $forzar);
+
+            return response()->json([
+                'message' => sprintf(
+                    '%d creadas, %d actualizadas, %d sin cambios, %d omitidas (ya facturadas)',
+                    $result['creadas'] ?? 0,
+                    $result['actualizadas'] ?? 0,
+                    $result['sin_cambios'] ?? 0,
+                    $result['omitidas_facturadas'] ?? 0
+                ),
+                'data' => $result,
+            ]);
+        } catch (\Throwable $e) {
+            return response()->json(['error' => 'Error al regenerar: ' . $e->getMessage()], 500);
+        }
     }
 
     // GET /liq/facturacion-clientes/{cliente}/periodo/{yyyymm}/split-por-sucursal (BUGFIX 26 Feature 26.2)

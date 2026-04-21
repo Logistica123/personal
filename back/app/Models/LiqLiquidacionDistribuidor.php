@@ -4,10 +4,11 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\SoftDeletes;
 
 class LiqLiquidacionDistribuidor extends Model
 {
-    use HasFactory;
+    use HasFactory, SoftDeletes;
 
     protected $table = 'liq_liquidaciones_distribuidor';
 
@@ -16,6 +17,7 @@ class LiqLiquidacionDistribuidor extends Model
     // -------------------------------------------------------------------------
 
     const ESTADO_GENERADA  = 'generada';
+    const ESTADO_PREPARADA = 'preparada';   // BUGFIX 27.1: promovida a oficial, esperando factura
     const ESTADO_APROBADA  = 'aprobada';
     const ESTADO_PAGADA    = 'pagada';
     const ESTADO_ANULADA   = 'anulada';
@@ -44,12 +46,19 @@ class LiqLiquidacionDistribuidor extends Model
         'eficiencia_pct',
         'eficiencia_detalle',
         'eficiencia_calculada_at',
+        'preparada_at',
+        'preparada_por',
+        'factura_cargada_at',
+        'deleted_by',
+        'delete_motivo',
     ];
 
     protected $casts = [
         'periodo_desde'           => 'date',
         'periodo_hasta'           => 'date',
         'fecha_generacion'        => 'datetime',
+        'preparada_at'            => 'datetime',
+        'factura_cargada_at'      => 'datetime',
         'subtotal'                => 'decimal:2',
         'gastos_administrativos'  => 'decimal:2',
         'total_a_pagar'           => 'decimal:2',

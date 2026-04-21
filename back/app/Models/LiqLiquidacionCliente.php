@@ -4,10 +4,11 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\SoftDeletes;
 
 class LiqLiquidacionCliente extends Model
 {
-    use HasFactory;
+    use HasFactory, SoftDeletes;
 
     protected $table = 'liq_liquidaciones_cliente';
 
@@ -34,6 +35,8 @@ class LiqLiquidacionCliente extends Model
         'total_importe_cliente',
         'total_importe_correcto',
         'total_diferencia',
+        'deleted_by',
+        'delete_motivo',
     ];
 
     protected $casts = [

@@ -329,10 +329,21 @@ Route::middleware('auth.api')->group(function () {
         Route::get('/liquidaciones-distribuidor/{liquidacionDistribuidor}/pdf', [LiqDistribuidorDocumentoController::class, 'descargarPdf']);
         Route::put('/liquidaciones-distribuidor/{liquidacionDistribuidor}/editar', [LiqDistribuidorLiquidacionesController::class, 'editar']);
         Route::post('/liquidaciones-distribuidor/{liquidacionDistribuidor}/recalcular-eficiencia', [LiqExtractosController::class, 'recalcularEficiencia']);
+
+        // BUGFIX 27.1: ciclo de vida (preparar/anular/borrar con auditoría) en ambas tablas.
+        // El endpoint DELETE /liquidaciones/{id} existente hace HARD delete para admins; estos agregan
+        // SOFT delete con motivo para uso operativo cotidiano (reversible).
+        Route::post(  '/liquidaciones-distribuidor/{liquidacionDistribuidor}/preparar',     [\App\Http\Controllers\Api\Liq\LiqLiquidacionDistribuidorCicloController::class, 'preparar']);
+        Route::patch( '/liquidaciones-distribuidor/{liquidacionDistribuidor}/anular',       [\App\Http\Controllers\Api\Liq\LiqLiquidacionDistribuidorCicloController::class, 'anularDistribuidor']);
+        Route::delete('/liquidaciones-distribuidor/{liquidacionDistribuidor}/soft',         [\App\Http\Controllers\Api\Liq\LiqLiquidacionDistribuidorCicloController::class, 'destroyDistribuidor']);
+        Route::patch( '/liquidaciones/{liquidacionCliente}/rechazar',                       [\App\Http\Controllers\Api\Liq\LiqLiquidacionDistribuidorCicloController::class, 'rechazarCliente']);
+        Route::delete('/liquidaciones/{liquidacionCliente}/soft',                           [\App\Http\Controllers\Api\Liq\LiqLiquidacionDistribuidorCicloController::class, 'destroyCliente']);
         // BUGFIX 25 Feature 25.3: resumen fiscal para facturar LA → cliente
         Route::get('/facturacion-clientes/{clienteId}/periodo/{periodo}/resumen-fiscal', [LiqExtractosController::class, 'resumenFiscalCliente']);
         // BUGFIX 26 Feature 26.2: split por sucursal con IVA
         Route::get('/facturacion-clientes/{clienteId}/periodo/{periodo}/split-por-sucursal', [LiqExtractosController::class, 'splitPorSucursalCliente']);
+        // BUGFIX 28: regenerar estado de cuenta de cliente
+        Route::post('/liquidaciones/{liquidacionCliente}/regenerar-estado-cuenta', [LiqExtractosController::class, 'regenerarEstadoCuenta']);
         Route::get('/liquidaciones-distribuidor/{liquidacionDistribuidor}/historial', [LiqDistribuidorLiquidacionesController::class, 'historial']);
         Route::get('/distribuidores/{persona}/historial-auditoria', [LiqDistribuidorLiquidacionesController::class, 'historialDistribuidor']);
 
