@@ -344,6 +344,8 @@ Route::middleware('auth.api')->group(function () {
         Route::get('/facturacion-clientes/{clienteId}/periodo/{periodo}/split-por-sucursal', [LiqExtractosController::class, 'splitPorSucursalCliente']);
         // BUGFIX 28: regenerar estado de cuenta de cliente
         Route::post('/liquidaciones/{liquidacionCliente}/regenerar-estado-cuenta', [LiqExtractosController::class, 'regenerarEstadoCuenta']);
+        // BUGFIX 31 v2: recalcular con motor OCASA nuevo (3 modelos)
+        Route::post('/liquidaciones/{liquidacionCliente}/recalcular-motor-ocasa', [LiqExtractosController::class, 'recalcularMotorOcasa']);
         Route::get('/liquidaciones-distribuidor/{liquidacionDistribuidor}/historial', [LiqDistribuidorLiquidacionesController::class, 'historial']);
         Route::get('/distribuidores/{persona}/historial-auditoria', [LiqDistribuidorLiquidacionesController::class, 'historialDistribuidor']);
 

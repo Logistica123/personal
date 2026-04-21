@@ -34,6 +34,22 @@ class LiqLineaTarifa extends Model
         'tarifa_parada_distrib',
         'tarifa_bulto_distrib',
         'capacidad_vehiculo_kg',
+        // BUGFIX 31 v2
+        'rango_distancia',
+        'material_tarifario',
+        'zona',
+        'es_minimo',
+        'codigo_sucursal',
+        'factor_km',
+        // Excel v5 OCASA unificado
+        'ruta_codigo',
+        'es_tarifa_base',
+        'distribuidor_nombre',
+        'patente_match',
+        'factor_prod_distrib',
+        'factor_cant_distrib',
+        'n_ops_observadas',
+        'observaciones_v5',
     ];
 
     protected $casts = [
@@ -50,6 +66,11 @@ class LiqLineaTarifa extends Model
         'tarifa_km_distribuidor' => 'decimal:2',
         'tarifa_parada_distrib'  => 'decimal:2',
         'tarifa_bulto_distrib'   => 'decimal:2',
+        'es_minimo'              => 'boolean',
+        'es_tarifa_base'         => 'boolean',
+        'factor_km'              => 'decimal:4',
+        'factor_prod_distrib'    => 'decimal:4',
+        'factor_cant_distrib'    => 'decimal:4',
     ];
 
     // -------------------------------------------------------------------------

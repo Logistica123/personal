@@ -129,6 +129,9 @@ class OcasaExcelProcessor
             $sucursalCod = strtoupper(trim((string) ($this->getVal($row, $colMap, 'sucursal') ?? '')));
             $pesoAprox = trim((string) ($this->getVal($row, $colMap, 'capacidad_vehiculo') ?? ''));
             $fechaRaw = $this->getVal($row, $colMap, 'fecha');
+            // BUGFIX 31 v2: IdTrack (2da/3ra vuelta) para Modelo 1
+            $idTrackRaw = trim((string) ($this->getVal($row, $colMap, 'id_track') ?? $this->getVal($row, $colMap, 'idtrack') ?? ''));
+            $idTrackTms = $idTrackRaw !== '' ? $idTrackRaw : null;
 
             // Ignorar filas con CostoTransporte = 0 (filas vacías / totales)
             if ($costoTransporte == 0 && $costoFijo == 0 && $costoProd == 0) {
@@ -331,6 +334,8 @@ class OcasaExcelProcessor
                 'tarifa_prod_distrib' => $tarifaProdDistrib,
                 'importe_gravado' => $costoTransporte, // default, actualizable por PDF
                 'importe_no_gravado' => 0,
+                // BUGFIX 31 v2: IdTrack para detectar 2da/3ra vuelta en Modelo 1
+                'idtrack_tms' => $idTrackTms,
             ]);
 
             $operacionesCreadas++;
@@ -410,6 +415,12 @@ class OcasaExcelProcessor
             $bultos = $this->getVal($row, $colMap, 'bultos');
             $costo = $this->parseNum($this->getVal($row, $colMap, 'costo'));
             $costoProd = $this->parseNum($this->getVal($row, $colMap, 'costo_productividad'));
+            // BUGFIX 31 v2: capturar material, zona (cod_regio), motivo, cp, distrito para Modelo 3 y eficiencia
+            $material = trim((string) ($this->getVal($row, $colMap, 'material') ?? $this->getVal($row, $colMap, 'gr_material') ?? ''));
+            $codRegio = trim((string) ($this->getVal($row, $colMap, 'cod_regio') ?? ''));
+            $motivo   = trim((string) ($this->getVal($row, $colMap, 'motivo') ?? ''));
+            $cp       = trim((string) ($this->getVal($row, $colMap, 'codigo_postal') ?? $this->getVal($row, $colMap, 'cp') ?? ''));
+            $distrito = trim((string) ($this->getVal($row, $colMap, 'distrito') ?? ''));
 
             LiqOperacionDetalle::create([
                 'operacion_id' => $operacion->id,
@@ -417,6 +428,11 @@ class OcasaExcelProcessor
                 'bultos' => $bultos !== null ? (int) $bultos : null,
                 'costo' => $costo,
                 'costo_productividad' => $costoProd,
+                'material_ycc' => $material !== '' ? $material : null,
+                'cod_regio'    => $codRegio !== '' ? $codRegio : null,
+                'motivo'       => $motivo !== '' ? $motivo : null,
+                'codigo_postal' => $cp !== '' ? $cp : null,
+                'distrito'     => $distrito !== '' ? $distrito : null,
             ]);
 
             $detallesCreados++;

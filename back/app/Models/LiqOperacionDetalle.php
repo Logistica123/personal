@@ -19,6 +19,10 @@ class LiqOperacionDetalle extends Model
         'bultos',
         'costo',
         'costo_productividad',
+        // BUGFIX 31 v2
+        'material_ycc',
+        'cod_regio',
+        'motivo',
     ];
 
     protected $casts = [

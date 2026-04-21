@@ -54,6 +54,10 @@ class LiqOperacion extends Model
         'tarifa_prod_distrib',
         'importe_gravado',
         'importe_no_gravado',
+        // BUGFIX 31 v2
+        'idtrack_tms',
+        'modelo_calculo',
+        'requiere_override_manual',
     ];
 
     protected $casts = [

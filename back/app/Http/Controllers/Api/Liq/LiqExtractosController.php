@@ -1050,6 +1050,28 @@ class LiqExtractosController extends Controller
         ]);
     }
 
+    // POST /liq/liquidaciones/{liquidacionCliente}/recalcular-motor-ocasa (BUGFIX 31 v2)
+    // Recalcula todas las operaciones de la liquidación con el motor nuevo de 3 modelos OCASA.
+    // Query param ?dry_run=1 para ver diff sin persistir.
+    public function recalcularMotorOcasa(Request $request, LiqLiquidacionCliente $liquidacionCliente): JsonResponse
+    {
+        $dryRun = (bool) $request->boolean('dry_run', false);
+        try {
+            $stats = app(\App\Services\Liq\LiqCalculoOcasaService::class)
+                ->recalcularLiquidacion($liquidacionCliente, $dryRun);
+
+            return response()->json([
+                'message' => $dryRun
+                    ? "Simulación: {$stats['actualizadas']}/{$stats['total']} se actualizarían (sin_tarifa={$stats['sin_tarifa']}, req_override={$stats['requieren_override']})"
+                    : "Recalculadas {$stats['actualizadas']}/{$stats['total']} operaciones (sin_tarifa={$stats['sin_tarifa']}, req_override={$stats['requieren_override']})",
+                'dry_run' => $dryRun,
+                'data' => $stats,
+            ]);
+        } catch (\Throwable $e) {
+            return response()->json(['error' => 'Error al recalcular: ' . $e->getMessage()], 500);
+        }
+    }
+
     // POST /liq/liquidaciones-distribuidor/{id}/recalcular-eficiencia (BUGFIX 24 A5)
     public function recalcularEficiencia(LiqLiquidacionDistribuidor $liquidacionDistribuidor): JsonResponse
     {
