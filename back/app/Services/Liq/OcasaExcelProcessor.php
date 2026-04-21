@@ -122,6 +122,12 @@ class OcasaExcelProcessor
             $costoKm = $this->parseNum($this->getVal($row, $colMap, 'costo_km'));
             $costoProd = $this->parseNum($this->getVal($row, $colMap, 'costo_prod'));
             $costoCant = $this->parseNum($this->getVal($row, $colMap, 'costo_cant'));
+            // SPEC INTEGRAL Fase A: penalidades TMS (Pen.POD + Pen.NO.POD + Penalidad + Pen.Hs.Caídas)
+            $penPod       = $this->parseNum($this->getVal($row, $colMap, 'pen_mal_uso_pod') ?? $this->getVal($row, $colMap, 'pen_pod'));
+            $penNoPod     = $this->parseNum($this->getVal($row, $colMap, 'pen_no_uso_pod') ?? $this->getVal($row, $colMap, 'pen_no_pod'));
+            $penalidad    = $this->parseNum($this->getVal($row, $colMap, 'penalidad'));
+            $penHsCaidas  = $this->parseNum($this->getVal($row, $colMap, 'pen_hs_caidas'));
+            $penalidadesTms = round((float) $penPod + (float) $penNoPod + (float) $penalidad + (float) $penHsCaidas, 2);
             $distancia = $this->parseNum($this->getVal($row, $colMap, 'distancia'));
             $totalParadas = (int) $this->parseNum($this->getVal($row, $colMap, 'total_paradas'));
             $patente = strtoupper(trim(preg_replace('/[\s\-]/', '', (string) ($this->getVal($row, $colMap, 'patente') ?? '')) ?? ''));
@@ -336,6 +342,8 @@ class OcasaExcelProcessor
                 'importe_no_gravado' => 0,
                 // BUGFIX 31 v2: IdTrack para detectar 2da/3ra vuelta en Modelo 1
                 'idtrack_tms' => $idTrackTms,
+                // SPEC INTEGRAL Fase A: penalidades TMS sumadas (se restan en motor de cálculo)
+                'penalidades_tms' => $penalidadesTms,
             ]);
 
             $operacionesCreadas++;

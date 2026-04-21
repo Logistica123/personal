@@ -6,87 +6,64 @@ use App\Models\LiqLiquidacionDistribuidor;
 use App\Models\LiqOperacion;
 
 /**
- * BUGFIX 24 MVP — Eficiencia OCASA v1.
+ * SPEC INTEGRAL Fase A — Eficiencia OCASA v2 (paradas YCC).
  *
- * Fórmula:
- *   base = SUM(costo_fijo) / SUM(valor_tarifa_original)
- *   considerando sólo ops con modelo_tarifa ∈ {JORNADA, JORNADA_KM}, fraccion_jornada ≤ 1.0, no excluidas
+ * Reemplaza la v1 (BUGFIX 24) que usaba SUM(costo_fijo)/SUM(valor_tarifa_original).
  *
- * Interpretación: fracción promedio ponderada por tarifa esperada.
- *   - Si todas las jornadas son completas (fracción=1.0) → eficiencia = 100%
- *   - Si hay jornadas parciales → eficiencia baja proporcional
- *   - Si hay ops con fracción > 1.0 (bug residual) → se excluyen y se reporta
+ * Fórmula nueva:
+ *   eficiencia = 100 × SUM(paradas_exitosas) / SUM(paradas_con_motivo)
  *
- * No contempla penalidades del TMS (requiere migración previa a iteración 2).
- * No contempla PRODUCTIVIDAD (ROS001/SUR001) — se reporta como "no medido".
+ * Donde las columnas SUM provienen de liq_operaciones pobladas por LiqEficienciaService::recalcularOperacion.
+ * Si hay operaciones sin YCC (paradas_con_motivo=NULL) no cuentan en el denominador.
+ *
+ * Si el distribuidor no tiene NINGUNA op con paradas YCC en el período, devuelve null ("sin datos").
  */
 class EficienciaOcasaStrategy implements EficienciaStrategy
 {
-    private const MODELOS_CONTABLES = ['JORNADA', 'JORNADA_KM'];
-
     public function calcular(LiqLiquidacionDistribuidor $liq): array
     {
-        $baseQuery = LiqOperacion::where('liquidacion_cliente_id', $liq->liquidacion_cliente_id)
+        $ops = LiqOperacion::where('liquidacion_cliente_id', $liq->liquidacion_cliente_id)
             ->where('distribuidor_id', $liq->distribuidor_id)
-            ->where('excluida', false);
+            ->where('excluida', false)
+            ->get();
 
-        $opsTotal = (clone $baseQuery)->count();
+        $opsTotal = $ops->count();
         if ($opsTotal === 0) {
             return [null, [
                 'formula' => null,
                 'motivo'  => 'Sin operaciones del distribuidor en el período',
-                'version' => 'ocasa-v1',
+                'version' => 'ocasa-v2-paradas',
             ]];
         }
 
-        // Ops contables: JORNADA/JORNADA_KM con fracción <= 1
-        $opsContables = (clone $baseQuery)
-            ->whereIn('modelo_tarifa', self::MODELOS_CONTABLES)
-            ->where('fraccion_jornada', '<=', 1.0)
-            ->selectRaw('
-                COUNT(*) as cant,
-                COALESCE(SUM(costo_fijo), 0)             as sum_costo_fijo,
-                COALESCE(SUM(valor_tarifa_original), 0)  as sum_valor_original
-            ')
-            ->first();
+        $sumConMotivo = (int) $ops->sum('paradas_con_motivo');
+        $sumExitosas  = (int) $ops->sum('paradas_exitosas');
+        $sumTotal     = (int) $ops->sum('paradas_ycc_total');
+        $opsConYcc    = $ops->filter(fn ($o) => $o->paradas_ycc_total !== null)->count();
 
-        // Ops excluidas del cálculo (por modelo o fracción anómala)
-        $opsFraccionAlta = (clone $baseQuery)
-            ->where('fraccion_jornada', '>', 1.0)
-            ->count();
-        $opsProductividad = (clone $baseQuery)
-            ->where('modelo_tarifa', 'PRODUCTIVIDAD')
-            ->count();
-
-        $cant = (int) ($opsContables->cant ?? 0);
-        $sumCF = (float) ($opsContables->sum_costo_fijo ?? 0);
-        $sumVO = (float) ($opsContables->sum_valor_original ?? 0);
-
-        if ($cant === 0 || $sumVO <= 0) {
+        if ($sumConMotivo === 0) {
             return [null, [
-                'formula' => 'SUM(costo_fijo) / SUM(valor_tarifa_original)',
-                'motivo'  => $cant === 0
-                    ? 'Sin ops JORNADA/JORNADA_KM contables en el período'
-                    : 'SUM(valor_tarifa_original)=0',
-                'ops_total'               => $opsTotal,
-                'ops_fraccion_alta'       => $opsFraccionAlta,
-                'ops_productividad'       => $opsProductividad,
-                'version'                 => 'ocasa-v1',
+                'formula' => '100 × SUM(paradas_exitosas) / SUM(paradas_con_motivo) — modelo paradas YCC',
+                'motivo'  => $opsConYcc === 0
+                    ? 'Ninguna operación tiene YCC cargado — correr liq:recalc-eficiencia o subir YCC'
+                    : 'Todas las paradas tienen motivo vacío (sin denominador calculable)',
+                'ops_total'   => $opsTotal,
+                'ops_con_ycc' => $opsConYcc,
+                'paradas_total' => $sumTotal,
+                'version' => 'ocasa-v2-paradas',
             ]];
         }
 
-        $pct = round(($sumCF / $sumVO) * 100, 2);
+        $pct = round(100.0 * $sumExitosas / $sumConMotivo, 2);
 
         return [$pct, [
-            'formula'                => 'SUM(costo_fijo) / SUM(valor_tarifa_original) × 100 — modelo JORNADA/JORNADA_KM, fraccion_jornada ≤ 1.0',
-            'numerador_costo_fijo'   => round($sumCF, 2),
-            'denominador_valor_orig' => round($sumVO, 2),
-            'ops_total'              => $opsTotal,
-            'ops_contables'          => $cant,
-            'ops_fraccion_alta'      => $opsFraccionAlta,
-            'ops_productividad'      => $opsProductividad,
-            'nota_penalidades'       => 'No contempladas en v1 (pendiente migración de campos TMS)',
-            'version'                => 'ocasa-v1',
+            'formula'         => '100 × SUM(paradas_exitosas) / SUM(paradas_con_motivo)',
+            'paradas_exitosas' => $sumExitosas,
+            'paradas_con_motivo' => $sumConMotivo,
+            'paradas_total'   => $sumTotal,
+            'ops_total'       => $opsTotal,
+            'ops_con_ycc'     => $opsConYcc,
+            'version'         => 'ocasa-v2-paradas',
         ]];
     }
 }

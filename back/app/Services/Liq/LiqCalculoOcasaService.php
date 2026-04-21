@@ -118,7 +118,11 @@ class LiqCalculoOcasaService
         $costoKmTms = (float) ($op->costo_km ?? 0);
         $costoProdTms = (float) ($op->costo_prod ?? 0);
         $costoCantTms = (float) ($op->costo_cant ?? 0);
-        $penalidades = (float) ($op->campos_originales['penalidades'] ?? 0); // si se captura después; por ahora 0
+        // SPEC INTEGRAL Fase A: leer penalidades desde columna persistida (parser TMS las puebla).
+        // Fallback: si aún no se migraron, intentar desde campos_originales JSON.
+        $penalidades = (float) ($op->penalidades_tms
+            ?? $op->campos_originales['penalidades']
+            ?? 0);
 
         $componentes = [
             'costo_fijo'       => round($costoFijo * $fraccion, 2),

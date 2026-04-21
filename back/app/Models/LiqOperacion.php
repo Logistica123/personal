@@ -58,6 +58,13 @@ class LiqOperacion extends Model
         'idtrack_tms',
         'modelo_calculo',
         'requiere_override_manual',
+        // SPEC INTEGRAL Fase A — eficiencia persistida + penalidades
+        'penalidades_tms',
+        'paradas_ycc_total',
+        'paradas_con_motivo',
+        'paradas_exitosas',
+        'eficiencia_pct',
+        'eficiencia_calculada_at',
     ];
 
     protected $casts = [
@@ -80,6 +87,9 @@ class LiqOperacion extends Model
         'tarifa_prod_distrib'      => 'decimal:2',
         'importe_gravado'          => 'decimal:2',
         'importe_no_gravado'       => 'decimal:2',
+        'penalidades_tms'          => 'decimal:2',
+        'eficiencia_pct'           => 'decimal:2',
+        'eficiencia_calculada_at'  => 'datetime',
     ];
 
     // -------------------------------------------------------------------------

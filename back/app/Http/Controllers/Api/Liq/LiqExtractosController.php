@@ -1050,6 +1050,39 @@ class LiqExtractosController extends Controller
         ]);
     }
 
+    // POST /liq/tarifas/importar-excel-v5 (SPEC Fase B)
+    //   multipart: archivo=xlsx, cliente=OCASA, reemplazar=1
+    public function importarExcelV5(Request $request): JsonResponse
+    {
+        $request->validate([
+            'archivo' => 'required|file|mimes:xlsx,xls',
+            'cliente' => 'sometimes|string|max:80',
+            'reemplazar' => 'sometimes|boolean',
+            'nombre' => 'sometimes|string|max:255',
+        ]);
+
+        try {
+            $file = $request->file('archivo');
+            $tmpPath = $file->getRealPath();
+            $res = app(\App\Services\Liq\LiqExcelV5ImportService::class)->importar(
+                $tmpPath,
+                clienteNombre: $request->input('cliente', 'OCASA'),
+                reemplazar: (bool) $request->boolean('reemplazar'),
+                nombreEsquema: $request->input('nombre') ?: null,
+            );
+
+            return response()->json([
+                'message' => sprintf(
+                    'Esquema #%d creado — %d base, %d overrides',
+                    $res['esquema_id'], $res['base'], $res['overrides']
+                ),
+                'data' => $res,
+            ], 201);
+        } catch (\Throwable $e) {
+            return response()->json(['error' => $e->getMessage()], 422);
+        }
+    }
+
     // POST /liq/liquidaciones/{liquidacionCliente}/recalcular-motor-ocasa (BUGFIX 31 v2)
     // Recalcula todas las operaciones de la liquidación con el motor nuevo de 3 modelos OCASA.
     // Query param ?dry_run=1 para ver diff sin persistir.

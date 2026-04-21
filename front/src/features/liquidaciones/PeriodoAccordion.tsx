@@ -31,6 +31,21 @@ type LiqRow = {
   };
 };
 
+/**
+ * SPEC INTEGRAL Fase B — Elementos mixtos opcionales en el expandido.
+ * Si se pasa `adjuntosPorGrupo`, el accordion muestra una sección "Otros del período"
+ * con legacy docs, ajustes manuales y descuentos de combustible del mismo {cliente, mes, quincena}.
+ * Si no se pasa, comportamiento idéntico a BUGFIX 27.3.
+ */
+export type AdjuntoPeriodo = {
+  tipo: 'legacy' | 'ajuste' | 'combustible' | 'otro';
+  label: string;
+  importe?: number | null;
+  fecha?: string | null;
+  meta?: string | null;
+  onClick?: () => void;
+};
+
 type Props = {
   rows: LiqRow[];
   materializingIds: Set<number>;
@@ -41,6 +56,8 @@ type Props = {
   onBorrar: (liqDistId: number) => void | Promise<void>;
   onMaterializarPdf: (liqDistId: number) => void | Promise<unknown>;
   onEditar: (row: LiqRow) => void;
+  /** Opcional: mapa groupKey → lista de elementos mixtos del mismo período */
+  adjuntosPorGrupo?: Map<string, AdjuntoPeriodo[]>;
 };
 
 type Grupo = {
@@ -111,6 +128,7 @@ export function PeriodoAccordion({
   onBorrar,
   onMaterializarPdf,
   onEditar,
+  adjuntosPorGrupo,
 }: Props) {
   const grupos: Grupo[] = useMemo(() => {
     const map = new Map<string, Grupo>();
@@ -291,6 +309,47 @@ export function PeriodoAccordion({
                       </tbody>
                     </table>
                   </div>
+
+                  {/* SPEC Fase B: Otros elementos del mismo período (legacy, ajustes, combustible) */}
+                  {(() => {
+                    const adjuntos = adjuntosPorGrupo?.get(g.key) ?? [];
+                    if (adjuntos.length === 0) return null;
+                    const iconoTipo: Record<AdjuntoPeriodo['tipo'], string> = {
+                      legacy: '📄', ajuste: '✏️', combustible: '⛽', otro: '•',
+                    };
+                    const colorTipo: Record<AdjuntoPeriodo['tipo'], string> = {
+                      legacy: '#6366f1', ajuste: '#f59e0b', combustible: '#ef4444', otro: '#6b7280',
+                    };
+                    return (
+                      <div style={{ marginTop: 10, padding: '10px 14px', background: '#fff', border: '1px dashed #d1d5db', borderRadius: 6 }}>
+                        <div style={{ fontSize: 12, fontWeight: 600, color: '#374151', marginBottom: 6 }}>
+                          Otros elementos del período ({adjuntos.length})
+                        </div>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                          {adjuntos.map((a, i) => (
+                            <div key={`adj-${g.key}-${i}`}
+                              onClick={a.onClick}
+                              style={{
+                                display: 'grid', gridTemplateColumns: '24px minmax(140px, 1fr) minmax(160px, 2fr) 120px 120px',
+                                gap: 8, alignItems: 'center', fontSize: 12,
+                                padding: '4px 6px', borderRadius: 4,
+                                cursor: a.onClick ? 'pointer' : 'default',
+                                background: i % 2 === 0 ? '#f9fafb' : '#fff',
+                              }}
+                            >
+                              <span style={{ color: colorTipo[a.tipo] }}>{iconoTipo[a.tipo]}</span>
+                              <span style={{ color: '#6b7280', textTransform: 'uppercase', fontSize: 10, letterSpacing: 0.5 }}>{a.tipo}</span>
+                              <span style={{ color: '#111827' }}>{a.label}</span>
+                              <span style={{ color: '#6b7280', fontSize: 11, textAlign: 'right' }}>{a.fecha ?? ''}</span>
+                              <span style={{ textAlign: 'right', fontWeight: 600 }}>
+                                {a.importe != null ? formatCurrency(a.importe) : '—'}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })()}
 
                   {/* Resumen al pie del período */}
                   <div style={{

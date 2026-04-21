@@ -346,6 +346,14 @@ Route::middleware('auth.api')->group(function () {
         Route::post('/liquidaciones/{liquidacionCliente}/regenerar-estado-cuenta', [LiqExtractosController::class, 'regenerarEstadoCuenta']);
         // BUGFIX 31 v2: recalcular con motor OCASA nuevo (3 modelos)
         Route::post('/liquidaciones/{liquidacionCliente}/recalcular-motor-ocasa', [LiqExtractosController::class, 'recalcularMotorOcasa']);
+        // SPEC Fase B: importador xlsx de tarifas
+        Route::post('/tarifas/importar-excel-v5', [LiqExtractosController::class, 'importarExcelV5']);
+
+        // SPEC Fase B: ABM motivos exitosos por cliente (para calcular eficiencia YCC)
+        Route::get(   '/clientes/{cliente}/motivos-exitosos', [\App\Http\Controllers\Api\Liq\LiqMotivosExitososController::class, 'index']);
+        Route::post(  '/clientes/{cliente}/motivos-exitosos', [\App\Http\Controllers\Api\Liq\LiqMotivosExitososController::class, 'store']);
+        Route::patch( '/motivos-exitosos/{id}',               [\App\Http\Controllers\Api\Liq\LiqMotivosExitososController::class, 'update']);
+        Route::delete('/motivos-exitosos/{id}',               [\App\Http\Controllers\Api\Liq\LiqMotivosExitososController::class, 'destroy']);
         Route::get('/liquidaciones-distribuidor/{liquidacionDistribuidor}/historial', [LiqDistribuidorLiquidacionesController::class, 'historial']);
         Route::get('/distribuidores/{persona}/historial-auditoria', [LiqDistribuidorLiquidacionesController::class, 'historialDistribuidor']);
 
