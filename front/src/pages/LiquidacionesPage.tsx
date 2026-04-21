@@ -3194,9 +3194,11 @@ export const LiquidacionesPage: React.FC<LiquidacionesPageProps> = ({
 
   const liquidacionGroupsForSelect = useMemo(
     () => {
-      // BUGFIX 27.2: filtrar extractos/liquidaciones no vigentes (anulada/rechazada/borrada).
-      // El backend puede devolver `estado` del extracto asociado y/o un flag `anulada`.
-      // Con los campos actuales (pendiente, deleted_at) un anulado SÍ aparece en el select — los ocultamos acá.
+      // BUGFIX 27.2 + ADDENDUM B:
+      //   1) Filtrar extractos/liquidaciones no vigentes (anulada/rechazada/borrada) si el backend expone el campo.
+      //   2) Deduplicar por {monthKey, fortnightKey} quedándose con el más reciente (id más alto).
+      //      Esto evita el caso "4 filas idénticas" del dropdown de Ahuad/Dist_47 cuando conviven
+      //      varios PDFs de la misma liquidación en legacy sin flag explícito de anulación.
       const NO_VIGENTE = new Set(['anulada', 'rechazada', 'borrada', 'cancelada']);
       const vigentes = allLiquidacionDocuments.filter(doc => {
         if (doc.anulada === true) return false;
@@ -3204,7 +3206,40 @@ export const LiquidacionesPage: React.FC<LiquidacionesPageProps> = ({
         if (estado && NO_VIGENTE.has(estado)) return false;
         return true;
       });
-      return buildLiquidacionGroups(vigentes);
+
+      // Dedup: agrupar por {monthKey, fortnightKey, tipoId} (evita mezclar Liq con Ajuste/Descuento)
+      // y quedarse con el de id más alto (el subido más recientemente).
+      const byKey = new Map<string, typeof vigentes[number]>();
+      for (const doc of vigentes) {
+        // Sólo dedupear documentos principales (no adjuntos) que son los que aparecen en el dropdown.
+        if (doc.isAttachment) continue;
+        const mk = doc.monthKey ?? 'nomonth';
+        const fk = doc.fortnightKey ?? 'nofortnight';
+        const tid = doc.tipoId ?? 0;
+        const key = `${mk}|${fk}|${tid}`;
+        const current = byKey.get(key);
+        if (!current || (doc.id ?? 0) > (current.id ?? 0)) {
+          byKey.set(key, doc);
+        }
+      }
+
+      // Para cada ganador, recuperar sus adjuntos desde la lista original
+      const ganadores = Array.from(byKey.values());
+      const adjuntosPorPadre = new Map<number, typeof vigentes>();
+      for (const d of vigentes) {
+        if (d.isAttachment && d.parentDocumentId != null) {
+          const arr = adjuntosPorPadre.get(d.parentDocumentId) ?? [];
+          arr.push(d);
+          adjuntosPorPadre.set(d.parentDocumentId, arr);
+        }
+      }
+
+      const deduped = [
+        ...ganadores,
+        ...ganadores.flatMap(g => adjuntosPorPadre.get(g.id) ?? []),
+      ];
+
+      return buildLiquidacionGroups(deduped);
     },
     [buildLiquidacionGroups, allLiquidacionDocuments]
   );
@@ -5999,32 +6034,65 @@ export const LiquidacionesPage: React.FC<LiquidacionesPageProps> = ({
 
         {detail && filteredLiquidacionSections.length > 0 ? (
           <div className="table-wrapper liquidaciones-table">
-            <table>
-              <thead>
-                <tr>
-                  <th>Nombre</th>
-                  <th>Tipo</th>
-                  <th>Fecha</th>
-                  <th>Peso</th>
-                  <th>Importe a facturar</th>
-                  <th>Enviada</th>
-                  <th>Facturado</th>
-                  <th>Validación IA</th>
-                  <th style={{ width: '200px' }}>Acciones</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filteredLiquidacionSections.map((monthSection) => (
-                  <React.Fragment key={`month-${monthSection.monthKey}`}>
-                    {monthSection.sections.map((section) => (
-                      <React.Fragment key={`month-${monthSection.monthKey}-${section.key}`}>
-                        <tr className="fortnight-row">
-                          <td colSpan={10}>
-                            <strong>{monthSection.monthLabel}</strong>
-                            <span className="fortnight-row__separator">•</span>
-                            <span>{section.label}</span>
-                          </td>
-                        </tr>
+            {/* BUGFIX 27 ADDENDUM A: Legacy como accordions por período (mes + quincena) */}
+            {filteredLiquidacionSections.map((monthSection) => (
+              <React.Fragment key={`month-${monthSection.monthKey}`}>
+                {monthSection.sections.map((section) => {
+                  // Subtotal del período: suma de importeFacturar (o getLiquidacionNetTotal) de las liq principales
+                  const subtotalSeccion = section.rows.reduce((acc, g) => {
+                    const net = getLiquidacionNetTotal(g);
+                    if (net != null) return acc + net;
+                    if (g.main.importeFacturar != null) return acc + Number(g.main.importeFacturar);
+                    return acc;
+                  }, 0);
+                  const liqCount = section.rows.length;
+                  const adjCount = section.rows.reduce((acc, g) => acc + g.attachments.length, 0);
+                  const clienteLabel = section.rows
+                    .map(g => liquidacionVisualClientByDocId[g.main.id])
+                    .filter((v): v is string => Boolean(v))
+                    .filter((v, i, a) => a.indexOf(v) === i)
+                    .join(', ') || '—';
+
+                  return (
+                    <details key={`accordion-${monthSection.monthKey}-${section.key}`}
+                      open={filteredLiquidacionSections.length === 1 && monthSection.sections.length === 1}
+                      style={{ marginBottom: 10, border: '1px solid #e5e7eb', borderRadius: 8, overflow: 'hidden', background: '#fff' }}>
+                      <summary style={{
+                        cursor: 'pointer',
+                        padding: '10px 14px',
+                        background: '#f9fafb',
+                        display: 'grid',
+                        gridTemplateColumns: '180px minmax(160px,1fr) minmax(140px,1fr) 120px 140px',
+                        gap: 10, alignItems: 'center', fontSize: 13,
+                      }}>
+                        <strong>{monthSection.monthLabel}</strong>
+                        <span style={{ color: '#374151' }}>{section.label}</span>
+                        <span style={{ color: '#6b7280', fontSize: 12 }}>
+                          {clienteLabel !== '—' && <>Cliente: <strong style={{ color: '#111827' }}>{clienteLabel}</strong></>}
+                        </span>
+                        <span style={{ textAlign: 'right', fontSize: 11, color: '#6b7280' }}>
+                          {liqCount} liq{adjCount > 0 ? ` · ${adjCount} adj` : ''}
+                        </span>
+                        <span style={{ textAlign: 'right', fontWeight: 700, color: '#1F3864' }}>
+                          {subtotalSeccion > 0 ? formatCurrency(subtotalSeccion) : '—'}
+                        </span>
+                      </summary>
+
+                      <table style={{ width: '100%' }}>
+                        <thead>
+                          <tr>
+                            <th>Nombre</th>
+                            <th>Tipo</th>
+                            <th>Fecha</th>
+                            <th>Peso</th>
+                            <th>Importe a facturar</th>
+                            <th>Enviada</th>
+                            <th>Facturado</th>
+                            <th>Validación IA</th>
+                            <th style={{ width: '200px' }}>Acciones</th>
+                          </tr>
+                        </thead>
+                        <tbody>
                         {section.rows.map((group) => {
                           const isDeletingMain = deletingDocumentIds.has(group.main.id);
                           return (
@@ -6195,12 +6263,27 @@ export const LiquidacionesPage: React.FC<LiquidacionesPageProps> = ({
                             </React.Fragment>
                           );
                         })}
-                      </React.Fragment>
-                    ))}
-                  </React.Fragment>
-                ))}
-              </tbody>
-            </table>
+                        </tbody>
+                      </table>
+
+                      {/* Subtotal de período al pie del accordion expandido */}
+                      {subtotalSeccion > 0 && (
+                        <div style={{
+                          padding: '8px 14px',
+                          background: '#F2F2F2',
+                          borderTop: '2px solid #1F3864',
+                          display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                          fontSize: 13,
+                        }}>
+                          <span style={{ color: '#4b5563' }}>Subtotal del período (con descuentos aplicados)</span>
+                          <strong style={{ color: '#1F3864', fontSize: 14 }}>{formatCurrency(subtotalSeccion)}</strong>
+                        </div>
+                      )}
+                    </details>
+                  );
+                })}
+              </React.Fragment>
+            ))}
           </div>
         ) : null}
 

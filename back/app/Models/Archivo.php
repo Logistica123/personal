@@ -29,6 +29,7 @@ class Archivo extends Model
         'size',
         'fecha_vencimiento',
         'fortnight_key',
+        'month_key',
         'importe_facturar',
         'enviada',
         'recibido',

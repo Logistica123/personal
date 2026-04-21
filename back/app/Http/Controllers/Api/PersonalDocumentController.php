@@ -504,6 +504,41 @@ class PersonalDocumentController extends Controller
 
         $validated = $validator->validate();
 
+        // BUGFIX 27 Addendum C: bloquear duplicados de liquidación principal (no adjunto) por {persona, tipo, mes, quincena}.
+        // Solo aplica cuando es principal (sin parent) y trae monthKey+fortnightKey. Escape hatch: ignorar_duplicados=true.
+        $esPrincipal = !$request->filled('parentDocumentId');
+        if (
+            $esPrincipal
+            && !empty($validated['monthKey'])
+            && !empty($validated['fortnightKey'])
+            && !$request->boolean('ignorar_duplicados')
+        ) {
+            $dupQuery = \App\Models\Archivo::where('persona_id', $persona->id)
+                ->where('tipo_archivo_id', $validated['tipoArchivoId'])
+                ->where('month_key', $validated['monthKey'])
+                ->where('fortnight_key', $validated['fortnightKey'])
+                ->whereNull('parent_document_id');
+            $existente = $dupQuery->orderByDesc('id')->first();
+            if ($existente) {
+                return response()->json([
+                    'error'   => 'DUPLICATE_PERIOD',
+                    'message' => "Ya existe una liquidación vigente para este período (id #{$existente->id}, subida el " . optional($existente->created_at)->format('d/m/Y H:i') . ").",
+                    'liquidacion_existente' => [
+                        'id'             => $existente->id,
+                        'nombre'         => $existente->nombre_original,
+                        'month_key'      => $existente->month_key,
+                        'fortnight_key'  => $existente->fortnight_key,
+                        'tipo_archivo_id' => $existente->tipo_archivo_id,
+                        'created_at'     => optional($existente->created_at)->toDateTimeString(),
+                    ],
+                    'sugerencias' => [
+                        'borrar_existente'   => "DELETE /api/personal/{$persona->id}/documentos/{$existente->id}",
+                        'forzar_subida'      => 'Reintentar con ignorar_duplicados=true (sólo si sabés lo que hacés)',
+                    ],
+                ], 409);
+            }
+        }
+
         $parentDocumentId = $this->resolveParentDocumentId($request, $persona);
 
         Log::info('Documento recibido', [
@@ -594,6 +629,7 @@ class PersonalDocumentController extends Controller
                     'tipo_archivo_id' => $validated['tipoArchivoId'],
                     'fecha_vencimiento' => $parsedFecha,
                     'fortnight_key' => $validated['fortnightKey'] ?? null,
+                    'month_key' => $validated['monthKey'] ?? null,  // BUGFIX 27 Addendum C
                     'importe_facturar' => $validated['importeFacturar'] ?? null,
                     'enviada' => $isLiquidacion && ! $isPending,
                     'recibido' => false,
