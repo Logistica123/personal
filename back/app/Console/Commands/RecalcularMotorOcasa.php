@@ -73,21 +73,31 @@ class RecalcularMotorOcasa extends Command
                 continue;
             }
 
-            $this->line("  Total: {$stats['total']}  |  Actualizadas: {$stats['actualizadas']}  |  Sin tarifa: {$stats['sin_tarifa']}  |  Req override: {$stats['requieren_override']}");
-            $this->line("  Por modelo: M1={$stats['por_modelo']['M1']} M2={$stats['por_modelo']['M2']} M3={$stats['por_modelo']['M3']} OVERRIDE={$stats['por_modelo']['OVERRIDE']}");
+            $this->line("  Total: {$stats['total']}  |  Actualizadas: {$stats['actualizadas']}  |  Sin tarifa: {$stats['sin_tarifa']}");
+            $pm = $stats['por_match'] ?? [];
+            $this->line("  Por match: DISTRIBUIDOR=" . ($pm['DISTRIBUIDOR'] ?? 0) . " PATENTE=" . ($pm['PATENTE'] ?? 0) . " BASE=" . ($pm['BASE'] ?? 0) . " sin_match=" . ($pm['sin_match'] ?? 0));
 
             if (!empty($stats['warnings'])) {
                 $this->newLine();
                 $this->warn('  Warnings:');
+                $shown = 0;
                 foreach ($stats['warnings'] as $w => $count) {
                     $this->line("    [{$count}x] {$w}");
+                    if (++$shown >= 10) { $this->line('    ...'); break; }
                 }
             }
 
             if (!empty($stats['muestras'])) {
                 $this->newLine();
-                $rows = array_map(fn ($s) => [$s['op_id'], $s['dominio'], $s['ruta'], $s['modelo'], $s['importe'] !== null ? number_format($s['importe'], 2, ',', '.') : '—', $s['concepto']], $stats['muestras']);
-                $this->table(['Op', 'Dominio', 'Ruta', 'Modelo', 'Importe', 'Concepto'], $rows);
+                $rows = array_map(fn ($s) => [
+                    $s['op_id'],
+                    $s['dominio'] ?? '—',
+                    $s['ruta'] ?? '—',
+                    $s['capacidad'] ?? '—',
+                    $s['match_tipo'] ?? '—',
+                    $s['importe'] !== null ? number_format($s['importe'], 2, ',', '.') : '—',
+                ], $stats['muestras']);
+                $this->table(['Op', 'Dominio', 'Ruta', 'Cap', 'Match', 'Importe'], $rows);
             }
         }
 
