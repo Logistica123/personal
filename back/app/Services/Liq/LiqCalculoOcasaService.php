@@ -42,30 +42,34 @@ class LiqCalculoOcasaService
         $capacidad = (int) ($op->capacidad_vehiculo_kg ?? 0);
         $patente = strtoupper(trim((string) ($op->dominio ?? '')));
 
-        // Nombre del distribuidor para match (case-insensitive, trim)
+        // Nombre del distribuidor para match (case+accent-insensitive, trim).
+        // El comparativo se hace vía normalizarNombre() porque el Excel importado suele traer
+        // tildes ("Benítez Germán") pero personas las guarda sin ("BENITEZ GERMAN").
         $distNombre = null;
+        $distNombreAlt = null;
         if ($op->distribuidor_id) {
             $p = \DB::table('personas')->where('id', $op->distribuidor_id)
                 ->first(['apellidos', 'nombres']);
             if ($p) {
-                $distNombre = strtoupper(trim(($p->apellidos ?? '') . ' ' . ($p->nombres ?? '')));
-                // También variante "Nombres Apellidos"
-                $distNombreAlt = strtoupper(trim(($p->nombres ?? '') . ' ' . ($p->apellidos ?? '')));
+                $distNombre    = $this->normalizarNombre(($p->apellidos ?? '') . ' ' . ($p->nombres ?? ''));
+                $distNombreAlt = $this->normalizarNombre(($p->nombres ?? '') . ' ' . ($p->apellidos ?? ''));
             }
         }
 
-        // 1. Match por distribuidor_nombre
+        // 1. Match por distribuidor_nombre (normalizando ambos lados)
         if ($distNombre) {
-            $q = LiqLineaTarifa::where('esquema_id', $esquema->id)
+            $candidatos = LiqLineaTarifa::where('esquema_id', $esquema->id)
                 ->where('activo', true)
                 ->where('es_tarifa_base', false)
                 ->where('ruta_codigo', $ruta)
                 ->where('capacidad_vehiculo_kg', $capacidad)
-                ->whereNotNull('distribuidor_nombre');
-            $linea = (clone $q)->whereRaw('UPPER(TRIM(distribuidor_nombre)) = ?', [$distNombre])->first()
-                ?? (clone $q)->whereRaw('UPPER(TRIM(distribuidor_nombre)) = ?', [$distNombreAlt ?? ''])->first();
-            if ($linea) {
-                return $this->aplicarFormula($op, $linea, 'DISTRIBUIDOR');
+                ->whereNotNull('distribuidor_nombre')
+                ->get();
+            foreach ($candidatos as $c) {
+                $n = $this->normalizarNombre($c->distribuidor_nombre);
+                if ($n === $distNombre || $n === $distNombreAlt) {
+                    return $this->aplicarFormula($op, $c, 'DISTRIBUIDOR');
+                }
             }
         }
 
@@ -163,6 +167,26 @@ class LiqCalculoOcasaService
             ],
             'warnings'        => [],
         ];
+    }
+
+    /**
+     * Normaliza un nombre para comparación: UPPERCASE, sin tildes, colapsa espacios.
+     * El Excel importado suele traer tildes ("Benítez Germán") pero personas las guarda sin
+     * ("BENITEZ GERMAN"). Sin esta normalización, los overrides jamás matchean por nombre.
+     */
+    private function normalizarNombre(?string $s): string
+    {
+        if ($s === null) return '';
+        // Quitar tildes manteniendo la letra base
+        $s = strtr($s, [
+            'á' => 'a', 'é' => 'e', 'í' => 'i', 'ó' => 'o', 'ú' => 'u',
+            'Á' => 'A', 'É' => 'E', 'Í' => 'I', 'Ó' => 'O', 'Ú' => 'U',
+            'ñ' => 'n', 'Ñ' => 'N',
+            'ü' => 'u', 'Ü' => 'U',
+        ]);
+        $s = strtoupper(trim($s));
+        $s = preg_replace('/\s+/', ' ', $s);
+        return $s;
     }
 
     /**
