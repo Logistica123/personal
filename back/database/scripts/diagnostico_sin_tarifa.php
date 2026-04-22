@@ -81,15 +81,41 @@ foreach ($muestra as $m) {
     );
 }
 
-// 3. Operaciones sin tarifa
+// 3. Operaciones sin tarifa — detectar qué columna usa esta instalación
+$opsCols = DB::select("SHOW COLUMNS FROM liq_operaciones");
+$colNames = array_map(fn($c) => $c->Field, $opsCols);
+
+echo "\n--- Columnas clave detectadas en liq_operaciones ---\n";
+$relevantes = array_filter($colNames, fn($c) =>
+    str_contains($c, 'estado') || str_contains($c, 'tarifa') || str_contains($c, 'sin_') ||
+    str_contains($c, 'ruta') || str_contains($c, 'capac') || str_contains($c, 'distrib') ||
+    str_contains($c, 'patent') || str_contains($c, 'dominio') || str_contains($c, 'concepto') ||
+    str_contains($c, 'linea_')
+);
+echo "  " . implode(', ', $relevantes) . "\n\n";
+
+// Intentar detectar la columna de estado de tarifa (tolerante a distintos esquemas)
+$estadoCol = null;
+foreach (['estado_tarifa', 'estado_resolucion', 'tarifa_estado', 'estado'] as $c) {
+    if (in_array($c, $colNames)) { $estadoCol = $c; break; }
+}
+$lineaFkCol = in_array('linea_tarifa_id', $colNames) ? 'linea_tarifa_id'
+           : (in_array('liq_linea_tarifa_id', $colNames) ? 'liq_linea_tarifa_id' : null);
+
+echo "Columnas usadas: estado='$estadoCol' · linea_fk='$lineaFkCol'\n\n";
+
 echo "\n--- Operaciones sin tarifa (top 10) ---\n";
-$ops = DB::table('liq_operaciones')
-    ->where('liquidacion_cliente_id', $liqId)
-    ->where(function ($q) {
-        $q->whereNull('linea_tarifa_id')->orWhere('estado_tarifa', 'sin_tarifa');
-    })
-    ->limit(10)
-    ->get();
+$q = DB::table('liq_operaciones')->where('liquidacion_cliente_id', $liqId);
+if ($lineaFkCol && $estadoCol) {
+    $q->where(function ($sub) use ($lineaFkCol, $estadoCol) {
+        $sub->whereNull($lineaFkCol)->orWhere($estadoCol, 'sin_tarifa');
+    });
+} elseif ($lineaFkCol) {
+    $q->whereNull($lineaFkCol);
+} elseif ($estadoCol) {
+    $q->where($estadoCol, 'sin_tarifa');
+}
+$ops = $q->limit(10)->get();
 
 if ($ops->isEmpty()) {
     echo "  (ninguna — todas tienen tarifa resuelta)\n";
