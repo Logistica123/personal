@@ -1186,12 +1186,41 @@ class LiqTarifaController extends Controller
         };
     }
 
-    private function queryLineasPorDimensiones(int $esquemaId, array $dimensionesValores)
+    /**
+     * Arma la query de líneas "mismas dimensiones". Soporta dos esquemas:
+     *
+     * - Antiguo (dimensiones_valores JSON): filtra por cada clave → valor.
+     * - v5 (OCASA unificado, ruta_codigo + capacidad + distribuidor + patente + es_tarifa_base):
+     *   si $dimensionesValores está vacío Y se pasa $linea con ruta_codigo, se usan esas columnas.
+     *
+     * Sin fix, una línea v5 con dimensiones_valores=[] matcheaba TODAS las del esquema y
+     * disparaba "Existe una línea aprobada con vigencia_desde >= a la nueva" aun entre
+     * overrides de distribuidores distintos.
+     */
+    private function queryLineasPorDimensiones(int $esquemaId, array $dimensionesValores, ?LiqLineaTarifa $linea = null)
     {
         $q = LiqLineaTarifa::where('esquema_id', $esquemaId);
-        foreach ($dimensionesValores as $dim => $valor) {
-            $q->where("dimensiones_valores->{$dim}", $valor);
+
+        if (!empty($dimensionesValores)) {
+            foreach ($dimensionesValores as $dim => $valor) {
+                $q->where("dimensiones_valores->{$dim}", $valor);
+            }
+            return $q;
         }
+
+        // Fallback schema v5: usar identificadores de la línea
+        if ($linea && $linea->ruta_codigo !== null) {
+            $q->where('ruta_codigo', $linea->ruta_codigo)
+              ->where('capacidad_vehiculo_kg', $linea->capacidad_vehiculo_kg)
+              ->where('es_tarifa_base', $linea->es_tarifa_base);
+            $linea->distribuidor_nombre
+                ? $q->where('distribuidor_nombre', $linea->distribuidor_nombre)
+                : $q->whereNull('distribuidor_nombre');
+            $linea->patente_match
+                ? $q->where('patente_match', $linea->patente_match)
+                : $q->whereNull('patente_match');
+        }
+
         return $q;
     }
 
@@ -1216,7 +1245,7 @@ class LiqTarifaController extends Controller
         }
 
         // Cerrar automáticamente líneas aprobadas previas que solapan vigencia para la misma combinación
-        $otras = $this->queryLineasPorDimensiones($linea->esquema_id, $dimensiones)
+        $otras = $this->queryLineasPorDimensiones($linea->esquema_id, $dimensiones, $linea)
             ->where('activo', true)
             ->whereNotNull('aprobado_por')
             ->where('id', '!=', $linea->id)

@@ -504,6 +504,17 @@ class LiqImportadorTarifasService
                 'patente_match'       => $f['patente_match'],
             ]);
 
+            // dimensiones_valores: populamos con identificadores v5 para que la validación de
+            // aprobación (LiqTarifaController::aprobarLineaLocked) distinga correctamente entre
+            // overrides de distribuidores distintos. Clave ordenada para consistencia.
+            $dims = [
+                'ruta'            => $f['ruta'],
+                'capacidad'       => (string) $f['capacidad_vehiculo'],
+                'es_tarifa_base'  => $f['es_tarifa_base'] ? '1' : '0',
+            ];
+            if ($f['distribuidor_nombre']) $dims['distribuidor'] = $f['distribuidor_nombre'];
+            if ($f['patente_match'])       $dims['patente']      = $f['patente_match'];
+
             $linea->fill([
                 'esquema_id'            => $data['esquema_id'],
                 'ruta_codigo'           => $f['ruta'],
@@ -526,7 +537,7 @@ class LiqImportadorTarifasService
                 'n_ops_observadas'      => $f['n_ops_observadas'] ?? 0,
                 'observaciones_v5'      => $f['observaciones_v5'] ?? null,
                 'activo'                => true,
-                'dimensiones_valores'   => [],
+                'dimensiones_valores'   => $dims,
             ]);
             if (!$linea->exists) {
                 $linea->creado_por = auth()->id();
