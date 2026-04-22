@@ -107,14 +107,29 @@ foreach ($porPatente as $patente => $opIds) {
         continue;
     }
     if (count($candidatos) > 1) {
-        $ambiguas[$patente] = array_map(fn($c) => "{$c->apellidos} {$c->nombres} (persona #{$c->persona_id}, cap={$c->capacidad_vehiculo_kg})", $candidatos);
-        continue;
-    }
+        // Resolver ambigüedad: si hay exactamente un candidato con capacidad_vehiculo_kg > 0, usarlo.
+        // Si hay múltiples con cap seteada, quedarse ambiguo sólo si difieren entre sí.
+        $conCap = array_values(array_filter($candidatos, fn($c) => !empty($c->capacidad_vehiculo_kg)));
+        $capsUnicas = array_unique(array_map(fn($c) => (int) $c->capacidad_vehiculo_kg, $conCap));
 
-    $persona = $candidatos[0];
-    if (!$persona->capacidad_vehiculo_kg) {
-        $personaSinCap[$patente] = "{$persona->apellidos} {$persona->nombres} (persona #{$persona->persona_id})";
-        continue;
+        if (count($conCap) === 0) {
+            // Ninguna tiene cap → reportar como "sin cap"
+            $personaSinCap[$patente] = implode(' | ', array_map(fn($c) => "{$c->apellidos} {$c->nombres} (#{$c->persona_id})", $candidatos));
+            continue;
+        }
+        if (count($capsUnicas) > 1) {
+            // Múltiples caps distintas → ambigüedad real, reportar
+            $ambiguas[$patente] = array_map(fn($c) => "{$c->apellidos} {$c->nombres} (persona #{$c->persona_id}, cap={$c->capacidad_vehiculo_kg})", $candidatos);
+            continue;
+        }
+        // Una sola cap posible (aunque aparezca en varios candidatos) → usar esa
+        $persona = $conCap[0];
+    } else {
+        $persona = $candidatos[0];
+        if (!$persona->capacidad_vehiculo_kg) {
+            $personaSinCap[$patente] = "{$persona->apellidos} {$persona->nombres} (persona #{$persona->persona_id})";
+            continue;
+        }
     }
 
     $fixed += count($opIds);
