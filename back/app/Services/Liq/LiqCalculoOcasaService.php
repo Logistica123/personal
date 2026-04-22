@@ -109,7 +109,10 @@ class LiqCalculoOcasaService
      */
     private function aplicarFormula(LiqOperacion $op, LiqLineaTarifa $linea, string $tipoMatch): array
     {
-        $costoFijo    = (float) ($linea->costo_fijo_base ?? 0);
+        // Fallback: si costo_fijo_base quedó NULL (porque el Excel trae el campo como texto
+        // o no se mapeó), usar precio_distribuidor. El motor v5 necesita un número acá —
+        // sin fallback, todo el cálculo daba 0 (bug observado en liq #43 post-import).
+        $costoFijo = (float) ($linea->costo_fijo_base ?? $linea->precio_distribuidor ?? 0);
         $factorKm     = $linea->factor_km !== null ? (float) $linea->factor_km : null;
         $factorProd   = $linea->factor_prod_distrib !== null ? (float) $linea->factor_prod_distrib : null;
         $factorCant   = $linea->factor_cant_distrib !== null ? (float) $linea->factor_cant_distrib : null;

@@ -530,7 +530,13 @@ class LiqImportadorTarifasService
                 'factor_prod_distrib'   => $f['factor_prod_distrib'],
                 'factor_cant_distrib'   => $f['factor_cant_distrib'],
                 'km_tarifa_la'          => $f['km_tarifa_la'],
-                'costo_fijo_base'       => is_numeric($f['costo_fijo_base']) ? (float) $f['costo_fijo_base'] : null,
+                // El motor v5 usa costo_fijo_base como decimal para Jornada × fracción.
+                // Si el Excel trae texto (label tipo "Posadas 7500") o viene vacío, defaulteamos
+                // a precio_distribuidor (el pago íntegro de la jornada). Sin esto, todos los
+                // cálculos BASE dan 0 porque Jornada = costo_fijo_base × fracción.
+                'costo_fijo_base'       => is_numeric($f['costo_fijo_base'] ?? null)
+                    ? (float) $f['costo_fijo_base']
+                    : (float) $f['precio_distribuidor'],
                 'vigencia_desde'        => $f['vigencia_desde'] ?? $data['form_vigencia_desde'],
                 'vigencia_hasta'        => $f['vigencia_hasta'] ?? $data['form_vigencia_hasta'],
                 'motivo_carga'          => $f['motivo'] ?? $data['form_motivo'],

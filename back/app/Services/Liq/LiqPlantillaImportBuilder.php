@@ -111,14 +111,14 @@ class LiqPlantillaImportBuilder
         $this->escribirHeaders($s, $headers);
 
         $rows = [
-            // BASE PSS206
-            ['PSS206', 7500, 'Jornada',    212579.64, 15, 180692.69, 1, '', '',                    null,   null, null, null, 'Posadas 7500', '2026-02-01', '', 'BASE Posadas 7500'],
+            // BASE PSS206 — costo_fijo_base = precio_distribuidor (valor decimal, no label)
+            ['PSS206', 7500, 'Jornada',    212579.64, 15, 180692.69, 1, '', '',                    null,   null, null, null, 180692.69, '2026-02-01', '', 'BASE Posadas 7500'],
             // OVERRIDE PSS206 Walter
-            ['PSS206', 7500, 'Jornada_KM', 212579.64, 19, 172087.60, 0, 'Wahnish Walter Alejandro', 'PAL831', 0.8147, null, null, null, '',               '2026-02-01', '', 'OVERRIDE Walter'],
+            ['PSS206', 7500, 'Jornada_KM', 212579.64, 19, 172087.60, 0, 'Wahnish Walter Alejandro', 'PAL831', 0.8147, null, null, null, 172087.60, '2026-02-01', '', 'OVERRIDE Walter'],
             // OVERRIDE ROHS07 Benítez
-            ['ROHS07', 10000, 'Jornada_KM', 317569.18, 17, 263582.41, 0, 'Benítez Germán', 'OMU364', null, null, null, 726.98, '',      '2026-02-01', '', 'OVERRIDE Benítez'],
+            ['ROHS07', 10000, 'Jornada_KM', 317569.18, 17, 263582.41, 0, 'Benítez Germán', 'OMU364', null, null, null, 726.98, 263582.41, '2026-02-01', '', 'OVERRIDE Benítez'],
             // OVERRIDE RES005 AUCAR (sin patente, solo nombre)
-            ['RES005', 2500, 'Jornada',    116403.53,  9, 105929.94, 0, 'AUCAR',                   '',       null, null, null, 436.33, '',      '2026-02-01', '', 'OVERRIDE AUCAR'],
+            ['RES005', 2500, 'Jornada',    116403.53,  9, 105929.94, 0, 'AUCAR',                   '',       null, null, null, 436.33, 105929.94, '2026-02-01', '', 'OVERRIDE AUCAR'],
         ];
 
         $r = 2;
