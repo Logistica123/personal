@@ -164,9 +164,10 @@ class LiqDistribuidorDocumentoController extends Controller
 
         // Historial (legacy)
         $distNombre = trim(($liquidacionDistribuidor->distribuidor?->apellidos ?? '') . ' ' . ($liquidacionDistribuidor->distribuidor?->nombres ?? ''));
+        $fmtTotal = number_format((float) $liquidacionDistribuidor->total_a_pagar, 2);
         LiqHistorialMovimiento::registrar(
             'pdf_generado',
-            "PDF generado y subido para {$distNombre} (${$fmtTotal = number_format((float) $liquidacionDistribuidor->total_a_pagar, 2)})",
+            "PDF generado y subido para {$distNombre} (\${$fmtTotal})",
             $request->user()?->id,
             (int) $liquidacionDistribuidor->liquidacion_cliente_id,
             (int) $liquidacionDistribuidor->id,
