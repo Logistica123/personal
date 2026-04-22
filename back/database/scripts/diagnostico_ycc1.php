@@ -43,14 +43,61 @@ foreach ($archivos as $a) {
         $a->id, $a->tipo_archivo, $a->nombre_original, $a->cant_registros ?? 'NULL', $a->created_at);
 }
 
-$ycc1Archivos = $archivos->filter(fn($a) => str_contains(strtoupper($a->tipo_archivo ?? ''), 'YCC'));
+// Detección YCC1: por tipo_archivo O por nombre_original conteniendo "YCC"
+// (el endpoint upload-ocasa etiqueta como DETALLE_SUCURSAL, no como YCC1)
+$ycc1Archivos = $archivos->filter(fn($a) =>
+    str_contains(strtoupper($a->tipo_archivo ?? ''), 'YCC') ||
+    str_contains(strtoupper($a->nombre_original ?? ''), 'YCC')
+);
 if ($ycc1Archivos->isEmpty()) {
     echo "\n*** No se encontró archivo YCC1 para la liquidación. Hay que subirlo. ***\n";
     exit(0);
 }
 
 $archivo = $ycc1Archivos->first();
-echo "\nUsando YCC1: #{$archivo->id} · {$archivo->nombre_original}\n\n";
+echo "\nUsando YCC1: #{$archivo->id} · {$archivo->nombre_original} · tipo={$archivo->tipo_archivo}\n";
+if ($archivo->tipo_archivo === 'DETALLE_SUCURSAL') {
+    echo "  (Nota: etiquetado 'DETALLE_SUCURSAL' — así lo marca upload-ocasa, no es un error)\n";
+}
+echo "\n";
+
+// ───────────────────────────────────────────────────────────────────
+// CHECK RÁPIDO ANTES DE TODO: ¿hay detalles YCC creados + ops con paradas?
+// ───────────────────────────────────────────────────────────────────
+echo "[0] Estado actual en DB (lo importante):\n";
+$detallesCount = DB::table('liq_operacion_detalles')
+    ->join('liq_operaciones', 'liq_operaciones.id', '=', 'liq_operacion_detalles.operacion_id')
+    ->where('liq_operaciones.liquidacion_cliente_id', $liqId)
+    ->count();
+echo "  Paradas YCC en DB (liq_operacion_detalles): $detallesCount\n";
+
+$opsTotal0 = DB::table('liq_operaciones')->where('liquidacion_cliente_id', $liqId)->count();
+$opsConParadasTotal = DB::table('liq_operaciones')
+    ->where('liquidacion_cliente_id', $liqId)
+    ->whereNotNull('paradas_ycc_total')
+    ->count();
+$opsConParadasMotivo = DB::table('liq_operaciones')
+    ->where('liquidacion_cliente_id', $liqId)
+    ->whereNotNull('paradas_con_motivo')
+    ->count();
+$sumParadas = DB::table('liq_operaciones')
+    ->where('liquidacion_cliente_id', $liqId)
+    ->sum('paradas_ycc_total');
+
+echo "  Operaciones: $opsTotal0 · con paradas_ycc_total seteado: $opsConParadasTotal · con paradas_con_motivo: $opsConParadasMotivo\n";
+echo "  Suma paradas_ycc_total: $sumParadas\n";
+
+if ($detallesCount > 0 && $opsConParadasTotal === 0) {
+    echo "\n  *** DIAGNÓSTICO RÁPIDO: el parser YCC SÍ cargó los $detallesCount detalles, pero el\n";
+    echo "      servicio de eficiencia NUNCA se ejecutó sobre las operaciones. Por eso la UI\n";
+    echo "      muestra '0 paradas' y sin eficiencia.\n\n";
+    echo "      FIX: correr liq:recalcular (motor OCASA + eficiencia + estado de cuenta) así:\n\n";
+    echo "      php artisan liq:recalcular --cliente=OCASA --periodo=2026-03 --dry-run   # validar\n";
+    echo "      php artisan liq:recalcular --cliente=OCASA --periodo=2026-03             # aplicar\n\n";
+}
+if ($detallesCount === 0) {
+    echo "\n  *** No hay detalles YCC en la DB. El parser no creó nada. Sigamos diagnosticando abajo. ***\n\n";
+}
 
 // ───────────────────────────────────────────────────────────────────
 // 2. Hojas del Excel
