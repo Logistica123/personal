@@ -32,7 +32,8 @@ $liq = DB::table('liq_liquidaciones_cliente')->where('id', $liqId)->first();
 if (!$liq) { echo "No existe la liquidación #$liqId\n"; exit(1); }
 
 $cli = DB::table('liq_clientes')->where('id', $liq->cliente_id)->first();
-echo "=== Liquidación #{$liq->id} · cliente={$cli->nombre_corto} · período {$liq->periodo}\n\n";
+$periodo = substr($liq->periodo_desde ?? '', 0, 7);
+echo "=== Liquidación #{$liq->id} · cliente={$cli->nombre_corto} · período {$periodo} ({$liq->periodo_desde} → {$liq->periodo_hasta})\n\n";
 
 // 1. Esquema activo del cliente
 $esq = DB::table('liq_esquemas_tarifarios')
