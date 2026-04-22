@@ -65,11 +65,11 @@ echo "\n";
 // CHECK RÁPIDO ANTES DE TODO: ¿hay detalles YCC creados + ops con paradas?
 // ───────────────────────────────────────────────────────────────────
 echo "[0] Estado actual en DB (lo importante):\n";
-$detallesCount = DB::table('liq_operacion_detalles')
-    ->join('liq_operaciones', 'liq_operaciones.id', '=', 'liq_operacion_detalles.operacion_id')
+$detallesCount = DB::table('liq_operaciones_detalle')
+    ->join('liq_operaciones', 'liq_operaciones.id', '=', 'liq_operaciones_detalle.operacion_id')
     ->where('liq_operaciones.liquidacion_cliente_id', $liqId)
     ->count();
-echo "  Paradas YCC en DB (liq_operacion_detalles): $detallesCount\n";
+echo "  Paradas YCC en DB (liq_operaciones_detalle): $detallesCount\n";
 
 $opsTotal0 = DB::table('liq_operaciones')->where('liquidacion_cliente_id', $liqId)->count();
 $opsConParadasTotal = DB::table('liq_operaciones')
