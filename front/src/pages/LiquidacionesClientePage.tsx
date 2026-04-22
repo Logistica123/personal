@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useLiqApi } from '../features/liquidaciones/api';
+import { TarifasImportPanel, TarifasImportLogList } from '../features/liquidaciones/TarifasImportPanel';
 import type {
   LiqCliente,
   LiqEsquemaTarifario,
@@ -1410,9 +1411,19 @@ export function LiquidacionesClientePage({
 
               {selectedEsquema && (
                 <>
-                  {/* Import from Excel */}
+                  {/* Importador unificado (v5): BASE + OVERRIDES + Motivos + Materiales con preview */}
+                  <TarifasImportPanel
+                    esquemaId={selectedEsquema.id}
+                    clienteCodigo={selectedCliente?.codigo_corto || selectedCliente?.nombre_corto || 'OCASA'}
+                    api={api}
+                    apiBaseUrl={resolveApiBaseUrl()}
+                    actorHeaders={buildActorHeaders(authUserRef.current)}
+                    onSuccess={() => { void selectEsquema(selectedEsquema); void refreshEsquemas(); }}
+                  />
+
+                  {/* Import from Excel (legacy - base tariffs only) */}
                   <div className="dashboard-card">
-                    <header className="card-header"><h3>Importar tarifa desde Excel</h3></header>
+                    <header className="card-header"><h3>Importar tarifa desde Excel (legacy)</h3></header>
                     <div className="card-body">
                       <div style={{ display: 'grid', gridTemplateColumns: '1.6fr 0.9fr 0.9fr 1.2fr auto', gap: 10, alignItems: 'end' }}>
                         <div>
@@ -2197,6 +2208,9 @@ export function LiquidacionesClientePage({
                   </>
                 )}
               </div>
+
+              {/* Log de importaciones xlsx */}
+              <TarifasImportLogList api={api} clienteId={selectedCliente.id} />
             </>
           )}
         </div>

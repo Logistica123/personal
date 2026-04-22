@@ -50,6 +50,9 @@ class LiqLineaTarifa extends Model
         'factor_cant_distrib',
         'n_ops_observadas',
         'observaciones_v5',
+        // Importador unificado (2026-04-22)
+        'km_tarifa_la',
+        'motivo_carga',
     ];
 
     protected $casts = [
@@ -71,6 +74,7 @@ class LiqLineaTarifa extends Model
         'factor_km'              => 'decimal:4',
         'factor_prod_distrib'    => 'decimal:4',
         'factor_cant_distrib'    => 'decimal:4',
+        'km_tarifa_la'           => 'decimal:2',
     ];
 
     // -------------------------------------------------------------------------
