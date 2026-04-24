@@ -25,6 +25,7 @@ import {
 } from '../features/liquidaciones/types';
 import { PeajesPanel } from '../features/liquidaciones/PeajesPanel';
 import { EficienciaBadge } from '../features/liquidaciones/EficienciaBadge';
+import { ReclamosOcasaPanel } from '../features/liquidaciones/ReclamosOcasaPanel';
 
 type Props = {
   DashboardLayout: React.ComponentType<{ title: string; subtitle?: string; children: React.ReactNode }>;
@@ -54,6 +55,7 @@ export function LiquidacionesExtractosPage({
   const [archivoSucursalEdit, setArchivoSucursalEdit] = useState<Record<number, string>>({});
   const [operaciones, setOperaciones] = useState<LiqOperacion[]>([]);
   const [distribuidores, setDistribuidores] = useState<LiqLiquidacionDistribuidor[]>([]);
+  const [reclamosOcasaKey, setReclamosOcasaKey] = useState<number>(0); // SPEC v3 · bump para recargar ReclamosOcasaPanel
   const [estadosCounts, setEstadosCounts] = useState<Record<string, number>>({});
   const [clientes, setClientes] = useState<LiqCliente[]>([]);
   const [esquemas, setEsquemas] = useState<LiqEsquemaTarifario[]>([]);
@@ -1445,6 +1447,18 @@ export function LiquidacionesExtractosPage({
                   } catch (e: unknown) { setError(e instanceof Error ? e.message : 'Error al regenerar estado de cuenta'); }
                 }}>
                   Regenerar Estado de Cuenta
+                </button>
+                {/* SPEC v3 · BUG B: detectar subpagos OCASA y abrir panel de reclamos */}
+                <button type="button" className="btn-sm" style={{ background: '#fef3c7', color: '#92400e', border: '1px solid #fbbf24' }} onClick={async () => {
+                  if (!selectedLiq) return;
+                  if (!window.confirm('¿Correr detección de subpagos OCASA ahora?\n\nCompara CostoFijo_TMS contra liq_tarifas_contrato_cliente y registra las diferencias > 5% en liq_reclamos_ocasa.\n\nEs idempotente: re-correr borra los reclamos previos y los recrea.')) return;
+                  try {
+                    const res = await api.post(`/liquidaciones/${selectedLiq.id}/reclamos-ocasa/detectar`, { tolerancia: 0.05 });
+                    showSuccess(res.message ?? 'Detección completada');
+                    setReclamosOcasaKey((k) => k + 1); // dispara recarga del panel
+                  } catch (e: unknown) { setError(e instanceof Error ? e.message : 'Error detectando reclamos'); }
+                }}>
+                  Reclamos OCASA
                 </button>
                 <button type="button" className="btn-sm btn-danger" onClick={eliminarLiquidacionDesdeDetalle}>
                   Eliminar liquidación
@@ -3198,6 +3212,18 @@ export function LiquidacionesExtractosPage({
                 </div>
               )}
             </div>
+
+            {/* SPEC v3 · BUG B — Panel de reclamos OCASA al pie de la liquidación.
+                Carga /liquidaciones/{id}/reclamos-ocasa. Invisible si no hay reclamos. */}
+            {selectedLiq && (
+              <div style={{ marginTop: 16 }}>
+                <ReclamosOcasaPanel
+                  liqId={selectedLiq.id}
+                  api={api}
+                  refreshKey={reclamosOcasaKey}
+                />
+              </div>
+            )}
           </div>
         </>
       )}

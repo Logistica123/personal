@@ -65,6 +65,11 @@ class LiqOperacion extends Model
         'paradas_exitosas',
         'eficiencia_pct',
         'eficiencia_calculada_at',
+        // SPEC v3 · Resolver 4 ramas (A override · B factor · C error · D productividad)
+        'modo_pago',
+        'estado_calculo',
+        'error_msg',
+        'detalle_paradas',
     ];
 
     protected $casts = [
@@ -90,6 +95,8 @@ class LiqOperacion extends Model
         'penalidades_tms'          => 'decimal:2',
         'eficiencia_pct'           => 'decimal:2',
         'eficiencia_calculada_at'  => 'datetime',
+        // SPEC v3
+        'detalle_paradas'          => 'array',
     ];
 
     // -------------------------------------------------------------------------

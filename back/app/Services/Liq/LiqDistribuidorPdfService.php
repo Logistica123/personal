@@ -123,8 +123,12 @@ class LiqDistribuidorPdfService
         $desde = $this->safeDate($liqDist->periodo_desde?->toDateString() ?? (string) $liqDist->periodo_desde);
         $hasta = $this->safeDate($liqDist->periodo_hasta?->toDateString() ?? (string) $liqDist->periodo_hasta);
 
+        // SPEC v3 · agregador de resumen mensual de paradas (rama D productividad).
+        // Se acumula cruzando todas las ops para mostrarlo al pie del PDF.
+        $resumenMensual = [];  // key: "material|zona|estado" → [paradas, importe]
+
         $ops = $operaciones
-            ->map(function (LiqOperacion $op) {
+            ->map(function (LiqOperacion $op) use (&$resumenMensual) {
                 $raw = is_array($op->campos_originales) ? $op->campos_originales : [];
                 $fecha = $this->pick($raw, ['Fecha Planif/', 'FechaPlanif', 'fecha_planif', 'Fecha', 'fecha']);
                 $importe = $op->valor_tarifa_distribuidor !== null ? (float) $op->valor_tarifa_distribuidor : null;
@@ -140,13 +144,48 @@ class LiqDistribuidorPdfService
                     $tarifaKmUnit = $kmExcedente > 0 ? round($valorKm / $kmExcedente, 2) : 0;
                 }
 
+                // SPEC v3 · Rama D · decoded detalle_paradas JSON si existe
+                $detalleParadas = null;
+                if ($op->modo_pago === 'productividad_paradas') {
+                    $raw_dp = $op->detalle_paradas;
+                    if (is_string($raw_dp)) $raw_dp = json_decode($raw_dp, true);
+                    if (is_array($raw_dp) && !empty($raw_dp)) {
+                        $detalleParadas = $this->agruparParadasPorMatZonaEstado($raw_dp);
+                        // Acumular en resumen mensual global
+                        foreach ($detalleParadas as $grupo) {
+                            $key = $grupo['material_la'] . '|' . $grupo['zona'] . '|' . $grupo['estado'];
+                            if (!isset($resumenMensual[$key])) {
+                                $resumenMensual[$key] = [
+                                    'material_la' => $grupo['material_la'],
+                                    'zona'        => $grupo['zona'],
+                                    'estado'      => $grupo['estado'],
+                                    'paradas'     => 0,
+                                    'importe'     => 0.0,
+                                ];
+                            }
+                            $resumenMensual[$key]['paradas'] += $grupo['paradas'];
+                            $resumenMensual[$key]['importe'] += $grupo['subtotal'];
+                        }
+                    }
+                }
+
+                // Modalidad legible para el PDF
+                $modalidad = match ($op->modo_pago) {
+                    'productividad_paradas' => 'Productividad',
+                    'factor_tms'            => 'Jornada+KM',
+                    'override_jornada'      => 'Jornada',
+                    default                 => $op->modelo_tarifa ?? '—',
+                };
+
                 return [
                     'id' => (int) $op->id,
                     'fecha' => $this->formatDate($fecha),
                     'transporte' => $op->id_operacion_cliente,
                     'ruta' => $op->concepto,
-                    'sucursal_op' => $op->sucursal_tarifa,  // BUGFIX 26.1
+                    'sucursal_op' => $op->sucursal_tarifa,
                     'modelo' => $op->modelo_tarifa,
+                    'modalidad' => $modalidad,
+                    'modo_pago' => $op->modo_pago,
                     'fraccion' => (float) ($op->fraccion_jornada ?? 1.0),
                     'tarifa_jornada' => $op->tarifa_jornada_distrib !== null ? (float) $op->tarifa_jornada_distrib : null,
                     'km_excedente' => $kmExcedente,
@@ -155,12 +194,19 @@ class LiqDistribuidorPdfService
                     'paradas' => $op->total_paradas,
                     'tarifa_prod' => $op->tarifa_prod_distrib !== null ? (float) $op->tarifa_prod_distrib : null,
                     'importe' => $importe,
+                    'detalle_paradas' => $detalleParadas,  // SPEC v3 · null o array agrupado
                 ];
             })
             ->sortBy(function (array $row) {
                 return ($row['fecha'] ?? '') . '|' . ($row['ruta'] ?? '') . '|' . (string) ($row['id'] ?? 0);
             })
             ->values();
+
+        // Ordenar resumen mensual por material, después zona
+        $resumenMensualSorted = collect($resumenMensual)
+            ->sortBy(fn ($g) => $g['material_la'] . '|' . $g['zona'] . '|' . $g['estado'])
+            ->values()
+            ->all();
 
         // BUGFIX 26.1: resolver sucursal "principal" del distribuidor.
         //   Preferencia: persona.sucursal (FK), si no aparece se usa la sucursal dominante de las ops.
@@ -215,9 +261,49 @@ class LiqDistribuidorPdfService
                 'sucursal' => $sucursalPrincipal,  // BUGFIX 26.1: sucursal del distribuidor
             ],
             'operaciones' => $ops,
+            'resumenMensual' => $resumenMensualSorted,  // SPEC v3 · footer productividad
         ])->render();
 
         return $this->renderDompdf($html, 'landscape');
+    }
+
+    /**
+     * SPEC v3 · Rama D · Agrupa las paradas individuales de una op en
+     * {material_la, zona, estado} → (paradas, subtotal).
+     * El PDF consume este arreglo para mostrar un desglose compacto por op
+     * en vez de listar cada parada individual (suele haber 40-60 por op).
+     */
+    private function agruparParadasPorMatZonaEstado(array $detalleParadas): array
+    {
+        $grupos = [];
+        foreach ($detalleParadas as $p) {
+            $key = ($p['material_la'] ?? '—') . '|' . ($p['zona'] ?? '—') . '|' . ($p['estado'] ?? '—');
+            if (!isset($grupos[$key])) {
+                $grupos[$key] = [
+                    'material_la' => $p['material_la'] ?? '—',
+                    'zona'        => $p['zona'] ?? '—',
+                    'estado'      => $p['estado'] ?? '—',
+                    'paradas'     => 0,
+                    'bultos'      => 0,
+                    'tarifa_orig' => (float) ($p['tarifa_orig'] ?? 0),
+                    'tarifa_la'   => (float) ($p['tarifa_la'] ?? 0),
+                    'subtotal'    => 0.0,
+                ];
+            }
+            $grupos[$key]['paradas']++;
+            $grupos[$key]['bultos'] += (int) ($p['bultos'] ?? 0);
+            $grupos[$key]['subtotal'] += (float) ($p['tarifa_la'] ?? 0);
+        }
+        // Ordenar por material → zona → estado (exitoso primero)
+        usort($grupos, function ($a, $b) {
+            $c = strcmp($a['material_la'], $b['material_la']);
+            if ($c !== 0) return $c;
+            $c = strcmp($a['zona'], $b['zona']);
+            if ($c !== 0) return $c;
+            // 'exitoso' antes que 'fallido'
+            return strcmp($a['estado'], $b['estado']);
+        });
+        return array_values($grupos);
     }
 
     private function renderDompdf(string $html, string $orientation = 'portrait'): string

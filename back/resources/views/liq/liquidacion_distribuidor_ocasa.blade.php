@@ -213,7 +213,8 @@
     </table>
 
     {{-- ╔════════════════════════════════════════════════════════════╗
-         ║  3) TABLA de operaciones con columna Sucursal              ║
+         ║  3) TABLA de operaciones con columna Sucursal + Modalidad  ║
+         ║  SPEC v3: ops de productividad muestran desglose expandido ║
          ╚════════════════════════════════════════════════════════════╝ --}}
     <table class="ops">
       <thead>
@@ -221,30 +222,102 @@
           <th style="width: 8mm;"  class="center">#</th>
           <th style="width: 20mm;" class="center">Fecha</th>
           <th style="width: 22mm;" class="center">Transporte</th>
-          <th style="width: 36mm;" class="left">Sucursal</th>
+          <th style="width: 32mm;" class="left">Sucursal</th>
           <th style="width: 15mm;" class="center">Ruta</th>
-          <th style="width: 11mm;" class="center">Fracc</th>
-          <th style="width: 32mm;" class="right">$/Jornada</th>
+          <th style="width: 22mm;" class="center">Modalidad</th>
+          <th style="width: 11mm;" class="center">Paradas</th>
+          <th style="width: 28mm;" class="right">$/Jornada</th>
           <th class="right">Importe</th>
         </tr>
       </thead>
       <tbody>
         @forelse($operaciones as $i => $op)
+          @php $esProd = ($op['modo_pago'] ?? '') === 'productividad_paradas'; @endphp
           <tr>
             <td class="center">{{ $i + 1 }}</td>
             <td class="center">{{ $fmtText($op['fecha'] ?? null) }}</td>
             <td class="center">{{ $fmtText($op['transporte'] ?? null) }}</td>
             <td class="left">{{ $fmtText($op['sucursal_op'] ?? null) }}</td>
             <td class="center">{{ $fmtText($op['ruta'] ?? null) }}</td>
-            <td class="center">{{ $fmtFraccion($op['fraccion'] ?? 1.0) }}</td>
-            <td class="right">{{ ($op['modelo'] ?? '') !== 'PRODUCTIVIDAD' ? $fmtMoney($op['tarifa_jornada'] ?? null) : '-' }}</td>
+            <td class="center" style="font-weight: 600; color: {{ $esProd ? '#7c3aed' : '#1F3864' }};">{{ $fmtText($op['modalidad'] ?? null) }}</td>
+            <td class="center">{{ $esProd ? ($op['paradas'] ?? '-') : $fmtFraccion($op['fraccion'] ?? 1.0) }}</td>
+            <td class="right">{{ $esProd ? '-' : $fmtMoney($op['tarifa_jornada'] ?? null) }}</td>
             <td class="right">{{ $fmtMoney($op['importe'] ?? null) }}</td>
           </tr>
+          {{-- SPEC v3 · Rama D: desglose expandido de paradas para ops productividad --}}
+          @if($esProd && !empty($op['detalle_paradas']))
+            <tr class="sub-detail-header">
+              <td colspan="9" style="padding: 1mm 2mm; background: #F3E8FF; font-size: 7.5pt; color: #6B21A8; font-weight: 600; border-top: 0.4pt solid #C084FC;">
+                Desglose op #{{ $op['transporte'] }} · paradas por material × zona × estado
+              </td>
+            </tr>
+            @foreach($op['detalle_paradas'] as $g)
+              <tr class="sub-detail-row">
+                <td colspan="3" style="padding: 0.6mm 2mm 0.6mm 8mm; background: #FAF5FF; font-size: 7pt; color: #6B21A8;">
+                  <span style="display:inline-block; width: 36mm;">{{ $g['material_la'] }}</span>
+                  <span style="display:inline-block; width: 16mm;">Zona {{ $g['zona'] }}</span>
+                  <span style="display:inline-block; width: 22mm; font-style: italic;">{{ $g['estado'] === 'exitoso' ? 'Entregado OK' : 'No entregado/VNE' }}</span>
+                </td>
+                <td colspan="2" style="padding: 0.6mm 2mm; background: #FAF5FF; font-size: 7pt; color: #6B21A8; text-align: center;">
+                  {{ $g['paradas'] }} paradas
+                </td>
+                <td colspan="2" style="padding: 0.6mm 2mm; background: #FAF5FF; font-size: 7pt; color: #6B21A8; text-align: right;">
+                  unit {{ $fmtMoney($g['tarifa_la']) }}
+                </td>
+                <td colspan="2" style="padding: 0.6mm 2mm; background: #FAF5FF; font-size: 7pt; color: #6B21A8; text-align: right; font-weight: 600;">
+                  {{ $fmtMoney($g['subtotal']) }}
+                </td>
+              </tr>
+            @endforeach
+          @endif
         @empty
-          <tr><td colspan="8" class="center" style="padding:6mm;">No hay operaciones para mostrar.</td></tr>
+          <tr><td colspan="9" class="center" style="padding:6mm;">No hay operaciones para mostrar.</td></tr>
         @endforelse
       </tbody>
     </table>
+
+    {{-- ╔════════════════════════════════════════════════════════════╗
+         ║  3b) RESUMEN MENSUAL de paradas (solo si hay productividad) ║
+         ╚════════════════════════════════════════════════════════════╝ --}}
+    @if(!empty($resumenMensual))
+      <div style="margin-top: 6mm;">
+        <h3 style="font-size: 10pt; color: #6B21A8; margin: 0 0 2mm 0;">
+          Resumen mensual de paradas (productividad)
+        </h3>
+        <table class="ops" style="margin-top: 0;">
+          <thead>
+            <tr style="background: #F3E8FF; color: #6B21A8;">
+              <th class="left" style="width: 40mm;">Material</th>
+              <th class="center" style="width: 20mm;">Zona</th>
+              <th class="center" style="width: 28mm;">Estado</th>
+              <th class="right" style="width: 22mm;">Paradas</th>
+              <th class="right" style="width: 32mm;">Tarifa unitaria</th>
+              <th class="right">Importe total</th>
+            </tr>
+          </thead>
+          <tbody>
+            @php $_totalParadas = 0; $_totalImporte = 0.0; @endphp
+            @foreach($resumenMensual as $g)
+              <tr>
+                <td class="left">{{ $g['material_la'] }}</td>
+                <td class="center">{{ $g['zona'] }}</td>
+                <td class="center">{{ $g['estado'] === 'exitoso' ? 'Entregado OK' : 'No entregado/VNE' }}</td>
+                <td class="right">{{ $g['paradas'] }}</td>
+                <td class="right">{{ $g['paradas'] > 0 ? $fmtMoney($g['importe'] / $g['paradas']) : '-' }}</td>
+                <td class="right">{{ $fmtMoney($g['importe']) }}</td>
+              </tr>
+              @php $_totalParadas += $g['paradas']; $_totalImporte += $g['importe']; @endphp
+            @endforeach
+            <tr style="background: #F3E8FF; font-weight: 700; color: #6B21A8; border-top: 0.8pt solid #C084FC;">
+              <td colspan="3" class="left">TOTAL MES</td>
+              <td class="right">{{ $_totalParadas }}</td>
+              <td></td>
+              <td class="right">{{ $fmtMoney($_totalImporte) }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    @endif
 
     {{-- ╔════════════════════════════════════════════════════════════╗
          ║  4) TOTALES                                                ║
