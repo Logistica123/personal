@@ -242,10 +242,17 @@ class LiqCalculoOcasaService
 
             if ($dryRun) continue;
 
+            // Persistir componentes del desglose para que el PDF distribuidor muestre
+            // $/Jornada, Valor KM, $/Prod separados (antes todos salían "-" porque el motor
+            // solo guardaba el total $valor_tarifa_distribuidor).
+            $comp = $res['desglose']['componentes'] ?? [];
             $op->update([
                 'modelo_calculo' => $tipo,
                 'linea_tarifa_id' => $res['linea_tarifa_id'] ?? $op->linea_tarifa_id,
                 'valor_tarifa_distribuidor' => $res['importe'],
+                'tarifa_jornada_distrib' => $comp['costo_fijo'] ?? null,
+                'tarifa_km_distrib_valor' => $comp['km'] ?? null,
+                'tarifa_prod_distrib' => $comp['productividad'] ?? null,
                 'requiere_override_manual' => false,
                 'estado' => $res['importe'] !== null ? 'ok' : 'sin_tarifa',
             ]);
