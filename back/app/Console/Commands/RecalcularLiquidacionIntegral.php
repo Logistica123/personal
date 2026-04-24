@@ -90,7 +90,11 @@ class RecalcularLiquidacionIntegral extends Command
         $stats = [
             'ops_recalculadas' => 0,
             'sin_tarifa' => 0,
-            'por_match' => ['DISTRIBUIDOR' => 0, 'PATENTE' => 0, 'BASE' => 0, 'sin_match' => 0],
+            'por_match' => [
+                'DISTRIBUIDOR' => 0, 'PATENTE' => 0, 'BASE' => 0,
+                'PRODUCTIVIDAD' => 0,  // SPEC v3 · Rama D
+                'sin_match' => 0,
+            ],
             'ef_ops_con_ycc' => 0,
             'ef_ops_sin_ycc' => 0,
             'delta_total_importe' => 0.0,
@@ -148,7 +152,7 @@ class RecalcularLiquidacionIntegral extends Command
         // Reporte
         $this->info("Motor cálculo:");
         $this->line("  ops recalculadas: {$stats['ops_recalculadas']}  |  sin tarifa: {$stats['sin_tarifa']}");
-        $this->line("  matches: DISTRIBUIDOR={$stats['por_match']['DISTRIBUIDOR']}  PATENTE={$stats['por_match']['PATENTE']}  BASE={$stats['por_match']['BASE']}  sin_match={$stats['por_match']['sin_match']}");
+        $this->line("  matches: DISTRIBUIDOR={$stats['por_match']['DISTRIBUIDOR']}  PATENTE={$stats['por_match']['PATENTE']}  BASE={$stats['por_match']['BASE']}  PRODUCTIVIDAD={$stats['por_match']['PRODUCTIVIDAD']}  sin_match={$stats['por_match']['sin_match']}");
         $this->line('  Δ total importe distribuidor: $' . number_format($stats['delta_total_importe'], 2, ',', '.'));
         $this->newLine();
 
