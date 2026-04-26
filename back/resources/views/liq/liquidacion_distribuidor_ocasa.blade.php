@@ -240,7 +240,16 @@
             <td class="left">{{ $fmtText($op['sucursal_op'] ?? null) }}</td>
             <td class="center">{{ $fmtText($op['ruta'] ?? null) }}</td>
             <td class="center" style="font-weight: 600; color: {{ $esProd ? '#7c3aed' : '#1F3864' }};">{{ $fmtText($op['modalidad'] ?? null) }}</td>
-            <td class="center">@if($esProd)@if(isset($op['paradas_entregadas']) && isset($op['paradas_totales'])){{ $op['paradas_entregadas'] }}/{{ $op['paradas_totales'] }}@else{{ $op['paradas'] ?? '-' }}@endif@else{{ $fmtFraccion($op['fraccion'] ?? 1.0) }}@endif</td>
+            @php
+              if ($esProd) {
+                  $celdaParadas = (isset($op['paradas_entregadas']) && isset($op['paradas_totales']))
+                      ? $op['paradas_entregadas'] . '/' . $op['paradas_totales']
+                      : ($op['paradas'] ?? '-');
+              } else {
+                  $celdaParadas = $fmtFraccion($op['fraccion'] ?? 1.0);
+              }
+            @endphp
+            <td class="center">{{ $celdaParadas }}</td>
             <td class="right">{{ $esProd ? '—' : $fmtMoney($op['tarifa_jornada'] ?? null) }}</td>
             <td class="right">{{ $fmtMoney($op['importe'] ?? null) }}</td>
           </tr>
@@ -329,7 +338,8 @@
               <td colspan="3" class="left">TOTAL MES</td>
               <td class="right">{{ $_totalParadas }}</td>
               <td class="right">{{ $_totalBultos }}</td>
-              <td class="right">{{ $fmtMoney($_totalImporte) }}</td>
+              {{-- Usamos liq.subtotal para evitar diff de centavos por suma de filas redondeadas --}}
+              <td class="right">{{ $fmtMoney($liq['subtotal'] ?? $_totalImporte) }}</td>
             </tr>
           </tbody>
         </table>
