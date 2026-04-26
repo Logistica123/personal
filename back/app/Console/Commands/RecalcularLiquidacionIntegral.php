@@ -30,6 +30,7 @@ class RecalcularLiquidacionIntegral extends Command
     protected $signature = 'liq:recalcular
                             {--cliente=OCASA : nombre_corto del cliente}
                             {--periodo= : YYYY-MM (requerido)}
+                            {--liq-id=* : (opcional) IDs de liq_liquidaciones_cliente puntuales — filtra solo esas. Ej: --liq-id=43 --liq-id=44}
                             {--dry-run : Simula sin persistir cambios}';
 
     protected $description = 'SPEC Fase A: recalcula importe + eficiencia + estado de cuenta para un cliente/período.';
@@ -64,10 +65,16 @@ class RecalcularLiquidacionIntegral extends Command
             return 1;
         }
 
+        $liqIdsFiltro = (array) $this->option('liq-id');
         $liqsClientes = LiqLiquidacionCliente::where('cliente_id', $cliente->id)
             ->whereBetween('periodo_desde', [$from, $to])
+            ->when(!empty($liqIdsFiltro), fn ($q) => $q->whereIn('id', $liqIdsFiltro))
             ->get();
         $liqIds = $liqsClientes->pluck('id');
+
+        if (!empty($liqIdsFiltro)) {
+            $this->info('Filtro por --liq-id: ' . implode(', ', $liqIdsFiltro));
+        }
 
         $ops = LiqOperacion::whereIn('liquidacion_cliente_id', $liqIds)
             ->whereIn('estado', ['ok', 'diferencia', 'pendiente', 'sin_tarifa'])
