@@ -2,7 +2,7 @@
 
 namespace App\Console\Commands;
 
-use App\Helpers\LiqV2DocumentoHelper;
+use App\Support\Liq\LiqV2DocumentoHelper;
 use App\Models\Archivo;
 use App\Models\FileType;
 use App\Models\LiqCliente;
