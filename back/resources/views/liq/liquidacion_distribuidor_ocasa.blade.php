@@ -242,9 +242,8 @@
             <td class="center" style="font-weight: 600; color: {{ $esProd ? '#7c3aed' : '#1F3864' }};">{{ $fmtText($op['modalidad'] ?? null) }}</td>
             @php
               if ($esProd) {
-                  $celdaParadas = (isset($op['paradas_entregadas']) && isset($op['paradas_totales']))
-                      ? $op['paradas_entregadas'] . '/' . $op['paradas_totales']
-                      : ($op['paradas'] ?? '-');
+                  // SPEC v4: solo total (la composición entregadas/visitadas va en Nivel 3)
+                  $celdaParadas = $op['paradas_totales'] ?? $op['paradas'] ?? '-';
               } else {
                   $celdaParadas = $fmtFraccion($op['fraccion'] ?? 1.0);
               }
@@ -253,43 +252,47 @@
             <td class="right">{{ $esProd ? '—' : $fmtMoney($op['tarifa_jornada'] ?? null) }}</td>
             <td class="right">{{ $fmtMoney($op['importe'] ?? null) }}</td>
           </tr>
-          {{-- SPEC v3 Addendum · Nivel 3: desglose por (parada × material × motivo) --}}
+          {{-- SPEC v4 · Nivel 3 simplificado: desglose por (material × zona × estado) --}}
           @if($esProd && !empty($op['detalle_paradas']))
             <tr>
               <td colspan="9" style="padding: 1mm 2mm 0 2mm; background: #F3E8FF; border-top: 0.4pt solid #C084FC;">
-                <div style="font-size: 7.5pt; color: #6B21A8; font-weight: 600; padding: 0 0 1mm 0;">
-                  Desglose op #{{ $op['transporte'] }} · paradas (entrega NE/OK por material y motivo)
+                <div style="font-size: 8pt; color: #6B21A8; font-weight: 600; padding: 0 0 0.5mm 0;">
+                  Desglose op #{{ $op['transporte'] }} · {{ $fmtText($op['fecha'] ?? null) }} · {{ $fmtText($op['ruta'] ?? null) }} · {{ $op['paradas_totales'] ?? 0 }} paradas
                 </div>
-                <table style="width:100%; border-collapse: collapse; font-size: 7pt; color: #4C1D95; background: #FAF5FF;">
+                @if(isset($op['paradas_entregadas']) && isset($op['paradas_totales']))
+                  <div style="font-size: 7pt; color: #6B21A8; padding: 0 0 1mm 0; font-style: italic;">
+                    ({{ $op['paradas_entregadas'] }} entregadas + {{ ($op['paradas_totales'] - $op['paradas_entregadas']) }} visitadas no entregadas)
+                  </div>
+                @endif
+                <table style="width:100%; border-collapse: collapse; font-size: 7.5pt; color: #4C1D95; background: #FAF5FF;">
                   <thead>
                     <tr style="background: #E9D5FF; font-weight: 600;">
-                      <th style="text-align:center; padding: 0.6mm 1mm; width: 10mm;">Parada</th>
-                      <th style="text-align:center; padding: 0.6mm 1mm; width: 14mm;">Zona</th>
-                      <th style="text-align:left;   padding: 0.6mm 2mm;">Material</th>
-                      <th style="text-align:center; padding: 0.6mm 1mm; width: 22mm;">Estado</th>
-                      <th style="text-align:center; padding: 0.6mm 1mm; width: 14mm;">Motivo</th>
-                      <th style="text-align:right;  padding: 0.6mm 1mm; width: 12mm;">Bultos</th>
-                      <th style="text-align:right;  padding: 0.6mm 2mm; width: 28mm;">Cobrás</th>
+                      <th style="text-align:left;   padding: 0.8mm 2mm;">Material</th>
+                      <th style="text-align:center; padding: 0.8mm 1mm; width: 18mm;">Zona</th>
+                      <th style="text-align:center; padding: 0.8mm 1mm; width: 24mm;">Estado</th>
+                      <th style="text-align:right;  padding: 0.8mm 2mm; width: 18mm;">Paradas</th>
+                      <th style="text-align:right;  padding: 0.8mm 2mm; width: 18mm;">Bultos</th>
+                      <th style="text-align:right;  padding: 0.8mm 2mm; width: 32mm;">Cobrás</th>
                     </tr>
                   </thead>
                   <tbody>
-                    @php $_opBultos = 0; $_opCostoLa = 0; @endphp
+                    @php $_opParadas = 0; $_opBultos = 0; $_opCobra = 0; @endphp
                     @foreach($op['detalle_paradas'] as $g)
                       <tr>
-                        <td style="text-align:center; padding: 0.4mm 1mm;">{{ $g['parada_num'] }}</td>
-                        <td style="text-align:center; padding: 0.4mm 1mm;">{{ $g['zona'] }}</td>
-                        <td style="text-align:left;   padding: 0.4mm 2mm;">{{ $g['material_la'] }}</td>
-                        <td style="text-align:center; padding: 0.4mm 1mm;">{{ $g['estado'] === 'entregado' ? 'Entregado' : 'Visitado NE' }}</td>
-                        <td style="text-align:center; padding: 0.4mm 1mm;">{{ $g['motivo'] }}</td>
-                        <td style="text-align:right;  padding: 0.4mm 1mm;">{{ $g['bultos'] }}</td>
-                        <td style="text-align:right;  padding: 0.4mm 2mm; font-weight: 600;">{{ $fmtMoney($g['costo_la']) }}</td>
+                        <td style="text-align:left;   padding: 0.6mm 2mm;">{{ $g['material_la'] }}</td>
+                        <td style="text-align:center; padding: 0.6mm 1mm;">{{ $g['zona'] }}</td>
+                        <td style="text-align:center; padding: 0.6mm 1mm;">{{ $g['estado'] === 'entregado' ? 'Entregado' : 'Visitado' }}</td>
+                        <td style="text-align:right;  padding: 0.6mm 2mm;">{{ $g['paradas'] }}</td>
+                        <td style="text-align:right;  padding: 0.6mm 2mm;">{{ $g['bultos'] }}</td>
+                        <td style="text-align:right;  padding: 0.6mm 2mm; font-weight: 600;">{{ $fmtMoney($g['cobra_la']) }}</td>
                       </tr>
-                      @php $_opBultos += $g['bultos']; $_opCostoLa += $g['costo_la']; @endphp
+                      @php $_opParadas += $g['paradas']; $_opBultos += $g['bultos']; $_opCobra += $g['cobra_la']; @endphp
                     @endforeach
                     <tr style="background: #E9D5FF; font-weight: 700; color: #6B21A8;">
-                      <td colspan="5" style="text-align:right; padding: 0.6mm 2mm;">TOTAL op</td>
-                      <td style="text-align:right; padding: 0.6mm 1mm;">{{ $_opBultos }}</td>
-                      <td style="text-align:right; padding: 0.6mm 2mm;">{{ $fmtMoney($op['importe']) }}</td>
+                      <td colspan="3" style="text-align:right; padding: 0.8mm 2mm;">TOTAL op</td>
+                      <td style="text-align:right; padding: 0.8mm 2mm;">{{ $op['paradas_totales'] ?? $_opParadas }}</td>
+                      <td style="text-align:right; padding: 0.8mm 2mm;">{{ $_opBultos }}</td>
+                      <td style="text-align:right; padding: 0.8mm 2mm;">{{ $fmtMoney($op['importe']) }}</td>
                     </tr>
                   </tbody>
                 </table>
@@ -318,7 +321,7 @@
               <th class="center" style="width: 28mm;">Estado</th>
               <th class="right"  style="width: 22mm;">Paradas</th>
               <th class="right"  style="width: 22mm;">Bultos</th>
-              <th class="right">Cobrás (LA)</th>
+              <th class="right">Cobrás</th>
             </tr>
           </thead>
           <tbody>
@@ -327,7 +330,7 @@
               <tr>
                 <td class="left">{{ $g['material_la'] }}</td>
                 <td class="center">{{ $g['zona'] }}</td>
-                <td class="center">{{ $g['estado'] === 'entregado' ? 'Entregado' : 'Visitado NE' }}</td>
+                <td class="center">{{ $g['estado'] === 'entregado' ? 'Entregado' : 'Visitado' }}</td>
                 <td class="right">{{ $g['paradas'] }}</td>
                 <td class="right">{{ $g['bultos'] }}</td>
                 <td class="right">{{ $fmtMoney($g['importe']) }}</td>

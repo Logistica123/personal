@@ -144,7 +144,7 @@ class LiqDistribuidorPdfService
                     $tarifaKmUnit = $kmExcedente > 0 ? round($valorKm / $kmExcedente, 2) : 0;
                 }
 
-                // SPEC v3 Addendum · Rama D · decode detalle_paradas + agrupar para PDF
+                // SPEC v4 · Rama D · decode detalle_paradas + agrupar para PDF
                 $detalleParadas = null;
                 $paradasEntregadas = null;
                 $paradasTotales = null;
@@ -152,8 +152,11 @@ class LiqDistribuidorPdfService
                     $raw_dp = $op->detalle_paradas;
                     if (is_string($raw_dp)) $raw_dp = json_decode($raw_dp, true);
                     if (is_array($raw_dp) && !empty($raw_dp)) {
-                        // Nivel 3: agrupación por (parada_num × material_la × motivo)
-                        $detalleParadas = $this->agruparParaNivel3($raw_dp);
+                        // Factor LA→Distribuidor: leer del primer detalle (todos comparten en una op)
+                        $factor = (float) ($raw_dp[0]['factor_aplicado'] ?? 0.85);
+
+                        // Nivel 3: agrupación por (material_la × zona × estado) - simplificado
+                        $detalleParadas = $this->agruparParaNivel3($raw_dp, $factor);
 
                         // Conteo entregadas/totales con paradas únicas (set por parada_num)
                         $setEntregadas = [];
@@ -169,14 +172,13 @@ class LiqDistribuidorPdfService
                         $paradasEntregadas = count($setEntregadas);
                         $paradasTotales    = count($setTotales);
 
-                        // Nivel 4: resumen mensual usando filas YCC raw (no agrupadas).
-                        // # paradas se calcula con SET de (op_id, parada_num) para no duplicar
-                        // paradas multi-material en el conteo.
+                        // Nivel 4: resumen mensual con costo_orig_sum para evitar pérdida de centavos
+                        // # paradas con SET de (op_id, parada_num) para no duplicar paradas multi-material
                         foreach ($raw_dp as $f) {
                             $materialLa = (string) ($f['material_la'] ?? '—');
                             $zona       = (string) ($f['zona'] ?? '—');
                             $estado     = (string) ($f['estado'] ?? 'visitado_ne');
-                            $costoLa    = (float) ($f['costo_la'] ?? $f['tarifa_la'] ?? 0);
+                            $costoOrig  = (float) ($f['costo_orig'] ?? $f['tarifa_orig'] ?? 0);
                             $bultos     = (int) ($f['bultos'] ?? 0);
                             $paradaNum  = (int) ($f['parada_num'] ?? 0);
 
@@ -186,14 +188,15 @@ class LiqDistribuidorPdfService
                                     'material_la'    => $materialLa,
                                     'zona'           => $zona,
                                     'estado'         => $estado,
-                                    'paradas_unicas' => [],   // set: 'op_id|parada_num' => true
+                                    'paradas_unicas' => [],
                                     'bultos'         => 0,
-                                    'importe'        => 0.0,
+                                    'costo_orig_sum' => 0.0,   // sumar sin redondeo intermedio
+                                    'factor'         => $factor,
                                 ];
                             }
                             $resumenMensual[$key]['paradas_unicas'][$op->id . '|' . $paradaNum] = true;
-                            $resumenMensual[$key]['bultos']  += $bultos;
-                            $resumenMensual[$key]['importe'] += $costoLa;
+                            $resumenMensual[$key]['bultos']         += $bultos;
+                            $resumenMensual[$key]['costo_orig_sum'] += $costoOrig;
                         }
                     }
                 }
@@ -233,11 +236,12 @@ class LiqDistribuidorPdfService
             })
             ->values();
 
-        // SPEC v3 Addendum · Nivel 4: convertir set paradas_unicas → count + ordenar
+        // SPEC v4 · Nivel 4: convertir set paradas_unicas → count + calcular importe correcto
         $resumenMensualSorted = collect($resumenMensual)
             ->map(function ($g) {
                 $g['paradas'] = count($g['paradas_unicas'] ?? []);
-                unset($g['paradas_unicas']);
+                $g['importe'] = round($g['costo_orig_sum'] * ($g['factor'] ?? 0.85), 2);
+                unset($g['paradas_unicas'], $g['costo_orig_sum'], $g['factor']);
                 return $g;
             })
             ->sortBy(fn ($g) => $g['material_la'] . '|' . $g['zona'] . '|' . $g['estado'])
@@ -304,47 +308,62 @@ class LiqDistribuidorPdfService
     }
 
     /**
-     * SPEC v3 Addendum · Nivel 3 · Agrupa las filas YCC de una op en
-     * {parada_num, material_la, motivo} → UNA fila por grupo.
+     * SPEC v4 · Nivel 3 simplificado · Agrupa las filas YCC de una op en
+     * {material_la, zona, estado} → UNA fila por grupo (4-5 filas por op típicamente).
      *
-     *   - Parada simple → 1 fila visual.
-     *   - Parada con N bultos del mismo material/motivo → 1 fila (bultos sumados).
-     *   - Parada con 2 materiales distintos → 2 filas (una por material).
-     *   - Parada con 2 motivos distintos (ej. parte exitosa + parte fallida) → 2 filas.
+     * Cuenta paradas únicas usando SET de parada_num — una parada con 2 materiales NO se
+     * duplica al sumar las paradas de cada material (cuenta 1 en cada uno).
+     *
+     * El cobra_la se calcula como `Σ costo_orig × factor` (un solo round al final del
+     * grupo) para evitar pérdida de centavos al acumular round() por fila.
      *
      * @param array<int,array<string,mixed>> $detalleParadas filas YCC sin agrupar
-     * @return array<int,array{parada_num:int,zona:string,material_la:string,motivo:string,
-     *                          estado:string,bultos:int,costo_orig:float,costo_la:float}>
+     * @param float $factor factor LA→Distribuidor a aplicar (ej 0.85)
+     * @return array<int,array{material_la:string,zona:string,estado:string,
+     *                          paradas:int,bultos:int,cobra_la:float}>
      */
-    private function agruparParaNivel3(array $detalleParadas): array
+    private function agruparParaNivel3(array $detalleParadas, float $factor): array
     {
         $grupos = [];
         foreach ($detalleParadas as $f) {
-            $paradaNum  = (int) ($f['parada_num'] ?? 0);
             $materialLa = (string) ($f['material_la'] ?? '—');
-            $motivo     = (string) ($f['motivo'] ?? '—');
-            $key = $paradaNum . '|' . $materialLa . '|' . $motivo;
+            $zona       = (string) ($f['zona'] ?? '—');
+            $estado     = (string) ($f['estado'] ?? 'visitado_ne');
+            $paradaNum  = (int) ($f['parada_num'] ?? 0);
+            $key        = $materialLa . '|' . $zona . '|' . $estado;
+
             if (!isset($grupos[$key])) {
                 $grupos[$key] = [
-                    'parada_num'  => $paradaNum,
-                    'zona'        => (string) ($f['zona'] ?? '—'),
-                    'material_la' => $materialLa,
-                    'motivo'      => $motivo,
-                    'estado'      => (string) ($f['estado'] ?? 'visitado_ne'),
-                    'bultos'      => 0,
-                    'costo_orig'  => 0.0,
-                    'costo_la'    => 0.0,
+                    'material_la'    => $materialLa,
+                    'zona'           => $zona,
+                    'estado'         => $estado,
+                    'paradas_unicas' => [],
+                    'bultos'         => 0,
+                    'costo_orig_sum' => 0.0,
                 ];
             }
-            $grupos[$key]['bultos']     += (int) ($f['bultos'] ?? 0);
-            $grupos[$key]['costo_orig'] += (float) ($f['costo_orig'] ?? $f['tarifa_orig'] ?? 0);
-            $grupos[$key]['costo_la']   += (float) ($f['costo_la']   ?? $f['tarifa_la']   ?? 0);
+            $grupos[$key]['paradas_unicas'][$paradaNum] = true;
+            $grupos[$key]['bultos']         += (int) ($f['bultos'] ?? 0);
+            $grupos[$key]['costo_orig_sum'] += (float) ($f['costo_orig'] ?? $f['tarifa_orig'] ?? 0);
         }
-        usort($grupos, fn ($a, $b) =>
-            [$a['parada_num'], $a['material_la'], $a['motivo']]
-            <=> [$b['parada_num'], $b['material_la'], $b['motivo']]
+
+        $resultado = [];
+        foreach ($grupos as $g) {
+            $resultado[] = [
+                'material_la' => $g['material_la'],
+                'zona'        => $g['zona'],
+                'estado'      => $g['estado'],
+                'paradas'     => count($g['paradas_unicas']),
+                'bultos'      => $g['bultos'],
+                'cobra_la'    => round($g['costo_orig_sum'] * $factor, 2),
+            ];
+        }
+
+        usort($resultado, fn ($a, $b) =>
+            [$a['material_la'], $a['zona'], $a['estado']] <=> [$b['material_la'], $b['zona'], $b['estado']]
         );
-        return array_values($grupos);
+
+        return $resultado;
     }
 
     private function renderDompdf(string $html, string $orientation = 'portrait'): string
