@@ -329,23 +329,23 @@ class LiqCalculoOcasaService
     /**
      * Rama D · Productividad por paradas.
      *
-     * Lee los detalles YCC de la operación (liq_operaciones_detalle), mapea cada parada
-     * contra liq_tarifas_productividad_cliente según (ruta, material_la, zona, tipo) y
-     * suma las tarifas LA → pago del distribuidor.
+     * El YCC1 ya trae el costo OCASA→LA por fila en liq_operaciones_detalle.costo
+     * (validado: SUM(YCC.costo) = TMS.costo_prod al centavo). El motor solo aplica el
+     * factor_distrib (1 - %agencia, típicamente 0.85 para OCASA) al costo YCC para
+     * obtener lo que LA paga al distribuidor.
      *
-     * Mapeos usados:
-     *   - material_ycc (PA/SO/BO/BI) → material_la (vía liq_material_mapeo)
-     *   - motivo YCC → tipo ('exitoso' si está en liq_motivos_exitosos con es_exitoso=1, 'fallido' si no)
-     *   - cod_regio del detalle → zona de la tarifa
+     *   pago_distribuidor = Σ ( YCC.costo × factor_distrib )
      *
-     * Persiste el array detalle_paradas en la op para que el PDF distribuidor lo use.
+     * No se hace lookup tarifa por (material × zona × estado) — eso solo sirve para el PDF
+     * (mostrar tarifa de referencia) y para validar que YCC.costo coincida con la tarifa
+     * Excel. Iterar fila × tarifa Excel infla el cálculo cuando una parada se reparte
+     * en múltiples filas YCC (típico cuando hay varios bultos por parada).
      */
     private function resolverRamaD(LiqOperacion $op, LiqEsquemaTarifario $esquema, string $fecha): array
     {
         $clienteId = (int) $esquema->cliente_id;
         $ruta      = (string) $op->concepto;
 
-        // Cargar paradas YCC de esta op
         $paradas = DB::table('liq_operaciones_detalle')
             ->where('operacion_id', $op->id)
             ->orderBy('parada')
@@ -358,13 +358,32 @@ class LiqCalculoOcasaService
             );
         }
 
-        // Mapeo material YCC → material_la (una sola query, in-memory map)
+        // Resolver factor_distrib desde la primera tarifa productividad de la ruta.
+        // Para OCASA todas las tarifas tienen el mismo factor (0.85 = 1 - 15% agencia).
+        $tarifaRef = DB::table('liq_tarifas_productividad_cliente')
+            ->where('cliente_id', $clienteId)
+            ->where('ruta', $ruta)
+            ->where('vigencia_desde', '<=', $fecha)
+            ->where(function ($q) use ($fecha) {
+                $q->whereNull('vigencia_hasta')->orWhere('vigencia_hasta', '>=', $fecha);
+            })
+            ->first();
+
+        if (!$tarifaRef || (float) $tarifaRef->precio_original <= 0) {
+            return $this->resolverRamaC(
+                $op, $ruta, (int) $op->capacidad_vehiculo_kg, null, $op->dominio,
+                "Ruta {$ruta} es productividad pero no hay tarifa de referencia para resolver factor_distrib"
+            );
+        }
+
+        $factor = round((float) $tarifaRef->precio_distribuidor / (float) $tarifaRef->precio_original, 4);
+
+        // Mapeos solo para el detalle del PDF (no afectan el cálculo)
         $mapeoMaterial = DB::table('liq_material_mapeo')
             ->where('cliente_id', $clienteId)
             ->pluck('material_tarifario', 'codigo_ycc')
             ->toArray();
 
-        // Motivos exitosos del cliente (in-memory set)
         $motivosExitosos = DB::table('liq_motivos_exitosos')
             ->where('cliente_id', $clienteId)
             ->where('es_exitoso', 1)
@@ -372,58 +391,23 @@ class LiqCalculoOcasaService
             ->map(fn($c) => (string) $c)
             ->toArray();
 
-        // Pre-cargar todas las tarifas productividad de esta ruta en memoria
-        // Key: material_la|zona|tipo
-        $tarifasRaw = DB::table('liq_tarifas_productividad_cliente')
-            ->where('cliente_id', $clienteId)
-            ->where('ruta', $ruta)
-            ->where('vigencia_desde', '<=', $fecha)
-            ->where(function ($q) use ($fecha) {
-                $q->whereNull('vigencia_hasta')->orWhere('vigencia_hasta', '>=', $fecha);
-            })
-            ->get();
-        $tarifas = [];
-        foreach ($tarifasRaw as $t) {
-            $key = $t->material_la . '|' . $t->zona . '|' . $t->tipo;
-            $tarifas[$key] = $t;
-        }
-
         $detalles = [];
         $importe  = 0.0;
-        $paradasSinTarifa = 0;
-        $paradasOk = 0;
+        $paradasPagadas = 0;
 
         foreach ($paradas as $parada) {
-            $matYcc = trim((string) ($parada->material_ycc ?? ''));
-            $matLa  = $mapeoMaterial[$matYcc] ?? null;
-            $zona   = trim((string) ($parada->cod_regio ?? ''));
-            $motivo = trim((string) ($parada->motivo ?? ''));
-            $bultos = (int) ($parada->bultos ?? 0);
+            $costoYcc = (float) ($parada->costo ?? 0);
+            if ($costoYcc <= 0) continue;
 
-            // Sin motivo: no cuenta para el pago (igual que hoy en eficiencia)
-            if ($motivo === '') continue;
-
-            $esExitoso = in_array($motivo, $motivosExitosos, true);
-            $estado    = $esExitoso ? 'exitoso' : 'fallido';
-
-            if ($matLa === null || $zona === '') {
-                $paradasSinTarifa++;
-                continue;
-            }
-
-            $tarifa = $tarifas[$matLa . '|' . $zona . '|' . $estado] ?? null;
-            if (!$tarifa) {
-                $paradasSinTarifa++;
-                continue;
-            }
-
-            $tarifaLa      = (float) $tarifa->precio_distribuidor;
-            $tarifaOrig    = (float) $tarifa->precio_original;
-            $factorAgencia = (float) $tarifa->porcentaje_agencia;
-            $factorDistrib = $tarifaOrig > 0 ? round($tarifaLa / $tarifaOrig, 4) : null;
+            $matYcc    = trim((string) ($parada->material_ycc ?? ''));
+            $matLa     = $mapeoMaterial[$matYcc] ?? null;
+            $zona      = trim((string) ($parada->cod_regio ?? ''));
+            $motivo    = trim((string) ($parada->motivo ?? ''));
+            $bultos    = (int) ($parada->bultos ?? 0);
+            $tarifaLa  = round($costoYcc * $factor, 2);
 
             $importe += $tarifaLa;
-            $paradasOk++;
+            $paradasPagadas++;
 
             $detalles[] = [
                 'parada_num'      => (int) $parada->parada,
@@ -432,11 +416,11 @@ class LiqCalculoOcasaService
                 'zona'            => $zona,
                 'distrito'        => $parada->distrito ?? null,
                 'motivo'          => $motivo,
-                'estado'          => $estado,
+                'estado'          => in_array($motivo, $motivosExitosos, true) ? 'entregado' : 'visitado_ne',
                 'bultos'          => $bultos,
-                'tarifa_orig'     => $tarifaOrig,
+                'tarifa_orig'     => $costoYcc,
                 'tarifa_la'       => $tarifaLa,
-                'factor_aplicado' => $factorDistrib,
+                'factor_aplicado' => $factor,
             ];
         }
 
@@ -445,21 +429,19 @@ class LiqCalculoOcasaService
         return [
             'match_tipo'      => 'PRODUCTIVIDAD',
             'modo_pago'       => 'productividad_paradas',
-            'linea_tarifa_id' => null, // no hay linea en liq_lineas_tarifa
+            'linea_tarifa_id' => null,
             'importe'         => $importe,
             'desglose'        => [
-                'rama'              => 'D',
-                'formula'           => 'Σ tarifa_LA por parada (material × zona × estado)',
-                'paradas_total'     => $paradas->count(),
-                'paradas_pagadas'   => $paradasOk,
-                'paradas_sin_tarifa'=> $paradasSinTarifa,
+                'rama'            => 'D',
+                'formula'         => 'Σ YCC.costo × factor_distrib',
+                'factor_aplicado' => $factor,
+                'paradas_total'   => $paradas->count(),
+                'paradas_pagadas' => $paradasPagadas,
             ],
             'detalle_paradas' => $detalles,
             'estado_calculo'  => 'ok',
             'error_msg'       => null,
-            'warnings'        => $paradasSinTarifa > 0
-                ? ["Op #{$op->id} ruta {$ruta}: {$paradasSinTarifa} paradas sin tarifa productividad (material/zona no mapeada)"]
-                : [],
+            'warnings'        => [],
         ];
     }
 
