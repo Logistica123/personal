@@ -123,6 +123,14 @@ class RecalcularLiquidacionIntegral extends Command
                     'linea_tarifa_id' => $resCalc['linea_tarifa_id'] ?? $op->linea_tarifa_id,
                     'valor_tarifa_distribuidor' => $resCalc['importe'],
                     'estado' => 'ok',
+                    // SPEC v3/v4 — persistir modo_pago + detalle_paradas para que el PDF
+                    // pueda renderizar Niveles 3 y 4 con la agrupación correcta.
+                    'modo_pago' => $resCalc['modo_pago'] ?? null,
+                    'estado_calculo' => $resCalc['estado_calculo'] ?? 'ok',
+                    'error_msg' => $resCalc['error_msg'] ?? null,
+                    'detalle_paradas' => isset($resCalc['detalle_paradas']) && is_array($resCalc['detalle_paradas']) && !empty($resCalc['detalle_paradas'])
+                        ? json_encode($resCalc['detalle_paradas'], JSON_UNESCAPED_UNICODE)
+                        : null,
                 ]);
                 $stats['delta_total_importe'] += ($resCalc['importe'] - $importeAnterior);
                 $stats['ops_recalculadas']++;
