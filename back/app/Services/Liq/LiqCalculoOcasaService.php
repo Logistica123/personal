@@ -418,8 +418,8 @@ class LiqCalculoOcasaService
                 'motivo'          => $motivo,
                 'estado'          => in_array($motivo, $motivosExitosos, true) ? 'entregado' : 'visitado_ne',
                 'bultos'          => $bultos,
-                'tarifa_orig'     => $costoYcc,
-                'tarifa_la'       => $tarifaLa,
+                'costo_orig'      => $costoYcc,
+                'costo_la'        => $tarifaLa,
                 'factor_aplicado' => $factor,
             ];
         }
