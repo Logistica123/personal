@@ -58,13 +58,20 @@ class LiqDeteccionSubpagoService
 
         $fecha = $liqCliente->periodo_desde?->toDateString() ?? now()->toDateString();
 
-        $ops = LiqOperacion::where('liquidacion_cliente_id', $liqCliente->id)
+        $todasOps = LiqOperacion::where('liquidacion_cliente_id', $liqCliente->id)
             ->where('excluida', false)
             ->whereIn('estado', ['ok', 'diferencia', 'pendiente', 'sin_tarifa'])
             ->get();
 
+        // SPEC v4.2: separar por modo de pago. Las productividad se chequean parada-por-parada
+        // contra liq_tarifas_ocasa_la; las jornada contra liq_tarifas_contrato_cliente (lógica vieja).
+        $opsJornada = $todasOps->filter(fn ($op) => ($op->modelo_calculo ?? '') !== 'PRODUCTIVIDAD');
+        $opsProductividad = $todasOps->filter(fn ($op) => ($op->modelo_calculo ?? '') === 'PRODUCTIVIDAD');
+
+        $ops = $opsJornada;
+
         $stats = [
-            'ops_analizadas'      => $ops->count(),
+            'ops_analizadas'      => $todasOps->count(),
             'reclamos_creados'    => 0,
             'total_subpago'       => 0.0,
             'total_sobrepago'     => 0.0,
@@ -148,7 +155,121 @@ class LiqDeteccionSubpagoService
             $stats['por_sucursal'][$key]['diferencia'] += abs($diferencia);
         }
 
+        // SPEC v4.2: detección parada-por-parada para ops productividad
+        $reclamosProd = $this->detectarSubpagoProductividad($opsProductividad, $clienteId, $fecha, $tolerancia);
+        $stats['reclamos_productividad']      = $reclamosProd['count'];
+        $stats['total_subpago_productividad'] = $reclamosProd['total_subpago'];
+        $stats['paradas_sin_tarifa_ocasa_la'] = $reclamosProd['sin_tarifa'];
+        $stats['reclamos_creados']           += $reclamosProd['count'];
+        $stats['total_subpago']              += $reclamosProd['total_subpago'];
+
         return $stats;
+    }
+
+    /**
+     * SPEC v4.2: detecta subpagos OCASA → LA en ops productividad comparando cada grupo
+     * de paradas YCC contra liq_tarifas_ocasa_la. Si YCC.costo del grupo < esperado
+     * × (1 - tolerancia) → reclamo por parada.
+     *
+     * @return array{count:int, total_subpago:float, sin_tarifa:int}
+     */
+    private function detectarSubpagoProductividad($ops, int $clienteId, string $fecha, float $tolerancia): array
+    {
+        $resolver = app(\App\Services\Liq\ResolverTarifaOcasaLa::class);
+
+        $mapeoMaterial = DB::table('liq_material_mapeo')
+            ->where('cliente_id', $clienteId)
+            ->pluck('material_tarifario', 'codigo_ycc')
+            ->toArray();
+
+        $count = 0;
+        $totalSubpago = 0.0;
+        $sinTarifa = 0;
+
+        foreach ($ops as $op) {
+            $paradas = DB::table('liq_operaciones_detalle')
+                ->where('operacion_id', $op->id)
+                ->orderBy('parada')
+                ->get();
+
+            // Agrupar por (parada × material × motivo)
+            $grupos = [];
+            foreach ($paradas as $p) {
+                $matYcc = trim((string) ($p->material_ycc ?? ''));
+                $matLa  = $mapeoMaterial[$matYcc] ?? 'DESCONOCIDO';
+                $motivo = trim((string) ($p->motivo ?? ''));
+                $zona   = trim((string) ($p->cod_regio ?? ''));
+                $key    = ((int) $p->parada) . '|' . $matLa . '|' . $motivo;
+
+                if (!isset($grupos[$key])) {
+                    $grupos[$key] = [
+                        'parada_num'  => (int) $p->parada,
+                        'material_la' => $matLa,
+                        'zona'        => $zona,
+                        'motivo'      => $motivo,
+                        'distrito'    => $p->distrito ?? null,
+                        'bultos'      => 0,
+                        'costo_orig'  => 0.0,
+                    ];
+                }
+                $grupos[$key]['bultos']     += (int) ($p->bultos ?? 0);
+                $grupos[$key]['costo_orig'] += (float) ($p->costo ?? 0);
+            }
+
+            foreach ($grupos as $g) {
+                $contexto = [
+                    'distrito'    => $g['distrito'],
+                    'material_la' => $g['material_la'],
+                    'zona'        => $g['zona'],
+                    'motivo'      => $g['motivo'],
+                ];
+                $tarifa = $resolver->resolver($op, $fecha, $contexto);
+                if (!$tarifa) {
+                    $sinTarifa++;
+                    continue;
+                }
+
+                $esperado = round($resolver->calcular($g['bultos'], $tarifa), 2);
+                if ($esperado <= 0) continue;
+                $real = round($g['costo_orig'], 2);
+                $diff = round($esperado - $real, 2);
+                $umbralSubpago = $esperado * (1 - $tolerancia);
+
+                if ($real >= $umbralSubpago) continue;
+
+                DB::table('liq_reclamos_ocasa')->insert([
+                    'op_id'              => $op->id,
+                    'parada_num'         => $g['parada_num'],
+                    'tarifa_esperada'    => $esperado,
+                    'pagado_ocasa'       => $real,
+                    'tarifa_contrato_id' => null,
+                    'importe_tms'        => $real,
+                    'importe_esperado'   => $esperado,
+                    'diferencia'         => $diff,
+                    'estado'             => 'pendiente_reclamo',
+                    'motivo_detectado'   => sprintf(
+                        '[subpago_prod] parada %d %s/%s/%s · OCASA=%s vs esperado=%s · diff=%s',
+                        $g['parada_num'], $g['material_la'], $g['zona'], $g['motivo'],
+                        number_format($real, 2), number_format($esperado, 2), number_format($diff, 2)
+                    ),
+                    'detalle'            => json_encode([
+                        'parada_num'  => $g['parada_num'],
+                        'material_la' => $g['material_la'],
+                        'zona'        => $g['zona'],
+                        'motivo'      => $g['motivo'],
+                        'bultos'      => $g['bultos'],
+                        'tarifa_id'   => $tarifa->id,
+                        'tipo_tarifa' => $tarifa->tipo_tarifa,
+                    ], JSON_UNESCAPED_UNICODE),
+                    'creado_at'          => now(),
+                ]);
+
+                $count++;
+                $totalSubpago += abs($diff);
+            }
+        }
+
+        return ['count' => $count, 'total_subpago' => $totalSubpago, 'sin_tarifa' => $sinTarifa];
     }
 
     /**

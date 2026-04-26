@@ -327,19 +327,16 @@ class LiqCalculoOcasaService
     }
 
     /**
-     * Rama D · Productividad por paradas.
+     * Rama D · Productividad por paradas — SPEC v4.
      *
-     * El YCC1 ya trae el costo OCASA→LA por fila en liq_operaciones_detalle.costo
-     * (validado: SUM(YCC.costo) = TMS.costo_prod al centavo). El motor solo aplica el
-     * factor_distrib (1 - %agencia, típicamente 0.85 para OCASA) al costo YCC para
-     * obtener lo que LA paga al distribuidor.
+     * Agrupa las filas YCC por (parada_num, material_la, motivo). Para cada grupo busca
+     * la regla más específica en `liq_tarifas_distribuidor` y aplica el cálculo según el
+     * tipo (monto_parada / monto_bulto / factor_ocasa). El multibulto se evalúa con los
+     * bultos del GRUPO sumados, no por fila YCC individual — clave para que `monto_parada`
+     * dé el resultado correcto cuando OCASA parte una parada en múltiples filas YCC.
      *
-     *   pago_distribuidor = Σ ( YCC.costo × factor_distrib )
-     *
-     * No se hace lookup tarifa por (material × zona × estado) — eso solo sirve para el PDF
-     * (mostrar tarifa de referencia) y para validar que YCC.costo coincida con la tarifa
-     * Excel. Iterar fila × tarifa Excel infla el cálculo cuando una parada se reparte
-     * en múltiples filas YCC (típico cuando hay varios bultos por parada).
+     * Persiste detalle_paradas como una entrada por fila YCC original (sin agrupar al
+     * guardar) para preservar trazabilidad. La agrupación visual se hace en el render PDF.
      */
     private function resolverRamaD(LiqOperacion $op, LiqEsquemaTarifario $esquema, string $fecha): array
     {
@@ -358,27 +355,6 @@ class LiqCalculoOcasaService
             );
         }
 
-        // Resolver factor_distrib desde la primera tarifa productividad de la ruta.
-        // Para OCASA todas las tarifas tienen el mismo factor (0.85 = 1 - 15% agencia).
-        $tarifaRef = DB::table('liq_tarifas_productividad_cliente')
-            ->where('cliente_id', $clienteId)
-            ->where('ruta', $ruta)
-            ->where('vigencia_desde', '<=', $fecha)
-            ->where(function ($q) use ($fecha) {
-                $q->whereNull('vigencia_hasta')->orWhere('vigencia_hasta', '>=', $fecha);
-            })
-            ->first();
-
-        if (!$tarifaRef || (float) $tarifaRef->precio_original <= 0) {
-            return $this->resolverRamaC(
-                $op, $ruta, (int) $op->capacidad_vehiculo_kg, null, $op->dominio,
-                "Ruta {$ruta} es productividad pero no hay tarifa de referencia para resolver factor_distrib"
-            );
-        }
-
-        $factor = round((float) $tarifaRef->precio_distribuidor / (float) $tarifaRef->precio_original, 4);
-
-        // Mapeos solo para el detalle del PDF (no afectan el cálculo)
         $mapeoMaterial = DB::table('liq_material_mapeo')
             ->where('cliente_id', $clienteId)
             ->pluck('material_tarifario', 'codigo_ycc')
@@ -391,40 +367,99 @@ class LiqCalculoOcasaService
             ->map(fn($c) => (string) $c)
             ->toArray();
 
-        $detalles = [];
-        $importe  = 0.0;
-        $paradasPagadas = 0;
-
+        // 1) Agrupar filas YCC por (parada × material × motivo) — necesario para multibulto
+        $grupos = [];
         foreach ($paradas as $parada) {
-            $costoYcc = (float) ($parada->costo ?? 0);
-            if ($costoYcc <= 0) continue;
+            $matYcc = trim((string) ($parada->material_ycc ?? ''));
+            $matLa  = $mapeoMaterial[$matYcc] ?? 'DESCONOCIDO';
+            $motivo = trim((string) ($parada->motivo ?? ''));
+            $zona   = trim((string) ($parada->cod_regio ?? ''));
+            $key    = ((int) $parada->parada) . '|' . $matLa . '|' . $motivo;
 
-            $matYcc    = trim((string) ($parada->material_ycc ?? ''));
-            $matLa     = $mapeoMaterial[$matYcc] ?? null;
-            $zona      = trim((string) ($parada->cod_regio ?? ''));
-            $motivo    = trim((string) ($parada->motivo ?? ''));
-            $bultos    = (int) ($parada->bultos ?? 0);
-            $tarifaLa  = round($costoYcc * $factor, 2);
-
-            $importe += $tarifaLa;
-            $paradasPagadas++;
-
-            $detalles[] = [
-                'parada_num'      => (int) $parada->parada,
-                'material_ycc'    => $matYcc,
-                'material_la'     => $matLa,
-                'zona'            => $zona,
-                'distrito'        => $parada->distrito ?? null,
-                'motivo'          => $motivo,
-                'estado'          => in_array($motivo, $motivosExitosos, true) ? 'entregado' : 'visitado_ne',
-                'bultos'          => $bultos,
-                'costo_orig'      => $costoYcc,
-                'costo_la'        => $tarifaLa,
-                'factor_aplicado' => $factor,
-            ];
+            if (!isset($grupos[$key])) {
+                $grupos[$key] = [
+                    'parada_num'  => (int) $parada->parada,
+                    'material_ycc'=> $matYcc,
+                    'material_la' => $matLa,
+                    'zona'        => $zona,
+                    'distrito'    => $parada->distrito ?? null,
+                    'motivo'      => $motivo,
+                    'bultos'      => 0,
+                    'costo_orig'  => 0.0,
+                    'filas'       => [],
+                ];
+            }
+            $grupos[$key]['bultos']     += (int) ($parada->bultos ?? 0);
+            $grupos[$key]['costo_orig'] += (float) ($parada->costo ?? 0);
+            $grupos[$key]['filas'][]     = $parada;
         }
 
-        $importe = round($importe, 2);
+        // 2) Resolver tarifa + calcular pago por grupo
+        $resolver = app(ResolverTarifaDistribuidor::class);
+        $detalles = [];
+        $importeRaw = 0.0;
+        $paradasPagadas = 0;
+        $factorRefParaPdf = null;
+        $sinTarifa = 0;
+
+        foreach ($grupos as $g) {
+            $contexto = [
+                'distrito'    => $g['distrito'],
+                'material_la' => $g['material_la'],
+                'zona'        => $g['zona'],
+                'motivo'      => $g['motivo'],
+            ];
+
+            $tarifa = $resolver->resolver($op, $fecha, $contexto);
+            if (!$tarifa) {
+                $sinTarifa++;
+                continue;
+            }
+
+            $costoLaGrupo = $resolver->calcular($g['costo_orig'], $g['bultos'], $tarifa);
+            $importeRaw += $costoLaGrupo;
+            $paradasPagadas++;
+
+            // Factor de referencia para mostrar en PDF (cuando es factor_ocasa)
+            if ($factorRefParaPdf === null && $tarifa->tipo_tarifa === 'factor_ocasa') {
+                $factorRefParaPdf = (float) $tarifa->valor;
+            }
+
+            // Persistir UNA entrada por fila YCC con prorrateo del costo_la del grupo
+            // (proporcional al costo_orig de cada fila). Necesario para trazabilidad y
+            // para que el resumen mensual cuente paradas únicas correctamente.
+            foreach ($g['filas'] as $f) {
+                $cYcc = (float) ($f->costo ?? 0);
+                $proporcion = $g['costo_orig'] > 0 ? $cYcc / $g['costo_orig'] : 0;
+                $costoLaFila = round($costoLaGrupo * $proporcion, 2);
+
+                $detalles[] = [
+                    'parada_num'      => (int) $f->parada,
+                    'material_ycc'    => trim((string) ($f->material_ycc ?? '')),
+                    'material_la'     => $g['material_la'],
+                    'zona'            => trim((string) ($f->cod_regio ?? '')),
+                    'distrito'        => $f->distrito ?? null,
+                    'motivo'          => trim((string) ($f->motivo ?? '')),
+                    'estado'          => in_array($g['motivo'], $motivosExitosos, true) ? 'entregado' : 'visitado_ne',
+                    'bultos'          => (int) ($f->bultos ?? 0),
+                    'costo_orig'      => $cYcc,
+                    'costo_la'        => $costoLaFila,
+                    'tarifa_id'       => $tarifa->id,
+                    'tipo_tarifa'     => $tarifa->tipo_tarifa,
+                ];
+            }
+        }
+
+        $importe = round($importeRaw, 2);
+
+        // Compatibilidad con código existente que lee 'factor_aplicado' en cada fila
+        if ($factorRefParaPdf === null) $factorRefParaPdf = 0.85;
+        foreach ($detalles as &$d) {
+            if (!isset($d['factor_aplicado'])) $d['factor_aplicado'] = $factorRefParaPdf;
+        }
+        unset($d);
+
+        $factor = $factorRefParaPdf;
 
         return [
             'match_tipo'      => 'PRODUCTIVIDAD',
@@ -433,14 +468,18 @@ class LiqCalculoOcasaService
             'importe'         => $importe,
             'desglose'        => [
                 'rama'            => 'D',
-                'formula'         => 'Σ YCC.costo × factor_distrib',
+                'formula'         => 'Σ tarifa(parada×material×motivo) según liq_tarifas_distribuidor',
                 'factor_aplicado' => $factor,
                 'paradas_total'   => $paradas->count(),
                 'paradas_pagadas' => $paradasPagadas,
+                'grupos_total'    => count($grupos),
+                'grupos_sin_tarifa' => $sinTarifa,
             ],
             'detalle_paradas' => $detalles,
-            'estado_calculo'  => 'ok',
-            'error_msg'       => null,
+            'estado_calculo'  => $sinTarifa > 0 ? 'sin_tarifa_distribuidor' : 'ok',
+            'error_msg'       => $sinTarifa > 0
+                ? "Op #{$op->id}: {$sinTarifa} grupos de paradas sin tarifa distribuidor en liq_tarifas_distribuidor"
+                : null,
             'warnings'        => [],
         ];
     }

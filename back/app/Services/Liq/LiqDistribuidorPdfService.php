@@ -146,12 +146,28 @@ class LiqDistribuidorPdfService
 
                 // SPEC v3 Addendum · Rama D · decode detalle_paradas + agrupar para PDF
                 $detalleParadas = null;
+                $paradasEntregadas = null;
+                $paradasTotales = null;
                 if ($op->modo_pago === 'productividad_paradas') {
                     $raw_dp = $op->detalle_paradas;
                     if (is_string($raw_dp)) $raw_dp = json_decode($raw_dp, true);
                     if (is_array($raw_dp) && !empty($raw_dp)) {
                         // Nivel 3: agrupación por (parada_num × material_la × motivo)
                         $detalleParadas = $this->agruparParaNivel3($raw_dp);
+
+                        // Conteo entregadas/totales con paradas únicas (set por parada_num)
+                        $setEntregadas = [];
+                        $setTotales = [];
+                        foreach ($raw_dp as $f) {
+                            $pn = (int) ($f['parada_num'] ?? 0);
+                            if ($pn === 0) continue;
+                            $setTotales[$pn] = true;
+                            if (($f['estado'] ?? '') === 'entregado') {
+                                $setEntregadas[$pn] = true;
+                            }
+                        }
+                        $paradasEntregadas = count($setEntregadas);
+                        $paradasTotales    = count($setTotales);
 
                         // Nivel 4: resumen mensual usando filas YCC raw (no agrupadas).
                         // # paradas se calcula con SET de (op_id, parada_num) para no duplicar
@@ -205,6 +221,8 @@ class LiqDistribuidorPdfService
                     'tarifa_km' => $tarifaKmUnit,
                     'valor_km' => $valorKm,
                     'paradas' => $op->total_paradas,
+                    'paradas_entregadas' => $paradasEntregadas,
+                    'paradas_totales' => $paradasTotales,
                     'tarifa_prod' => $op->tarifa_prod_distrib !== null ? (float) $op->tarifa_prod_distrib : null,
                     'importe' => $importe,
                     'detalle_paradas' => $detalleParadas,  // SPEC v3 · null o array agrupado
