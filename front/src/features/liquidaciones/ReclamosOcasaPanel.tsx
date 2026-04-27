@@ -13,20 +13,35 @@ import React, { useCallback, useEffect, useState } from 'react';
  * "Reclamos OCASA" del header.
  */
 
+type MotivoCategoria =
+  | 'sin_tarifa_contrato'
+  | 'tarifa_capacidad_inferior'
+  | 'concepto_mal_clasificado'
+  | 'motivo_mal_etiquetado'
+  | 'material_mal_clasificado'
+  | 'zona_mal_asignada'
+  | 'multibulto_no_aplicado'
+  | 'bajo_tolerancia'
+  | 'otra'
+  | string;
+
 type Reclamo = {
   id: number;
   op_id: number;
+  parada_num: number | null;
   patente: string | null;
   sucursal: string | null;
   ruta: string | null;
   distancia_km: number | null;
   capacidad_vehiculo_kg: number | null;
-  concepto_contrato: string;
+  modelo_calculo: string | null;
+  concepto_contrato: string | null;
   importe_tms: number;
   importe_esperado: number;
   diferencia: number;
   estado: 'pendiente_reclamo' | 'reclamado' | 'ajustado' | 'cerrado';
   motivo_detectado: string | null;
+  motivo_categoria: MotivoCategoria | null;
   distribuidor: string | null;
   creado_at: string;
   reclamado_at: string | null;
@@ -36,6 +51,12 @@ type Reclamo = {
 type PorSucursal = {
   sucursal: string | null;
   ops: number;
+  diferencia_total: number;
+};
+
+type PorCategoria = {
+  categoria: MotivoCategoria;
+  cantidad: number;
   diferencia_total: number;
 };
 
@@ -70,11 +91,29 @@ const colorEstado = (e: Reclamo['estado']) => {
   }
 };
 
+// SPEC v4.3 · Mapping de motivo_categoria a etiqueta visual.
+const colorMotivo = (c: MotivoCategoria | null): { bg: string; fg: string; label: string } => {
+  switch (c) {
+    case 'sin_tarifa_contrato':       return { bg: '#fee2e2', fg: '#991b1b', label: 'Sin tarifa' };
+    case 'tarifa_capacidad_inferior': return { bg: '#fde68a', fg: '#92400e', label: 'Cap. inferior' };
+    case 'concepto_mal_clasificado':  return { bg: '#fed7aa', fg: '#9a3412', label: 'Concepto' };
+    case 'motivo_mal_etiquetado':     return { bg: '#fbcfe8', fg: '#9d174d', label: 'Motivo' };
+    case 'material_mal_clasificado':  return { bg: '#ddd6fe', fg: '#5b21b6', label: 'Material' };
+    case 'zona_mal_asignada':         return { bg: '#bfdbfe', fg: '#1e3a8a', label: 'Zona' };
+    case 'multibulto_no_aplicado':    return { bg: '#a7f3d0', fg: '#065f46', label: 'Multibulto' };
+    case 'bajo_tolerancia':           return { bg: '#e5e7eb', fg: '#374151', label: 'Tolerancia' };
+    case 'otra':
+    default:                          return { bg: '#f3f4f6', fg: '#6b7280', label: c ?? 'Otra' };
+  }
+};
+
 export function ReclamosOcasaPanel({ liqId, api, refreshKey = 0 }: Props) {
   const [loading, setLoading] = useState(false);
   const [reclamos, setReclamos] = useState<Reclamo[]>([]);
   const [totales, setTotales] = useState<Totales | null>(null);
   const [porSucursal, setPorSucursal] = useState<PorSucursal[]>([]);
+  const [porCategoria, setPorCategoria] = useState<PorCategoria[]>([]);
+  const [filtroCategoria, setFiltroCategoria] = useState<MotivoCategoria | 'todas'>('todas');
   const [error, setError] = useState<string | null>(null);
 
   const cargar = useCallback(async () => {
@@ -86,12 +125,17 @@ export function ReclamosOcasaPanel({ liqId, api, refreshKey = 0 }: Props) {
       setReclamos(d.reclamos ?? []);
       setTotales(d.totales ?? null);
       setPorSucursal(d.por_sucursal ?? []);
+      setPorCategoria(d.por_categoria ?? []);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Error cargando reclamos');
     } finally {
       setLoading(false);
     }
   }, [api, liqId]);
+
+  const reclamosFiltrados = filtroCategoria === 'todas'
+    ? reclamos
+    : reclamos.filter((r) => (r.motivo_categoria ?? 'otra') === filtroCategoria);
 
   useEffect(() => { void cargar(); }, [cargar, refreshKey]);
 
@@ -159,7 +203,7 @@ export function ReclamosOcasaPanel({ liqId, api, refreshKey = 0 }: Props) {
 
         {/* Por sucursal */}
         {porSucursal.length > 0 && (
-          <details style={{ marginBottom: 16 }}>
+          <details style={{ marginBottom: 12 }}>
             <summary style={{ cursor: 'pointer', fontSize: 13, fontWeight: 600 }}>
               Agrupado por sucursal ({porSucursal.length})
             </summary>
@@ -180,6 +224,49 @@ export function ReclamosOcasaPanel({ liqId, api, refreshKey = 0 }: Props) {
           </details>
         )}
 
+        {/* SPEC v4.3 · Filtro y agrupación por motivo (categoría) */}
+        {porCategoria.length > 0 && (
+          <div style={{ marginBottom: 12, padding: 10, background: '#f9fafb', borderRadius: 6 }}>
+            <div style={{ fontSize: 12, fontWeight: 600, color: '#374151', marginBottom: 6 }}>
+              Filtrar por motivo:
+            </div>
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+              <button
+                type="button"
+                onClick={() => setFiltroCategoria('todas')}
+                style={{
+                  padding: '4px 10px', borderRadius: 4, fontSize: 11,
+                  background: filtroCategoria === 'todas' ? '#1e40af' : '#e5e7eb',
+                  color: filtroCategoria === 'todas' ? '#fff' : '#374151',
+                  border: 'none', cursor: 'pointer', fontWeight: 600,
+                }}
+              >
+                Todas ({reclamos.length})
+              </button>
+              {porCategoria.map((c) => {
+                const col = colorMotivo(c.categoria);
+                const activo = filtroCategoria === c.categoria;
+                return (
+                  <button
+                    key={c.categoria}
+                    type="button"
+                    onClick={() => setFiltroCategoria(c.categoria)}
+                    title={`${c.cantidad} reclamos · ${fmtMoney(c.diferencia_total)}`}
+                    style={{
+                      padding: '4px 10px', borderRadius: 4, fontSize: 11,
+                      background: activo ? col.fg : col.bg,
+                      color: activo ? '#fff' : col.fg,
+                      border: 'none', cursor: 'pointer', fontWeight: 600,
+                    }}
+                  >
+                    {col.label} ({c.cantidad})
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
         {/* Tabla de reclamos */}
         <table className="table" style={{ width: '100%', fontSize: 12 }}>
           <thead>
@@ -189,25 +276,40 @@ export function ReclamosOcasaPanel({ liqId, api, refreshKey = 0 }: Props) {
               <th>Patente</th>
               <th>Distribuidor</th>
               <th>Ruta</th>
-              <th>Concepto</th>
-              <th style={{ textAlign: 'right' }}>TMS</th>
-              <th style={{ textAlign: 'right' }}>Contrato</th>
+              <th>Tipo</th>
+              <th>Motivo</th>
+              <th style={{ textAlign: 'right' }}>OCASA</th>
+              <th style={{ textAlign: 'right' }}>Esperado</th>
               <th style={{ textAlign: 'right' }}>Δ</th>
               <th>Estado</th>
               <th>Acciones</th>
             </tr>
           </thead>
           <tbody>
-            {reclamos.map((r) => {
+            {reclamosFiltrados.map((r) => {
               const st = colorEstado(r.estado);
+              const cm = colorMotivo(r.motivo_categoria);
+              const esProductividad = r.modelo_calculo === 'PRODUCTIVIDAD';
               return (
                 <tr key={r.id}>
-                  <td style={{ fontFamily: 'monospace' }}>#{r.op_id}</td>
+                  <td style={{ fontFamily: 'monospace' }}>
+                    #{r.op_id}{r.parada_num != null && <span style={{ color: '#6b7280' }}> · p{r.parada_num}</span>}
+                  </td>
                   <td>{r.sucursal ?? '—'}</td>
                   <td>{r.patente ?? '—'}</td>
                   <td>{r.distribuidor?.trim() ?? '—'}</td>
                   <td>{r.ruta ?? '—'}</td>
-                  <td style={{ fontSize: 11 }}>{r.concepto_contrato}</td>
+                  <td style={{ fontSize: 11, color: esProductividad ? '#7c3aed' : '#1f2937' }}>
+                    {esProductividad ? 'Prod.' : (r.concepto_contrato ?? 'Jornada')}
+                  </td>
+                  <td>
+                    <span
+                      title={r.motivo_detectado ?? undefined}
+                      style={{ background: cm.bg, color: cm.fg, padding: '2px 8px', borderRadius: 4, fontSize: 11, fontWeight: 600, whiteSpace: 'nowrap' }}
+                    >
+                      {cm.label}
+                    </span>
+                  </td>
                   <td style={{ textAlign: 'right' }}>{fmtMoney(Number(r.importe_tms))}</td>
                   <td style={{ textAlign: 'right' }}>{fmtMoney(Number(r.importe_esperado))}</td>
                   <td style={{ textAlign: 'right', fontWeight: 600, color: Number(r.diferencia) > 0 ? '#991b1b' : '#3730a3' }}>{fmtMoney(Number(r.diferencia))}</td>

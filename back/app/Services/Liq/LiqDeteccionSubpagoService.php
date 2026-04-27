@@ -135,6 +135,11 @@ class LiqDeteccionSubpagoService
 
             if ($tipo === null) continue;
 
+            // SPEC v4.3 · Clasificar motivo del subpago para reclamos efectivos
+            $clasif = $this->clasificarMotivoJornada(
+                $op, $tarifa, $importeTms, $importeEsperado, $diferencia, $clienteId, $fecha
+            );
+
             DB::table('liq_reclamos_ocasa')->insert([
                 'op_id'              => $op->id,
                 'tarifa_contrato_id' => $tarifa->id,
@@ -142,7 +147,8 @@ class LiqDeteccionSubpagoService
                 'importe_esperado'   => $importeEsperado,
                 'diferencia'         => $diferencia,
                 'estado'             => 'pendiente_reclamo',
-                'motivo_detectado'   => "[{$tipo}] {$motivo}",
+                'motivo_detectado'   => "[{$tipo}] " . $clasif['descripcion'],
+                'motivo_categoria'   => $clasif['categoria'],
                 'creado_at'          => now(),
             ]);
 
@@ -237,6 +243,8 @@ class LiqDeteccionSubpagoService
 
                 if ($real >= $umbralSubpago) continue;
 
+                $clasif = $this->clasificarMotivoProductividad($op, $g, $tarifa, $real, $esperado, $diff);
+
                 DB::table('liq_reclamos_ocasa')->insert([
                     'op_id'              => $op->id,
                     'parada_num'         => $g['parada_num'],
@@ -247,11 +255,8 @@ class LiqDeteccionSubpagoService
                     'importe_esperado'   => $esperado,
                     'diferencia'         => $diff,
                     'estado'             => 'pendiente_reclamo',
-                    'motivo_detectado'   => sprintf(
-                        '[subpago_prod] parada %d %s/%s/%s · OCASA=%s vs esperado=%s · diff=%s',
-                        $g['parada_num'], $g['material_la'], $g['zona'], $g['motivo'],
-                        number_format($real, 2), number_format($esperado, 2), number_format($diff, 2)
-                    ),
+                    'motivo_detectado'   => '[subpago_prod] ' . $clasif['descripcion'],
+                    'motivo_categoria'   => $clasif['categoria'],
                     'detalle'            => json_encode([
                         'parada_num'  => $g['parada_num'],
                         'material_la' => $g['material_la'],
@@ -345,5 +350,202 @@ class LiqDeteccionSubpagoService
         // "BAHIA BLANCA" vs "BAHÍA BLANCA" → ambas igualan
         // "LUQ MDZ" viene tal cual
         return $s;
+    }
+
+    /**
+     * SPEC v4.3 · Clasifica el motivo del subpago/sobrepago de una op JORNADA.
+     * Devuelve {categoria, descripcion}: categoría para filtrado UI, descripción
+     * para argumentar el reclamo a OCASA.
+     *
+     * @return array{categoria: string, descripcion: string}
+     */
+    private function clasificarMotivoJornada(
+        LiqOperacion $op,
+        $tarifa,
+        float $pagado,
+        float $esperado,
+        float $diferencia,
+        int $clienteId,
+        string $fecha
+    ): array {
+        $diffPct = $esperado > 0 ? abs($diferencia) / $esperado : 0;
+
+        // 1. Bajo tolerancia (no es bug, ajuste menor)
+        if ($diffPct < 0.05) {
+            return [
+                'categoria'   => 'bajo_tolerancia',
+                'descripcion' => sprintf(
+                    'Diferencia menor al 5%% (%.2f%%) — probable ajuste/redondeo. Pagado=%s vs esperado=%s',
+                    $diffPct * 100, number_format($pagado, 2), number_format($esperado, 2)
+                ),
+            ];
+        }
+
+        // 2. Tarifa de capacidad inferior: existe tarifa de capacidad mayor que matchea mejor
+        $sucursalNorm = $this->normalizarSucursal((string) ($op->sucursal_tarifa ?? ''));
+        $tarifaCapMayor = DB::table('liq_tarifas_contrato_cliente')
+            ->where('cliente_id', $clienteId)
+            ->where('sucursal', $sucursalNorm)
+            ->where('concepto', $tarifa->concepto)
+            ->where('capacidad_vehiculo', '>', (int) ($op->capacidad_vehiculo_kg ?? 0))
+            ->where('vigencia_desde', '<=', $fecha)
+            ->orderBy('capacidad_vehiculo')
+            ->first();
+
+        if ($tarifaCapMayor && abs((float) $tarifaCapMayor->importe_contrato - $pagado) < abs($pagado - $esperado) * 0.5) {
+            return [
+                'categoria'   => 'tarifa_capacidad_inferior',
+                'descripcion' => sprintf(
+                    'OCASA pagó tarifa cap=%d (%s) pero la op probablemente debería ser cap=%d (esperado %s · diff=%s)',
+                    $op->capacidad_vehiculo_kg, number_format($pagado, 2),
+                    $tarifaCapMayor->capacidad_vehiculo, number_format($tarifaCapMayor->importe_contrato, 2),
+                    number_format($diferencia, 2)
+                ),
+            ];
+        }
+
+        // 3. Concepto mal clasificado: existe tarifa con concepto distinto que matchea mejor el TMS
+        $conceptoCorrecto = $this->derivarConcepto($op);
+        if ($conceptoCorrecto !== null && $conceptoCorrecto !== $tarifa->concepto) {
+            $tarifaConceptoOK = DB::table('liq_tarifas_contrato_cliente')
+                ->where('cliente_id', $clienteId)
+                ->where('sucursal', $sucursalNorm)
+                ->where('capacidad_vehiculo', (int) ($op->capacidad_vehiculo_kg ?? 0))
+                ->where('concepto', $conceptoCorrecto)
+                ->where('vigencia_desde', '<=', $fecha)
+                ->first();
+            if ($tarifaConceptoOK) {
+                return [
+                    'categoria'   => 'concepto_mal_clasificado',
+                    'descripcion' => sprintf(
+                        'OCASA aplicó concepto "%s" pero la distancia/idtrack sugiere "%s" (esperado %s · pagado %s · diff=%s)',
+                        $tarifa->concepto, $conceptoCorrecto,
+                        number_format((float) $tarifaConceptoOK->importe_contrato, 2),
+                        number_format($pagado, 2), number_format($diferencia, 2)
+                    ),
+                ];
+            }
+        }
+
+        // 4. Default: requiere revisión manual
+        return [
+            'categoria'   => 'otra',
+            'descripcion' => sprintf(
+                'Diferencia de %s sin causa identificable automáticamente. Pagado=%s vs esperado=%s — revisar manual',
+                number_format($diferencia, 2), number_format($pagado, 2), number_format($esperado, 2)
+            ),
+        ];
+    }
+
+    /**
+     * SPEC v4.3 · Clasifica el motivo del subpago de una parada PRODUCTIVIDAD.
+     *
+     * @param  array  $grupo  grupo de paradas YCC (parada × material × motivo)
+     * @return array{categoria: string, descripcion: string}
+     */
+    private function clasificarMotivoProductividad(
+        LiqOperacion $op,
+        array $grupo,
+        $tarifa,
+        float $pagado,
+        float $esperado,
+        float $diferencia
+    ): array {
+        $diffPct = $esperado > 0 ? abs($diferencia) / $esperado : 0;
+
+        // Bajo tolerancia
+        if ($diffPct < 0.05) {
+            return [
+                'categoria'   => 'bajo_tolerancia',
+                'descripcion' => sprintf(
+                    'Parada %d %s/%s/%s · diferencia %.2f%% (probable ajuste). Pagado=%s vs esperado=%s',
+                    $grupo['parada_num'], $grupo['material_la'], $grupo['zona'], $grupo['motivo'],
+                    $diffPct * 100, number_format($pagado, 2), number_format($esperado, 2)
+                ),
+            ];
+        }
+
+        // Multibulto no aplicado: bultos >= 5 pero pagaron solo 1 tarifa unitaria
+        $tarifaUnit = (float) $tarifa->valor;
+        if ($grupo['bultos'] >= 5 && $tarifaUnit > 0 && abs($pagado - $tarifaUnit) < $tarifaUnit * 0.10) {
+            return [
+                'categoria'   => 'multibulto_no_aplicado',
+                'descripcion' => sprintf(
+                    'Parada %d con %d bultos %s/%s · OCASA pagó solo 1 tarifa unit (%s) en lugar de %d × %s = %s',
+                    $grupo['parada_num'], $grupo['bultos'], $grupo['material_la'], $grupo['zona'],
+                    number_format($pagado, 2), (int) ceil($grupo['bultos'] / 5),
+                    number_format($tarifaUnit, 2), number_format($esperado, 2)
+                ),
+            ];
+        }
+
+        // Material/zona/motivo mal clasificado: el costo OCASA está cerca de tarifa de OTRA
+        // combinación cargada en la tabla. Intento detectar la combinación más cercana.
+        $clienteId = (int) \DB::table('liq_liquidaciones_cliente')
+            ->where('id', $op->liquidacion_cliente_id)
+            ->value('cliente_id');
+        $tarifasMismaRuta = DB::table('liq_tarifas_ocasa_la')
+            ->where('cliente_id', $clienteId)
+            ->where('ruta', $op->concepto)
+            ->where('vigencia_desde', '<=', $op->liquidacionCliente?->periodo_desde?->toDateString() ?? now()->toDateString())
+            ->get();
+
+        $mejorMatch = null;
+        $mejorDiff  = PHP_FLOAT_MAX;
+        foreach ($tarifasMismaRuta as $t) {
+            $tEsperado = $t->aplica_multibulto && $grupo['bultos'] >= 5
+                ? (int) ceil($grupo['bultos'] / 5) * (float) $t->valor
+                : (float) $t->valor;
+            $d = abs($pagado - $tEsperado);
+            if ($d < $mejorDiff) {
+                $mejorDiff = $d;
+                $mejorMatch = $t;
+            }
+        }
+
+        if ($mejorMatch && $mejorDiff < $esperado * 0.10) {
+            // Diferenciamos según qué dimensión cambia
+            if ($mejorMatch->material_la !== $grupo['material_la']) {
+                return [
+                    'categoria'   => 'material_mal_clasificado',
+                    'descripcion' => sprintf(
+                        'Parada %d · OCASA cobró como %s/%s/%s pero el costo coincide con %s/%s/%s (esperado real=%s vs pagado=%s)',
+                        $grupo['parada_num'], $grupo['material_la'], $grupo['zona'], $grupo['motivo'],
+                        $mejorMatch->material_la, $mejorMatch->zona, $mejorMatch->motivo,
+                        number_format($esperado, 2), number_format($pagado, 2)
+                    ),
+                ];
+            }
+            if ($mejorMatch->zona !== $grupo['zona']) {
+                return [
+                    'categoria'   => 'zona_mal_asignada',
+                    'descripcion' => sprintf(
+                        'Parada %d %s · OCASA aplicó zona %s pero el costo coincide con zona %s (diff=%s)',
+                        $grupo['parada_num'], $grupo['material_la'],
+                        $grupo['zona'], $mejorMatch->zona, number_format($diferencia, 2)
+                    ),
+                ];
+            }
+            if ($mejorMatch->motivo !== $grupo['motivo']) {
+                return [
+                    'categoria'   => 'motivo_mal_etiquetado',
+                    'descripcion' => sprintf(
+                        'Parada %d %s/%s · etiquetada motivo %s pero el costo coincide con motivo %s (diff=%s)',
+                        $grupo['parada_num'], $grupo['material_la'], $grupo['zona'],
+                        $grupo['motivo'], $mejorMatch->motivo, number_format($diferencia, 2)
+                    ),
+                ];
+            }
+        }
+
+        // Default
+        return [
+            'categoria'   => 'otra',
+            'descripcion' => sprintf(
+                'Parada %d %s/%s/%s · diff=%s (sin causa identificable automáticamente)',
+                $grupo['parada_num'], $grupo['material_la'], $grupo['zona'], $grupo['motivo'],
+                number_format($diferencia, 2)
+            ),
+        ];
     }
 }

@@ -22,23 +22,27 @@ class LiqReclamosOcasaController extends Controller
     {
         $reclamos = DB::table('liq_reclamos_ocasa as r')
             ->join('liq_operaciones as o', 'o.id', '=', 'r.op_id')
-            ->join('liq_tarifas_contrato_cliente as tc', 'tc.id', '=', 'r.tarifa_contrato_id')
+            // SPEC v4.2: leftJoin para incluir reclamos productividad (tarifa_contrato_id=NULL)
+            ->leftJoin('liq_tarifas_contrato_cliente as tc', 'tc.id', '=', 'r.tarifa_contrato_id')
             ->leftJoin('personas as p', 'p.id', '=', 'o.distribuidor_id')
             ->where('o.liquidacion_cliente_id', $liquidacionCliente->id)
             ->select([
                 'r.id',
                 'r.op_id',
+                'r.parada_num',                          // SPEC v4.2 productividad
                 'o.dominio as patente',
                 'o.sucursal_tarifa as sucursal',
                 'o.concepto as ruta',
                 'o.distancia_km',
                 'o.capacidad_vehiculo_kg',
+                'o.modelo_calculo',                      // 'PRODUCTIVIDAD' o no
                 'tc.concepto as concepto_contrato',
                 'r.importe_tms',
                 'r.importe_esperado',
                 'r.diferencia',
                 'r.estado',
                 'r.motivo_detectado',
+                'r.motivo_categoria',                    // SPEC v4.3 clasificador
                 'r.creado_at',
                 'r.reclamado_at',
                 'r.resuelto_at',
@@ -59,6 +63,16 @@ class LiqReclamosOcasaController extends Controller
             ->sortByDesc('diferencia_total')
             ->values();
 
+        // SPEC v4.3: agrupación por motivo_categoria para filtros UI
+        $porCategoria = $reclamos->groupBy('motivo_categoria')
+            ->map(fn ($grupo, $categoria) => [
+                'categoria' => $categoria ?: 'otra',
+                'cantidad' => $grupo->count(),
+                'diferencia_total' => round((float) $grupo->sum('diferencia'), 2),
+            ])
+            ->sortByDesc('diferencia_total')
+            ->values();
+
         return response()->json([
             'data' => [
                 'liquidacion_id' => $liquidacionCliente->id,
@@ -70,6 +84,7 @@ class LiqReclamosOcasaController extends Controller
                     'neto_reclamable' => round($totalSubpago - $totalSobrepago, 2),
                 ],
                 'por_sucursal' => $porSucursal,
+                'por_categoria' => $porCategoria,
             ],
         ]);
     }
