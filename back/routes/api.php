@@ -355,6 +355,14 @@ Route::middleware('auth.api')->group(function () {
         Route::post( '/liquidaciones/{liquidacionCliente}/reclamos-ocasa/detectar',       [\App\Http\Controllers\Api\Liq\LiqReclamosOcasaController::class, 'detectar']);
         Route::patch('/reclamos-ocasa/{reclamoId}/estado',                                [\App\Http\Controllers\Api\Liq\LiqReclamosOcasaController::class, 'cambiarEstado']);
 
+        // SPEC v4.4 · CRUD Tarifas Contrato Cliente (cliente → LA, fuente del detector subpago)
+        Route::get(   '/tarifas-contrato-cliente',                  [\App\Http\Controllers\Api\Liq\LiqTarifaContratoController::class, 'index']);
+        Route::get(   '/tarifas-contrato-cliente/export-excel',     [\App\Http\Controllers\Api\Liq\LiqTarifaContratoController::class, 'exportExcel']);
+        Route::post(  '/tarifas-contrato-cliente/import-excel',     [\App\Http\Controllers\Api\Liq\LiqTarifaContratoController::class, 'importExcel']);
+        Route::post(  '/tarifas-contrato-cliente',                  [\App\Http\Controllers\Api\Liq\LiqTarifaContratoController::class, 'store']);
+        Route::put(   '/tarifas-contrato-cliente/{id}',             [\App\Http\Controllers\Api\Liq\LiqTarifaContratoController::class, 'update']);
+        Route::delete('/tarifas-contrato-cliente/{id}',             [\App\Http\Controllers\Api\Liq\LiqTarifaContratoController::class, 'destroy']);
+
         // SPEC "Importador de Tarifas OCASA" v1.0 — flujo preview/apply sobre esquema existente
         Route::post('/tarifas/importar/preview',    [\App\Http\Controllers\Api\Liq\LiqTarifaImportController::class, 'preview']);
         Route::post('/tarifas/importar/confirmar',  [\App\Http\Controllers\Api\Liq\LiqTarifaImportController::class, 'confirmar']);
