@@ -350,9 +350,10 @@ Route::middleware('auth.api')->group(function () {
         Route::post('/tarifas/importar-excel-v5', [LiqExtractosController::class, 'importarExcelV5']);
 
         // SPEC v3 · BUG B — Reclamos OCASA (subpagos detectados)
-        Route::get(  '/liquidaciones/{liquidacionCliente}/reclamos-ocasa',           [\App\Http\Controllers\Api\Liq\LiqReclamosOcasaController::class, 'index']);
-        Route::post( '/liquidaciones/{liquidacionCliente}/reclamos-ocasa/detectar',  [\App\Http\Controllers\Api\Liq\LiqReclamosOcasaController::class, 'detectar']);
-        Route::patch('/reclamos-ocasa/{reclamoId}/estado',                           [\App\Http\Controllers\Api\Liq\LiqReclamosOcasaController::class, 'cambiarEstado']);
+        Route::get(  '/liquidaciones/{liquidacionCliente}/reclamos-ocasa',                [\App\Http\Controllers\Api\Liq\LiqReclamosOcasaController::class, 'index']);
+        Route::get(  '/liquidaciones/{liquidacionCliente}/reclamos-ocasa/export-excel',   [\App\Http\Controllers\Api\Liq\LiqReclamosOcasaController::class, 'exportExcel']);
+        Route::post( '/liquidaciones/{liquidacionCliente}/reclamos-ocasa/detectar',       [\App\Http\Controllers\Api\Liq\LiqReclamosOcasaController::class, 'detectar']);
+        Route::patch('/reclamos-ocasa/{reclamoId}/estado',                                [\App\Http\Controllers\Api\Liq\LiqReclamosOcasaController::class, 'cambiarEstado']);
 
         // SPEC "Importador de Tarifas OCASA" v1.0 — flujo preview/apply sobre esquema existente
         Route::post('/tarifas/importar/preview',    [\App\Http\Controllers\Api\Liq\LiqTarifaImportController::class, 'preview']);

@@ -5,9 +5,11 @@ namespace App\Http\Controllers\Api\Liq;
 use App\Http\Controllers\Controller;
 use App\Models\LiqLiquidacionCliente;
 use App\Services\Liq\LiqDeteccionSubpagoService;
+use App\Services\Liq\LiqReclamosOcasaExportService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Symfony\Component\HttpFoundation\StreamedResponse;
 
 /**
  * SPEC v3 · BUG B — Endpoint de reclamos OCASA.
@@ -139,5 +141,34 @@ class LiqReclamosOcasaController extends Controller
         DB::table('liq_reclamos_ocasa')->where('id', $reclamoId)->update($update);
 
         return response()->json(['message' => 'Estado actualizado', 'data' => ['id' => $reclamoId, 'estado' => $data['estado']]]);
+    }
+
+    /**
+     * SPEC v4.3 · GET /api/liq/liquidaciones/{liq}/reclamos-ocasa/export-excel
+     *
+     * Genera un .xlsx con resumen + hoja por sucursal listo para presentar a OCASA.
+     * Filtros opcionales por estado / tipo / motivo_categoria.
+     */
+    public function exportExcel(
+        Request $request,
+        LiqLiquidacionCliente $liquidacionCliente,
+        LiqReclamosOcasaExportService $exportSvc
+    ): StreamedResponse {
+        $estado    = $request->query('estado');     // 'pendiente_reclamo' | 'reclamado' | ...
+        $tipo      = $request->query('tipo');       // 'jornada' | 'productividad' | 'todos'
+        $categoria = $request->query('categoria');  // 'tarifa_capacidad_inferior' | ...
+
+        $contenido = $exportSvc->generar($liquidacionCliente, $estado, $tipo, $categoria);
+        $periodo = $liquidacionCliente->periodo_desde?->format('Y-m') ?? 'mes';
+        $filename = "Reclamos_OCASA_{$periodo}_liq{$liquidacionCliente->id}.xlsx";
+
+        return response()->streamDownload(
+            fn () => print $contenido,
+            $filename,
+            [
+                'Content-Type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                'Cache-Control' => 'no-store, no-cache',
+            ]
+        );
     }
 }

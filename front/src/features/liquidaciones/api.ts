@@ -141,8 +141,33 @@ export function useLiqApi(deps: ApiDeps) {
     [headers]
   );
 
+  // SPEC v4.3 · descarga blob (xlsx, pdf, etc.) directo a archivo del navegador
+  const downloadFile = useCallback(
+    async (path: string, filename: string) => {
+      const actorHeaders = buildActorHeadersRef.current(authUserRef.current);
+      const r = await fetch(`${baseRef.current}/api/liq${path}`, {
+        credentials: 'include',
+        headers: actorHeaders,
+      });
+      if (!r.ok) {
+        const json = await r.json().catch(() => ({}));
+        throw new Error(extractApiErrorMessage(json, `Error ${r.status}`));
+      }
+      const blob = await r.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    },
+    []
+  );
+
   return useMemo(
-    () => ({ get, post, patch, put, delete: del, postForm }),
-    [get, post, patch, put, del, postForm]
+    () => ({ get, post, patch, put, delete: del, postForm, downloadFile }),
+    [get, post, patch, put, del, postForm, downloadFile]
   );
 }

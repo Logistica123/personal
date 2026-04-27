@@ -70,6 +70,7 @@ type Totales = {
 type ApiShape = {
   get: (path: string) => Promise<any>;
   patch: (path: string, body: unknown) => Promise<any>;
+  downloadFile?: (path: string, filename: string) => Promise<void>;
 };
 
 type Props = {
@@ -148,6 +149,24 @@ export function ReclamosOcasaPanel({ liqId, api, refreshKey = 0 }: Props) {
     }
   }, [api, cargar]);
 
+  const exportarExcel = useCallback(async () => {
+    if (!api.downloadFile) {
+      setError('La función de descarga no está disponible en este contexto');
+      return;
+    }
+    try {
+      const params = new URLSearchParams();
+      if (filtroCategoria !== 'todas') params.set('categoria', filtroCategoria);
+      const qs = params.toString() ? '?' + params.toString() : '';
+      await api.downloadFile(
+        `/liquidaciones/${liqId}/reclamos-ocasa/export-excel${qs}`,
+        `Reclamos_OCASA_liq${liqId}.xlsx`
+      );
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Error exportando Excel');
+    }
+  }, [api, liqId, filtroCategoria]);
+
   if (loading && reclamos.length === 0) {
     return <div className="dashboard-card"><div className="card-body">Cargando reclamos…</div></div>;
   }
@@ -167,9 +186,21 @@ export function ReclamosOcasaPanel({ liqId, api, refreshKey = 0 }: Props) {
     <div className="dashboard-card">
       <header className="card-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <h3 style={{ margin: 0 }}>Reclamos OCASA (subpagos detectados)</h3>
-        <button type="button" className="btn-sm" onClick={() => void cargar()} disabled={loading}>
-          Refrescar
-        </button>
+        <div style={{ display: 'flex', gap: 6 }}>
+          <button
+            type="button"
+            className="btn-sm"
+            onClick={() => void exportarExcel()}
+            disabled={loading || reclamos.length === 0}
+            title="Exportar Excel para presentar a OCASA (resumen + hoja por sucursal)"
+            style={{ background: '#10b981', color: 'white' }}
+          >
+            ↓ Exportar Excel
+          </button>
+          <button type="button" className="btn-sm" onClick={() => void cargar()} disabled={loading}>
+            Refrescar
+          </button>
+        </div>
       </header>
 
       <div className="card-body">
