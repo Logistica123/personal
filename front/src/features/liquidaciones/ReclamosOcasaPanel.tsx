@@ -16,6 +16,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 type MotivoCategoria =
   | 'sin_tarifa_contrato'
   | 'tarifa_capacidad_inferior'
+  | 'tarifa_desactualizada'
   | 'concepto_mal_clasificado'
   | 'motivo_mal_etiquetado'
   | 'material_mal_clasificado'
@@ -97,6 +98,7 @@ const colorMotivo = (c: MotivoCategoria | null): { bg: string; fg: string; label
   switch (c) {
     case 'sin_tarifa_contrato':       return { bg: '#fee2e2', fg: '#991b1b', label: 'Sin tarifa' };
     case 'tarifa_capacidad_inferior': return { bg: '#fde68a', fg: '#92400e', label: 'Cap. inferior' };
+    case 'tarifa_desactualizada':     return { bg: '#fecaca', fg: '#7f1d1d', label: 'Tarifa vieja' };
     case 'concepto_mal_clasificado':  return { bg: '#fed7aa', fg: '#9a3412', label: 'Concepto' };
     case 'motivo_mal_etiquetado':     return { bg: '#fbcfe8', fg: '#9d174d', label: 'Motivo' };
     case 'material_mal_clasificado':  return { bg: '#ddd6fe', fg: '#5b21b6', label: 'Material' };

@@ -344,6 +344,7 @@ class LiqReclamosOcasaExportService
         return match ($c) {
             'sin_tarifa_contrato'       => 'Sin tarifa contrato',
             'tarifa_capacidad_inferior' => 'Capacidad inferior',
+            'tarifa_desactualizada'     => 'Tarifa anterior (factor sistemático)',
             'concepto_mal_clasificado'  => 'Concepto mal clasificado',
             'motivo_mal_etiquetado'     => 'Motivo mal etiquetado',
             'material_mal_clasificado'  => 'Material mal clasificado',

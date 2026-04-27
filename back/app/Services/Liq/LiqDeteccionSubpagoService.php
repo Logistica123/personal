@@ -370,8 +370,31 @@ class LiqDeteccionSubpagoService
     ): array {
         $diffPct = $esperado > 0 ? abs($diferencia) / $esperado : 0;
 
-        // 1. Bajo tolerancia (no es bug, ajuste menor)
+        // 1. Bajo tolerancia: distinguir factor sistemático (tarifa_desactualizada)
+        //    vs ajuste/redondeo aislado (bajo_tolerancia).
         if ($diffPct < 0.05) {
+            // Si hay >=3 ops del mismo cliente+sucursal+capacidad+concepto con diferencia
+            // proporcional consistente (≥1.5% pero <5%), es OCASA aplicando tarifa anterior.
+            $sucursalNorm = $this->normalizarSucursal((string) ($op->sucursal_tarifa ?? ''));
+            $opsSistematicas = LiqOperacion::query()
+                ->where('liquidacion_cliente_id', $op->liquidacion_cliente_id)
+                ->where('sucursal_tarifa', $op->sucursal_tarifa)
+                ->where('capacidad_vehiculo_kg', $op->capacidad_vehiculo_kg)
+                ->where('costo_fijo', $pagado)  // mismo importe pagado por OCASA
+                ->where('excluida', false)
+                ->count();
+            if ($diffPct >= 0.015 && $opsSistematicas >= 3) {
+                $factor = $esperado > 0 ? $pagado / $esperado : 0;
+                return [
+                    'categoria'   => 'tarifa_desactualizada',
+                    'descripcion' => sprintf(
+                        'OCASA aplicó tarifa anterior (factor sistemático %.4f). %d ops con mismo importe %s vs nuevo contractual %s · diff/op=%s',
+                        $factor, $opsSistematicas,
+                        number_format($pagado, 2), number_format($esperado, 2),
+                        number_format(abs($diferencia), 2)
+                    ),
+                ];
+            }
             return [
                 'categoria'   => 'bajo_tolerancia',
                 'descripcion' => sprintf(
