@@ -126,9 +126,13 @@ class LiqDistribuidorPdfService
         // SPEC v3 · agregador de resumen mensual de paradas (rama D productividad).
         // Se acumula cruzando todas las ops para mostrarlo al pie del PDF.
         $resumenMensual = [];  // key: "material|zona|estado" → [paradas, importe]
+        // SET global de paradas únicas del mes para el TOTAL del Nivel 4.
+        // Necesario porque sumar las paradas por fila duplica las paradas multi-material
+        // (una parada con 2 materiales aparece en 2 filas; el SET las cuenta una sola vez).
+        $totalMesParadasSet = [];
 
         $ops = $operaciones
-            ->map(function (LiqOperacion $op) use (&$resumenMensual) {
+            ->map(function (LiqOperacion $op) use (&$resumenMensual, &$totalMesParadasSet) {
                 $raw = is_array($op->campos_originales) ? $op->campos_originales : [];
                 $fecha = $this->pick($raw, ['Fecha Planif/', 'FechaPlanif', 'fecha_planif', 'Fecha', 'fecha']);
                 $importe = $op->valor_tarifa_distribuidor !== null ? (float) $op->valor_tarifa_distribuidor : null;
@@ -197,6 +201,10 @@ class LiqDistribuidorPdfService
                             $resumenMensual[$key]['paradas_unicas'][$op->id . '|' . $paradaNum] = true;
                             $resumenMensual[$key]['bultos']         += $bultos;
                             $resumenMensual[$key]['costo_orig_sum'] += $costoOrig;
+
+                            // SET global del mes (ignora material/zona/estado para no duplicar
+                            // paradas multi-material cuando se totaliza el Nivel 4).
+                            $totalMesParadasSet[$op->id . '|' . $paradaNum] = true;
                         }
                     }
                 }
@@ -302,6 +310,7 @@ class LiqDistribuidorPdfService
             ],
             'operaciones' => $ops,
             'resumenMensual' => $resumenMensualSorted,  // SPEC v3 · footer productividad
+            'resumenMensualTotalParadas' => count($totalMesParadasSet),  // SET global, evita duplicar multi-material
         ])->render();
 
         return $this->renderDompdf($html, 'landscape');

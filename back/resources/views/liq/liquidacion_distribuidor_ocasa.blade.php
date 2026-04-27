@@ -339,9 +339,10 @@
             @endforeach
             <tr style="background: #F3E8FF; font-weight: 700; color: #6B21A8; border-top: 0.8pt solid #C084FC;">
               <td colspan="3" class="left">TOTAL MES</td>
-              <td class="right">{{ $_totalParadas }}</td>
+              {{-- Paradas: usar SET global del mes para no duplicar paradas multi-material --}}
+              <td class="right">{{ $resumenMensualTotalParadas ?? $_totalParadas }}</td>
               <td class="right">{{ $_totalBultos }}</td>
-              {{-- Usamos liq.subtotal para evitar diff de centavos por suma de filas redondeadas --}}
+              {{-- Cobrás: usar liq.subtotal para que cuadre al centavo con SubTotal Operaciones --}}
               <td class="right">{{ $fmtMoney($liq['subtotal'] ?? $_totalImporte) }}</td>
             </tr>
           </tbody>
