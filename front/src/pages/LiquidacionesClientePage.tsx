@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useLiqApi } from '../features/liquidaciones/api';
 import { TarifasImportPanel, TarifasImportLogList } from '../features/liquidaciones/TarifasImportPanel';
+import { TarifasContratoPanel } from '../features/liquidaciones/TarifasContratoPanel';
 import type {
   LiqCliente,
   LiqEsquemaTarifario,
@@ -21,7 +22,7 @@ type Props = {
   formatDateOnly?: (s: string) => string;
 };
 
-type Tab = 'clientes' | 'esquema' | 'mapeos' | 'gastos' | 'historial';
+type Tab = 'clientes' | 'esquema' | 'mapeos' | 'gastos' | 'tarifas_contrato' | 'historial';
 type BaseClienteOption = { id: number; codigo?: string | null; nombre?: string | null; documento_fiscal?: string | null };
 const SUPPORTED_EXTRA_UPLOAD_TYPES = ['TARIFARIO', 'BASE_DISTRIB', 'VARIABLES'] as const;
 const SUPPORTED_DISTRIBUTOR_MATCHING = ['patente', 'cuil', 'legajo', 'nombre_exacto', 'nombre_fuzzy'] as const;
@@ -1045,7 +1046,7 @@ export function LiquidacionesClientePage({
 
       {/* Tab bar */}
       <div className="liq-tabbar" role="tablist" aria-label="Configuración de liquidaciones" style={{ marginBottom: 16 }}>
-        {(['clientes', 'esquema', 'mapeos', 'gastos', 'historial'] as Tab[]).map((t) => (
+        {(['clientes', 'esquema', 'mapeos', 'gastos', 'tarifas_contrato', 'historial'] as Tab[]).map((t) => (
           <button
             key={t}
             type="button"
@@ -1054,7 +1055,7 @@ export function LiquidacionesClientePage({
             aria-selected={activeTab === t}
             className={`tab-btn${activeTab === t ? ' is-active' : ''}`}
           >
-            {{ clientes: 'Clientes', esquema: 'Esquema Tarifario', mapeos: 'Mapeos', gastos: 'Gastos', historial: 'Historial Tarifa' }[t]}
+            {{ clientes: 'Clientes', esquema: 'Esquema Tarifario', mapeos: 'Mapeos', gastos: 'Gastos', tarifas_contrato: 'Tarifas Contrato', historial: 'Historial Tarifa' }[t]}
           </button>
         ))}
       </div>
@@ -2126,6 +2127,15 @@ export function LiquidacionesClientePage({
           )}
         </div>
       )}
+      {/* Tab: Tarifas Contrato Cliente — SPEC v4.4 */}
+      {activeTab === 'tarifas_contrato' && (
+        <div className="dashboard-card">
+          <div className="card-body">
+            <TarifasContratoPanel api={api} />
+          </div>
+        </div>
+      )}
+
       {/* Tab: Historial Tarifa */}
       {activeTab === 'historial' && (
         <div className="dashboard-card">
