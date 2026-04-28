@@ -347,6 +347,10 @@ class LiqTarifaController extends Controller
             'tarifa_bulto_distrib' => 'nullable|numeric|min:0',
             'costo_fijo_base' => 'nullable|numeric|min:0',
             'capacidad_vehiculo_kg' => 'nullable|integer|min:0',
+            // SPEC v4 — overrides distribuidor/patente
+            'factor_km' => 'nullable|numeric|min:0|max:5',
+            'distribuidor_nombre' => 'nullable|string|max:120',
+            'patente_match' => 'nullable|string|max:20',
             'vigencia_desde' => 'nullable|date',
             'vigencia_hasta' => 'nullable|date|after_or_equal:vigencia_desde',
             'motivo' => 'required|string|min:5',
@@ -378,12 +382,16 @@ class LiqTarifaController extends Controller
         if (isset($data['vigencia_desde'])) $updateData['vigencia_desde'] = $data['vigencia_desde'];
         if (isset($data['vigencia_hasta'])) $updateData['vigencia_hasta'] = $data['vigencia_hasta'];
 
-        // Campos OCASA opcionales
-        $ocasaFields = ['modelo_tarifa', 'costo_fijo_base', 'tarifa_km_original', 'tarifa_km_distribuidor',
-            'umbral_km', 'modo_productividad', 'tarifa_parada_distrib', 'tarifa_bulto_distrib', 'capacidad_vehiculo_kg'];
+        // Campos OCASA opcionales + SPEC v4 overrides distribuidor/patente
+        $ocasaFields = [
+            'modelo_tarifa', 'costo_fijo_base', 'tarifa_km_original', 'tarifa_km_distribuidor',
+            'umbral_km', 'modo_productividad', 'tarifa_parada_distrib', 'tarifa_bulto_distrib',
+            'capacidad_vehiculo_kg', 'factor_km', 'distribuidor_nombre', 'patente_match',
+        ];
         foreach ($ocasaFields as $field) {
-            if (array_key_exists($field, $data) && $data[$field] !== null) {
-                $updateData[$field] = $data[$field];
+            // Permitir setear a null/string vacío explícitamente para limpiar override
+            if (array_key_exists($field, $data)) {
+                $updateData[$field] = $data[$field] === '' ? null : $data[$field];
             }
         }
 
@@ -414,6 +422,51 @@ class LiqTarifaController extends Controller
                 ? 'Línea actualizada. Volvió a borrador y requiere aprobación.'
                 : 'Línea actualizada.',
         ]);
+    }
+
+    /**
+     * SPEC v4 · GET /liq/lineas/{id}/historial
+     * Devuelve la cronología de cambios de una línea con campos modificados,
+     * motivo, usuario y snapshots para preservar auditoría.
+     */
+    public function historialLinea(LiqLineaTarifa $lineaTarifa): JsonResponse
+    {
+        $historial = LiqAuditoriaTarifa::query()
+            ->where('linea_tarifa_id', $lineaTarifa->id)
+            ->orderByDesc('created_at')
+            ->limit(100)
+            ->get();
+
+        // Por cada entrada, calcular qué campos cambiaron entre antes y después
+        $cronologia = $historial->map(function ($h) {
+            $antes = is_array($h->valores_anteriores) ? $h->valores_anteriores : [];
+            $despues = is_array($h->valores_nuevos) ? $h->valores_nuevos : [];
+            $camposModificados = [];
+            foreach ($despues as $key => $val) {
+                $valAntes = $antes[$key] ?? null;
+                if ((string) $valAntes !== (string) $val) {
+                    $camposModificados[$key] = ['antes' => $valAntes, 'despues' => $val];
+                }
+            }
+            // Resolver nombre/email del usuario
+            $userInfo = null;
+            if ($h->usuario_id) {
+                $u = \DB::table('users')->where('id', $h->usuario_id)->select('id', 'name', 'email')->first();
+                if ($u) $userInfo = ['id' => $u->id, 'name' => $u->name ?? $u->email, 'email' => $u->email];
+            }
+            return [
+                'id'          => $h->id,
+                'accion'      => $h->accion,
+                'motivo'      => $h->motivo,
+                'usuario'     => $userInfo,
+                'created_at'  => $h->created_at,
+                'campos_modificados' => $camposModificados,
+                'valores_anteriores' => $antes,
+                'valores_nuevos'     => $despues,
+            ];
+        });
+
+        return response()->json(['data' => $cronologia]);
     }
 
     // POST /liq/esquemas/{esquema}/importar-excel - importar líneas/dimensiones desde un Excel (asistido)

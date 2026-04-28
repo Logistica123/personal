@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { useLiqApi } from '../features/liquidaciones/api';
 import { TarifasImportPanel, TarifasImportLogList } from '../features/liquidaciones/TarifasImportPanel';
 import { TarifasContratoPanel } from '../features/liquidaciones/TarifasContratoPanel';
+import { LineaTarifaEditModal } from '../features/liquidaciones/LineaTarifaEditModal';
 import type {
   LiqCliente,
   LiqEsquemaTarifario,
@@ -121,6 +122,9 @@ export function LiquidacionesClientePage({
   const [newLineaTarifaBulto, setNewLineaTarifaBulto] = useState('');
   const [newLineaUmbralKm, setNewLineaUmbralKm] = useState('240');
   const [newLineaCapacidadKg, setNewLineaCapacidadKg] = useState('');
+
+  // Edit línea modal
+  const [editingLineaId, setEditingLineaId] = useState<number | null>(null);
 
   // OCASA detection
   const isOcasaClient = useMemo(() => {
@@ -1745,9 +1749,13 @@ export function LiquidacionesClientePage({
                           <tbody>
                             {lineas.map((l) => (
                               <tr key={l.id} style={{ opacity: l.activo ? 1 : 0.5 }}>
-                                {selectedEsquema.dimensiones.map((d) => (
-                                  <td key={d}>{l.dimensiones_valores[d] ?? '—'}</td>
-                                ))}
+                                {selectedEsquema.dimensiones.map((d) => {
+                                  let val: string | number | null | undefined = l.dimensiones_valores[d];
+                                  if ((val == null || val === '') && d.toLowerCase().startsWith('capac') && l.capacidad_vehiculo_kg != null) {
+                                    val = l.capacidad_vehiculo_kg;
+                                  }
+                                  return <td key={d}>{val != null && val !== '' ? val : '—'}</td>;
+                                })}
                                 <td>{fmt(parseFloat(l.precio_original))}</td>
                                 <td>{l.porcentaje_agencia}%</td>
                                 <td>{fmt(parseFloat(l.precio_distribuidor))}</td>
@@ -1774,7 +1782,10 @@ export function LiquidacionesClientePage({
                                     <span style={{ color: '#9ca3af' }}>0</span>
                                   )}
                                 </td>
-                                <td style={{ display: 'flex', gap: 4 }}>
+                                <td style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                                  {l.activo && (
+                                    <button type="button" className="btn-sm" onClick={() => setEditingLineaId(l.id)}>Editar</button>
+                                  )}
                                   {l.activo && !l.aprobado_por && (
                                     <button type="button" className="btn-sm btn-primary" onClick={() => aprobarLinea(l.id)}>Aprobar</button>
                                   )}
@@ -1790,6 +1801,29 @@ export function LiquidacionesClientePage({
                       </div>
                     </div>
                   </div>
+
+                  {editingLineaId != null && (() => {
+                    const l = lineas.find((x) => x.id === editingLineaId);
+                    if (!l) return null;
+                    return (
+                      <LineaTarifaEditModal
+                        api={api}
+                        linea={l}
+                        dimensiones={selectedEsquema.dimensiones}
+                        isOcasa={isOcasaClient}
+                        formatDate={fmtDate}
+                        onClose={() => setEditingLineaId(null)}
+                        onSaved={async () => {
+                          setEditingLineaId(null);
+                          if (selectedEsquema) {
+                            const res = await api.get(`/esquemas/${selectedEsquema.id}/lineas`);
+                            setLineas(res.data ?? []);
+                          }
+                          showSuccess('Línea actualizada');
+                        }}
+                      />
+                    );
+                  })()}
 
                   {/* Tarifa por patente (override) */}
                   <div className="dashboard-card">

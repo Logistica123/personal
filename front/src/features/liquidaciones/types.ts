@@ -62,6 +62,10 @@ export type LiqLineaTarifa = {
   tarifa_parada_distrib?: string | null;
   tarifa_bulto_distrib?: string | null;
   capacidad_vehiculo_kg?: number | null;
+  // Override fields (manual)
+  factor_km?: string | null;
+  distribuidor_nombre?: string | null;
+  patente_match?: string | null;
 };
 
 export type LiqTarifaPatente = {
