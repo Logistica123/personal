@@ -423,6 +423,7 @@ export function LiquidacionesEstadoCuentaPage({
                   <th>Q</th>
                   <th>Tipo</th>
                   <th style={{ textAlign: 'right' }}>Neto Gravado</th>
+                  <th style={{ textAlign: 'right' }}>No Gravado</th>
                   <th style={{ textAlign: 'right' }}>IVA</th>
                   <th style={{ textAlign: 'right' }}>Imp. a Cobrar</th>
                   <th>N Factura</th>
@@ -456,6 +457,7 @@ export function LiquidacionesEstadoCuentaPage({
                     <td>{row.quincena}</td>
                     <td><span className="tag">{row.tipo_comprobante}</span></td>
                     <td style={{ textAlign: 'right' }}>{fmtCurrency(num(row.neto_gravado), formatCurrencyProp)}</td>
+                    <td style={{ textAlign: 'right' }}>{num(row.no_gravado) > 0 ? fmtCurrency(num(row.no_gravado), formatCurrencyProp) : '—'}</td>
                     <td style={{ textAlign: 'right' }}>{fmtCurrency(num(row.iva), formatCurrencyProp)}</td>
                     <td style={{ textAlign: 'right', fontWeight: 600 }}>{fmtCurrency(num(row.importe_a_cobrar), formatCurrencyProp)}</td>
                     <td style={{ fontFamily: 'monospace', fontSize: 12 }}>{row.numero_factura ?? ''}</td>

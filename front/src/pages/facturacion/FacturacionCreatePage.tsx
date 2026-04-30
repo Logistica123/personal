@@ -434,11 +434,26 @@ export const createFacturacionCreatePage = (ctx: FacturacionPageContext) => {
         return;
       }
 
-      const neto = detallePdf.reduce((acc, row) => acc + parseNumberOrZero(row.subtotal), 0);
-      const totalDetalle = detallePdf.reduce((acc, row) => acc + parseNumberOrZero(row.subtotal_con_iva), 0);
-      const iva = Math.max(0, totalDetalle - neto);
+      // Items con alícuota IVA > 0 = gravados → suman a imp_neto
+      // Items con alícuota IVA <= 0 = no gravados → suman a imp_tot_conc (cabecera ARCA)
+      let neto = 0;
+      let noGravado = 0;
+      let totalDetalle = 0;
+      for (const row of detallePdf) {
+        const subtotal = parseNumberOrZero(row.subtotal);
+        const subtotalConIva = parseNumberOrZero(row.subtotal_con_iva);
+        const alic = parseNumberOrZero(row.alicuota_iva_pct);
+        totalDetalle += subtotalConIva;
+        if (alic > 0) {
+          neto += subtotal;
+        } else {
+          noGravado += subtotal;
+        }
+      }
+      const iva = Math.max(0, totalDetalle - neto - noGravado);
 
       const nextNeto = neto.toFixed(2);
+      const nextNoGravado = noGravado.toFixed(2);
       const nextIva = iva.toFixed(2);
 
       // Para evitar inconsistencias con el validador, asumimos que el detalle PDF representa
@@ -449,8 +464,8 @@ export const createFacturacionCreatePage = (ctx: FacturacionPageContext) => {
       setForm((prev) => {
         const next = { ...prev };
         let changed = false;
-        if (next.imp_tot_conc !== '0.00') {
-          next.imp_tot_conc = '0.00';
+        if (next.imp_tot_conc !== nextNoGravado) {
+          next.imp_tot_conc = nextNoGravado;
           changed = true;
         }
         if (next.imp_op_ex !== '0.00') {

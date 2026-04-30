@@ -193,7 +193,16 @@ class LiqEstadoCuentaController extends Controller
             return response()->json(['message' => 'Cliente no encontrado en DistriApp.'], 422);
         }
 
-        $sucursal = Sucursal::where('cliente_id', $cliente->id)->first();
+        // BUGFIX: usar la sucursal cuyo nombre coincida con el Estado de Cuenta;
+        //   si no hay match (cliente DistriApp sin esa sucursal), fallback a la primera.
+        //   Antes siempre tomaba la primera → mostraba "Mendoza" en facturas de Posadas.
+        $sucursal = Sucursal::where('cliente_id', $cliente->id)
+            ->where('nombre', $estadoCuenta->sucursal)
+            ->first()
+            ?? Sucursal::where('cliente_id', $cliente->id)
+                ->whereRaw('LOWER(nombre) = ?', [mb_strtolower($estadoCuenta->sucursal)])
+                ->first()
+            ?? Sucursal::where('cliente_id', $cliente->id)->first();
 
         // Resolver fechas del periodo
         [$periodoDesde, $periodoHasta] = $this->parsePeriodo($estadoCuenta->periodo, $estadoCuenta->quincena);
@@ -210,6 +219,8 @@ class LiqEstadoCuentaController extends Controller
         $total = (float) $estadoCuenta->importe_a_cobrar;
 
         $jurisdiccionNombre = LiqJurisdiccionSucursal::nombreJurisdiccion((int) $estadoCuenta->jurisdiccion_id) ?? '';
+        $descripcionGravado = "Servicio de transporte y logística - {$estadoCuenta->sucursal} - {$estadoCuenta->periodo}";
+        $descripcionNoGravado = "Peajes y gastos reembolsables - {$estadoCuenta->sucursal} - {$estadoCuenta->periodo}";
         $descripcion = "IIBB {$estadoCuenta->jurisdiccion_id} - {$estadoCuenta->sucursal} - {$estadoCuenta->periodo}";
 
         $emisor = \App\Models\ArcaEmisor::where('activo', true)->first();
@@ -218,6 +229,36 @@ class LiqEstadoCuentaController extends Controller
         }
 
         $ptoVta = config('services.arca.pto_venta_default', 11);
+
+        // BUGFIX OCASA gravado/no gravado:
+        //   - detalle_pdf con 2 items cuando noGravado > 0 (item gravado 21% + item no gravado 0%)
+        //   - bloque `iva` solo lleva alícuotas > 0 (ARCA WSFE rechaza filas con importe=0;
+        //     el no_gravado se transmite por imp_tot_conc en la cabecera)
+        $detallePdf = [[
+            'orden'            => 1,
+            'descripcion'      => $noGravado > 0 ? $descripcionGravado : $descripcion,
+            'cantidad'         => 1,
+            'unidad_medida'    => 'unidades',
+            'precio_unitario'  => $netoGravado,
+            'bonificacion_pct' => 0,
+            'subtotal'         => $netoGravado,
+            'alicuota_iva_pct' => 21,
+            'subtotal_con_iva' => round($netoGravado + $iva, 2),
+        ]];
+
+        if ($noGravado > 0) {
+            $detallePdf[] = [
+                'orden'            => 2,
+                'descripcion'      => $descripcionNoGravado,
+                'cantidad'         => 1,
+                'unidad_medida'    => 'unidades',
+                'precio_unitario'  => $noGravado,
+                'bonificacion_pct' => 0,
+                'subtotal'         => $noGravado,
+                'alicuota_iva_pct' => 0,
+                'subtotal_con_iva' => $noGravado,
+            ];
+        }
 
         $payload = [
             'emisor_id'         => $emisor->id,
@@ -248,19 +289,7 @@ class LiqEstadoCuentaController extends Controller
             'periodo_facturado' => $periodoFacturado,
             'fecha_aprox_cobro' => now()->addDays(30)->format('Y-m-d'),
             'observaciones_cobranza' => $descripcion,
-            'detalle_pdf'       => [
-                [
-                    'orden'            => 1,
-                    'descripcion'      => $descripcion,
-                    'cantidad'         => 1,
-                    'unidad_medida'    => 'unidades',
-                    'precio_unitario'  => $netoGravado,
-                    'bonificacion_pct' => 0,
-                    'subtotal'         => $netoGravado,
-                    'alicuota_iva_pct' => 21,
-                    'subtotal_con_iva' => round($netoGravado + $iva, 2),
-                ],
-            ],
+            'detalle_pdf'       => $detallePdf,
             'iva' => [
                 [
                     'iva_id'   => 5,
