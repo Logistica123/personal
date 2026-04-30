@@ -219,8 +219,19 @@ class LiqEstadoCuentaController extends Controller
         $total = (float) $estadoCuenta->importe_a_cobrar;
 
         $jurisdiccionNombre = LiqJurisdiccionSucursal::nombreJurisdiccion((int) $estadoCuenta->jurisdiccion_id) ?? '';
-        $descripcionGravado = "Servicio de transporte y logística - {$estadoCuenta->sucursal} - {$estadoCuenta->periodo}";
-        $descripcionNoGravado = "Peajes y gastos reembolsables - {$estadoCuenta->sucursal} - {$estadoCuenta->periodo}";
+
+        // Formato OCASA: "Por servicios prestados en {Mes} {Año} {Sucursal} . Acreedor 102008890.-"
+        // (ID SAP del cliente OCASA en sus PDFs originales = 102008890)
+        $mesesEs = [
+            1 => 'Enero', 2 => 'Febrero', 3 => 'Marzo', 4 => 'Abril',
+            5 => 'Mayo', 6 => 'Junio', 7 => 'Julio', 8 => 'Agosto',
+            9 => 'Septiembre', 10 => 'Octubre', 11 => 'Noviembre', 12 => 'Diciembre',
+        ];
+        $mesNombre = $mesesEs[(int) $mes] ?? $mes;
+        $descripcionGravado = "Por servicios prestados en {$mesNombre} {$anio} {$estadoCuenta->sucursal} . Acreedor 102008890.-";
+        $descripcionNoGravado = 'Imp no gravado';
+        // Mantengo $descripcion (IIBB ...) para `observaciones_cobranza` en cabecera ARCA;
+        // el detalle_pdf usa siempre el formato nuevo OCASA.
         $descripcion = "IIBB {$estadoCuenta->jurisdiccion_id} - {$estadoCuenta->sucursal} - {$estadoCuenta->periodo}";
 
         $emisor = \App\Models\ArcaEmisor::where('activo', true)->first();
@@ -236,9 +247,9 @@ class LiqEstadoCuentaController extends Controller
         //     el no_gravado se transmite por imp_tot_conc en la cabecera)
         $detallePdf = [[
             'orden'            => 1,
-            'descripcion'      => $noGravado > 0 ? $descripcionGravado : $descripcion,
+            'descripcion'      => $descripcionGravado,
             'cantidad'         => 1,
-            'unidad_medida'    => 'unidades',
+            'unidad_medida'    => 'Otras unidades',
             'precio_unitario'  => $netoGravado,
             'bonificacion_pct' => 0,
             'subtotal'         => $netoGravado,
@@ -251,7 +262,7 @@ class LiqEstadoCuentaController extends Controller
                 'orden'            => 2,
                 'descripcion'      => $descripcionNoGravado,
                 'cantidad'         => 1,
-                'unidad_medida'    => 'unidades',
+                'unidad_medida'    => 'Otras unidades',
                 'precio_unitario'  => $noGravado,
                 'bonificacion_pct' => 0,
                 'subtotal'         => $noGravado,
