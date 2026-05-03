@@ -26,10 +26,14 @@ class LiqDistribuidorDocumentoController extends Controller
             return response()->json(['message' => 'No tenés permisos para generar documentos de liquidación.'], 403);
         }
 
+        // BUGFIX: incluir cuil + sucursal_id + relación sucursal para que el render del PDF
+        // tenga acceso a esos campos. Sin esto, loadMissing posterior en LiqDistribuidorPdfService
+        // no recarga (la relación ya está cargada parcial) → CUIT y SUCURSAL salen "-".
         $liquidacionDistribuidor->loadMissing([
-            'distribuidor:id,apellidos,nombres,email,patente',
+            'distribuidor:id,apellidos,nombres,cuil,email,telefono,patente,sucursal_id',
+            'distribuidor.sucursal:id,codigo_corto,nombre',
             'liquidacionCliente:id,cliente_id,periodo_desde,periodo_hasta',
-            'liquidacionCliente.cliente:id,nombre_corto,razon_social',
+            'liquidacionCliente.cliente:id,nombre_corto,razon_social,cuit',
         ]);
 
         $personaId = (int) $liquidacionDistribuidor->distribuidor_id;
