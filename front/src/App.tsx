@@ -2517,10 +2517,14 @@ const DashboardLayout: React.FC<{
   const location = useLocation();
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [personalSubmenuOpen, setPersonalSubmenuOpen] = useState(false);
+  const [polizasSubmenuOpen, setPolizasSubmenuOpen] = useState(false);
   const [reclamosSubmenuOpen, setReclamosSubmenuOpen] = useState(false);
   const [liquidacionesSubmenuOpen, setLiquidacionesSubmenuOpen] = useState(false);
   const [facturacionSubmenuOpen, setFacturacionSubmenuOpen] = useState(false);
   const isPersonalListRoute = location.pathname === '/personal';
+  const isPolizasRoute = location.pathname.startsWith('/polizas');
+  const isPolizasListRoute = location.pathname === '/polizas';
+  const isPolizasSolicitudesRoute = location.pathname.startsWith('/polizas/solicitudes');
   const isReclamosRoute = location.pathname.startsWith('/reclamos');
   const isReclamosListRoute = location.pathname === '/reclamos';
   const isReclamosNuevoRoute = location.pathname === '/reclamos/nuevo';
@@ -2600,6 +2604,11 @@ const DashboardLayout: React.FC<{
       setPersonalSubmenuOpen(false);
     }
   }, [location.pathname]);
+  useEffect(() => {
+    if (!isPolizasRoute) {
+      setPolizasSubmenuOpen(false);
+    }
+  }, [isPolizasRoute]);
   useEffect(() => {
     if (!isReclamosRoute) {
       setReclamosSubmenuOpen(false);
@@ -3678,6 +3687,40 @@ const DashboardLayout: React.FC<{
                       {item.label}
                     </button>
                   ))}
+                </div>
+              ) : null}
+            </>
+          ) : null}
+          {canAccessSection(userRole, 'personal', authUser?.permissions) ? (
+            <>
+              <button
+                type="button"
+                className={`sidebar-link has-submenu${isPolizasRoute ? ' is-active' : ''}${
+                  polizasSubmenuOpen ? ' is-submenu-open' : ''
+                }`}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  setPolizasSubmenuOpen((prev) => !prev);
+                }}
+              >
+                Pólizas
+              </button>
+              {polizasSubmenuOpen ? (
+                <div className="sidebar-submenu">
+                  <button
+                    type="button"
+                    className={`sidebar-sublink${isPolizasListRoute ? ' is-active' : ''}`}
+                    onClick={() => navigate('/polizas')}
+                  >
+                    Listado
+                  </button>
+                  <button
+                    type="button"
+                    className={`sidebar-sublink${isPolizasSolicitudesRoute ? ' is-active' : ''}`}
+                    onClick={() => navigate('/polizas/solicitudes')}
+                  >
+                    Bandeja de solicitudes
+                  </button>
                 </div>
               ) : null}
             </>
