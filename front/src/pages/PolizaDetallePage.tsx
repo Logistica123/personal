@@ -27,7 +27,8 @@ const FORMATTER_FECHA = new Intl.DateTimeFormat('es-AR', {
 
 function fmtDate(s: string | null | undefined): string {
   if (!s) return '—';
-  return FORMATTER_FECHA.format(new Date(s + 'T00:00:00'));
+  // Tolera 'YYYY-MM-DD' o 'YYYY-MM-DDTHH:mm:ssZ' (Laravel cast date en prod).
+  return FORMATTER_FECHA.format(new Date(s.slice(0, 10) + 'T00:00:00'));
 }
 
 function fmtMoney(s: string | null | undefined): string {

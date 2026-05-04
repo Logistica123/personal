@@ -43,7 +43,8 @@ const ESTADO_BADGE: Record<string, string> = {
   no_matcheado: 'estado-badge--default',
 };
 
-const fmtDate = (s: string): string => new Date(s + 'T00:00:00').toLocaleDateString('es-AR');
+// Tolera 'YYYY-MM-DD' o 'YYYY-MM-DDTHH:mm:ssZ' (Laravel cast date en prod).
+const fmtDate = (s: string): string => new Date(s.slice(0, 10) + 'T00:00:00').toLocaleDateString('es-AR');
 
 export const PersonaPolizasPage: React.FC<Props> = ({ DashboardLayout, resolveApiBaseUrl }) => {
   const { personaId } = useParams<{ personaId: string }>();

@@ -20,10 +20,15 @@ const FORMATTER_FECHA = new Intl.DateTimeFormat('es-AR', {
   year: 'numeric',
 });
 
+function parseFecha(s: string): Date {
+  // Tolera 'YYYY-MM-DD' (cast date local) o 'YYYY-MM-DDTHH:mm:ssZ' (cast date Laravel prod).
+  return new Date(s.slice(0, 10) + 'T00:00:00');
+}
+
 function diasHastaVencimiento(vigenciaHasta: string): number {
   const hoy = new Date();
   hoy.setHours(0, 0, 0, 0);
-  const fin = new Date(vigenciaHasta + 'T00:00:00');
+  const fin = parseFecha(vigenciaHasta);
   return Math.round((fin.getTime() - hoy.getTime()) / (1000 * 60 * 60 * 24));
 }
 
@@ -114,9 +119,9 @@ export const PolizasPage: React.FC<Props> = ({ DashboardLayout, resolveApiBaseUr
                 <div>
                   <div style={{ color: '#888', fontSize: '0.7rem' }}>Vigencia</div>
                   <div>
-                    {FORMATTER_FECHA.format(new Date(p.vigencia_desde + 'T00:00:00'))}
+                    {FORMATTER_FECHA.format(parseFecha(p.vigencia_desde))}
                     {' → '}
-                    {FORMATTER_FECHA.format(new Date(p.vigencia_hasta + 'T00:00:00'))}
+                    {FORMATTER_FECHA.format(parseFecha(p.vigencia_hasta))}
                   </div>
                 </div>
                 <div>
