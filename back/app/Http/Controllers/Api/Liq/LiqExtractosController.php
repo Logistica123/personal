@@ -1105,6 +1105,72 @@ class LiqExtractosController extends Controller
         }
     }
 
+    // POST /liq/liquidaciones/{id}/procesar-cadena
+    // SPEC v5: orquesta el pipeline post-upload en un solo click:
+    //   1. Motor de cálculo OCASA (modelo + modo_pago + tarifa_*)
+    //   2. Eficiencia por operación (paradas YCC) + agregada por distribuidor
+    //   3. Estado de Cuenta cliente regenerado
+    //   4. PDFs distribuidor regenerados
+    // Reemplaza el flujo manual de 3 comandos artisan.
+    public function procesarCadena(Request $request, LiqLiquidacionCliente $liquidacionCliente): JsonResponse
+    {
+        $liquidacionCliente->loadMissing('cliente:id,nombre_corto,razon_social');
+        $cliente = $liquidacionCliente->cliente?->nombre_corto
+            ?? $liquidacionCliente->cliente?->razon_social
+            ?? '';
+        $periodoMes = $liquidacionCliente->periodo_desde?->format('Y-m');
+
+        if (! $cliente || ! $periodoMes) {
+            return response()->json(['error' => 'Cliente o período no resoluble'], 422);
+        }
+
+        $resultados = [];
+        $errores = [];
+
+        // Paso 1 — Motor v4 + eficiencia por op + estado de cuenta
+        try {
+            \Artisan::call('liq:recalcular', [
+                '--cliente' => $cliente,
+                '--periodo' => $periodoMes,
+                '--liq-id' => [$liquidacionCliente->id],
+            ]);
+            $resultados['motor'] = trim(\Artisan::output());
+        } catch (\Throwable $e) {
+            $errores[] = 'motor: ' . $e->getMessage();
+        }
+
+        // Paso 2 — Eficiencia agregada por distribuidor (force para sobrescribir si ya estaba)
+        try {
+            \Artisan::call('liq:recalcular-eficiencia', [
+                '--liq-cliente-id' => (string) $liquidacionCliente->id,
+                '--force' => true,
+            ]);
+            $resultados['eficiencia'] = trim(\Artisan::output());
+        } catch (\Throwable $e) {
+            $errores[] = 'eficiencia: ' . $e->getMessage();
+        }
+
+        // Paso 3 — Regenerar PDFs de cada distribuidor
+        try {
+            \Artisan::call('liq:regenerar-pdfs-distribuidor', [
+                '--liq-cliente-id' => (string) $liquidacionCliente->id,
+            ]);
+            $resultados['pdfs'] = trim(\Artisan::output());
+        } catch (\Throwable $e) {
+            $errores[] = 'pdfs: ' . $e->getMessage();
+        }
+
+        $msg = empty($errores)
+            ? 'Pipeline completo: motor + eficiencia + PDFs distribuidor.'
+            : 'Pipeline parcial. Errores: ' . implode(' | ', $errores);
+
+        return response()->json([
+            'message'     => $msg,
+            'errores'     => $errores ?: null,
+            'detalle'     => $resultados,
+        ], empty($errores) ? 200 : 207);
+    }
+
     // POST /liq/liquidaciones-distribuidor/{id}/recalcular-eficiencia (BUGFIX 24 A5)
     public function recalcularEficiencia(LiqLiquidacionDistribuidor $liquidacionDistribuidor): JsonResponse
     {

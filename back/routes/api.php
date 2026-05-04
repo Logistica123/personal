@@ -347,6 +347,8 @@ Route::middleware('auth.api')->group(function () {
         Route::post('/liquidaciones/{liquidacionCliente}/regenerar-estado-cuenta', [LiqExtractosController::class, 'regenerarEstadoCuenta']);
         // BUGFIX 31 v2: recalcular con motor OCASA nuevo (3 modelos)
         Route::post('/liquidaciones/{liquidacionCliente}/recalcular-motor-ocasa', [LiqExtractosController::class, 'recalcularMotorOcasa']);
+        // SPEC v5: pipeline completo en 1 endpoint (motor + eficiencia + PDFs distribuidor)
+        Route::post('/liquidaciones/{liquidacionCliente}/procesar-cadena', [LiqExtractosController::class, 'procesarCadena']);
         // SPEC Fase B: importador xlsx de tarifas (legacy — crea esquema nuevo)
         Route::post('/tarifas/importar-excel-v5', [LiqExtractosController::class, 'importarExcelV5']);
 

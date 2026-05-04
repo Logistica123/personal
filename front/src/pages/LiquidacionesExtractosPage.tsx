@@ -71,6 +71,7 @@ export function LiquidacionesExtractosPage({
   const [selectedArchivoIds, setSelectedArchivoIds] = useState<Record<number, boolean>>({});
   const [selectedOpIds, setSelectedOpIds] = useState<Record<number, boolean>>({});
   const [pdfGenerating, setPdfGenerating] = useState<Record<number, boolean>>({});
+  const [procesandoCadena, setProcesandoCadena] = useState(false);
   const [hotMapOp, setHotMapOp] = useState<LiqOperacion | null>(null);
   const [hotMapValorTarifa, setHotMapValorTarifa] = useState('');
   const [hotMapDim, setHotMapDim] = useState('concepto');
@@ -1425,6 +1426,29 @@ export function LiquidacionesExtractosPage({
                   } catch (e: unknown) { setError(e instanceof Error ? e.message : 'Error'); }
                 }}>
                   Revincular distribuidores
+                </button>
+                {/* SPEC v5: pipeline completo en 1 click — motor + eficiencia + PDFs distribuidor */}
+                <button
+                  type="button"
+                  className="btn-sm"
+                  style={{ background: '#dcfce7', color: '#166534', border: '1px solid #86efac', fontWeight: 600 }}
+                  disabled={procesandoCadena}
+                  onClick={async () => {
+                    if (!selectedLiq) return;
+                    if (!window.confirm('¿Procesar liquidación completa?\n\nEjecuta en orden:\n1. Motor de cálculo (modelos OCASA por op)\n2. Eficiencia (paradas YCC + agregada por distribuidor)\n3. Estado de Cuenta (regenera filas)\n4. PDFs distribuidor (regenera todos)\n\nIdempotente: re-correr es seguro.')) return;
+                    setProcesandoCadena(true);
+                    try {
+                      const res = await api.post(`/liquidaciones/${selectedLiq.id}/procesar-cadena`, {});
+                      showSuccess(res.message ?? 'Pipeline completado');
+                      await openLiq(selectedLiq);
+                    } catch (e: unknown) {
+                      setError(e instanceof Error ? e.message : 'Error procesando pipeline');
+                    } finally {
+                      setProcesandoCadena(false);
+                    }
+                  }}
+                >
+                  {procesandoCadena ? 'Procesando…' : '⚡ Procesar liquidación'}
                 </button>
                 <button type="button" className="btn-sm" style={{ background: '#fef3c7', color: '#92400e', border: '1px solid #fcd34d' }} onClick={async () => {
                   if (!selectedLiq) return;
