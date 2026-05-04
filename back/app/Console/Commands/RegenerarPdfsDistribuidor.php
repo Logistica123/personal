@@ -58,11 +58,14 @@ class RegenerarPdfsDistribuidor extends Command
 
         if (empty($liqIds)) { $this->warn('No se encontraron liquidaciones cliente'); return 0; }
 
+        // BUGFIX: incluir cuil + sucursal_id + relación sucursal para que el render del PDF
+        // muestre CUIT y SUCURSAL en el header. Sin esto salen "-" aunque la persona los tenga cargados.
         $dists = LiqLiquidacionDistribuidor::whereIn('liquidacion_cliente_id', $liqIds)
             ->with([
-                'distribuidor:id,apellidos,nombres,email,patente',
+                'distribuidor:id,apellidos,nombres,cuil,email,telefono,patente,sucursal_id',
+                'distribuidor.sucursal:id,codigo_corto,nombre',
                 'liquidacionCliente:id,cliente_id,periodo_desde,periodo_hasta',
-                'liquidacionCliente.cliente:id,nombre_corto,razon_social',
+                'liquidacionCliente.cliente:id,nombre_corto,razon_social,cuit',
             ])
             ->whereNotIn('estado', ['anulada'])
             ->get();
