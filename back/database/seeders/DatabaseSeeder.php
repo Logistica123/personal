@@ -20,6 +20,7 @@ class DatabaseSeeder extends Seeder
             ArcaFacturacionSeeder::class,
             LoginterSeeder::class,
             OcaSeeder::class,
+            PolizasSeeder::class,
         ]);
 
         User::query()->updateOrCreate(

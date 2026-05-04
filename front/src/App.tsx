@@ -42,6 +42,13 @@ import { UsuariosPage } from './pages/UsuariosPage';
 import { RrhhPage } from './pages/RrhhPage';
 import { ProveedoresPage } from './pages/ProveedoresPage';
 import { ProveedorEditarPage } from './pages/ProveedorEditarPage';
+import { PolizasPage } from './pages/PolizasPage';
+import { PolizaDetallePage } from './pages/PolizaDetallePage';
+import { PolizaCargarPdfPage } from './pages/PolizaCargarPdfPage';
+import { PolizaSolicitarPage } from './pages/PolizaSolicitarPage';
+import { PolizaSolicitudesPage } from './pages/PolizaSolicitudesPage';
+import { PolizaSolicitudDetallePage } from './pages/PolizaSolicitudDetallePage';
+import { PersonaPolizasPage } from './pages/PersonaPolizasPage';
 import { MembresiaPanelPage } from './pages/MembresiaPanelPage';
 import { ProveedorNuevoPage } from './pages/ProveedorNuevoPage';
 import { WebRtcCallsPage } from './pages/WebRtcCallsPage';
@@ -21001,6 +21008,83 @@ const AppRoutes: React.FC = () => {
               resolveApiBaseUrl={resolveApiBaseUrl}
               useStoredAuthUser={useStoredAuthUser}
               buildActorHeaders={buildActorHeaders}
+            />
+          </RequireAccess>
+        }
+      />
+      <Route
+        path="/polizas"
+        element={
+          <RequireAccess section="personal">
+            <PolizasPage
+              DashboardLayout={DashboardLayout}
+              resolveApiBaseUrl={resolveApiBaseUrl}
+            />
+          </RequireAccess>
+        }
+      />
+      <Route
+        path="/polizas/solicitudes"
+        element={
+          <RequireAccess section="personal">
+            <PolizaSolicitudesPage
+              DashboardLayout={DashboardLayout}
+              resolveApiBaseUrl={resolveApiBaseUrl}
+            />
+          </RequireAccess>
+        }
+      />
+      <Route
+        path="/polizas/solicitudes/:solicitudId"
+        element={
+          <RequireAccess section="personal">
+            <PolizaSolicitudDetallePage
+              DashboardLayout={DashboardLayout}
+              resolveApiBaseUrl={resolveApiBaseUrl}
+            />
+          </RequireAccess>
+        }
+      />
+      <Route
+        path="/polizas/:polizaId"
+        element={
+          <RequireAccess section="personal">
+            <PolizaDetallePage
+              DashboardLayout={DashboardLayout}
+              resolveApiBaseUrl={resolveApiBaseUrl}
+            />
+          </RequireAccess>
+        }
+      />
+      <Route
+        path="/polizas/:polizaId/solicitar"
+        element={
+          <RequireAccess section="personal">
+            <PolizaSolicitarPage
+              DashboardLayout={DashboardLayout}
+              resolveApiBaseUrl={resolveApiBaseUrl}
+            />
+          </RequireAccess>
+        }
+      />
+      <Route
+        path="/personal/:personaId/polizas"
+        element={
+          <RequireAccess section="personal">
+            <PersonaPolizasPage
+              DashboardLayout={DashboardLayout}
+              resolveApiBaseUrl={resolveApiBaseUrl}
+            />
+          </RequireAccess>
+        }
+      />
+      <Route
+        path="/polizas/:polizaId/cargar-pdf"
+        element={
+          <RequireAccess section="personal">
+            <PolizaCargarPdfPage
+              DashboardLayout={DashboardLayout}
+              resolveApiBaseUrl={resolveApiBaseUrl}
             />
           </RequireAccess>
         }

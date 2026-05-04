@@ -15,6 +15,8 @@ use App\Http\Controllers\Api\LiquidacionReciboController;
 use App\Http\Controllers\Api\UnidadController;
 use App\Http\Controllers\Api\UserController;
 use App\Http\Controllers\Api\PersonalController;
+use App\Http\Controllers\Api\PolizasController;
+use App\Http\Controllers\Api\PolizaSolicitudController;
 use App\Http\Controllers\Api\ReclamoController;
 use App\Http\Controllers\Api\NotificationController;
 use App\Http\Controllers\Api\PersonalDocumentController;
@@ -53,6 +55,23 @@ Route::post('/twofactor/setup', [AuthController::class, 'setupTotp']);
 Route::post('/twofactor/enable', [AuthController::class, 'enableTotp']);
 
 Route::middleware('auth.api')->group(function () {
+    // ----- Pólizas -----
+    Route::get('/polizas',                                 [PolizasController::class, 'index']);
+    Route::get('/polizas/{poliza}',                        [PolizasController::class, 'show']);
+    Route::get('/polizas/{poliza}/discrepancias',          [PolizasController::class, 'discrepancias']);
+    Route::get('/polizas/{poliza}/asegurados',             [PolizasController::class, 'asegurados']);
+    Route::post('/polizas/{poliza}/cargar-pdf',            [PolizasController::class, 'cargarPdf']);
+    Route::post('/polizas/{poliza}/confirmar-carga',       [PolizasController::class, 'confirmarCarga']);
+    // Solicitudes (alta / baja)
+    Route::post('/polizas/{poliza}/solicitudes',            [PolizaSolicitudController::class, 'store']);
+    Route::get ('/polizas/solicitudes',                     [PolizaSolicitudController::class, 'index']);
+    Route::get ('/polizas/solicitudes/{solicitud}',         [PolizaSolicitudController::class, 'show']);
+    Route::post('/polizas/solicitudes/{solicitud}/preview', [PolizaSolicitudController::class, 'preview']);
+    Route::post('/polizas/solicitudes/{solicitud}/enviar',  [PolizaSolicitudController::class, 'enviar']);
+    Route::post('/polizas/solicitudes/{solicitud}/confirmar',[PolizaSolicitudController::class, 'confirmar']);
+    // Integración con módulo Proveedores
+    Route::get('/personal/{persona}/polizas',                [PolizasController::class, 'polizasDePersona']);
+
     Route::get('/personal/documentos/tipos', [PersonalDocumentController::class, 'types']);
     Route::post('/personal/documentos/tipos', [PersonalDocumentController::class, 'storeType']);
     Route::get('/personal/documentos/tipos/{tipo}', [PersonalDocumentController::class, 'show']);

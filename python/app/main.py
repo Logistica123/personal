@@ -25,6 +25,7 @@ from app.procesar_oca import (
     CODIGOS_CONTRATO_CONOCIDOS,
 )
 from app.parsers.pdf_ocasa import parse_pdf_ocasa
+from app.parsers.polizas import parse_pdf_polizas
 
 app = FastAPI(
     title="OCA PDF Processor",
@@ -119,6 +120,24 @@ async def parse_pdf_ocasa_endpoint(pdf: UploadFile = File(...)):
     try:
         result = parse_pdf_ocasa(tmp_path, nombre_archivo=pdf.filename)
         return result
+    finally:
+        os.unlink(tmp_path)
+
+
+# ---------------------------------------------------------------------------
+# Pólizas (MAPFRE / San Cristóbal / La Segunda)
+# ---------------------------------------------------------------------------
+
+@app.post("/api/polizas/parse-pdf")
+async def parse_pdf_polizas_endpoint(file: UploadFile = File(...)):
+    """Parsea un PDF de póliza y devuelve aseguradora detectada + datos + asegurados."""
+    with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
+        content = await file.read()
+        tmp.write(content)
+        tmp_path = tmp.name
+
+    try:
+        return parse_pdf_polizas(tmp_path)
     finally:
         os.unlink(tmp_path)
 

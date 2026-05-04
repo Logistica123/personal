@@ -12,6 +12,19 @@ Schedule::command('cierre:sync-kommo')
     ->withoutOverlapping()
     ->appendOutputTo(storage_path('logs/cierre-sync.log'));
 
+// ─── Pólizas: alertas de vencimiento + recordatorios diarios a las 08:00 ────
+Schedule::command('polizas:alertas-vencimiento')
+    ->dailyAt('08:00')
+    ->timezone('America/Argentina/Buenos_Aires')
+    ->withoutOverlapping()
+    ->appendOutputTo(storage_path('logs/polizas-alertas.log'));
+
+Schedule::command('polizas:recordar-solicitudes-pendientes')
+    ->dailyAt('08:05')
+    ->timezone('America/Argentina/Buenos_Aires')
+    ->withoutOverlapping()
+    ->appendOutputTo(storage_path('logs/polizas-alertas.log'));
+
 Artisan::command('inspire', function () {
     $this->comment(Inspiring::quote());
 })->purpose('Display an inspiring quote');

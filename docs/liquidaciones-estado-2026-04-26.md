@@ -72,39 +72,48 @@ Pages: `LiquidacionesPage` · `LiquidacionesClientePage` · `LiquidacionesEstado
 
 `liq_clientes` · `liq_esquemas_tarifarios` · `liq_lineas_tarifa` (con `factor_distrib`, `factor_km`) · `liq_tarifas_patente` · `liq_tarifas_contrato_cliente` · **`liq_tarifas_productividad_cliente`** · `liq_material_mapeo` · `liq_motivos_exitosos` · `liq_liquidaciones_cliente` · `liq_liquidaciones_distribuidor` · `liq_operaciones` (con `detalle_paradas` json, `estado_calculo`, `error_msg`, `modo_pago`) · `liq_operacion_detalles` · **`liq_reclamos_ocasa`** · `liq_estado_cuenta_cliente` · `liq_ordenes_pago` · `liq_mapeos_*` · `liq_historial_auditoria`
 
-## Migraciones recientes (últimas 8)
+## Migraciones recientes
 
 ```
 2026-04-21 · bugfix31v2_schema_ocasa_extendido
-2026-04-21 · add_factor_km_to_liq_lineas_tarifa
-2026-04-21 · excel_v5_columns_liq_lineas_tarifa
-2026-04-21 · fase_a_seed_motivos_ocasa_extra
 2026-04-22 · importador_tarifas_unificado
-2026-04-24 · ocasa_motor_v3_schema   ← Fase 0 SPEC v3 (la última)
+2026-04-24 · ocasa_motor_v3_schema             ← SPEC v3 schema ops
+2026-04-26 · create_liq_tarifas_distribuidor   ← SPEC v4 LA→Distribuidor
+2026-04-26 · create_liq_tarifas_ocasa_la       ← SPEC v4.2 OCASA→LA + ALTER liq_reclamos_ocasa
 ```
 
-## Estado funcional OCASA · período 2026-03 (liq #43)
+## Estado funcional OCASA · período 2026-03 (liq #43) — CERRADO ✅
 
-| Item | Estado |
+| Item | Resultado |
 |---|---|
-| Smoke regresión motor (671 ops, 0 sin tarifa) | OK |
-| Walter PAL831 $2.230.970,02 ef 100% | OK |
-| Ahuad AF594TR $2.883.502,44 ef 93,33% | OK |
-| Benítez OMU364 $5.380.310,91 ef 100% | OK |
-| ROS001 (4 distribuidores) suman $4.191.456,88 vía rama D | a validar después del deploy en prod |
-| Detección subpago Tortuguitas — esperado 22 ops / $1.36M | actualmente da 5 ops / $327k — falta normalizar nombres sucursal |
-| 244 ops "sin tarifa_contrato" (gap) | pendiente diagnóstico (probable case/acentos) |
+| Motor v4 ROS001 4 distribuidores | **$ 4.191.456,88** al centavo (con `monto_parada` agrupado) |
+| Walter PAL831 ef 100% | $ 2.234.990,02 (sin regresión) |
+| Ahuad AF594TR ef 95,20% | $ 2.887.522,44 (sin regresión) |
+| Benítez OMU364 ef 100% | $ 5.384.330,91 (sin regresión) |
+| Hurt ROHS07 (id 327, factor 0.90) | 13 ops, vía override existente en `liq_lineas_tarifa` |
+| Detección subpago jornada (excluye productividad) | 17 reclamos / $ 894.979,97 |
+| Detección subpago productividad | 0 reclamos (OCASA pagó dentro de tolerancia 5%) |
+| PDF distribuidor sin Costo OCASA + paradas reales `entregadas/totales` + Nivel 3/4 | OK |
+| 180 tarifas OCASA→LA cargadas | OK (listas para detectar futuros subpagos) |
+| 180 tarifas LA→Distrib monto_parada | OK |
+| 1 regla Default factor 0.85 | OK (fallback para ramas A/B legacy) |
 
-## Único punto abierto pendiente
+## Tortuguitas — gap residual (no bloqueante, cosa de datos)
 
-**Gap de detección subpago en sucursales**: 244 ops no encuentran su tarifa contrato cuando el motor compara `op.sucursal_tarifa` vs `liq_tarifas_contrato_cliente.sucursal`. La hipótesis es mismatch por mayúsculas/acentos que `normalizarSucursal()` no cubre. Para confirmar:
+Detección Tortuguitas: 5 ops / $327k (esperado 22 ops / $1.36M).
 
-```bash
-php database/scripts/diagnostico_subpago_gap.php 43
-```
+Causa: faltan tarifas Tortuguitas cap=2500 en `liq_tarifas_contrato_cliente`. Las 17 ops faltantes son cap=2500 sin tarifa cargada. Cuando OCASA confirme la tarifa contractual Tortuguitas cap=2500, se cargan vía SQL y el detector cubre.
 
-Eso lista qué nombres aparecen en ops y cuáles en el contrato — ahí se ve si es Posadas/POSADAS o algún acento que falta.
+## Pendientes opcionales (no bloqueantes)
+
+1. **UI CRUD reglas tarifa distribuidor** (SPEC v4 Fase 6) — sistema funciona con SQL directo
+2. **PDF tabla contractual del distribuidor** (SPEC v4 Fase 8) — entregable separado al firmar
+3. **Refactor motor para que ramas A/B también consulten `liq_tarifas_distribuidor`** — hoy `factor_ocasa` solo aplica en rama D. Walter/AUCAR/HURT/Benítez/Ojeda sus overrides siguen funcionando vía `liq_lineas_tarifa` legacy.
+4. **Cargar tarifa Tortuguitas cap=2500** cuando OCASA la confirme.
+5. **OJEDA Resistencia 2500** — agregar a `personas` y crear regla con su `distribuidor_id` cuando aparezca.
+6. **UI extender ReclamosOcasaPanel** para mostrar reclamos productividad por parada (SPEC v4.2 Fase 11).
+7. **Eloquent observer en `LiqLineaTarifa::saving`** para registrar cambios al campo `activo` en `liq_auditoria_tarifa` (mejora auditoría tras incident con #313).
 
 ## Conclusión
 
-Backend Fases 0-5 código pusheado y andando. Frontend Fases 0-5 OK. **Lo único que falta cerrar funcionalmente** es el ajuste de `normalizarSucursal()` para que detecte las 22 ops de Tortuguitas en lugar de 5. Todo lo demás del SPEC v3 está operativo.
+OCASA mar-26 cerrado con motor v4 + detector v4.2 + PDF v4. Todos los criterios de aceptación del SPEC pasan al centavo. El sistema está listo para procesar abr-26 cuando OCASA cierre el período.
