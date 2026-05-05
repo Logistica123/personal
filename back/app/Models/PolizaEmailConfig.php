@@ -21,6 +21,7 @@ class PolizaEmailConfig extends Model
         'asunto_template',
         'body_template',
         'asegurado_template',
+        'separador_entre_asegurados',
         'adjuntos_requeridos',
         'activo',
     ];

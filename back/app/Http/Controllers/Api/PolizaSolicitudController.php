@@ -19,9 +19,14 @@ class PolizaSolicitudController extends Controller
     public function store(Request $request, Poliza $poliza): JsonResponse
     {
         $data = $request->validate([
-            'tipo'             => ['required', 'in:alta,baja'],
-            'asegurado_ids'    => ['required', 'array', 'min:1'],
-            'asegurado_ids.*'  => ['integer', 'exists:polizas_asegurados,id'],
+            'tipo'                                        => ['required', 'in:alta,baja'],
+            'asegurado_ids'                               => ['required', 'array', 'min:1'],
+            'asegurado_ids.*'                             => ['integer', 'exists:polizas_asegurados,id'],
+            'tipo_clausula_global'                        => ['nullable', 'in:ninguna,aplicar,previa_existente'],
+            'clausula_global_id'                          => ['nullable', 'integer', 'exists:polizas_clausulas,id'],
+            'clausulas_individuales'                      => ['nullable', 'array'],
+            'clausulas_individuales.*.asegurado_id'       => ['required_with:clausulas_individuales', 'integer'],
+            'clausulas_individuales.*.clausula_id'        => ['required_with:clausulas_individuales', 'integer', 'exists:polizas_clausulas,id'],
         ]);
 
         $admin = $request->user();
@@ -29,7 +34,15 @@ class PolizaSolicitudController extends Controller
             return response()->json(['message' => 'No autenticado.'], 401);
         }
 
-        $solicitud = $this->service->crearBorrador($poliza, $data['tipo'], $data['asegurado_ids'], $admin);
+        $opciones = [
+            'tipo_clausula_global'   => $data['tipo_clausula_global']   ?? 'ninguna',
+            'clausula_global_id'     => $data['clausula_global_id']     ?? null,
+            'clausulas_individuales' => $data['clausulas_individuales'] ?? null,
+        ];
+
+        $solicitud = $this->service->crearBorrador(
+            $poliza, $data['tipo'], $data['asegurado_ids'], $admin, $opciones
+        );
 
         return response()->json(['data' => $solicitud->fresh(['asegurados.asegurado'])], 201);
     }

@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import type {
+  ClausulaAplicada,
   Discrepancias,
   Poliza,
   PolizaAsegurado,
@@ -19,7 +20,7 @@ type Props = {
   resolveApiBaseUrl: () => string;
 };
 
-type Tab = 'resumen' | 'asegurados' | 'discrepancias' | 'endosos' | 'email';
+type Tab = 'resumen' | 'asegurados' | 'discrepancias' | 'endosos' | 'email' | 'clausulas';
 
 const FORMATTER_FECHA = new Intl.DateTimeFormat('es-AR', {
   day: '2-digit', month: '2-digit', year: 'numeric',
@@ -47,6 +48,7 @@ export const PolizaDetallePage: React.FC<Props> = ({ DashboardLayout, resolveApi
 
   const [asegurados, setAsegurados] = useState<PolizaAsegurado[] | null>(null);
   const [discrepancias, setDiscrepancias] = useState<Discrepancias | null>(null);
+  const [clausulasVigentes, setClausulasVigentes] = useState<ClausulaAplicada[] | null>(null);
   const [filterEstado, setFilterEstado] = useState<string>('');
   const [filterDudosos, setFilterDudosos] = useState(false);
 
@@ -99,6 +101,18 @@ export const PolizaDetallePage: React.FC<Props> = ({ DashboardLayout, resolveApi
     })();
   }, [tab, polizaId, apiBaseUrl, discrepancias]);
 
+  // ---- fetch cláusulas vigentes ----
+  useEffect(() => {
+    if (tab !== 'clausulas' || !polizaId || clausulasVigentes) return;
+    (async () => {
+      const resp = await fetch(`${apiBaseUrl}/api/polizas/${polizaId}/clausulas-vigentes`, { cache: 'no-store' });
+      if (resp.ok) {
+        const { data } = (await resp.json()) as { data: ClausulaAplicada[] };
+        setClausulasVigentes(data ?? []);
+      }
+    })();
+  }, [tab, polizaId, apiBaseUrl, clausulasVigentes]);
+
   if (error) {
     return (
       <DashboardLayout title="Pólizas — error">
@@ -147,6 +161,7 @@ export const PolizaDetallePage: React.FC<Props> = ({ DashboardLayout, resolveApi
           ['resumen',       'Resumen'],
           ['asegurados',    `Asegurados (${poliza.asegurados_count ?? 0})`],
           ['discrepancias', 'Discrepancias'],
+          ['clausulas',     'Cláusulas vigentes'],
           ['endosos',       `Endosos (${poliza.endosos?.length ?? 0})`],
           ['email',         'Email config'],
         ] as const).map(([key, label]) => (
@@ -176,6 +191,7 @@ export const PolizaDetallePage: React.FC<Props> = ({ DashboardLayout, resolveApi
         />
       )}
       {tab === 'discrepancias' && <TabDiscrepancias discrepancias={discrepancias} />}
+      {tab === 'clausulas' && <TabClausulas clausulas={clausulasVigentes} />}
       {tab === 'endosos' && <TabEndosos endosos={poliza.endosos ?? []} />}
       {tab === 'email' && <TabEmail configs={poliza.email_configs ?? []} />}
     </DashboardLayout>
@@ -391,6 +407,54 @@ function Section<T extends { id?: number; persona_id?: number }>({ title, emptyT
     </div>
   );
 }
+
+const TabClausulas: React.FC<{ clausulas: ClausulaAplicada[] | null }> = ({ clausulas }) => (
+  <div className="dashboard-card">
+    <div className="card-header">
+      <h3 style={{ margin: 0 }}>Cláusulas vigentes</h3>
+      <Link to="/polizas/configuracion/clausulas" className="secondary-action secondary-action--ghost">
+        Ir al catálogo
+      </Link>
+    </div>
+    {clausulas === null && <div style={{ padding: '0.5rem' }}>Cargando…</div>}
+    {clausulas !== null && clausulas.length === 0 && (
+      <div style={{ padding: '0.5rem 0', color: '#666' }}>
+        Esta póliza no tiene cláusulas aplicadas. Aplicá una desde el catálogo si corresponde.
+      </div>
+    )}
+    {clausulas !== null && clausulas.length > 0 && (
+      <div className="table-wrapper">
+        <table className="bdd-activos-table" style={{ width: '100%' }}>
+          <thead>
+            <tr>
+              <th>Cláusula</th>
+              <th>CUIT titular</th>
+              <th>Tipo</th>
+              <th>Aplicación</th>
+              <th>Vigente desde</th>
+            </tr>
+          </thead>
+          <tbody>
+            {clausulas.map((ca) => (
+              <tr key={ca.id}>
+                <td>
+                  <b>{ca.clausula?.nombre_corto ?? '—'}</b>
+                  <small style={{ display: 'block', color: '#888' }}>
+                    alias "{ca.clausula?.alias}"
+                  </small>
+                </td>
+                <td><code>{ca.clausula?.cuit_titular}</code></td>
+                <td>{ca.clausula?.tipo}</td>
+                <td>{ca.tipo_aplicacion}</td>
+                <td>{fmtDate(ca.aplicada_desde)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    )}
+  </div>
+);
 
 const TabEndosos: React.FC<{ endosos: NonNullable<Poliza['endosos']> }> = ({ endosos }) => (
   <div className="dashboard-card">

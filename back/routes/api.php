@@ -16,6 +16,7 @@ use App\Http\Controllers\Api\UnidadController;
 use App\Http\Controllers\Api\UserController;
 use App\Http\Controllers\Api\PersonalController;
 use App\Http\Controllers\Api\PolizasController;
+use App\Http\Controllers\Api\PolizaClausulaController;
 use App\Http\Controllers\Api\PolizaSolicitudController;
 use App\Http\Controllers\Api\ReclamoController;
 use App\Http\Controllers\Api\NotificationController;
@@ -69,6 +70,13 @@ Route::middleware('auth.api')->group(function () {
     Route::post('/polizas/solicitudes/{solicitud}/preview', [PolizaSolicitudController::class, 'preview']);
     Route::post('/polizas/solicitudes/{solicitud}/enviar',  [PolizaSolicitudController::class, 'enviar']);
     Route::post('/polizas/solicitudes/{solicitud}/confirmar',[PolizaSolicitudController::class, 'confirmar']);
+    // Cláusulas (catálogo + aplicación a pólizas)
+    Route::get   ('/polizas/clausulas',                       [PolizaClausulaController::class, 'index']);
+    Route::post  ('/polizas/clausulas',                       [PolizaClausulaController::class, 'store']);
+    Route::put   ('/polizas/clausulas/{clausula}',            [PolizaClausulaController::class, 'update']);
+    Route::get   ('/polizas/{poliza}/clausulas-vigentes',     [PolizaClausulaController::class, 'vigentesPorPoliza']);
+    Route::post  ('/polizas/{poliza}/clausulas-aplicar',      [PolizaClausulaController::class, 'aplicar']);
+    Route::post  ('/polizas/clausulas-aplicadas/{aplicacion}/remover', [PolizaClausulaController::class, 'remover']);
     // Integración con módulo Proveedores
     Route::get('/personal/{persona}/polizas',                [PolizasController::class, 'polizasDePersona']);
 

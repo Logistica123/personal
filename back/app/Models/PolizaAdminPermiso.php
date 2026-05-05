@@ -18,6 +18,7 @@ class PolizaAdminPermiso extends Model
         'puede_solicitar_baja',
         'puede_confirmar_respuesta',
         'puede_editar_email_config',
+        'puede_gestionar_clausulas',
         'recibe_alertas_vencimiento',
         'notas',
     ];
@@ -28,6 +29,7 @@ class PolizaAdminPermiso extends Model
         'puede_solicitar_baja'       => 'boolean',
         'puede_confirmar_respuesta'  => 'boolean',
         'puede_editar_email_config'  => 'boolean',
+        'puede_gestionar_clausulas'  => 'boolean',
         'recibe_alertas_vencimiento' => 'boolean',
     ];
 

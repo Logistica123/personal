@@ -20,14 +20,18 @@
 | `07_PLAN_FASES.md` | Fases de implementación con estimaciones |
 | `08_CRITERIOS_ACEPTACION.md` | Validación post-deploy |
 | `09_TODO_CONFIGURAR.md` | Configuraciones que faltan responder (5 preguntas pendientes) |
+| **`10_ADDENDUM_Clausulas.md`** | **ADDENDUM 1 — Cláusulas de no repetición + 2 pólizas MAPFRE adicionales (URBANO + NEWSAN)** |
+| **`11_ADDENDUM_SanCristobal_Clausulas.md`** | **ADDENDUM 2 — Cláusulas también en San Cristóbal + cláusula global vs individual + numeración `N)_:`** |
+| **`12_ADDENDUM_Clausulas_Universal.md`** | **ADDENDUM 3 — Cláusulas universales (La Segunda incluida) + catálogo NEWSAN + campo `alias`** |
 | `00_proveedores_modulo_resumen.md` | Doc de referencia del módulo Proveedores existente |
 | `ejemplos_pdfs/` | 5 PDFs reales para que Francisco pueda probar el parser |
 
 ## Cómo usar este paquete
 
-1. **Leer primero** `01_SPEC_TECNICO.md` — resumen ejecutivo + diseño completo.
-2. **Pasar a Francisco** todo el zip con `Proyecto_Polizas/` adentro.
-3. **Su IA** trabaja directo desde esa carpeta — todo lo necesario está en los 9 docs + los PDFs de muestra.
+1. **Leer primero** `01_SPEC_TECNICO.md` — resumen ejecutivo + diseño completo del MVP.
+2. **Después leer** `10_ADDENDUM_Clausulas.md` — cambios y nuevas tablas para soportar cláusulas de no repetición + 2 pólizas MAPFRE adicionales (asume el MVP ya implementado en producción).
+3. **Pasar a Francisco** todo el zip con `Proyecto_Polizas/` adentro.
+4. **Su IA** trabaja directo desde esa carpeta — todo lo necesario está en los 10 docs + los PDFs de muestra.
 
 ## Lo bloqueante
 
@@ -41,15 +45,25 @@ El doc `09_TODO_CONFIGURAR.md` lista 5 configuraciones que faltan definir. **Nin
 
 ## Pólizas en alcance
 
-| Aseguradora | Póliza | N° | Vigencia |
-|---|---|---|---|
-| MAPFRE | AP Distribuidores | 1520222860404 / 2297608 | 08/04/25 → 08/04/26 |
-| San Cristóbal | AP Colectivo | 01-06-06-30035710 | 30/03/26 → 05/12/26 |
-| La Segunda | Vehículos Autos | 67.743.063 | 23/01/26 → 23/01/27 |
-| La Segunda | Vehículos Motos | 45.597.407 | 28/02/26 → 31/05/26 |
+| Aseguradora | Póliza | N° | Vigencia | Cliente / cláusula |
+|---|---|---|---|---|
+| MAPFRE | AP Distribuidores OCASA | 2297608 | 08/04/25 → 08/04/26 | OCASA (CUIT 30-66204961-8) |
+| MAPFRE | AP URBANO / Otras Empresas | **2297847** | TODO confirmar | URBANO Suc. Moreno (NEWSAN S.A.) |
+| MAPFRE | AP NEWSAN | **2298721** | TODO confirmar | NEWSAN La Tablada (CBN + ID Supply Chain) |
+| San Cristóbal | AP Colectivo | 01-06-06-30035710 | 30/03/26 → 05/12/26 | — |
+| La Segunda | Vehículos Autos | 67.743.063 | 23/01/26 → 23/01/27 | — |
+| La Segunda | Vehículos Motos | 45.597.407 | 28/02/26 → 31/05/26 | — |
 
 ## Estimación
 
 **MVP completo: ~10-12 días** Francisco. Detalle de fases en `07_PLAN_FASES.md`.
+
+**Addendum 1 (cláusulas + 2 pólizas MAPFRE): +3 días** sobre lo anterior. Detalle en `10_ADDENDUM_Clausulas.md`.
+
+**Addendum 2 (cláusulas en SC + global vs individual): +1.5 días** sobre el addendum 1. Detalle en `11_ADDENDUM_SanCristobal_Clausulas.md`.
+
+**Addendum 3 (cláusulas universales en La Segunda + NEWSAN + alias): +1.25 días** sobre el addendum 2. Detalle en `12_ADDENDUM_Clausulas_Universal.md`.
+
+**Total feature cláusulas (10+11+12): ~5.75 días** sobre el MVP base.
 
 Cualquier duda, cortame en el momento.

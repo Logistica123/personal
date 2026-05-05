@@ -76,8 +76,8 @@ class AdjuntosCheckService
     private function slugsFaltantes(int $personaId, array $slugs): array
     {
         $tipos = Archivo::query()
-            ->where('persona_id', $personaId)
-            ->whereNull('deleted_at')
+            ->where('archivos.persona_id', $personaId)
+            ->whereNull('archivos.deleted_at')
             ->join('fyle_types', 'fyle_types.id', '=', 'archivos.tipo_archivo_id')
             ->pluck('fyle_types.nombre')
             ->map(fn ($n) => mb_strtolower($n))

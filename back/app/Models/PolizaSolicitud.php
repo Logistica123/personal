@@ -26,6 +26,9 @@ class PolizaSolicitud extends Model
         'respuesta_recibida_en',
         'respuesta_resumen',
         'email_message_id',
+        'tipo_clausula_global',
+        'clausula_global_id',
+        'clausulas_individuales',
     ];
 
     protected $casts = [
@@ -35,6 +38,7 @@ class PolizaSolicitud extends Model
         'adjuntos'                    => 'array',
         'enviado_en'                  => 'datetime',
         'respuesta_recibida_en'       => 'datetime',
+        'clausulas_individuales'      => 'array',
     ];
 
     public function poliza()
@@ -50,5 +54,10 @@ class PolizaSolicitud extends Model
     public function asegurados()
     {
         return $this->hasMany(PolizaSolicitudAsegurado::class, 'solicitud_id');
+    }
+
+    public function clausulaGlobal()
+    {
+        return $this->belongsTo(PolizaClausula::class, 'clausula_global_id');
     }
 }

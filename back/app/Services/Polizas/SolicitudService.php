@@ -4,6 +4,7 @@ namespace App\Services\Polizas;
 
 use App\Models\Poliza;
 use App\Models\PolizaAsegurado;
+use App\Models\PolizaClausula;
 use App\Models\PolizaEmailConfig;
 use App\Models\PolizaSolicitud;
 use App\Models\PolizaSolicitudAsegurado;
@@ -29,11 +30,19 @@ class SolicitudService
     ) {
     }
 
+    /**
+     * @param array $opciones {
+     *     tipo_clausula_global?: 'ninguna'|'aplicar'|'previa_existente',
+     *     clausula_global_id?: ?int,
+     *     clausulas_individuales?: array<int,int>  // [asegurado_id => clausula_id]
+     * }
+     */
     public function crearBorrador(
         Poliza $poliza,
         string $tipo,             // 'alta' | 'baja'
         array $aseguradoIds,
         User $admin,
+        array $opciones = [],
     ): PolizaSolicitud {
         if (!in_array($tipo, ['alta', 'baja'], true)) {
             throw new RuntimeException('tipo debe ser alta o baja');
@@ -42,7 +51,7 @@ class SolicitudService
             throw new RuntimeException('Sin asegurados seleccionados');
         }
 
-        return DB::transaction(function () use ($poliza, $tipo, $aseguradoIds, $admin) {
+        return DB::transaction(function () use ($poliza, $tipo, $aseguradoIds, $admin, $opciones) {
             $solicitud = PolizaSolicitud::create([
                 'poliza_id'                  => $poliza->id,
                 'tipo'                       => $tipo,
@@ -52,6 +61,9 @@ class SolicitudService
                 'asunto'                     => '',
                 'body'                       => '',
                 'estado'                     => 'borrador',
+                'tipo_clausula_global'       => $opciones['tipo_clausula_global']  ?? 'ninguna',
+                'clausula_global_id'         => $opciones['clausula_global_id']    ?? null,
+                'clausulas_individuales'     => $opciones['clausulas_individuales'] ?? null,
             ]);
 
             foreach ($aseguradoIds as $aid) {
@@ -74,8 +86,12 @@ class SolicitudService
         $config = $this->cargarEmailConfig($solicitud);
         $asegurados = $this->cargarAsegurados($solicitud);
         $admin = $solicitud->administrativo;
+        $opciones = $this->opcionesClausulas($solicitud);
 
-        $rendered = $this->renderer->render($solicitud->poliza, $config, $asegurados, $admin);
+        $rendered = $this->renderer->render(
+            $solicitud->poliza()->with('aseguradora')->first(),
+            $config, $asegurados, $admin, $opciones
+        );
 
         $check = ['ok' => true, 'faltantes' => []];
         if ($solicitud->tipo === 'alta' && !empty($config->adjuntos_requeridos)) {
@@ -111,8 +127,12 @@ class SolicitudService
         $config = $this->cargarEmailConfig($solicitud);
         $asegurados = $this->cargarAsegurados($solicitud);
         $admin = $solicitud->administrativo;
+        $opciones = $this->opcionesClausulas($solicitud);
 
-        $rendered = $this->renderer->render($solicitud->poliza, $config, $asegurados, $admin);
+        $rendered = $this->renderer->render(
+            $solicitud->poliza()->with('aseguradora')->first(),
+            $config, $asegurados, $admin, $opciones
+        );
 
         // Validar adjuntos requeridos antes de mandar.
         if ($solicitud->tipo === 'alta' && !empty($config->adjuntos_requeridos)) {
@@ -242,6 +262,29 @@ class SolicitudService
         });
 
         return $messageId;
+    }
+
+    /** Resuelve las cláusulas (global + individuales) guardadas en la solicitud para pasar al renderer. */
+    private function opcionesClausulas(PolizaSolicitud $solicitud): array
+    {
+        $clausulaGlobal = $solicitud->clausula_global_id
+            ? PolizaClausula::find($solicitud->clausula_global_id)
+            : null;
+
+        $individuales = [];
+        foreach ((array) ($solicitud->clausulas_individuales ?? []) as $par) {
+            $aid = (int) ($par['asegurado_id'] ?? 0);
+            $cid = (int) ($par['clausula_id']  ?? 0);
+            if ($aid && $cid) {
+                $individuales[$aid] = PolizaClausula::find($cid);
+            }
+        }
+
+        return [
+            'tipo_clausula_global'   => $solicitud->tipo_clausula_global ?? 'ninguna',
+            'clausula_global'        => $clausulaGlobal,
+            'clausulas_individuales' => array_filter($individuales),
+        ];
     }
 
     private function cargarEmailConfig(PolizaSolicitud $solicitud): PolizaEmailConfig

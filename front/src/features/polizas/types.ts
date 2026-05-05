@@ -177,6 +177,35 @@ export type CargaPreview = {
   warnings: string[];
 };
 
+export type TipoClausula = 'no_repeticion' | 'subrogacion' | 'otra';
+export type TipoClausulaGlobal = 'ninguna' | 'aplicar' | 'previa_existente';
+export type TipoAplicacion = 'global' | 'individual';
+
+export type Clausula = {
+  id: number;
+  nombre_corto: string;
+  alias: string;
+  cliente_id: number | null;
+  sucursal_id: number | null;
+  cuit_titular: string;
+  razon_social_titular: string;
+  tipo: TipoClausula;
+  descripcion_corta: string | null;
+  activa: boolean;
+  notas: string | null;
+};
+
+export type ClausulaAplicada = {
+  id: number;
+  poliza_id: number;
+  clausula_id: number;
+  tipo_aplicacion: TipoAplicacion;
+  aplicada_desde: string;
+  aplicada_hasta: string | null;
+  notas: string | null;
+  clausula?: Clausula;
+};
+
 export type EstadoSolicitud =
   | 'borrador'
   | 'enviado'
@@ -199,6 +228,9 @@ export type PolizaSolicitud = {
   respuesta_recibida_en: string | null;
   respuesta_resumen: string | null;
   email_message_id: string | null;
+  tipo_clausula_global?: TipoClausulaGlobal;
+  clausula_global_id?: number | null;
+  clausulas_individuales?: Array<{ asegurado_id: number; clausula_id: number }> | null;
   asegurados_count?: number;
   poliza?: { id: number; nombre_descriptivo: string; numero_poliza: string; aseguradora?: { id: number; nombre: string } };
   administrativo?: { id: number; name: string | null; email: string | null };

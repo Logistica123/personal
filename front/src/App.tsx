@@ -49,6 +49,7 @@ import { PolizaSolicitarPage } from './pages/PolizaSolicitarPage';
 import { PolizaSolicitudesPage } from './pages/PolizaSolicitudesPage';
 import { PolizaSolicitudDetallePage } from './pages/PolizaSolicitudDetallePage';
 import { PersonaPolizasPage } from './pages/PersonaPolizasPage';
+import { PolizaClausulasPage } from './pages/PolizaClausulasPage';
 import { MembresiaPanelPage } from './pages/MembresiaPanelPage';
 import { ProveedorNuevoPage } from './pages/ProveedorNuevoPage';
 import { WebRtcCallsPage } from './pages/WebRtcCallsPage';
@@ -3720,6 +3721,13 @@ const DashboardLayout: React.FC<{
                     onClick={() => navigate('/polizas/solicitudes')}
                   >
                     Bandeja de solicitudes
+                  </button>
+                  <button
+                    type="button"
+                    className={`sidebar-sublink${location.pathname === '/polizas/configuracion/clausulas' ? ' is-active' : ''}`}
+                    onClick={() => navigate('/polizas/configuracion/clausulas')}
+                  >
+                    Cláusulas
                   </button>
                 </div>
               ) : null}
@@ -21071,6 +21079,17 @@ const AppRoutes: React.FC = () => {
         element={
           <RequireAccess section="personal">
             <PolizaSolicitudesPage
+              DashboardLayout={DashboardLayout}
+              resolveApiBaseUrl={resolveApiBaseUrl}
+            />
+          </RequireAccess>
+        }
+      />
+      <Route
+        path="/polizas/configuracion/clausulas"
+        element={
+          <RequireAccess section="personal">
+            <PolizaClausulasPage
               DashboardLayout={DashboardLayout}
               resolveApiBaseUrl={resolveApiBaseUrl}
             />

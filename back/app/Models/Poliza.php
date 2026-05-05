@@ -65,4 +65,17 @@ class Poliza extends Model
     {
         return $this->hasMany(PolizaSolicitud::class, 'poliza_id');
     }
+
+    public function clausulasAplicadas()
+    {
+        return $this->hasMany(PolizaClausulaAplicada::class, 'poliza_id');
+    }
+
+    /** Cláusulas vigentes (sin `aplicada_hasta` o futura). */
+    public function clausulasVigentes()
+    {
+        return $this->hasMany(PolizaClausulaAplicada::class, 'poliza_id')
+            ->whereNull('aplicada_hasta')
+            ->with('clausula');
+    }
 }
