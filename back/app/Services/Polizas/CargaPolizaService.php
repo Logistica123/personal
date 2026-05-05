@@ -113,18 +113,23 @@ class CargaPolizaService
                 $matchScore = null;
                 $matchMetodo = null;
                 $revision = false;
+                $personaEstado = null;
 
                 if ($decision === 'vincular') {
                     $personaId   = $a['persona_id']                ?? null;
                     $matchScore  = $a['match_score']               ?? null;
                     $matchMetodo = $a['match_metodo']              ?? 'manual';
                     $revision    = (bool)($a['revision_manual_pendiente'] ?? false);
+                    $personaEstado = $a['persona_estado_al_matchear'] ?? null;
                     if (!$personaId) {
                         throw new RuntimeException("Decision 'vincular' sin persona_id en {$a['identificador']}");
                     }
                 }
 
                 $estado = $personaId ? 'activo' : 'no_matcheado';
+                $alertaEstado = $personaEstado
+                    ? MatchingService::calcularAlertaEstado($personaEstado, $estado)
+                    : null;
 
                 $existente = PolizaAsegurado::query()
                     ->where('poliza_id', $poliza->id)
@@ -147,6 +152,8 @@ class CargaPolizaService
                     'estado'                    => $estado,
                     'match_score'               => $matchScore,
                     'match_metodo'              => $matchMetodo,
+                    'persona_estado_al_matchear' => $personaEstado,
+                    'persona_alerta_estado'     => $alertaEstado,
                     'revision_manual_pendiente' => $revision,
                 ];
 
@@ -195,6 +202,7 @@ class CargaPolizaService
         if ($tipo === 'endoso_incorporacion') $tipo = 'incorporacion';
         if ($tipo === 'endoso_baja')          $tipo = 'baja';
         if ($tipo === 'endoso_modificacion')  $tipo = 'modificacion';
+        // 'asegurados_adherentes' (ADD 13A) — válido como tipo del ENUM tras la migración.
 
         $endoso = PolizaEndoso::create([
             'poliza_id'      => $poliza->id,

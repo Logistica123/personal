@@ -32,6 +32,8 @@ class PolizaAsegurado extends Model
         'estado',
         'match_score',
         'match_metodo',
+        'persona_estado_al_matchear',
+        'persona_alerta_estado',
         'revision_manual_pendiente',
         'notas',
     ];

@@ -18,6 +18,7 @@ use App\Http\Controllers\Api\PersonalController;
 use App\Http\Controllers\Api\PolizasController;
 use App\Http\Controllers\Api\PolizaClausulaController;
 use App\Http\Controllers\Api\PolizaSolicitudController;
+use App\Http\Controllers\Api\PolizaNotificacionDistribuidorController;
 use App\Http\Controllers\Api\ReclamoController;
 use App\Http\Controllers\Api\NotificationController;
 use App\Http\Controllers\Api\PersonalDocumentController;
@@ -77,6 +78,14 @@ Route::middleware('auth.api')->group(function () {
     Route::get   ('/polizas/{poliza}/clausulas-vigentes',     [PolizaClausulaController::class, 'vigentesPorPoliza']);
     Route::post  ('/polizas/{poliza}/clausulas-aplicar',      [PolizaClausulaController::class, 'aplicar']);
     Route::post  ('/polizas/clausulas-aplicadas/{aplicacion}/remover', [PolizaClausulaController::class, 'remover']);
+    // Notificación al distribuidor (ADD 13B)
+    Route::post('/polizas/{poliza}/notificaciones-distribuidor/preview',  [PolizaNotificacionDistribuidorController::class, 'preview']);
+    Route::post('/polizas/{poliza}/notificaciones-distribuidor/enviar',   [PolizaNotificacionDistribuidorController::class, 'enviar']);
+    Route::get ('/polizas/notificaciones-distribuidor',                    [PolizaNotificacionDistribuidorController::class, 'index']);
+    Route::post('/polizas/notificaciones-distribuidor/{notificacion}/reenviar', [PolizaNotificacionDistribuidorController::class, 'reenviar']);
+    // ADD 15 — flujo bidireccional CRM Aprobaciones ↔ Pólizas
+    Route::post('/polizas/personas/aprobar-masivo',          [PolizaSolicitudController::class, 'aprobarPersonas']);
+    Route::get ('/personal/{persona}/polizas-aplicables',    [PolizasController::class, 'polizasAplicablesParaPersona']);
     // Integración con módulo Proveedores
     Route::get('/personal/{persona}/polizas',                [PolizasController::class, 'polizasDePersona']);
 

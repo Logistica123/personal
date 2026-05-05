@@ -23,6 +23,9 @@
 | **`10_ADDENDUM_Clausulas.md`** | **ADDENDUM 1 — Cláusulas de no repetición + 2 pólizas MAPFRE adicionales (URBANO + NEWSAN)** |
 | **`11_ADDENDUM_SanCristobal_Clausulas.md`** | **ADDENDUM 2 — Cláusulas también en San Cristóbal + cláusula global vs individual + numeración `N)_:`** |
 | **`12_ADDENDUM_Clausulas_Universal.md`** | **ADDENDUM 3 — Cláusulas universales (La Segunda incluida) + catálogo NEWSAN + campo `alias`** |
+| **`13_ADDENDUM_Parser_SC_Adherentes_y_Notificacion.md`** | **ADDENDUM 4 — Fix parser SC "Anexo de Adherentes" + Notificación al distribuidor por email** |
+| **`14_ADDENDUM_Matching_Estados_Persona.md`** | **ADDENDUM 5 — Fix matching contra TODOS los estados de personas (caso OPT548 real)** |
+| **`15_ADDENDUM_Flujo_Aprobacion_Distribuidor.md`** | **ADDENDUM 6 — Flujo bidireccional CRM Aprobaciones ↔ Pólizas (alta de seguro antes de aprobar distribuidor)** |
 | `00_proveedores_modulo_resumen.md` | Doc de referencia del módulo Proveedores existente |
 | `ejemplos_pdfs/` | 5 PDFs reales para que Francisco pueda probar el parser |
 
@@ -65,5 +68,13 @@ El doc `09_TODO_CONFIGURAR.md` lista 5 configuraciones que faltan definir. **Nin
 **Addendum 3 (cláusulas universales en La Segunda + NEWSAN + alias): +1.25 días** sobre el addendum 2. Detalle en `12_ADDENDUM_Clausulas_Universal.md`.
 
 **Total feature cláusulas (10+11+12): ~5.75 días** sobre el MVP base.
+
+**Addendum 4 (parser SC adherentes + notificación distribuidor): +5 días** sobre lo anterior. Detalle en `13_ADDENDUM_Parser_SC_Adherentes_y_Notificacion.md`.
+
+**Addendum 5 (fix matching todos los estados): +2.5 días** sobre lo anterior. Detalle en `14_ADDENDUM_Matching_Estados_Persona.md`.
+
+**Addendum 6 (flujo bidireccional CRM Aprobaciones ↔ Pólizas + auto-aprobación): +3.25 días** sobre lo anterior. Detalle en `15_ADDENDUM_Flujo_Aprobacion_Distribuidor.md`.
+
+**TOTAL acumulado proyecto pólizas: ~27 días Francisco** (12 MVP + 5.75 cláusulas + 5 addendum 4 + 2.5 addendum 5 + 3.25 addendum 6 + medio día integración).
 
 Cualquier duda, cortame en el momento.

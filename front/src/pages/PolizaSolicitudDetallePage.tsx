@@ -59,6 +59,11 @@ export const PolizaSolicitudDetallePage: React.FC<Props> = ({ DashboardLayout, r
 
   useEffect(() => { fetchSolicitud(); }, [fetchSolicitud]);
 
+  const [pendientesAprobacion, setPendientesAprobacion] = useState<Array<{
+    persona_id: number; nombre: string; es_solicitud: boolean; aprobado: boolean;
+  }>>([]);
+  const [seleccionAprobar, setSeleccionAprobar] = useState<Set<number>>(new Set());
+
   const confirmar = useCallback(async (tipoRespuesta: 'ok' | 'rechazada') => {
     if (!solicitud) return;
     if (!window.confirm(
@@ -75,6 +80,15 @@ export const PolizaSolicitudDetallePage: React.FC<Props> = ({ DashboardLayout, r
         body: JSON.stringify({ tipo_respuesta: tipoRespuesta, respuesta_resumen: resumen || null }),
       });
       if (!resp.ok) throw new Error(await resp.text());
+      const { data } = await resp.json() as { data: {
+        solicitud: PolizaSolicitud;
+        personas_pendientes_aprobacion: Array<{ persona_id: number; nombre: string; es_solicitud: boolean; aprobado: boolean }>;
+      }};
+      // ADD 15 — si hay personas pendientes de aprobar, abrir modal
+      if (data.personas_pendientes_aprobacion?.length > 0) {
+        setPendientesAprobacion(data.personas_pendientes_aprobacion);
+        setSeleccionAprobar(new Set(data.personas_pendientes_aprobacion.map((p) => p.persona_id)));
+      }
       await fetchSolicitud();
       setResumen('');
     } catch (e) {
@@ -83,6 +97,30 @@ export const PolizaSolicitudDetallePage: React.FC<Props> = ({ DashboardLayout, r
       setLoading(false);
     }
   }, [solicitud, resumen, apiBaseUrl, fetchSolicitud]);
+
+  const aprobarSeleccionados = useCallback(async () => {
+    if (seleccionAprobar.size === 0) {
+      setPendientesAprobacion([]);
+      return;
+    }
+    try {
+      setLoading(true);
+      const resp = await fetch(`${apiBaseUrl}/api/polizas/personas/aprobar-masivo`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({ persona_ids: Array.from(seleccionAprobar) }),
+      });
+      if (!resp.ok) throw new Error(await resp.text());
+      const { data } = await resp.json() as { data: { count: number } };
+      window.alert(`${data.count} distribuidor(es) aprobado(s).`);
+      setPendientesAprobacion([]);
+      setSeleccionAprobar(new Set());
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setLoading(false);
+    }
+  }, [seleccionAprobar, apiBaseUrl]);
 
   const enviar = useCallback(async () => {
     if (!solicitud) return;
@@ -108,6 +146,48 @@ export const PolizaSolicitudDetallePage: React.FC<Props> = ({ DashboardLayout, r
     >
       {error && (
         <div style={{ padding: '1rem', background: '#fee', color: '#900', borderRadius: 12, margin: '1rem 0' }}>{error}</div>
+      )}
+
+      {pendientesAprobacion.length > 0 && (
+        <div style={{
+          position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', zIndex: 100,
+          display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem',
+        }}>
+          <div className="dashboard-card" style={{ maxWidth: 520, width: '100%' }}>
+            <h3 style={{ margin: 0 }}>✓ Solicitud confirmada</h3>
+            <p style={{ margin: 0, fontSize: '0.9rem' }}>
+              <b>{pendientesAprobacion.length}</b> de los asegurados de esta solicitud son personas que aún están en
+              solicitud pendiente. ¿Aprobarlas como distribuidores activos ahora?
+            </p>
+            <div style={{ maxHeight: 300, overflowY: 'auto', border: '1px solid #ddd', borderRadius: 8, padding: '0.5rem' }}>
+              {pendientesAprobacion.map((p) => (
+                <label key={p.persona_id} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.25rem 0' }}>
+                  <input type="checkbox" checked={seleccionAprobar.has(p.persona_id)}
+                    onChange={(e) => {
+                      const next = new Set(seleccionAprobar);
+                      if (e.target.checked) next.add(p.persona_id); else next.delete(p.persona_id);
+                      setSeleccionAprobar(next);
+                    }}
+                  />
+                  <span>{p.nombre}</span>
+                  <small style={{ color: '#888', marginLeft: 'auto' }}>
+                    {p.es_solicitud ? 'es_solicitud' : 'sin aprobar'}
+                  </small>
+                </label>
+              ))}
+            </div>
+            <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
+              <button type="button" className="secondary-action secondary-action--ghost"
+                onClick={() => { setPendientesAprobacion([]); setSeleccionAprobar(new Set()); }}>
+                No aprobar ahora
+              </button>
+              <button type="button" disabled={loading || seleccionAprobar.size === 0} onClick={aprobarSeleccionados}
+                style={{ background: '#0a8c3a', color: '#fff', padding: '0.5rem 1rem', borderRadius: 10, border: 0, cursor: 'pointer' }}>
+                Aprobar {seleccionAprobar.size} distribuidor(es)
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       <div className="dashboard-card" style={{ marginBottom: '1rem' }}>

@@ -8,10 +8,13 @@ use App\Models\PersonaPatente;
 /**
  * Matchea asegurados (personas o vehículos) extraídos de un PDF contra el maestro `personas`.
  *
- * Devuelve `['persona_id', 'score', 'metodo', 'revision_manual_pendiente']` o null.
- * Métodos posibles: `cuil_exacto`, `dni_exacto`, `patente_exacto`, `fuzzy_nombre`.
+ * Devuelve `['persona_id', 'score', 'metodo', 'revision_manual_pendiente',
+ * 'persona_estado_al_matchear']` o null. Métodos posibles: `cuil_exacto`,
+ * `dni_exacto`, `patente_exacto`, `fuzzy_nombre`.
  *
- * El matching considera sólo personas aprobadas y con estado Activo (estado_id = 1).
+ * **ADD 14**: el matching busca en TODA la tabla `personas` (sin filtrar por
+ * estado/aprobado) y devuelve el snapshot del estado para que el caller
+ * decida si reportarla como inconsistente.
  */
 class MatchingService
 {
@@ -31,12 +34,7 @@ class MatchingService
             if (strlen($idNorm) === 11) {
                 $persona = $this->buscarPorCuil($idNorm);
                 if ($persona) {
-                    return [
-                        'persona_id' => $persona->id,
-                        'score'      => 1.000,
-                        'metodo'     => 'cuil_exacto',
-                        'revision_manual_pendiente' => false,
-                    ];
+                    return $this->resultExacto($persona, 'cuil_exacto');
                 }
             }
 
@@ -45,12 +43,7 @@ class MatchingService
             if ($dni) {
                 $persona = $this->buscarPorDni($dni);
                 if ($persona) {
-                    return [
-                        'persona_id' => $persona->id,
-                        'score'      => 1.000,
-                        'metodo'     => 'dni_exacto',
-                        'revision_manual_pendiente' => false,
-                    ];
+                    return $this->resultExacto($persona, 'dni_exacto');
                 }
             }
         }
@@ -73,33 +66,22 @@ class MatchingService
             return null;
         }
 
-        // 1. patente principal en personas.
+        // 1. patente principal en personas (sin filtro de estado).
         $persona = Persona::query()
             ->whereRaw('UPPER(REPLACE(REPLACE(patente, " ", ""), "-", "")) = ?', [$patNorm])
-            ->where('estado_id', self::ESTADO_ACTIVO_ID)
             ->first();
         if ($persona) {
-            return [
-                'persona_id' => $persona->id,
-                'score'      => 1.000,
-                'metodo'     => 'patente_exacto',
-                'revision_manual_pendiente' => false,
-            ];
+            return $this->resultExacto($persona, 'patente_exacto');
         }
 
-        // 2. patentes adicionales activas.
+        // 2. patentes adicionales activas (sin filtro de estado de la persona).
         $extra = PersonaPatente::query()
             ->where('patente_norm', $patNorm)
             ->where('activo', true)
-            ->whereHas('persona', fn ($q) => $q->where('estado_id', self::ESTADO_ACTIVO_ID))
+            ->with('persona')
             ->first();
-        if ($extra) {
-            return [
-                'persona_id' => $extra->persona_id,
-                'score'      => 1.000,
-                'metodo'     => 'patente_exacto',
-                'revision_manual_pendiente' => false,
-            ];
+        if ($extra && $extra->persona) {
+            return $this->resultExacto($extra->persona, 'patente_exacto');
         }
 
         return null;
@@ -109,7 +91,6 @@ class MatchingService
     {
         return Persona::query()
             ->whereRaw('REPLACE(REPLACE(REPLACE(cuil, "-", ""), ".", ""), " ", "") = ?', [$cuilNorm])
-            ->where('estado_id', self::ESTADO_ACTIVO_ID)
             ->first();
     }
 
@@ -119,7 +100,6 @@ class MatchingService
         // El CUIL almacena 11 dígitos: PP + DNI(8) + V; tomamos los 8 centrales.
         return Persona::query()
             ->whereRaw('SUBSTRING(REPLACE(REPLACE(REPLACE(cuil, "-", ""), ".", ""), " ", ""), 3, 8) = ?', [$dni])
-            ->where('estado_id', self::ESTADO_ACTIVO_ID)
             ->first();
     }
 
@@ -130,21 +110,20 @@ class MatchingService
             return null;
         }
 
+        // Sin filtros — fuzzy en TODA la tabla personas (ADD 14).
         $personas = Persona::query()
-            ->where('estado_id', self::ESTADO_ACTIVO_ID)
-            ->select(['id', 'apellidos', 'nombres'])
+            ->select(['id', 'apellidos', 'nombres', 'cuil', 'estado_id', 'fecha_baja', 'es_solicitud', 'aprobado'])
             ->get();
 
         $candidatos = [];
         foreach ($personas as $p) {
-            // Probar las dos posibles ordenaciones (Apellido Nombre / Nombre Apellido).
             $cand1 = self::normalizarNombre(trim(($p->apellidos ?? '') . ' ' . ($p->nombres ?? '')));
             $cand2 = self::normalizarNombre(trim(($p->nombres ?? '') . ' ' . ($p->apellidos ?? '')));
             similar_text($needle, $cand1, $pct1);
             similar_text($needle, $cand2, $pct2);
             $score = max($pct1, $pct2) / 100.0;
             if ($score >= self::FUZZY_MIN_SCORE) {
-                $candidatos[] = ['persona_id' => $p->id, 'score' => $score];
+                $candidatos[] = ['persona' => $p, 'score' => $score];
             }
         }
 
@@ -156,12 +135,65 @@ class MatchingService
         $top = $candidatos[0];
 
         return [
-            'persona_id' => $top['persona_id'],
-            'score'      => round($top['score'], 3),
-            'metodo'     => 'fuzzy_nombre',
-            'revision_manual_pendiente' => $top['score'] < self::FUZZY_AUTO_SCORE
-                                            || count($candidatos) > 1,
+            'persona_id'                  => $top['persona']->id,
+            'score'                       => round($top['score'], 3),
+            'metodo'                      => 'fuzzy_nombre',
+            'revision_manual_pendiente'   => $top['score'] < self::FUZZY_AUTO_SCORE
+                                                || count($candidatos) > 1,
+            'persona_estado_al_matchear'  => self::calcularEstadoPersona($top['persona']),
         ];
+    }
+
+    /** Construye el array de retorno para matches exactos (cuil/dni/patente). */
+    private function resultExacto(Persona $persona, string $metodo): array
+    {
+        return [
+            'persona_id'                  => $persona->id,
+            'score'                       => 1.000,
+            'metodo'                      => $metodo,
+            'revision_manual_pendiente'   => false,
+            'persona_estado_al_matchear'  => self::calcularEstadoPersona($persona),
+        ];
+    }
+
+    /**
+     * Resuelve el estado snapshot de la persona en un string corto y estable.
+     * Orden de precedencia: baja > suspendido > solicitud_pendiente > sin_aprobar > activo.
+     */
+    public static function calcularEstadoPersona(Persona $p): string
+    {
+        if ($p->fecha_baja) {
+            return 'baja';
+        }
+        // estado_id 3 = Suspendido en el catálogo de este repo (verificado).
+        if ((int) $p->estado_id === 3) {
+            return 'suspendido';
+        }
+        if ($p->es_solicitud) {
+            return 'solicitud_pendiente';
+        }
+        if (!$p->aprobado) {
+            return 'sin_aprobar';
+        }
+        return 'activo';
+    }
+
+    /**
+     * Devuelve el flag de alerta cuando la persona está en estado distinto a "activo"
+     * pero el asegurado en póliza sí está activo.
+     */
+    public static function calcularAlertaEstado(string $personaEstado, string $aseguradoEstado): ?string
+    {
+        if ($aseguradoEstado !== 'activo') {
+            return null; // alerta sólo cuando la póliza considera al asegurado vigente
+        }
+        return match ($personaEstado) {
+            'baja'                 => 'persona_baja_en_poliza_activa',
+            'suspendido'           => 'persona_suspendida_en_poliza_activa',
+            'solicitud_pendiente'  => 'persona_solicitud_pendiente_en_poliza_activa',
+            'sin_aprobar'          => 'persona_sin_aprobar_en_poliza_activa',
+            default                => null,
+        };
     }
 
     /** Strip a sólo dígitos. */

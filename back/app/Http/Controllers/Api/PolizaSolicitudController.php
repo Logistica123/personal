@@ -98,7 +98,23 @@ class PolizaSolicitudController extends Controller
             'respuesta_resumen' => ['nullable', 'string', 'max:2000'],
         ]);
 
-        $solicitud = $this->service->confirmar($solicitud, $data['tipo_respuesta'], $data['respuesta_resumen'] ?? null);
-        return response()->json(['data' => $solicitud]);
+        $resultado = $this->service->confirmar($solicitud, $data['tipo_respuesta'], $data['respuesta_resumen'] ?? null);
+        return response()->json(['data' => [
+            'solicitud'                      => $resultado['solicitud'],
+            'personas_pendientes_aprobacion' => $resultado['personas_pendientes_aprobacion'],
+        ]]);
+    }
+
+    /** ADD 15 — aprueba varias personas a la vez tras confirmar un alta. */
+    public function aprobarPersonas(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'persona_ids'   => ['required', 'array', 'min:1'],
+            'persona_ids.*' => ['integer', 'exists:personas,id'],
+        ]);
+        $admin = $request->user();
+        if (!$admin) return response()->json(['message' => 'No autenticado.'], 401);
+
+        return response()->json(['data' => $this->service->aprobarPersonasMasivo($data['persona_ids'], $admin)]);
     }
 }

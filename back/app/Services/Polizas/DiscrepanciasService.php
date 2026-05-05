@@ -20,12 +20,57 @@ class DiscrepanciasService
         $poliza = Poliza::query()->findOrFail($polizaId);
 
         return [
-            'poliza_id'            => $poliza->id,
-            'tipo_asegurado'       => $poliza->tipo_asegurado,
+            'poliza_id'              => $poliza->id,
+            'tipo_asegurado'         => $poliza->tipo_asegurado,
             'asegurados_sin_persona' => $this->asegurados_sin_persona($poliza),
             'personas_sin_poliza'    => $this->personas_sin_poliza($poliza),
             'match_dudoso'           => $this->match_dudoso($poliza),
+            'estado_inconsistente'   => $this->estado_inconsistente($poliza),  // ADD 14
         ];
+    }
+
+    /**
+     * ADD 14 — asegurados activos en póliza pero la persona vinculada está en
+     * estado distinto a "activo" (baja, suspendido, solicitud, sin aprobar).
+     */
+    private function estado_inconsistente(Poliza $poliza): array
+    {
+        $rows = PolizaAsegurado::query()
+            ->where('poliza_id', $poliza->id)
+            ->whereNotNull('persona_alerta_estado')
+            ->whereNotNull('persona_id')
+            ->where('estado', 'activo')
+            ->with('persona:id,apellidos,nombres,cuil,patente,fecha_baja,estado_id')
+            ->orderBy('persona_alerta_estado')
+            ->get();
+
+        $grupos = [
+            'persona_baja_en_poliza_activa'                 => [],
+            'persona_suspendida_en_poliza_activa'           => [],
+            'persona_solicitud_pendiente_en_poliza_activa'  => [],
+            'persona_sin_aprobar_en_poliza_activa'          => [],
+        ];
+
+        foreach ($rows as $a) {
+            $alerta = (string) $a->persona_alerta_estado;
+            if (!array_key_exists($alerta, $grupos)) {
+                continue;
+            }
+            $grupos[$alerta][] = [
+                'asegurado_id'                => $a->id,
+                'identificador'               => $a->identificador,
+                'identificador_tipo'          => $a->identificador_tipo,
+                'nombre_apellido_pdf'         => $a->nombre_apellido_pdf,
+                'marca_modelo_pdf'            => $a->marca_modelo_pdf,
+                'persona_id'                  => $a->persona_id,
+                'persona_nombre'              => trim(($a->persona->apellidos ?? '') . ', ' . ($a->persona->nombres ?? '')),
+                'persona_cuil'                => $a->persona?->cuil,
+                'persona_estado_al_matchear'  => $a->persona_estado_al_matchear,
+                'persona_fecha_baja'          => $a->persona?->fecha_baja,
+            ];
+        }
+
+        return $grupos;
     }
 
     private function asegurados_sin_persona(Poliza $poliza): array

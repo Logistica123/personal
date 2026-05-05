@@ -16,7 +16,7 @@ from app.parsers.polizas import mapfre, san_cristobal, la_segunda
 
 _PROFILES = {
     'mapfre': mapfre.parse,
-    'san_cristobal': san_cristobal.parse,
+    'san_cristobal': san_cristobal.parse,   # acepta pdf_path opcional para Anexo de Adherentes
     'la_segunda': la_segunda.parse,
 }
 
@@ -53,6 +53,10 @@ def parse_pdf_polizas(path: str) -> dict[str, Any]:
         }
 
     parser_fn = _PROFILES[aseguradora]
-    result = parser_fn(text_paginas)
+    # SC necesita el path del PDF para extract_words con coords (Anexo Adherentes).
+    if aseguradora == 'san_cristobal':
+        result = parser_fn(text_paginas, path)
+    else:
+        result = parser_fn(text_paginas)
     result['aseguradora_detectada'] = aseguradora
     return result

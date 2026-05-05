@@ -25,6 +25,12 @@ Schedule::command('polizas:recordar-solicitudes-pendientes')
     ->withoutOverlapping()
     ->appendOutputTo(storage_path('logs/polizas-alertas.log'));
 
+Schedule::command('polizas:recalcular-estados-asegurados')
+    ->dailyAt('08:10')
+    ->timezone('America/Argentina/Buenos_Aires')
+    ->withoutOverlapping()
+    ->appendOutputTo(storage_path('logs/polizas-alertas.log'));
+
 Artisan::command('inspire', function () {
     $this->comment(Inspiring::quote());
 })->purpose('Display an inspiring quote');

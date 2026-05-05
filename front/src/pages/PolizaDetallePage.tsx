@@ -322,7 +322,9 @@ const cssEstado = (e: string): string => ({
 
 const TabDiscrepancias: React.FC<{ discrepancias: Discrepancias | null }> = ({ discrepancias }) => {
   if (!discrepancias) return <div style={{ padding: '1rem' }}>Cargando reportes…</div>;
-  const { asegurados_sin_persona, personas_sin_poliza, match_dudoso } = discrepancias;
+  const { asegurados_sin_persona, personas_sin_poliza, match_dudoso, estado_inconsistente } = discrepancias;
+  const totalEstadoIncons = (Object.values(estado_inconsistente ?? {}) as Array<unknown[]>)
+    .reduce((s, arr) => s + arr.length, 0);
 
   return (
     <div style={{ display: 'grid', gap: '1rem' }}>
@@ -369,6 +371,69 @@ const TabDiscrepancias: React.FC<{ discrepancias: Discrepancias | null }> = ({ d
         )}
         headers={['PDF', 'Persona sugerida', 'Score', 'Motivo']}
       />
+      {totalEstadoIncons > 0 && (
+        <div className="dashboard-card">
+          <div className="card-header">
+            <h3 style={{ margin: 0 }}>⚠️ Estado inconsistente ({totalEstadoIncons})</h3>
+          </div>
+          <p style={{ margin: 0, fontSize: '0.85rem', color: '#666' }}>
+            Asegurados activos en póliza pero la persona vinculada está en otro estado.
+            Probablemente convenga pedir baja en la póliza.
+          </p>
+          {(([
+            ['persona_baja_en_poliza_activa',                'persona en BAJA'],
+            ['persona_suspendida_en_poliza_activa',          'persona SUSPENDIDA'],
+            ['persona_solicitud_pendiente_en_poliza_activa', 'persona en SOLICITUD pendiente'],
+            ['persona_sin_aprobar_en_poliza_activa',         'persona SIN APROBAR'],
+          ] as const)).map(([key, label]) => {
+            const items = estado_inconsistente?.[key] ?? [];
+            if (items.length === 0) return null;
+            return (
+              <div key={key} style={{ marginTop: '0.75rem' }}>
+                <h4 style={{ margin: '0 0 0.4rem 0', fontSize: '0.95rem' }}>
+                  {label} ({items.length})
+                </h4>
+                <div className="table-wrapper">
+                  <table className="bdd-activos-table" style={{ width: '100%' }}>
+                    <thead>
+                      <tr>
+                        <th>Identificador</th>
+                        <th>Persona</th>
+                        <th>CUIL</th>
+                        <th>Estado</th>
+                        <th></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {items.slice(0, 50).map((it) => (
+                        <tr key={it.asegurado_id} style={{ background: '#fffbe6' }}>
+                          <td><code>{it.identificador}</code></td>
+                          <td>
+                            <Link to={`/personal/${it.persona_id}/editar`}>{it.persona_nombre}</Link>
+                          </td>
+                          <td><code style={{ fontSize: '0.75rem' }}>{it.persona_cuil ?? '—'}</code></td>
+                          <td>{it.persona_estado_al_matchear}</td>
+                          <td>
+                            <Link to={`/polizas/${discrepancias.poliza_id}/solicitar?tipo=baja`}
+                              style={{ background: '#c4392a', color: '#fff', padding: '0.25rem 0.6rem', borderRadius: 6, textDecoration: 'none', fontSize: '0.8rem' }}>
+                              Pedir baja
+                            </Link>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  {items.length > 50 && (
+                    <div style={{ padding: '0.5rem', textAlign: 'center', color: '#888', fontSize: '0.8rem' }}>
+                      Mostrando 50 de {items.length}.
+                    </div>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 };

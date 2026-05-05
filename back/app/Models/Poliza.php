@@ -29,6 +29,7 @@ class Poliza extends Model
         'cantidad_vidas_unidades',
         'clausulas_especiales',
         'alerta_dias_antes_vencimiento',
+        'ofrecer_auto_aprobacion_distribuidor',
         'activa',
         'notas',
     ];
@@ -39,6 +40,7 @@ class Poliza extends Model
         'suma_asegurada_total'  => 'decimal:2',
         'premio_anual'          => 'decimal:2',
         'activa'                => 'boolean',
+        'ofrecer_auto_aprobacion_distribuidor' => 'boolean',
     ];
 
     public function aseguradora()

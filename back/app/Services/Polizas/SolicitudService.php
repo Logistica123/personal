@@ -174,11 +174,14 @@ class SolicitudService
      *  - tipo_respuesta='rechazada'  → solicitud=respondida_rechazada; rollback al estado
      *                                  previo razonable (alta→no_matcheado, baja→activo).
      */
+    /**
+     * @return array{solicitud: PolizaSolicitud, personas_pendientes_aprobacion: array}
+     */
     public function confirmar(
         PolizaSolicitud $solicitud,
         string $tipoRespuesta,
         ?string $resumen = null
-    ): PolizaSolicitud {
+    ): array {
         if (!in_array($tipoRespuesta, ['ok', 'rechazada'], true)) {
             throw new RuntimeException("tipo_respuesta debe ser 'ok' o 'rechazada'");
         }
@@ -230,8 +233,56 @@ class SolicitudService
                     ->count(),
             ]);
 
-            return $solicitud->fresh();
+            // ADD 15 — detectar personas en es_solicitud pendiente de aprobar.
+            $pendientes = [];
+            if ($tipoRespuesta === 'ok' && $solicitud->tipo === 'alta'
+                && $solicitud->poliza->ofrecer_auto_aprobacion_distribuidor) {
+
+                $pendientes = \App\Models\Persona::query()
+                    ->whereIn('id', PolizaAsegurado::query()
+                        ->whereIn('id', $aseguradoIds)
+                        ->whereNotNull('persona_id')
+                        ->pluck('persona_id'))
+                    ->where(function ($q) {
+                        $q->where('es_solicitud', true)->orWhere('aprobado', false);
+                    })
+                    ->select(['id', 'apellidos', 'nombres', 'es_solicitud', 'aprobado'])
+                    ->get()
+                    ->map(fn ($p) => [
+                        'persona_id'    => $p->id,
+                        'nombre'        => trim(($p->apellidos ?? '') . ', ' . ($p->nombres ?? '')),
+                        'es_solicitud'  => (bool) $p->es_solicitud,
+                        'aprobado'      => (bool) $p->aprobado,
+                    ])
+                    ->all();
+            }
+
+            return [
+                'solicitud'                       => $solicitud->fresh(),
+                'personas_pendientes_aprobacion'  => $pendientes,
+            ];
         });
+    }
+
+    /** ADD 15 — aprobar varias personas en una sola operación (post-confirmación de alta). */
+    public function aprobarPersonasMasivo(array $personaIds, User $admin): array
+    {
+        $personas = \App\Models\Persona::whereIn('id', $personaIds)->get();
+        $aprobados = [];
+        $estadoActivoId = MatchingService::ESTADO_ACTIVO_ID;
+
+        foreach ($personas as $p) {
+            $p->update([
+                'aprobado'      => true,
+                'aprobado_at'   => now(),
+                'aprobado_por'  => $admin->id,
+                'es_solicitud'  => false,
+                'estado_id'     => $estadoActivoId,
+            ]);
+            $aprobados[] = $p->id;
+        }
+
+        return ['aprobados' => $aprobados, 'count' => count($aprobados)];
     }
 
     /**

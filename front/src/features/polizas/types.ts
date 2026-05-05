@@ -101,6 +101,8 @@ export type PolizaAsegurado = {
   estado: EstadoAsegurado;
   match_score: string | null;
   match_metodo: string | null;
+  persona_estado_al_matchear: EstadoPersonaSnapshot | null;
+  persona_alerta_estado: AlertaEstado | null;
   revision_manual_pendiente: boolean;
   notas: string | null;
   persona?: PolizaAseguradoPersona | null;
@@ -139,11 +141,34 @@ export type DiscrepanciaDudoso = {
   persona_sugerida: { id: number; nombre: string; cuil: string | null } | null;
 };
 
+export type EstadoPersonaSnapshot =
+  | 'activo' | 'baja' | 'suspendido' | 'solicitud_pendiente' | 'sin_aprobar';
+
+export type AlertaEstado =
+  | 'persona_baja_en_poliza_activa'
+  | 'persona_suspendida_en_poliza_activa'
+  | 'persona_solicitud_pendiente_en_poliza_activa'
+  | 'persona_sin_aprobar_en_poliza_activa';
+
 export type MatchPropuesto = {
   persona_id: number;
   score: number;
   metodo: 'cuil_exacto' | 'dni_exacto' | 'patente_exacto' | 'fuzzy_nombre' | 'manual';
   revision_manual_pendiente: boolean;
+  persona_estado_al_matchear?: EstadoPersonaSnapshot;
+};
+
+export type DiscrepanciaEstadoInconsistente = {
+  asegurado_id: number;
+  identificador: string;
+  identificador_tipo: string;
+  nombre_apellido_pdf: string | null;
+  marca_modelo_pdf: string | null;
+  persona_id: number;
+  persona_nombre: string;
+  persona_cuil: string | null;
+  persona_estado_al_matchear: EstadoPersonaSnapshot;
+  persona_fecha_baja: string | null;
 };
 
 export type PreviewAsegurado = {
@@ -252,10 +277,34 @@ export type SolicitudPreview = {
   };
 };
 
+export type EstadoNotificacionDistribuidor = 'pendiente' | 'enviado' | 'rebotado' | 'sin_email';
+
+export type NotificacionDistribuidor = {
+  id: number;
+  asegurado_id: number;
+  poliza_id: number;
+  persona_id: number;
+  tipo: 'alta' | 'baja';
+  email_destinatario: string;
+  asunto: string;
+  body: string;
+  estado: EstadoNotificacionDistribuidor;
+  enviado_en: string | null;
+  error_envio: string | null;
+  poliza?: { id: number; numero_poliza: string; aseguradora?: { nombre: string } };
+  persona?: { id: number; apellidos: string | null; nombres: string | null; email: string | null };
+};
+
 export type Discrepancias = {
   poliza_id: number;
   tipo_asegurado: TipoAsegurado;
   asegurados_sin_persona: DiscrepanciaSinPersona[];
   personas_sin_poliza: DiscrepanciaSinPoliza[];
   match_dudoso: DiscrepanciaDudoso[];
+  estado_inconsistente: {
+    persona_baja_en_poliza_activa: DiscrepanciaEstadoInconsistente[];
+    persona_suspendida_en_poliza_activa: DiscrepanciaEstadoInconsistente[];
+    persona_solicitud_pendiente_en_poliza_activa: DiscrepanciaEstadoInconsistente[];
+    persona_sin_aprobar_en_poliza_activa: DiscrepanciaEstadoInconsistente[];
+  };
 };

@@ -81,6 +81,37 @@ class PolizasController extends Controller
         return response()->json(['data' => $result]);
     }
 
+    /**
+     * ADD 15 — Pólizas aplicables (sugeridas) para una persona según su perfil.
+     * Heurística simple: todas las pólizas activas del tipo correspondiente al
+     * perfil de la persona (vehículo si tiene patente, persona si no).
+     */
+    public function polizasAplicablesParaPersona(Persona $persona): JsonResponse
+    {
+        $tieneVehiculo = !empty($persona->patente)
+            || $persona->patentesAdicionales()->exists();
+
+        $query = Poliza::query()
+            ->with('aseguradora:id,nombre,parser_perfil')
+            ->where('activa', true);
+
+        if (!$tieneVehiculo) {
+            $query->where('tipo_asegurado', 'persona');
+        }
+
+        $polizas = $query->orderBy('nombre_descriptivo')->get()->map(fn ($p) => [
+            'poliza_id'    => $p->id,
+            'nombre'       => $p->nombre_descriptivo,
+            'aseguradora'  => $p->aseguradora?->nombre,
+            'tipo_asegurado' => $p->tipo_asegurado,
+            'razon'        => $p->tipo_asegurado === 'vehiculo'
+                ? 'Persona con patente registrada'
+                : 'Persona AP',
+        ]);
+
+        return response()->json(['data' => $polizas]);
+    }
+
     /** Lista las pólizas en las que figura un proveedor (Persona) como asegurado. */
     public function polizasDePersona(Persona $persona): JsonResponse
     {
