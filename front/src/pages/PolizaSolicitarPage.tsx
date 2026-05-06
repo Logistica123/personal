@@ -323,7 +323,7 @@ const SeleccionAsegurados: React.FC<SeleccionProps> = ({
           <div className="table-wrapper">
             <table className="bdd-activos-table" style={{ width: '100%' }}>
               <thead>
-                <tr><th></th><th>Identificador</th><th>Nombre / Vehículo</th><th>Persona</th><th>Estado</th></tr>
+                <tr><th></th><th>Identificador</th><th>Nombre / Vehículo</th><th>Distribuidor</th><th>Estado</th></tr>
               </thead>
               <tbody>
                 {asegurados.map((a) => (
@@ -331,7 +331,7 @@ const SeleccionAsegurados: React.FC<SeleccionProps> = ({
                     <td><input type="checkbox" checked={seleccion.has(a.id)} onChange={() => toggle(a.id)} /></td>
                     <td><code>{a.identificador}</code> <small style={{ color: '#888' }}>({a.identificador_tipo})</small></td>
                     <td>{a.nombre_apellido_pdf ?? a.marca_modelo_pdf ?? '—'}</td>
-                    <td>{a.persona ? `${a.persona.apellidos}, ${a.persona.nombres}` : <span style={{ color: '#c00' }}>sin match</span>}</td>
+                    <td>{a.persona ? a.persona.nombre_completo : <span style={{ color: '#c00' }}>sin match</span>}</td>
                     <td>{a.estado}</td>
                   </tr>
                 ))}

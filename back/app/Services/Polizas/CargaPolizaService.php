@@ -39,23 +39,33 @@ class CargaPolizaService
         $asegurados = [];
         foreach ($parsed['asegurados'] ?? [] as $a) {
             $tipo = $a['tipo'] ?? null;
+            $match = null;
+            $sugerencia = null;
+
             if ($tipo === 'persona') {
                 $match = $this->matcher->matchPersona(
                     $a['identificador']      ?? null,
                     $a['identificador_tipo'] ?? null,
                     $a['nombre_apellido']    ?? null,
                 );
+                // BUGFIX 02 Issue 1: sin match exacto, ofrecer sugerencia fuzzy
+                // por nombre como AYUDA visual (no auto-vincula).
+                if (!$match) {
+                    $sugerencia = $this->matcher->sugerirFuzzyPersona($a['nombre_apellido'] ?? null);
+                    if ($sugerencia) {
+                        $sugerencia['persona'] = \App\Models\Persona::query()
+                            ->select(['id', 'apellidos', 'nombres', 'cuil', 'estado_id', 'fecha_baja', 'es_solicitud', 'aprobado'])
+                            ->find($sugerencia['persona_id']);
+                    }
+                }
             } elseif ($tipo === 'vehiculo') {
                 $match = $this->matcher->matchVehiculo($a['identificador'] ?? null);
-            } else {
-                $match = null;
             }
 
             $asegurados[] = array_merge($a, [
-                'match_propuesto' => $match,
-                'decision_default' => $match
-                    ? ($match['revision_manual_pendiente'] ? 'revisar' : 'vincular')
-                    : 'crear',
+                'match_propuesto'       => $match,
+                'sugerencia_fuzzy'      => $sugerencia,
+                'decision_default'      => $match ? 'vincular' : ($sugerencia ? 'revisar' : 'crear'),
             ]);
         }
 
@@ -124,7 +134,18 @@ class CargaPolizaService
                     if (!$personaId) {
                         throw new RuntimeException("Decision 'vincular' sin persona_id en {$a['identificador']}");
                     }
+                    // BUGFIX 02 Issue 1: el match `fuzzy_nombre` ya no es válido.
+                    // Si llega del frontend, se ignora el método y se trata como
+                    // vinculación manual (decisión explícita del admin).
+                    if (!in_array($matchMetodo, ['cuil_exacto', 'dni_exacto', 'patente_exacto', 'manual'], true)) {
+                        $matchMetodo = 'manual';
+                    }
                 }
+
+                // Sugerencia fuzzy: se preserva siempre que venga en el payload
+                // (incluso si la decisión es 'crear' o si el admin la rechazó).
+                $sugFuzzyId    = $a['sugerencia_fuzzy_persona_id'] ?? null;
+                $sugFuzzyScore = $a['sugerencia_fuzzy_score']      ?? null;
 
                 $estado = $personaId ? 'activo' : 'no_matcheado';
                 $alertaEstado = $personaEstado
@@ -154,6 +175,8 @@ class CargaPolizaService
                     'match_metodo'              => $matchMetodo,
                     'persona_estado_al_matchear' => $personaEstado,
                     'persona_alerta_estado'     => $alertaEstado,
+                    'sugerencia_fuzzy_persona_id' => $sugFuzzyId,
+                    'sugerencia_fuzzy_score'    => $sugFuzzyScore,
                     'revision_manual_pendiente' => $revision,
                 ];
 

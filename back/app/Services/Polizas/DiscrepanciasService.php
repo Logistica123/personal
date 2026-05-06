@@ -132,34 +132,38 @@ class DiscrepanciasService
             ->all();
     }
 
+    /**
+     * BUGFIX 02 Issue 1: ahora "match dudoso" = asegurados SIN persona vinculada
+     * pero CON sugerencia fuzzy por nombre. Antes incluía matches `fuzzy_nombre`
+     * auto-vinculados con score < 0.95; eso ya no existe (regla central: solo
+     * cuil/dni/patente exactos).
+     */
     private function match_dudoso(Poliza $poliza): array
     {
         return PolizaAsegurado::query()
             ->where('poliza_id', $poliza->id)
-            ->where('revision_manual_pendiente', true)
-            ->whereNotNull('persona_id')
-            ->with('persona:id,apellidos,nombres,cuil')
+            ->whereNull('persona_id')
+            ->whereNotNull('sugerencia_fuzzy_persona_id')
+            ->with('sugerenciaFuzzyPersona:id,apellidos,nombres,cuil')
             ->select([
                 'id',
-                'persona_id',
                 'identificador',
                 'identificador_tipo',
                 'nombre_apellido_pdf',
-                'match_score',
-                'match_metodo',
+                'sugerencia_fuzzy_persona_id',
+                'sugerencia_fuzzy_score',
             ])
-            ->orderBy('match_score')
+            ->orderByDesc('sugerencia_fuzzy_score')
             ->get()
             ->map(function ($a) {
                 $arr = $a->toArray();
-                $arr['persona_sugerida'] = $a->persona ? [
-                    'id'        => $a->persona->id,
-                    'nombre'    => trim(($a->persona->apellidos ?? '') . ', ' . ($a->persona->nombres ?? '')),
-                    'cuil'      => $a->persona->cuil,
+                $sug = $a->sugerenciaFuzzyPersona;
+                $arr['persona_sugerida'] = $sug ? [
+                    'id'     => $sug->id,
+                    'nombre' => trim(($sug->apellidos ?? '') . ', ' . ($sug->nombres ?? '')),
+                    'cuil'   => $sug->cuil,
                 ] : null;
-                $arr['motivo'] = $a->match_score !== null && (float) $a->match_score < MatchingService::FUZZY_AUTO_SCORE
-                    ? 'score_bajo'
-                    : 'ambiguedad';
+                $arr['motivo'] = 'sugerencia_fuzzy_pendiente_revision';
                 return $arr;
             })
             ->all();

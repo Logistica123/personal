@@ -62,8 +62,13 @@ Route::middleware('auth.api')->group(function () {
     Route::get('/polizas/{poliza}',                        [PolizasController::class, 'show']);
     Route::get('/polizas/{poliza}/discrepancias',          [PolizasController::class, 'discrepancias']);
     Route::get('/polizas/{poliza}/asegurados',             [PolizasController::class, 'asegurados']);
+    // BUGFIX 02 Issue 1 — Auditoría de matches fuzzy (históricos + nuevos)
+    Route::get ('/polizas/auditoria/matches-fuzzy',                    [PolizasController::class, 'auditoriaMatchesFuzzy']);
+    Route::post('/polizas/auditoria/matches-fuzzy/{asegurado}/resolver',[PolizasController::class, 'resolverSugerenciaFuzzy']);
     Route::post('/polizas/{poliza}/cargar-pdf',            [PolizasController::class, 'cargarPdf']);
     Route::post('/polizas/{poliza}/confirmar-carga',       [PolizasController::class, 'confirmarCarga']);
+    // BUGFIX 02 — selector de personas para wizard "Solicitar alta"
+    Route::get ('/polizas/{poliza}/personas-disponibles-para-alta', [PolizasController::class, 'personasDisponiblesParaAlta']);
     // Solicitudes (alta / baja)
     Route::post('/polizas/{poliza}/solicitudes',            [PolizaSolicitudController::class, 'store']);
     Route::get ('/polizas/solicitudes',                     [PolizaSolicitudController::class, 'index']);

@@ -63,6 +63,19 @@ class PolizaSolicitudController extends Controller
         if ($tipo   = $request->query('tipo'))     $query->where('tipo', $tipo);
         if ($pid    = $request->query('poliza_id')) $query->where('poliza_id', $pid);
 
+        if ($search = trim((string) $request->query('search', ''))) {
+            $like = '%' . str_replace('%', '\\%', $search) . '%';
+            $query->where(function ($q) use ($like) {
+                $q->where('asunto', 'LIKE', $like)
+                  ->orWhereHas('poliza', fn ($qp) => $qp
+                      ->where('nombre_descriptivo', 'LIKE', $like)
+                      ->orWhere('numero_poliza', 'LIKE', $like))
+                  ->orWhereHas('administrativo', fn ($qa) => $qa
+                      ->where('name', 'LIKE', $like)
+                      ->orWhere('email', 'LIKE', $like));
+            });
+        }
+
         return response()->json(['data' => $query->get()]);
     }
 

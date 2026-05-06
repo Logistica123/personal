@@ -8,9 +8,10 @@ use App\Models\PersonaPatente;
 /**
  * Matchea asegurados (personas o vehículos) extraídos de un PDF contra el maestro `personas`.
  *
- * Devuelve `['persona_id', 'score', 'metodo', 'revision_manual_pendiente',
- * 'persona_estado_al_matchear']` o null. Métodos posibles: `cuil_exacto`,
- * `dni_exacto`, `patente_exacto`, `fuzzy_nombre`.
+ * **BUGFIX 02 Issue 1**: el matching SOLO vincula por identificador exacto
+ * (`cuil_exacto`, `dni_exacto`, `patente_exacto`). El fuzzy por nombre se
+ * calcula como sugerencia visual aparte (`sugerirFuzzyPersona`) — nunca
+ * autovincula. Esta es la regla central del spec §4.
  *
  * **ADD 14**: el matching busca en TODA la tabla `personas` (sin filtrar por
  * estado/aprobado) y devuelve el snapshot del estado para que el caller
@@ -20,7 +21,6 @@ class MatchingService
 {
     public const ESTADO_ACTIVO_ID = 1;
     public const FUZZY_MIN_SCORE  = 0.85;
-    public const FUZZY_AUTO_SCORE = 0.95;
 
     public function matchPersona(
         ?string $identificador,
@@ -48,15 +48,22 @@ class MatchingService
             }
         }
 
-        // 3. Fuzzy por nombre + apellido.
-        if ($nombreApellido) {
-            $match = $this->fuzzyNombre($nombreApellido);
-            if ($match) {
-                return $match;
-            }
-        }
-
+        // Sin match exacto → null. NO autovinculamos por fuzzy.
         return null;
+    }
+
+    /**
+     * Devuelve el mejor candidato fuzzy por nombre como **sugerencia visual** para el
+     * preview del wizard. NO se vincula automáticamente — el admin decide.
+     *
+     * @return array{persona_id:int, score:float}|null
+     */
+    public function sugerirFuzzyPersona(?string $nombreApellido): ?array
+    {
+        if (!$nombreApellido) {
+            return null;
+        }
+        return $this->fuzzyNombre($nombreApellido);
     }
 
     public function matchVehiculo(?string $patente): ?array
@@ -103,6 +110,12 @@ class MatchingService
             ->first();
     }
 
+    /**
+     * Calcula el mejor candidato fuzzy por nombre (≥ FUZZY_MIN_SCORE). Sólo se usa
+     * desde `sugerirFuzzyPersona`; nunca para auto-vincular.
+     *
+     * @return array{persona_id:int, score:float}|null
+     */
     private function fuzzyNombre(string $nombreApellidoPdf): ?array
     {
         $needle = self::normalizarNombre($nombreApellidoPdf);
@@ -112,35 +125,30 @@ class MatchingService
 
         // Sin filtros — fuzzy en TODA la tabla personas (ADD 14).
         $personas = Persona::query()
-            ->select(['id', 'apellidos', 'nombres', 'cuil', 'estado_id', 'fecha_baja', 'es_solicitud', 'aprobado'])
+            ->select(['id', 'apellidos', 'nombres'])
             ->get();
 
-        $candidatos = [];
+        $best = null;
+        $bestScore = 0.0;
         foreach ($personas as $p) {
             $cand1 = self::normalizarNombre(trim(($p->apellidos ?? '') . ' ' . ($p->nombres ?? '')));
             $cand2 = self::normalizarNombre(trim(($p->nombres ?? '') . ' ' . ($p->apellidos ?? '')));
             similar_text($needle, $cand1, $pct1);
             similar_text($needle, $cand2, $pct2);
             $score = max($pct1, $pct2) / 100.0;
-            if ($score >= self::FUZZY_MIN_SCORE) {
-                $candidatos[] = ['persona' => $p, 'score' => $score];
+            if ($score > $bestScore) {
+                $bestScore = $score;
+                $best = $p;
             }
         }
 
-        if (count($candidatos) === 0) {
+        if (!$best || $bestScore < self::FUZZY_MIN_SCORE) {
             return null;
         }
 
-        usort($candidatos, fn ($a, $b) => $b['score'] <=> $a['score']);
-        $top = $candidatos[0];
-
         return [
-            'persona_id'                  => $top['persona']->id,
-            'score'                       => round($top['score'], 3),
-            'metodo'                      => 'fuzzy_nombre',
-            'revision_manual_pendiente'   => $top['score'] < self::FUZZY_AUTO_SCORE
-                                                || count($candidatos) > 1,
-            'persona_estado_al_matchear'  => self::calcularEstadoPersona($top['persona']),
+            'persona_id' => $best->id,
+            'score'      => round($bestScore, 3),
         ];
     }
 

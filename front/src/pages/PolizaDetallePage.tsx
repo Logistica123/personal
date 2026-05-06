@@ -7,6 +7,8 @@ import type {
   PolizaAsegurado,
   PolizaEmailConfig,
 } from '../features/polizas/types';
+import { SearchInput } from '../features/polizas/SearchInput';
+import { EstadoDistribuidorBadge } from '../features/polizas/EstadoDistribuidorBadge';
 
 type DashboardLayoutProps = {
   title: string;
@@ -51,6 +53,7 @@ export const PolizaDetallePage: React.FC<Props> = ({ DashboardLayout, resolveApi
   const [clausulasVigentes, setClausulasVigentes] = useState<ClausulaAplicada[] | null>(null);
   const [filterEstado, setFilterEstado] = useState<string>('');
   const [filterDudosos, setFilterDudosos] = useState(false);
+  const [searchAsegurados, setSearchAsegurados] = useState('');
 
   // ---- fetch póliza ----
   useEffect(() => {
@@ -71,19 +74,20 @@ export const PolizaDetallePage: React.FC<Props> = ({ DashboardLayout, resolveApi
     return () => controller.abort();
   }, [polizaId, apiBaseUrl]);
 
-  // ---- fetch asegurados (lazy al activar tab) ----
+  // ---- fetch asegurados (lazy al activar tab; refetch al cambiar filtros) ----
   const fetchAsegurados = useCallback(async () => {
     if (!polizaId) return;
     const params = new URLSearchParams();
     if (filterEstado) params.set('estado', filterEstado);
     if (filterDudosos) params.set('solo_dudosos', '1');
+    if (searchAsegurados) params.set('search', searchAsegurados);
     const url = `${apiBaseUrl}/api/polizas/${polizaId}/asegurados${params.toString() ? '?' + params : ''}`;
     const resp = await fetch(url, { cache: 'no-store' });
     if (resp.ok) {
       const { data } = (await resp.json()) as { data: PolizaAsegurado[] };
       setAsegurados(data ?? []);
     }
-  }, [polizaId, apiBaseUrl, filterEstado, filterDudosos]);
+  }, [polizaId, apiBaseUrl, filterEstado, filterDudosos, searchAsegurados]);
 
   useEffect(() => {
     if (tab === 'asegurados') fetchAsegurados();
@@ -188,6 +192,8 @@ export const PolizaDetallePage: React.FC<Props> = ({ DashboardLayout, resolveApi
           setFilterEstado={setFilterEstado}
           filterDudosos={filterDudosos}
           setFilterDudosos={setFilterDudosos}
+          search={searchAsegurados}
+          setSearch={setSearchAsegurados}
         />
       )}
       {tab === 'discrepancias' && <TabDiscrepancias discrepancias={discrepancias} />}
@@ -238,13 +244,15 @@ type TabAseguradosProps = {
   setFilterEstado: (v: string) => void;
   filterDudosos: boolean;
   setFilterDudosos: (v: boolean) => void;
+  search: string;
+  setSearch: (v: string) => void;
 };
 
 const TabAsegurados: React.FC<TabAseguradosProps> = ({
-  asegurados, filterEstado, setFilterEstado, filterDudosos, setFilterDudosos,
+  asegurados, filterEstado, setFilterEstado, filterDudosos, setFilterDudosos, search, setSearch,
 }) => (
   <div className="dashboard-card">
-    <div className="filters-bar" style={{ marginBottom: '1rem' }}>
+    <div className="filters-bar" style={{ marginBottom: '1rem', alignItems: 'center', gap: '1rem' }}>
       <label className="filter-field">
         <span>Estado</span>
         <select value={filterEstado} onChange={(e) => setFilterEstado(e.target.value)}>
@@ -258,14 +266,24 @@ const TabAsegurados: React.FC<TabAseguradosProps> = ({
       </label>
       <label className="filter-field" style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
         <input type="checkbox" checked={filterDudosos} onChange={(e) => setFilterDudosos(e.target.checked)} />
-        <span>Sólo dudosos</span>
+        <span>Sólo dudosos / sugerencia fuzzy</span>
+      </label>
+      <label className="filter-field" style={{ flex: '1 1 240px', minWidth: 200 }}>
+        <span>Buscar</span>
+        <SearchInput
+          value={search}
+          onChange={setSearch}
+          placeholder="patente, CUIL, nombre, distribuidor…"
+        />
       </label>
     </div>
 
     {asegurados === null && <div style={{ padding: '1rem' }}>Cargando…</div>}
     {asegurados !== null && asegurados.length === 0 && (
       <div style={{ padding: '1rem', color: '#666' }}>
-        No hay asegurados cargados todavía. Cargá un PDF desde "Cargar PDF" (próximamente).
+        {search
+          ? `No se encontraron resultados para "${search}".`
+          : 'No hay asegurados cargados todavía. Cargá un PDF desde "Cargar PDF".'}
       </div>
     )}
     {asegurados !== null && asegurados.length > 0 && (
@@ -276,33 +294,46 @@ const TabAsegurados: React.FC<TabAseguradosProps> = ({
               <th>N° orden</th>
               <th>Identificador</th>
               <th>Nombre / Vehículo</th>
-              <th>Estado</th>
-              <th>Match</th>
-              <th>Persona</th>
+              <th>Distribuidor</th>
+              <th>Estado dist.</th>
+              <th>Estado póliza</th>
             </tr>
           </thead>
           <tbody>
             {asegurados.map((a) => (
               <tr key={a.id} style={a.revision_manual_pendiente ? { background: '#fffbe6' } : undefined}>
                 <td>{a.numero_orden_aseguradora ?? '—'}</td>
-                <td><code>{a.identificador}</code> <small style={{ color: '#888' }}>({a.identificador_tipo})</small></td>
-                <td>{a.nombre_apellido_pdf ?? a.marca_modelo_pdf ?? '—'}</td>
-                <td><span className={`estado-badge estado-badge--${cssEstado(a.estado)}`}>{a.estado}</span></td>
                 <td>
-                  {a.match_metodo ? (
-                    <small>
-                      {a.match_metodo}
-                      {a.match_score && ` (${parseFloat(a.match_score).toFixed(2)})`}
+                  <code>{a.identificador}</code>{' '}
+                  <small style={{ color: '#888' }}>({a.identificador_tipo})</small>
+                  {a.match_metodo && (
+                    <small style={{ display: 'block', color: '#666' }}>
+                      match {a.match_metodo}
                     </small>
-                  ) : '—'}
+                  )}
                 </td>
+                <td>{a.nombre_apellido_pdf ?? a.marca_modelo_pdf ?? '—'}</td>
                 <td>
                   {a.persona ? (
                     <Link to={`/personal/${a.persona.id}/editar`}>
-                      {a.persona.apellidos}, {a.persona.nombres}
+                      {a.persona.nombre_completo}
                     </Link>
-                  ) : <span style={{ color: '#c00' }}>sin match</span>}
+                  ) : a.sugerencia_fuzzy_persona ? (
+                    <small style={{ color: '#666' }}>
+                      sugerencia: {a.sugerencia_fuzzy_persona.nombre}
+                      {a.sugerencia_fuzzy_score && ` (${parseFloat(a.sugerencia_fuzzy_score).toFixed(2)})`}
+                    </small>
+                  ) : (
+                    <span style={{ color: '#c00' }}>sin match</span>
+                  )}
                 </td>
+                <td>
+                  <EstadoDistribuidorBadge
+                    estado={a.persona?.estado_actual ?? null}
+                    alerta={a.persona_alerta_estado}
+                  />
+                </td>
+                <td><span className={`estado-badge estado-badge--${cssEstado(a.estado)}`}>{a.estado}</span></td>
               </tr>
             ))}
           </tbody>
@@ -358,18 +389,25 @@ const TabDiscrepancias: React.FC<{ discrepancias: Discrepancias | null }> = ({ d
         headers={['Nombre', 'CUIL', 'Patente', 'Perfil']}
       />
       <Section
-        title={`🟠 Match dudoso (${match_dudoso.length})`}
-        emptyText="No hay matches con revisión manual pendiente."
+        title={`🟠 Sugerencia fuzzy pendiente (${match_dudoso.length})`}
+        emptyText="No hay asegurados con sugerencia fuzzy esperando revisión."
         items={match_dudoso}
         renderRow={(d) => (
           <>
-            <td>{d.nombre_apellido_pdf ?? d.identificador}</td>
-            <td>{d.persona_sugerida?.nombre ?? '—'}</td>
-            <td>{d.match_score ? parseFloat(d.match_score).toFixed(3) : '—'}</td>
-            <td>{d.motivo}</td>
+            <td>
+              <code>{d.identificador}</code>{' '}
+              <small style={{ color: '#888' }}>{d.nombre_apellido_pdf ?? '—'}</small>
+            </td>
+            <td>
+              {d.persona_sugerida ? (
+                <Link to={`/personal/${d.persona_sugerida.id}/editar`}>{d.persona_sugerida.nombre}</Link>
+              ) : '—'}
+            </td>
+            <td>{d.persona_sugerida?.cuil ?? '—'}</td>
+            <td>{d.sugerencia_fuzzy_score ? parseFloat(d.sugerencia_fuzzy_score).toFixed(3) : '—'}</td>
           </>
         )}
-        headers={['PDF', 'Persona sugerida', 'Score', 'Motivo']}
+        headers={['PDF', 'Persona sugerida', 'CUIL sugerencia', 'Score']}
       />
       {totalEstadoIncons > 0 && (
         <div className="dashboard-card">

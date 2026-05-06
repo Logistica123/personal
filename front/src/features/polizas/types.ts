@@ -82,6 +82,23 @@ export type PolizaAseguradoPersona = {
   estado_id: number | null;
 };
 
+/**
+ * BUGFIX 02 Issue 3 — datos enriquecidos del distribuidor para badges de
+ * estado en listados (asegurados, preview, selectores). Devuelto por
+ * `serializarDistribuidor` en el backend.
+ */
+export type DistribuidorEnriquecido = {
+  id: number;
+  nombre_completo: string;
+  cuil: string | null;
+  patente: string | null;
+  estado_actual: EstadoPersonaSnapshot;
+  es_solicitud: boolean;
+  aprobado: boolean;
+  fecha_baja: string | null;
+  perfil?: string | null;
+};
+
 export type PolizaAsegurado = {
   id: number;
   poliza_id: number;
@@ -100,12 +117,17 @@ export type PolizaAsegurado = {
   fecha_baja_efectiva: string | null;
   estado: EstadoAsegurado;
   match_score: string | null;
-  match_metodo: string | null;
+  match_metodo: 'cuil_exacto' | 'dni_exacto' | 'patente_exacto' | 'manual' | null;
   persona_estado_al_matchear: EstadoPersonaSnapshot | null;
   persona_alerta_estado: AlertaEstado | null;
+  // BUGFIX 02 Issue 1 — sugerencia fuzzy NO autovincula
+  sugerencia_fuzzy_persona_id: number | null;
+  sugerencia_fuzzy_score: string | null;
+  sugerencia_fuzzy_persona?: { id: number; nombre: string; cuil: string | null; score: string | null } | null;
   revision_manual_pendiente: boolean;
   notas: string | null;
-  persona?: PolizaAseguradoPersona | null;
+  // `persona` es ahora la versión enriquecida (con `estado_actual`)
+  persona?: DistribuidorEnriquecido | null;
 };
 
 export type DiscrepanciaSinPersona = {
@@ -131,13 +153,12 @@ export type DiscrepanciaSinPoliza = {
 
 export type DiscrepanciaDudoso = {
   id: number;
-  persona_id: number;
   identificador: string;
   identificador_tipo: string;
   nombre_apellido_pdf: string | null;
-  match_score: string | null;
-  match_metodo: string | null;
-  motivo: 'score_bajo' | 'ambiguedad';
+  sugerencia_fuzzy_persona_id: number | null;
+  sugerencia_fuzzy_score: string | null;
+  motivo: 'sugerencia_fuzzy_pendiente_revision';
   persona_sugerida: { id: number; nombre: string; cuil: string | null } | null;
 };
 
@@ -153,9 +174,28 @@ export type AlertaEstado =
 export type MatchPropuesto = {
   persona_id: number;
   score: number;
-  metodo: 'cuil_exacto' | 'dni_exacto' | 'patente_exacto' | 'fuzzy_nombre' | 'manual';
+  metodo: 'cuil_exacto' | 'dni_exacto' | 'patente_exacto' | 'manual';
   revision_manual_pendiente: boolean;
   persona_estado_al_matchear?: EstadoPersonaSnapshot;
+};
+
+/**
+ * BUGFIX 02 Issue 1 — sugerencia fuzzy por nombre devuelta por
+ * `CargaPolizaService::armarPreview`. NO autovincula; el admin decide.
+ */
+export type SugerenciaFuzzy = {
+  persona_id: number;
+  score: number;
+  persona?: {
+    id: number;
+    apellidos: string | null;
+    nombres: string | null;
+    cuil: string | null;
+    estado_id: number | null;
+    fecha_baja: string | null;
+    es_solicitud: boolean;
+    aprobado: boolean;
+  } | null;
 };
 
 export type DiscrepanciaEstadoInconsistente = {
@@ -184,6 +224,7 @@ export type PreviewAsegurado = {
   suma_asegurada?: number | null;
   premio_individual?: number | null;
   match_propuesto: MatchPropuesto | null;
+  sugerencia_fuzzy?: SugerenciaFuzzy | null;
   decision_default: 'vincular' | 'crear' | 'revisar';
 };
 

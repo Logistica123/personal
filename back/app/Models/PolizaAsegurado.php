@@ -34,6 +34,8 @@ class PolizaAsegurado extends Model
         'match_metodo',
         'persona_estado_al_matchear',
         'persona_alerta_estado',
+        'sugerencia_fuzzy_persona_id',
+        'sugerencia_fuzzy_score',
         'revision_manual_pendiente',
         'notas',
     ];
@@ -45,6 +47,7 @@ class PolizaAsegurado extends Model
         'suma_asegurada'            => 'decimal:2',
         'premio_individual'         => 'decimal:2',
         'match_score'               => 'decimal:3',
+        'sugerencia_fuzzy_score'    => 'decimal:3',
         'revision_manual_pendiente' => 'boolean',
     ];
 
@@ -56,6 +59,11 @@ class PolizaAsegurado extends Model
     public function persona()
     {
         return $this->belongsTo(Persona::class, 'persona_id');
+    }
+
+    public function sugerenciaFuzzyPersona()
+    {
+        return $this->belongsTo(Persona::class, 'sugerencia_fuzzy_persona_id');
     }
 
     public function altaEndoso()

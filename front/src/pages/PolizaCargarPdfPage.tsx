@@ -3,8 +3,8 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import type {
   CargaPreview,
   Poliza,
-  PreviewAsegurado,
 } from '../features/polizas/types';
+import { SearchInput } from '../features/polizas/SearchInput';
 
 type DashboardLayoutProps = {
   title: string;
@@ -18,15 +18,24 @@ type Props = {
   resolveApiBaseUrl: () => string;
 };
 
-type Decision = 'vincular' | 'crear' | 'ignorar';
+// BUGFIX 02 Issue 2 — `eliminado` es una 4ta decisión: la fila queda en el
+// preview pero no se envía al backend al confirmar.
+type Decision = 'vincular' | 'crear' | 'ignorar' | 'eliminado';
+
+// Filtro por estado del match — categoriza filas según qué ofrece el matching.
+type FiltroEstadoMatch = '' | 'exacto' | 'sin_match' | 'con_sugerencia';
+type FiltroDecision = '' | Decision;
 
 type FilaDecision = {
   decision: Decision;
-  persona_id?: number;            // override manual
-  persona_id_default?: number;    // viene del match propuesto
+  persona_id?: number;
+  persona_id_default?: number;
   match_score?: number;
-  match_metodo?: string;
+  match_metodo?: 'cuil_exacto' | 'dni_exacto' | 'patente_exacto' | 'manual';
   revision_manual_pendiente?: boolean;
+  // sugerencia fuzzy: se preserva incluso si el admin ignora la sugerencia.
+  sugerencia_fuzzy_persona_id?: number;
+  sugerencia_fuzzy_score?: number;
 };
 
 export const PolizaCargarPdfPage: React.FC<Props> = ({ DashboardLayout, resolveApiBaseUrl }) => {
@@ -75,17 +84,22 @@ export const PolizaCargarPdfPage: React.FC<Props> = ({ DashboardLayout, resolveA
       }
       const { data } = (await resp.json()) as { data: CargaPreview };
       setPreview(data);
-      // Inicializar decisiones por defecto.
+      // Inicializar decisiones por defecto. Las filas con sugerencia fuzzy NO
+      // se autovinculan — quedan en 'crear' (BUGFIX 02 Issue 1) y la sugerencia
+      // se persiste en el state para que el admin pueda confirmarla manualmente.
       const inicial: Record<number, FilaDecision> = {};
       data.asegurados.forEach((a, i) => {
         const m = a.match_propuesto;
+        const s = a.sugerencia_fuzzy;
         inicial[i] = {
           decision: m ? 'vincular' : 'crear',
           persona_id_default: m?.persona_id,
           persona_id: m?.persona_id,
           match_score: m?.score,
           match_metodo: m?.metodo,
-          revision_manual_pendiente: m?.revision_manual_pendiente ?? false,
+          revision_manual_pendiente: m?.revision_manual_pendiente ?? Boolean(s),
+          sugerencia_fuzzy_persona_id: s?.persona_id,
+          sugerencia_fuzzy_score: s?.score,
         };
       });
       setDecisiones(inicial);
@@ -103,28 +117,34 @@ export const PolizaCargarPdfPage: React.FC<Props> = ({ DashboardLayout, resolveA
     try {
       setLoading(true);
       setError(null);
+      // Filas marcadas como `eliminado` no se envían al backend.
+      const filas = preview.asegurados
+        .map((a, i) => ({ a, d: decisiones[i] }))
+        .filter(({ d }) => d.decision !== 'eliminado');
+
       const payload = {
         endoso: preview.endoso,
-        asegurados: preview.asegurados.map((a, i) => {
-          const d = decisiones[i];
-          return {
-            tipo: a.tipo,
-            identificador: a.identificador,
-            identificador_tipo: a.identificador_tipo,
-            numero_orden_aseguradora: a.numero_orden_aseguradora ?? null,
-            nombre_apellido: a.nombre_apellido ?? null,
-            marca_modelo: a.marca_modelo ?? null,
-            tipo_vehiculo: a.tipo_vehiculo ?? null,
-            localidad: a.localidad ?? null,
-            suma_asegurada: a.suma_asegurada ?? null,
-            premio_individual: a.premio_individual ?? null,
-            decision: d.decision,
-            persona_id: d.decision === 'vincular' ? d.persona_id ?? null : null,
-            match_score: d.match_score ?? null,
-            match_metodo: d.match_metodo ?? null,
-            revision_manual_pendiente: d.revision_manual_pendiente ?? false,
-          };
-        }),
+        asegurados: filas.map(({ a, d }) => ({
+          tipo: a.tipo,
+          identificador: a.identificador,
+          identificador_tipo: a.identificador_tipo,
+          numero_orden_aseguradora: a.numero_orden_aseguradora ?? null,
+          nombre_apellido: a.nombre_apellido ?? null,
+          marca_modelo: a.marca_modelo ?? null,
+          tipo_vehiculo: a.tipo_vehiculo ?? null,
+          localidad: a.localidad ?? null,
+          suma_asegurada: a.suma_asegurada ?? null,
+          premio_individual: a.premio_individual ?? null,
+          decision: d.decision,
+          persona_id: d.decision === 'vincular' ? d.persona_id ?? null : null,
+          match_score: d.match_score ?? null,
+          match_metodo: d.match_metodo ?? null,
+          revision_manual_pendiente: d.revision_manual_pendiente ?? false,
+          // BUGFIX 02 Issue 1 — la sugerencia fuzzy se persiste aunque la decisión
+          // sea "crear" o "ignorar"; sirve para auditoría y revisión posterior.
+          sugerencia_fuzzy_persona_id: d.sugerencia_fuzzy_persona_id ?? null,
+          sugerencia_fuzzy_score: d.sugerencia_fuzzy_score ?? null,
+        })),
       };
       const resp = await fetch(`${apiBaseUrl}/api/polizas/${polizaId}/confirmar-carga`, {
         method: 'POST',
@@ -146,10 +166,10 @@ export const PolizaCargarPdfPage: React.FC<Props> = ({ DashboardLayout, resolveA
   }, [preview, polizaId, decisiones, apiBaseUrl]);
 
   const totales = useMemo(() => {
-    const t = { vincular: 0, crear: 0, ignorar: 0, dudosos: 0 };
+    const t = { vincular: 0, crear: 0, ignorar: 0, eliminado: 0, dudosos: 0 };
     Object.values(decisiones).forEach((d) => {
       t[d.decision]++;
-      if (d.revision_manual_pendiente) t.dudosos++;
+      if (d.revision_manual_pendiente && d.decision !== 'eliminado') t.dudosos++;
     });
     return t;
   }, [decisiones]);
@@ -265,7 +285,7 @@ type PreviewMatchingProps = {
   preview: CargaPreview;
   decisiones: Record<number, FilaDecision>;
   setDecisiones: React.Dispatch<React.SetStateAction<Record<number, FilaDecision>>>;
-  totales: { vincular: number; crear: number; ignorar: number; dudosos: number };
+  totales: { vincular: number; crear: number; ignorar: number; eliminado: number; dudosos: number };
   loading: boolean;
   onConfirmar: () => void;
   onVolver: () => void;
@@ -276,6 +296,74 @@ const PreviewMatching: React.FC<PreviewMatchingProps> = ({
 }) => {
   const setDecision = (i: number, partial: Partial<FilaDecision>) => {
     setDecisiones((prev) => ({ ...prev, [i]: { ...prev[i], ...partial } }));
+  };
+
+  // BUGFIX 02 Issue 2 — filtros + buscador + selección múltiple.
+  const [filterMatch, setFilterMatch] = useState<FiltroEstadoMatch>('');
+  const [filterDecision, setFilterDecision] = useState<FiltroDecision>('');
+  const [search, setSearch] = useState('');
+  const [seleccionadas, setSeleccionadas] = useState<Set<number>>(new Set());
+
+  const filaEstadoMatch = (i: number): FiltroEstadoMatch => {
+    const a = preview.asegurados[i];
+    if (a.match_propuesto) return 'exacto';
+    if (a.sugerencia_fuzzy) return 'con_sugerencia';
+    return 'sin_match';
+  };
+
+  const indicesVisibles = useMemo(() => {
+    const needle = search.trim().toLowerCase();
+    return preview.asegurados
+      .map((_, i) => i)
+      .filter((i) => {
+        const a = preview.asegurados[i];
+        const d = decisiones[i] ?? { decision: 'crear' };
+        if (filterMatch && filaEstadoMatch(i) !== filterMatch) return false;
+        if (filterDecision && d.decision !== filterDecision) return false;
+        if (!needle) return true;
+        return [
+          a.identificador,
+          a.nombre_apellido,
+          a.marca_modelo,
+          a.tipo_vehiculo,
+          a.localidad,
+        ].some((s) => (s ?? '').toLowerCase().includes(needle));
+      });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [preview.asegurados, decisiones, filterMatch, filterDecision, search]);
+
+  const todasSeleccionadasVisibles = indicesVisibles.length > 0
+    && indicesVisibles.every((i) => seleccionadas.has(i));
+
+  const toggleTodas = () => {
+    setSeleccionadas((prev) => {
+      const next = new Set(prev);
+      if (todasSeleccionadasVisibles) {
+        indicesVisibles.forEach((i) => next.delete(i));
+      } else {
+        indicesVisibles.forEach((i) => next.add(i));
+      }
+      return next;
+    });
+  };
+
+  const toggleFila = (i: number) => {
+    setSeleccionadas((prev) => {
+      const next = new Set(prev);
+      if (next.has(i)) next.delete(i); else next.add(i);
+      return next;
+    });
+  };
+
+  const aplicarMasiva = (decision: Decision) => {
+    if (seleccionadas.size === 0) return;
+    setDecisiones((prev) => {
+      const next = { ...prev };
+      seleccionadas.forEach((i) => {
+        next[i] = { ...next[i], decision };
+      });
+      return next;
+    });
   };
 
   return (
@@ -296,11 +384,71 @@ const PreviewMatching: React.FC<PreviewMatchingProps> = ({
             </ul>
           </div>
         )}
-        <div style={{ display: 'flex', gap: '1rem', fontSize: '0.85rem' }}>
+        <div style={{ display: 'flex', gap: '1rem', fontSize: '0.85rem', flexWrap: 'wrap' }}>
           <span>🔵 Vincular: <b>{totales.vincular}</b></span>
           <span>🟢 Crear nuevo: <b>{totales.crear}</b></span>
           <span>⚪ Ignorar: <b>{totales.ignorar}</b></span>
+          <span>🗑 Eliminado: <b>{totales.eliminado}</b></span>
           {totales.dudosos > 0 && <span style={{ color: '#c70' }}>⚠ Dudosos: <b>{totales.dudosos}</b></span>}
+        </div>
+      </div>
+
+      <div className="dashboard-card" style={{ marginBottom: '0.75rem' }}>
+        <div className="filters-bar" style={{ alignItems: 'center', gap: '1rem', flexWrap: 'wrap' }}>
+          <label className="filter-field">
+            <span>Estado match</span>
+            <select value={filterMatch} onChange={(e) => setFilterMatch(e.target.value as FiltroEstadoMatch)}>
+              <option value="">Todos</option>
+              <option value="exacto">Exacto</option>
+              <option value="sin_match">Sin match</option>
+              <option value="con_sugerencia">Con sugerencia fuzzy</option>
+            </select>
+          </label>
+          <label className="filter-field">
+            <span>Decisión</span>
+            <select value={filterDecision} onChange={(e) => setFilterDecision(e.target.value as FiltroDecision)}>
+              <option value="">Todas</option>
+              <option value="vincular">Vincular</option>
+              <option value="crear">Crear</option>
+              <option value="ignorar">Ignorar</option>
+              <option value="eliminado">Eliminado</option>
+            </select>
+          </label>
+          <label className="filter-field" style={{ flex: '1 1 240px', minWidth: 220 }}>
+            <span>Buscar</span>
+            <SearchInput
+              value={search}
+              onChange={setSearch}
+              placeholder="patente, CUIL, nombre, modelo…"
+            />
+          </label>
+        </div>
+
+        <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', marginTop: '0.5rem', fontSize: '0.85rem' }}>
+          <span>
+            Mostrando <b>{indicesVisibles.length}</b> de {preview.asegurados.length}
+            {seleccionadas.size > 0 && ` · ${seleccionadas.size} seleccionadas`}
+          </span>
+          {seleccionadas.size > 0 && (
+            <>
+              <span style={{ marginLeft: 'auto' }}>Aplicar a seleccionadas:</span>
+              <button type="button" className="secondary-action secondary-action--ghost" onClick={() => aplicarMasiva('vincular')}>
+                Vincular
+              </button>
+              <button type="button" className="secondary-action secondary-action--ghost" onClick={() => aplicarMasiva('crear')}>
+                Crear
+              </button>
+              <button type="button" className="secondary-action secondary-action--ghost" onClick={() => aplicarMasiva('ignorar')}>
+                Ignorar
+              </button>
+              <button type="button" className="secondary-action secondary-action--ghost" onClick={() => aplicarMasiva('eliminado')}>
+                Eliminar
+              </button>
+              <button type="button" className="secondary-action secondary-action--ghost" onClick={() => setSeleccionadas(new Set())}>
+                Limpiar
+              </button>
+            </>
+          )}
         </div>
       </div>
 
@@ -309,19 +457,49 @@ const PreviewMatching: React.FC<PreviewMatchingProps> = ({
           <table className="bdd-activos-table" style={{ width: '100%' }}>
             <thead>
               <tr>
+                <th style={{ width: 32 }}>
+                  <input
+                    type="checkbox"
+                    checked={todasSeleccionadasVisibles}
+                    onChange={toggleTodas}
+                    aria-label="Seleccionar todas las visibles"
+                  />
+                </th>
                 <th>#</th>
                 <th>Identificador</th>
                 <th>Nombre / Vehículo</th>
-                <th>Match propuesto</th>
-                <th>Score</th>
+                <th>Match / Sugerencia</th>
                 <th>Decisión</th>
+                <th style={{ width: 36 }}></th>
               </tr>
             </thead>
             <tbody>
-              {preview.asegurados.map((a, i) => {
-                const d = decisiones[i] ?? { decision: 'crear' };
+              {indicesVisibles.length === 0 && (
+                <tr><td colSpan={7} style={{ padding: '1rem', color: '#888', textAlign: 'center' }}>
+                  {search ? `No se encontraron resultados para "${search}".` : 'No hay filas que coincidan con los filtros.'}
+                </td></tr>
+              )}
+              {indicesVisibles.map((i) => {
+                const a = preview.asegurados[i];
+                const d = decisiones[i] ?? { decision: 'crear' as Decision };
+                const eliminado = d.decision === 'eliminado';
+                const dudoso = (d.revision_manual_pendiente ?? false) && !eliminado;
+                const filaStyle: React.CSSProperties | undefined = eliminado
+                  ? { opacity: 0.45, textDecoration: 'line-through', background: '#f5f5f5' }
+                  : dudoso
+                    ? { background: '#fffbe6' }
+                    : undefined;
+                const sug = a.sugerencia_fuzzy;
                 return (
-                  <tr key={i} style={d.revision_manual_pendiente ? { background: '#fffbe6' } : undefined}>
+                  <tr key={i} style={filaStyle}>
+                    <td>
+                      <input
+                        type="checkbox"
+                        checked={seleccionadas.has(i)}
+                        onChange={() => toggleFila(i)}
+                        aria-label={`Seleccionar fila ${i + 1}`}
+                      />
+                    </td>
                     <td>{a.numero_orden_aseguradora ?? i + 1}</td>
                     <td>
                       <code>{a.identificador}</code>
@@ -330,28 +508,56 @@ const PreviewMatching: React.FC<PreviewMatchingProps> = ({
                     <td>{a.nombre_apellido ?? a.marca_modelo ?? '—'}</td>
                     <td>
                       {a.match_propuesto ? (
-                        <span>persona #{a.match_propuesto.persona_id}</span>
-                      ) : <span style={{ color: '#c00' }}>sin match</span>}
-                    </td>
-                    <td>
-                      {a.match_propuesto ? (
                         <small>
-                          {a.match_propuesto.score.toFixed(2)}
-                          <br />{a.match_propuesto.metodo}
+                          <b>persona #{a.match_propuesto.persona_id}</b>
+                          <br />método: {a.match_propuesto.metodo}
                         </small>
-                      ) : '—'}
+                      ) : sug ? (
+                        <small style={{ color: '#c70' }}>
+                          <b>sin match exacto</b>
+                          <br />sugerencia: persona #{sug.persona_id}
+                          {sug.persona && ` (${sug.persona.apellidos ?? ''} ${sug.persona.nombres ?? ''})`}
+                          {' '}({sug.score.toFixed(2)})
+                          <br />
+                          <button
+                            type="button"
+                            onClick={() => setDecision(i, {
+                              decision: 'vincular',
+                              persona_id: sug.persona_id,
+                              match_metodo: 'manual',
+                              match_score: sug.score,
+                              revision_manual_pendiente: false,
+                            })}
+                            style={{ marginTop: 4, padding: '0.15rem 0.4rem', fontSize: '0.75rem', cursor: 'pointer' }}
+                          >
+                            Vincular sugerencia
+                          </button>
+                        </small>
+                      ) : <span style={{ color: '#c00' }}>sin match</span>}
                     </td>
                     <td>
                       <select
                         value={d.decision}
                         onChange={(e) => setDecision(i, { decision: e.target.value as Decision })}
                       >
-                        <option value="vincular" disabled={!a.match_propuesto && !d.persona_id}>
-                          Vincular {a.match_propuesto ? `→ #${a.match_propuesto.persona_id}` : '(falta persona_id)'}
+                        <option value="vincular" disabled={!d.persona_id}>
+                          Vincular {d.persona_id ? `→ #${d.persona_id}` : '(falta persona_id)'}
                         </option>
-                        <option value="crear">Crear sin persona (no_matcheado)</option>
+                        <option value="crear">Crear sin persona</option>
                         <option value="ignorar">Ignorar</option>
+                        <option value="eliminado">Eliminado</option>
                       </select>
+                    </td>
+                    <td>
+                      <button
+                        type="button"
+                        title="Quitar del preview"
+                        aria-label="Eliminar fila"
+                        onClick={() => setDecision(i, { decision: 'eliminado' })}
+                        style={{ background: 'transparent', border: 0, cursor: 'pointer', color: '#c4392a', fontSize: '1.1rem' }}
+                      >
+                        ✗
+                      </button>
                     </td>
                   </tr>
                 );
@@ -360,17 +566,22 @@ const PreviewMatching: React.FC<PreviewMatchingProps> = ({
           </table>
         </div>
 
-        <div style={{ display: 'flex', gap: '0.75rem', marginTop: '1rem' }}>
+        <div style={{ display: 'flex', gap: '0.75rem', marginTop: '1rem', alignItems: 'center', flexWrap: 'wrap' }}>
           <button type="button" className="secondary-action secondary-action--ghost" onClick={onVolver}>
             ← Volver
           </button>
+          <span style={{ fontSize: '0.85rem', color: '#666' }}>
+            A persistir: <b>{totales.vincular + totales.crear}</b>
+            {' · '}Ignorados: {totales.ignorar}
+            {' · '}Eliminados: {totales.eliminado}
+          </span>
           <button
             type="button"
             disabled={loading}
             onClick={onConfirmar}
-            style={{ background: '#0a8c3a', color: '#fff', padding: '0.6rem 1.2rem', borderRadius: 10, border: 0, cursor: 'pointer' }}
+            style={{ background: '#0a8c3a', color: '#fff', padding: '0.6rem 1.2rem', borderRadius: 10, border: 0, cursor: 'pointer', marginLeft: 'auto' }}
           >
-            {loading ? 'Confirmando…' : `Confirmar carga (${totales.vincular + totales.crear} a persistir)`}
+            {loading ? 'Confirmando…' : `Confirmar carga (${totales.vincular + totales.crear})`}
           </button>
         </div>
       </div>

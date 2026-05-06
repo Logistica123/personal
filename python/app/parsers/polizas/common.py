@@ -8,13 +8,26 @@ from typing import Optional
 
 
 # Formatos de patente argentinos (auto/moto, viejo y Mercosur).
+#
+# BUGFIX 01: pdfplumber.extract_text() merge celdas adyacentes cuando el N° de
+# orden tiene 2+ dígitos. Resultado: la patente queda pegada al modelo del
+# vehículo sin espacio (`AA788ZUEXPRESS`). Con `\b` final el match falla
+# (entre 'U' y 'E' no hay word boundary). Se reemplaza por:
+#
+#   - Lookbehind `(?<![A-Z\d])` exigiendo que ANTES de la patente no haya
+#     letra ni dígito (acepta espacio, signo, inicio de string).
+#   - Sin lookahead final: aceptamos que la patente puede estar pegada a
+#     más letras (modelo del vehículo).
+#
+# Los formatos están ordenados de más específico a menos para que en posiciones
+# ambiguas se prefiera el patrón largo.
 RE_PATENTE = re.compile(
-    r'\b('
-    r'[A-Z]{3}\d{3}'           # auto viejo: ABC123
-    r'|[A-Z]{2}\d{3}[A-Z]{2}'  # auto Mercosur: AB123CD
+    r'(?<![A-Z\d])('
+    r'[A-Z]{2}\d{3}[A-Z]{2}'   # auto Mercosur: AB123CD
     r'|[A-Z]\d{3}[A-Z]{3}'     # moto Mercosur: A123BCD
+    r'|[A-Z]{3}\d{3}'          # auto viejo: ABC123
     r'|\d{3}[A-Z]{3}'          # moto vieja: 123ABC
-    r')\b'
+    r')'
 )
 
 
