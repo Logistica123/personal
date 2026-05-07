@@ -470,13 +470,14 @@ const PreviewMatching: React.FC<PreviewMatchingProps> = ({
                 <th>Identificador</th>
                 <th>Nombre / Vehículo</th>
                 <th>Match / Sugerencia</th>
+                <th>Estado dist.</th>
                 <th>Decisión</th>
                 <th style={{ width: 36 }}></th>
               </tr>
             </thead>
             <tbody>
               {indicesVisibles.length === 0 && (
-                <tr><td colSpan={7} style={{ padding: '1rem', color: '#888', textAlign: 'center' }}>
+                <tr><td colSpan={8} style={{ padding: '1rem', color: '#888', textAlign: 'center' }}>
                   {search ? `No se encontraron resultados para "${search}".` : 'No hay filas que coincidan con los filtros.'}
                 </td></tr>
               )}
@@ -522,12 +523,6 @@ const PreviewMatching: React.FC<PreviewMatchingProps> = ({
                       {a.match_propuesto ? (
                         <small>
                           <b>persona #{a.match_propuesto.persona_id}</b>
-                          {a.match_propuesto.persona && (
-                            <>
-                              {' '}
-                              <EstadoDistribuidorBadge estado={a.match_propuesto.persona.estado_actual} />
-                            </>
-                          )}
                           <br />método: {a.match_propuesto.metodo}
                         </small>
                       ) : sug ? (
@@ -552,6 +547,11 @@ const PreviewMatching: React.FC<PreviewMatchingProps> = ({
                           </button>
                         </small>
                       ) : <span style={{ color: '#c00' }}>sin match</span>}
+                    </td>
+                    <td>
+                      <EstadoDistribuidorBadge
+                        estado={a.match_propuesto?.persona?.estado_actual ?? sug?.persona?.estado_actual ?? null}
+                      />
                     </td>
                     <td>
                       <select
