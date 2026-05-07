@@ -146,4 +146,29 @@ return [
         'base_url' => env('OCA_SERVICE_URL', 'http://localhost:8100'),
     ],
 
+    /*
+    |--------------------------------------------------------------------------
+    | Microsoft Graph (OAuth) — ADDENDUM 9 Parte A
+    |--------------------------------------------------------------------------
+    |
+    | Authorization Code flow para que cada admin del módulo Pólizas envíe los
+    | emails desde su propio Outlook. Las credenciales son del registro de App
+    | "Logística Argentina - DistriApp Pólizas" en Azure Entra ID.
+    |
+    | El secret expira y debe rotarse en Azure cada ~24 meses (después se
+    | actualiza solo el `MS_CLIENT_SECRET` en el .env, no toca código).
+    */
+    'microsoft' => [
+        'tenant_id'     => env('MS_TENANT_ID'),
+        'client_id'     => env('MS_CLIENT_ID'),
+        'client_secret' => env('MS_CLIENT_SECRET'),
+        'redirect_uri'  => env('MS_REDIRECT_URI'),
+        'scope'         => env('MS_SCOPE', 'offline_access User.Read Mail.Send Mail.Read'),
+        'authorize_url' => env('MS_AUTHORIZE_URL', 'https://login.microsoftonline.com/{tenant}/oauth2/v2.0/authorize'),
+        'token_url'     => env('MS_TOKEN_URL',     'https://login.microsoftonline.com/{tenant}/oauth2/v2.0/token'),
+        'graph_base'    => env('MS_GRAPH_BASE',    'https://graph.microsoft.com/v1.0'),
+        // URL absoluta del frontend al que volvemos tras callback exitoso/erroneo.
+        'frontend_redirect' => env('MS_FRONTEND_REDIRECT', 'https://personal.distriapp.com.ar/polizas/configuracion/mi-outlook'),
+    ],
+
 ];

@@ -27,6 +27,8 @@ class SolicitudService
     public function __construct(
         private readonly EmailRenderService $renderer,
         private readonly AdjuntosCheckService $adjuntosCheck,
+        private readonly PolizaCertificadoIndividualService $certificadoService,
+        private readonly OAuthMicrosoftService $oauth,
     ) {
     }
 
@@ -300,6 +302,21 @@ class SolicitudService
                         'estado'              => 'activo',
                         'fecha_alta_efectiva' => now()->toDateString(),
                     ]);
+
+                    // ADDENDUM 9 Parte B — generar certificado individual por
+                    // asegurado activado. Falla silenciosa: si el PDF da error,
+                    // se loguea pero no rompe el flujo de confirmación.
+                    $aseguradosActivados = PolizaAsegurado::query()
+                        ->whereIn('id', $aseguradoIds)
+                        ->whereNotNull('persona_id')
+                        ->get();
+                    foreach ($aseguradosActivados as $a) {
+                        try {
+                            $this->certificadoService->generarYGuardar($a);
+                        } catch (\Throwable $e) {
+                            \Log::warning("No se pudo generar certificado individual para asegurado #{$a->id}: " . $e->getMessage());
+                        }
+                    }
                 } else { // baja
                     PolizaAsegurado::whereIn('id', $aseguradoIds)->update([
                         'estado'              => 'dado_de_baja',
@@ -380,13 +397,34 @@ class SolicitudService
     }
 
     /**
-     * Envía vía Laravel Mail. Devuelve el `Message-ID` del SMTP si está disponible.
-     * En driver `log` devuelve un id sintético para que la trazabilidad funcione igual.
+     * Envía el email. ADDENDUM 9 Parte A: si el admin tiene cuenta OAuth de
+     * Outlook vinculada y activa, el email sale desde su Outlook personal vía
+     * Microsoft Graph (remitente = el admin, mismo workflow que si lo mandara
+     * con su cliente normal). Si no tiene cuenta vinculada, falla el OAuth, o
+     * la cuenta está inactiva → fallback al SMTP institucional con Reply-To
+     * apuntando al admin.
+     *
+     * Devuelve el `Message-ID` para correlación de respuestas.
      */
     private function mandarMail(array $rendered, User $admin): string
     {
         $messageId = '<polizas-' . uniqid() . '@logisticaargentina.com.ar>';
 
+        // 1) Intento via OAuth/Graph si el admin tiene cuenta activa.
+        $account = $this->oauth->findByUser($admin);
+        if ($account && $account->activo) {
+            try {
+                return $this->oauth->sendEmail($account, $rendered, $messageId);
+            } catch (\Throwable $e) {
+                \Log::warning("OAuth sendMail falló para admin {$admin->id}, fallback a SMTP: " . $e->getMessage());
+                // Sigue al SMTP institucional. El último error queda registrado en
+                // la cuenta para que el admin sepa que tiene que re-vincular.
+                $account->update(['last_error' => $e->getMessage()]);
+            }
+        }
+
+        // 2) Fallback SMTP institucional. Reply-To = email del admin para que
+        //    las respuestas le lleguen a él aunque el remitente sea el genérico.
         Mail::raw($rendered['body'], function ($mail) use ($rendered, $admin, $messageId) {
             $mail->subject($rendered['asunto']);
             if (!empty($rendered['destinatarios_to'])) {

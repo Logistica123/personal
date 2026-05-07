@@ -51,6 +51,7 @@ import { PolizaSolicitudDetallePage } from './pages/PolizaSolicitudDetallePage';
 import { PersonaPolizasPage } from './pages/PersonaPolizasPage';
 import { PolizaClausulasPage } from './pages/PolizaClausulasPage';
 import { PolizaNotificacionesPage } from './pages/PolizaNotificacionesPage';
+import { PolizasConfigMiOutlookPage } from './pages/PolizasConfigMiOutlookPage';
 import { MembresiaPanelPage } from './pages/MembresiaPanelPage';
 import { ProveedorNuevoPage } from './pages/ProveedorNuevoPage';
 import { WebRtcCallsPage } from './pages/WebRtcCallsPage';
@@ -3736,6 +3737,13 @@ const DashboardLayout: React.FC<{
                     onClick={() => navigate('/polizas/notificaciones')}
                   >
                     Notificaciones a distribuidor
+                  </button>
+                  <button
+                    type="button"
+                    className={`sidebar-sublink${location.pathname === '/polizas/configuracion/mi-outlook' ? ' is-active' : ''}`}
+                    onClick={() => navigate('/polizas/configuracion/mi-outlook')}
+                  >
+                    Mi Outlook
                   </button>
                 </div>
               ) : null}
@@ -21109,6 +21117,18 @@ const AppRoutes: React.FC = () => {
         element={
           <RequireAccess section="personal">
             <PolizaNotificacionesPage
+              DashboardLayout={DashboardLayout}
+              resolveApiBaseUrl={resolveApiBaseUrl}
+            />
+          </RequireAccess>
+        }
+      />
+      {/* ADDENDUM 9 Parte A — vinculación OAuth de Outlook por admin */}
+      <Route
+        path="/polizas/configuracion/mi-outlook"
+        element={
+          <RequireAccess section="personal">
+            <PolizasConfigMiOutlookPage
               DashboardLayout={DashboardLayout}
               resolveApiBaseUrl={resolveApiBaseUrl}
             />

@@ -31,6 +31,14 @@ Schedule::command('polizas:recalcular-estados-asegurados')
     ->withoutOverlapping()
     ->appendOutputTo(storage_path('logs/polizas-alertas.log'));
 
+// ADDENDUM 9 Parte A — refresh silencioso de access_tokens de Outlook (cada hora).
+// Microsoft emite tokens de ~60 min; este job renueva los que vencen en <30 min.
+Schedule::command('polizas:refresh-tokens-outlook')
+    ->hourly()
+    ->timezone('America/Argentina/Buenos_Aires')
+    ->withoutOverlapping()
+    ->appendOutputTo(storage_path('logs/polizas-oauth.log'));
+
 Artisan::command('inspire', function () {
     $this->comment(Inspiring::quote());
 })->purpose('Display an inspiring quote');

@@ -19,6 +19,7 @@ use App\Http\Controllers\Api\PolizasController;
 use App\Http\Controllers\Api\PolizaClausulaController;
 use App\Http\Controllers\Api\PolizaSolicitudController;
 use App\Http\Controllers\Api\PolizaNotificacionDistribuidorController;
+use App\Http\Controllers\Api\OAuthMicrosoftController;
 use App\Http\Controllers\Api\ReclamoController;
 use App\Http\Controllers\Api\NotificationController;
 use App\Http\Controllers\Api\PersonalDocumentController;
@@ -56,6 +57,12 @@ Route::post('/login', [AuthController::class, 'login']);
 Route::post('/twofactor/setup', [AuthController::class, 'setupTotp']);
 Route::post('/twofactor/enable', [AuthController::class, 'enableTotp']);
 
+// ADDENDUM 9 Parte A — callback OAuth Microsoft.
+// NO va bajo auth.api porque Microsoft redirige sin token de la app — el state
+// (validado en cache contra el user_id que inició el flow) es la prueba de
+// integridad. El resto de los endpoints OAuth sí requieren auth.api.
+Route::get('/oauth/microsoft/callback', [OAuthMicrosoftController::class, 'callback']);
+
 Route::middleware('auth.api')->group(function () {
     // ----- Pólizas -----
     Route::get('/polizas',                                 [PolizasController::class, 'index']);
@@ -65,6 +72,12 @@ Route::middleware('auth.api')->group(function () {
     // BUGFIX 02 Issue 1 — Auditoría de matches fuzzy (históricos + nuevos)
     Route::get ('/polizas/auditoria/matches-fuzzy',                    [PolizasController::class, 'auditoriaMatchesFuzzy']);
     Route::post('/polizas/auditoria/matches-fuzzy/{asegurado}/resolver',[PolizasController::class, 'resolverSugerenciaFuzzy']);
+    // ADDENDUM 9 Parte B — regenerar certificado individual de un asegurado
+    Route::post('/polizas/asegurados/{asegurado}/certificado-individual', [PolizasController::class, 'regenerarCertificadoIndividual']);
+    // ADDENDUM 9 Parte A — vinculación OAuth Outlook (admins del módulo Pólizas)
+    Route::get ('/oauth/microsoft/authorize', [OAuthMicrosoftController::class, 'authorize']);
+    Route::get ('/oauth/microsoft/status',    [OAuthMicrosoftController::class, 'status']);
+    Route::post('/oauth/microsoft/unlink',    [OAuthMicrosoftController::class, 'unlink']);
     Route::post('/polizas/{poliza}/cargar-pdf',            [PolizasController::class, 'cargarPdf']);
     Route::post('/polizas/{poliza}/confirmar-carga',       [PolizasController::class, 'confirmarCarga']);
     // BUGFIX 02 — selector de personas para wizard "Solicitar alta"

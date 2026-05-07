@@ -169,6 +169,19 @@ class Persona extends Model
     }
 
     /**
+     * ADDENDUM 9 Parte C — pólizas en las que el distribuidor figura como
+     * asegurado activo (estado='activo'). Usada en el listado de /personal
+     * para mostrar la columna "Pólizas vigentes" y los filtros de cobertura.
+     */
+    public function polizasVigentes()
+    {
+        return $this->hasMany(\App\Models\PolizaAsegurado::class, 'persona_id')
+            ->where('estado', 'activo')
+            ->with('poliza:id,nombre_descriptivo,numero_poliza,ramo,tipo_asegurado,aseguradora_id,activa',
+                   'poliza.aseguradora:id,nombre,parser_perfil');
+    }
+
+    /**
      * Determina si este distribuidor tiene un cobrador designado.
      */
     public function tieneCobrador(): bool

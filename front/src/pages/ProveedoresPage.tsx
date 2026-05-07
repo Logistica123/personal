@@ -129,6 +129,10 @@ export const ProveedoresPage: React.FC<ProveedoresPageProps> = ({
   const [legajoFilter, setLegajoFilter] = useState(() => resolveStoredFilters().legajo ?? '');
   const [docStatusFilter, setDocStatusFilter] = useState<'vencido' | 'por_vencer' | 'vigente' | ''>('');
   const [membresiaFilter, setMembresiaFilter] = useState(false);
+  // ADDENDUM 9 Parte C — filtros de cobertura de pólizas (client-side, sobre `polizasVigentes`).
+  const [coberturaPolizaIdFilter, setCoberturaPolizaIdFilter] = useState<string>('');
+  const [coberturaApFilter, setCoberturaApFilter] = useState<'' | 'con' | 'sin'>('');
+  const [coberturaVehFilter, setCoberturaVehFilter] = useState<'' | 'con' | 'sin'>('');
   const [docsSortActive, setDocsSortActive] = useState(false);
   const sinEstadoFilterValue = 'sin_estado';
   const noCitadoFilterValue = 'no_citado';
@@ -167,6 +171,8 @@ export const ProveedoresPage: React.FC<ProveedoresPageProps> = ({
       { key: 'docs', label: 'Docs' },
       { key: 'qrIngresos', label: 'Ingresos QR' },
       { key: 'qrUltimoIngreso', label: 'Último ingreso' },
+      // ADDENDUM 9 Parte C — columna de pólizas activas (oculta por default).
+      { key: 'polizasVigentes', label: 'Pólizas vigentes' },
       { key: 'acciones', label: 'Acciones', locked: true },
     ],
     []
@@ -563,6 +569,25 @@ export const ProveedoresPage: React.FC<ProveedoresPageProps> = ({
         return false;
       }
 
+      // ADDENDUM 9 Parte C — filtros de cobertura.
+      const polizasActivas = registro.polizasVigentes ?? [];
+      if (coberturaPolizaIdFilter) {
+        const polizaIdNum = Number(coberturaPolizaIdFilter);
+        if (!polizasActivas.some((pa) => pa.poliza_id === polizaIdNum)) {
+          return false;
+        }
+      }
+      if (coberturaApFilter) {
+        const tieneAp = polizasActivas.some((pa) => pa.ramo === 'accidentes_personales');
+        if (coberturaApFilter === 'con' && !tieneAp) return false;
+        if (coberturaApFilter === 'sin' && tieneAp) return false;
+      }
+      if (coberturaVehFilter) {
+        const tieneVeh = polizasActivas.some((pa) => pa.ramo === 'vehiculos');
+        if (coberturaVehFilter === 'con' && !tieneVeh) return false;
+        if (coberturaVehFilter === 'sin' && tieneVeh) return false;
+      }
+
       if (term.length === 0) {
         return true;
       }
@@ -596,6 +621,8 @@ export const ProveedoresPage: React.FC<ProveedoresPageProps> = ({
         registro.duenoEmail,
         registro.duenoTelefono,
         registro.duenoObservaciones,
+        // Búsqueda libre incluye nº y nombre de póliza vigente (ADDENDUM 9 Parte C).
+        ...polizasActivas.flatMap((pa) => [pa.numero_poliza, pa.nombre_descriptivo, pa.aseguradora]),
       ];
 
       return fields.some((field) => field?.toLowerCase().includes(term));
@@ -612,6 +639,9 @@ export const ProveedoresPage: React.FC<ProveedoresPageProps> = ({
     combustibleFilter,
     tarifaFilter,
     altaDatePreset,
+    coberturaPolizaIdFilter,
+    coberturaApFilter,
+    coberturaVehFilter,
     altaDateFrom,
     altaDateTo,
     perfilNames,
@@ -759,6 +789,23 @@ export const ProveedoresPage: React.FC<ProveedoresPageProps> = ({
       Array.from(new Set(personal.map((registro) => registro.estado).filter((value): value is string => Boolean(value)))).sort(),
     [personal]
   );
+
+  // ADDENDUM 9 Parte C — opciones de pólizas para el filtro "por póliza".
+  // Se derivan del listado actual: cualquier póliza que aparezca como activa en
+  // al menos un proveedor.
+  const polizaOptionsCobertura = useMemo(() => {
+    const m = new Map<number, string>();
+    personal.forEach((registro) => {
+      (registro.polizasVigentes ?? []).forEach((pa) => {
+        if (pa.poliza_id && !m.has(pa.poliza_id)) {
+          m.set(pa.poliza_id, pa.nombre_descriptivo ?? `Póliza #${pa.poliza_id}`);
+        }
+      });
+    });
+    return Array.from(m.entries())
+      .map(([id, nombre]) => ({ id, nombre }))
+      .sort((a, b) => a.nombre.localeCompare(b.nombre));
+  }, [personal]);
 
   useEffect(() => {
     const params = new URLSearchParams(location.search);
@@ -970,6 +1017,14 @@ export const ProveedoresPage: React.FC<ProveedoresPageProps> = ({
             { header: 'Dueño observaciones', resolve: (registro) => registro.duenoObservaciones ?? '' },
             { header: 'Ingresos QR', resolve: (registro) => registro.transportistaQrScansCount ?? 0 },
             { header: 'Último ingreso QR', resolve: (registro) => registro.transportistaQrLastScanAtLabel ?? '' },
+            // ADDENDUM 9 Parte C — pólizas activas concatenadas en una columna.
+            {
+              header: 'Pólizas vigentes',
+              resolve: (registro) =>
+                (registro.polizasVigentes ?? [])
+                  .map((pa) => pa.nombre_descriptivo ?? `Póliza #${pa.poliza_id}`)
+                  .join(' | '),
+            },
     ];
 
     const sanitizeCell = (raw: string): string => {
@@ -1326,6 +1381,41 @@ export const ProveedoresPage: React.FC<ProveedoresPageProps> = ({
             onChange={(event) => setAltaDateTo(event.target.value)}
           />
         </label>
+        {/* ADDENDUM 9 Parte C — filtros de cobertura de pólizas. */}
+        <label className="filter-field">
+          <span>Póliza</span>
+          <select
+            value={coberturaPolizaIdFilter}
+            onChange={(event) => setCoberturaPolizaIdFilter(event.target.value)}
+          >
+            <option value="">Todas</option>
+            {polizaOptionsCobertura.map((p) => (
+              <option key={p.id} value={p.id}>{p.nombre}</option>
+            ))}
+          </select>
+        </label>
+        <label className="filter-field">
+          <span>Cobertura AP</span>
+          <select
+            value={coberturaApFilter}
+            onChange={(event) => setCoberturaApFilter(event.target.value as '' | 'con' | 'sin')}
+          >
+            <option value="">Todos</option>
+            <option value="con">Con cobertura AP</option>
+            <option value="sin">Sin cobertura AP</option>
+          </select>
+        </label>
+        <label className="filter-field">
+          <span>Cobertura vehículos</span>
+          <select
+            value={coberturaVehFilter}
+            onChange={(event) => setCoberturaVehFilter(event.target.value as '' | 'con' | 'sin')}
+          >
+            <option value="">Todos</option>
+            <option value="con">Con cobertura vehículos</option>
+            <option value="sin">Sin cobertura vehículos</option>
+          </select>
+        </label>
       </div>
 
       <div className="filters-actions">
@@ -1488,6 +1578,7 @@ export const ProveedoresPage: React.FC<ProveedoresPageProps> = ({
               ) : null}
               {isColumnVisible('qrIngresos') ? <th>Ingresos QR</th> : null}
               {isColumnVisible('qrUltimoIngreso') ? <th>Último ingreso</th> : null}
+              {isColumnVisible('polizasVigentes') ? <th>Pólizas vigentes</th> : null}
               {isColumnVisible('acciones') ? <th>Acciones</th> : null}
             </tr>
           </thead>
@@ -1625,6 +1716,35 @@ export const ProveedoresPage: React.FC<ProveedoresPageProps> = ({
                   {isColumnVisible('qrIngresos') ? <td>{registro.transportistaQrScansCount ?? 0}</td> : null}
                   {isColumnVisible('qrUltimoIngreso') ? (
                     <td>{registro.transportistaQrLastScanAtLabel ?? '—'}</td>
+                  ) : null}
+                  {isColumnVisible('polizasVigentes') ? (
+                    <td>
+                      {(registro.polizasVigentes ?? []).length === 0 ? (
+                        <span style={{ color: '#888', fontSize: '0.8rem' }}>—</span>
+                      ) : (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                          {(registro.polizasVigentes ?? []).map((pa) => (
+                            <span
+                              key={pa.asegurado_id}
+                              title={`${pa.aseguradora ?? ''} · N° ${pa.numero_poliza ?? ''}`}
+                              style={{
+                                fontSize: '0.75rem',
+                                background: '#eef2ff',
+                                color: '#1e3a8a',
+                                padding: '1px 6px',
+                                borderRadius: 6,
+                                whiteSpace: 'nowrap',
+                                overflow: 'hidden',
+                                textOverflow: 'ellipsis',
+                                maxWidth: 220,
+                              }}
+                            >
+                              {pa.nombre_descriptivo ?? `Póliza #${pa.poliza_id}`}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                    </td>
                   ) : null}
                   {isColumnVisible('acciones') ? (
                     <td>

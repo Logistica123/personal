@@ -8,6 +8,7 @@ use App\Models\Poliza;
 use App\Models\PolizaAsegurado;
 use App\Services\Polizas\CargaPolizaService;
 use App\Services\Polizas\DiscrepanciasService;
+use App\Services\Polizas\PolizaCertificadoIndividualService;
 use App\Services\Polizas\PolizaPdfService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -18,7 +19,27 @@ class PolizasController extends Controller
         private readonly DiscrepanciasService $discrepancias,
         private readonly PolizaPdfService $pdfService,
         private readonly CargaPolizaService $cargaService,
+        private readonly PolizaCertificadoIndividualService $certificadoService,
     ) {
+    }
+
+    /**
+     * ADDENDUM 9 Parte B — regenera el certificado individual de un asegurado.
+     * Útil cuando el alta se confirmó antes de que existiera la feature, o
+     * cuando hubo un fallo transitorio al generarlo automáticamente.
+     */
+    public function regenerarCertificadoIndividual(PolizaAsegurado $asegurado): JsonResponse
+    {
+        try {
+            $archivo = $this->certificadoService->generarYGuardar($asegurado);
+        } catch (\Throwable $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
+        }
+        return response()->json(['data' => [
+            'archivo_id' => $archivo->id,
+            'nombre'     => $archivo->nombre_original,
+            'ruta'       => $archivo->ruta,
+        ]]);
     }
 
     public function index(): JsonResponse

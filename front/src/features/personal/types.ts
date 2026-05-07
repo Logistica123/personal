@@ -108,4 +108,14 @@ export type PersonalRecord = {
   documentacionVencidos?: number | null;
   documentacionPorVencer?: number | null;
   documentacionTotal?: number | null;
+  // ADDENDUM 9 Parte C — pólizas activas en las que el distribuidor figura.
+  polizasVigentes?: Array<{
+    asegurado_id: number;
+    poliza_id: number;
+    nombre_descriptivo: string | null;
+    numero_poliza: string | null;
+    aseguradora_id: number | null;
+    aseguradora: string | null;
+    ramo: 'accidentes_personales' | 'vehiculos' | null;
+  }>;
 };

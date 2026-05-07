@@ -25,6 +25,7 @@ class Archivo extends Model
         'download_url',
         'disk',
         'nombre_original',
+        'categoria',
         'mime',
         'size',
         'fecha_vencimiento',

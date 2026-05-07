@@ -980,6 +980,8 @@ class PersonalController extends Controller
                 'patentesAdicionales:id,persona_id,patente,patente_norm,activo',
                 'dueno:id,persona_id,nombreapellido,fecha_nacimiento,email,telefono,cuil,cuil_cobrador,cbu_alias,observaciones',
                 'aprobadoPor:id,name',
+                // ADDENDUM 9 Parte C — pólizas activas para columna "Pólizas vigentes" y filtros.
+                'polizasVigentes',
                 'documentosVencimientos' => function ($documentsQuery) use ($includePending) {
                     $documentsQuery
                         ->select('id', 'persona_id', 'fecha_vencimiento', 'tipo_archivo_id', 'es_pendiente')
@@ -1072,6 +1074,9 @@ class PersonalController extends Controller
                     });
             });
         }
+
+        // ADDENDUM 9 Parte C — filtros por cobertura de pólizas.
+        $this->applyCoberturaFilters($query, $request);
 
         $personas = $query->get();
 
@@ -2556,6 +2561,66 @@ class PersonalController extends Controller
         ];
     }
 
+    /**
+     * ADDENDUM 9 Parte C — filtros por cobertura de pólizas en el listado.
+     *
+     * Acepta:
+     *  - `?polizaId=N`              persona con cobertura ACTIVA en esa póliza
+     *  - `?sinPolizaId=N`           persona SIN cobertura activa en esa póliza
+     *  - `?aseguradoraId=N`         persona con cobertura activa en alguna póliza de esa aseguradora
+     *  - `?conCoberturaAp=true`     persona con cobertura activa en cualquier póliza ramo=accidentes_personales
+     *  - `?sinCoberturaAp=true`     persona SIN cobertura activa AP
+     *  - `?conCoberturaVehiculos=true`  ídem para ramo=vehiculos
+     *  - `?sinCoberturaVehiculos=true`
+     *
+     * El índice `idx_aseg_persona_estado (persona_id, estado)` (migración
+     * 2026_05_07_000001) garantiza que estos `whereExists` corren con index seek.
+     */
+    protected function applyCoberturaFilters(\Illuminate\Database\Eloquent\Builder $query, Request $request): void
+    {
+        $base = fn () => \DB::table('polizas_asegurados as pa')
+            ->whereColumn('pa.persona_id', 'personas.id')
+            ->where('pa.estado', 'activo');
+
+        if ($request->filled('polizaId')) {
+            $polizaId = (int) $request->input('polizaId');
+            $query->whereExists(fn ($q) => $base()->where('pa.poliza_id', $polizaId)->select(\DB::raw(1))->limit(1));
+        }
+        if ($request->filled('sinPolizaId')) {
+            $polizaId = (int) $request->input('sinPolizaId');
+            $query->whereNotExists(fn ($q) => $base()->where('pa.poliza_id', $polizaId)->select(\DB::raw(1))->limit(1));
+        }
+        if ($request->filled('aseguradoraId')) {
+            $asegId = (int) $request->input('aseguradoraId');
+            $query->whereExists(fn ($q) => $base()
+                ->join('polizas as p', 'p.id', '=', 'pa.poliza_id')
+                ->where('p.aseguradora_id', $asegId)
+                ->select(\DB::raw(1))
+                ->limit(1)
+            );
+        }
+
+        $coberturaPorRamo = [
+            'conCoberturaAp'         => ['accidentes_personales', 'with'],
+            'sinCoberturaAp'         => ['accidentes_personales', 'without'],
+            'conCoberturaVehiculos'  => ['vehiculos', 'with'],
+            'sinCoberturaVehiculos'  => ['vehiculos', 'without'],
+        ];
+        foreach ($coberturaPorRamo as $param => [$ramo, $modo]) {
+            if (!$request->boolean($param)) continue;
+            $existsClosure = fn () => $base()
+                ->join('polizas as p', 'p.id', '=', 'pa.poliza_id')
+                ->where('p.ramo', $ramo)
+                ->select(\DB::raw(1))
+                ->limit(1);
+            if ($modo === 'with') {
+                $query->whereExists($existsClosure);
+            } else {
+                $query->whereNotExists($existsClosure);
+            }
+        }
+    }
+
     protected function transformPersonaListItem(Persona $persona): array
     {
         $transportistaQr = $this->buildTransportistaQrPayload($persona, request());
@@ -2726,6 +2791,19 @@ class PersonalController extends Controller
             'documentacionVencidos' => $documentacionStatus['vencidos'],
             'documentacionPorVencer' => $documentacionStatus['porVencer'],
             'documentacionTotal' => $documentacionStatus['total'],
+            // ADDENDUM 9 Parte C — pólizas activas para columna y filtros.
+            'polizasVigentes' => collect($persona->polizasVigentes ?? [])
+                ->map(fn ($a) => [
+                    'asegurado_id'        => $a->id,
+                    'poliza_id'           => $a->poliza_id,
+                    'nombre_descriptivo'  => $a->poliza?->nombre_descriptivo,
+                    'numero_poliza'       => $a->poliza?->numero_poliza,
+                    'aseguradora_id'      => $a->poliza?->aseguradora_id,
+                    'aseguradora'         => $a->poliza?->aseguradora?->nombre,
+                    'ramo'                => $a->poliza?->ramo,
+                ])
+                ->values()
+                ->all(),
         ];
     }
 
