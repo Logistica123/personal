@@ -177,6 +177,9 @@ export type MatchPropuesto = {
   metodo: 'cuil_exacto' | 'dni_exacto' | 'patente_exacto' | 'manual';
   revision_manual_pendiente: boolean;
   persona_estado_al_matchear?: EstadoPersonaSnapshot;
+  // BUGFIX: nombre + estado para que la UI del preview pueda mostrar quién es
+  // realmente el distribuidor matcheado.
+  persona?: DistribuidorEnriquecido | null;
 };
 
 /**
@@ -186,16 +189,7 @@ export type MatchPropuesto = {
 export type SugerenciaFuzzy = {
   persona_id: number;
   score: number;
-  persona?: {
-    id: number;
-    apellidos: string | null;
-    nombres: string | null;
-    cuil: string | null;
-    estado_id: number | null;
-    fecha_baja: string | null;
-    es_solicitud: boolean;
-    aprobado: boolean;
-  } | null;
+  persona?: DistribuidorEnriquecido | null;
 };
 
 export type DiscrepanciaEstadoInconsistente = {

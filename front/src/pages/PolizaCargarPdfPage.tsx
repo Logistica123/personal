@@ -5,6 +5,7 @@ import type {
   Poliza,
 } from '../features/polizas/types';
 import { SearchInput } from '../features/polizas/SearchInput';
+import { EstadoDistribuidorBadge } from '../features/polizas/EstadoDistribuidorBadge';
 
 type DashboardLayoutProps = {
   title: string;
@@ -505,18 +506,35 @@ const PreviewMatching: React.FC<PreviewMatchingProps> = ({
                       <code>{a.identificador}</code>
                       <small style={{ color: '#888', display: 'block' }}>{a.identificador_tipo}</small>
                     </td>
-                    <td>{a.nombre_apellido ?? a.marca_modelo ?? '—'}</td>
+                    <td>
+                      {a.match_propuesto?.persona ? (
+                        <span>
+                          <b>{a.match_propuesto.persona.nombre_completo}</b>
+                          <small style={{ display: 'block', color: '#888' }}>
+                            {a.nombre_apellido ?? a.marca_modelo ?? ''}
+                          </small>
+                        </span>
+                      ) : (
+                        a.nombre_apellido ?? a.marca_modelo ?? '—'
+                      )}
+                    </td>
                     <td>
                       {a.match_propuesto ? (
                         <small>
                           <b>persona #{a.match_propuesto.persona_id}</b>
+                          {a.match_propuesto.persona && (
+                            <>
+                              {' '}
+                              <EstadoDistribuidorBadge estado={a.match_propuesto.persona.estado_actual} />
+                            </>
+                          )}
                           <br />método: {a.match_propuesto.metodo}
                         </small>
                       ) : sug ? (
                         <small style={{ color: '#c70' }}>
                           <b>sin match exacto</b>
                           <br />sugerencia: persona #{sug.persona_id}
-                          {sug.persona && ` (${sug.persona.apellidos ?? ''} ${sug.persona.nombres ?? ''})`}
+                          {sug.persona && ` (${sug.persona.nombre_completo})`}
                           {' '}({sug.score.toFixed(2)})
                           <br />
                           <button

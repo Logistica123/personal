@@ -2,6 +2,7 @@
 
 namespace App\Services\Polizas;
 
+use App\Models\Persona;
 use App\Models\Poliza;
 use App\Models\PolizaAsegurado;
 use App\Models\PolizaEndoso;
@@ -18,6 +19,30 @@ class CargaPolizaService
     public function __construct(
         private readonly MatchingService $matcher,
     ) {
+    }
+
+    /**
+     * Carga la persona vinculada y devuelve el shape `{id, nombre_completo, cuil,
+     * patente, estado_actual, ...}` que la UI usa para mostrar el nombre del
+     * distribuidor + badge de estado. Devuelve null si no existe.
+     */
+    private static function cargarDistribuidor(?int $personaId): ?array
+    {
+        if (!$personaId) return null;
+        $p = Persona::query()
+            ->select(['id', 'apellidos', 'nombres', 'cuil', 'patente', 'estado_id', 'fecha_baja', 'es_solicitud', 'aprobado'])
+            ->find($personaId);
+        if (!$p) return null;
+        return [
+            'id'              => $p->id,
+            'nombre_completo' => trim(($p->apellidos ?? '') . ' ' . ($p->nombres ?? '')) ?: '—',
+            'cuil'            => $p->cuil,
+            'patente'         => $p->patente,
+            'estado_actual'   => MatchingService::calcularEstadoPersona($p),
+            'es_solicitud'    => (bool) $p->es_solicitud,
+            'aprobado'        => (bool) $p->aprobado,
+            'fecha_baja'      => $p->fecha_baja,
+        ];
     }
 
     /**
@@ -53,13 +78,17 @@ class CargaPolizaService
                 if (!$match) {
                     $sugerencia = $this->matcher->sugerirFuzzyPersona($a['nombre_apellido'] ?? null);
                     if ($sugerencia) {
-                        $sugerencia['persona'] = \App\Models\Persona::query()
-                            ->select(['id', 'apellidos', 'nombres', 'cuil', 'estado_id', 'fecha_baja', 'es_solicitud', 'aprobado'])
-                            ->find($sugerencia['persona_id']);
+                        $sugerencia['persona'] = self::cargarDistribuidor($sugerencia['persona_id']);
                     }
                 }
             } elseif ($tipo === 'vehiculo') {
                 $match = $this->matcher->matchVehiculo($a['identificador'] ?? null);
+            }
+
+            // Enriquecer el match con datos del distribuidor (nombre + estado actual)
+            // para que la UI del preview pueda mostrar quién es realmente.
+            if ($match) {
+                $match['persona'] = self::cargarDistribuidor($match['persona_id']);
             }
 
             $asegurados[] = array_merge($a, [
