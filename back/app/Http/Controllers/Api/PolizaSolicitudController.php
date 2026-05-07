@@ -18,16 +18,27 @@ class PolizaSolicitudController extends Controller
     /** Crear borrador de solicitud (alta o baja) con asegurados seleccionados. */
     public function store(Request $request, Poliza $poliza): JsonResponse
     {
+        // BUGFIX 02 Issue 2: el wizard "Solicitar alta" puede mandar `persona_ids`
+        // (proveedores que aún NO son asegurados de esta póliza) en lugar de
+        // `asegurado_ids`. Al menos uno de los dos arrays debe venir.
         $data = $request->validate([
             'tipo'                                        => ['required', 'in:alta,baja'],
-            'asegurado_ids'                               => ['required', 'array', 'min:1'],
+            'asegurado_ids'                               => ['nullable', 'array'],
             'asegurado_ids.*'                             => ['integer', 'exists:polizas_asegurados,id'],
+            'persona_ids'                                 => ['nullable', 'array'],
+            'persona_ids.*'                               => ['integer', 'exists:personas,id'],
             'tipo_clausula_global'                        => ['nullable', 'in:ninguna,aplicar,previa_existente'],
             'clausula_global_id'                          => ['nullable', 'integer', 'exists:polizas_clausulas,id'],
             'clausulas_individuales'                      => ['nullable', 'array'],
             'clausulas_individuales.*.asegurado_id'       => ['required_with:clausulas_individuales', 'integer'],
             'clausulas_individuales.*.clausula_id'        => ['required_with:clausulas_individuales', 'integer', 'exists:polizas_clausulas,id'],
         ]);
+
+        $aseguradoIds = $data['asegurado_ids'] ?? [];
+        $personaIds   = $data['persona_ids']   ?? [];
+        if (empty($aseguradoIds) && empty($personaIds)) {
+            return response()->json(['message' => 'Sin asegurados ni personas seleccionados.'], 422);
+        }
 
         $admin = $request->user();
         if (!$admin) {
@@ -38,10 +49,11 @@ class PolizaSolicitudController extends Controller
             'tipo_clausula_global'   => $data['tipo_clausula_global']   ?? 'ninguna',
             'clausula_global_id'     => $data['clausula_global_id']     ?? null,
             'clausulas_individuales' => $data['clausulas_individuales'] ?? null,
+            'persona_ids'            => $personaIds,
         ];
 
         $solicitud = $this->service->crearBorrador(
-            $poliza, $data['tipo'], $data['asegurado_ids'], $admin, $opciones
+            $poliza, $data['tipo'], $aseguradoIds, $admin, $opciones
         );
 
         return response()->json(['data' => $solicitud->fresh(['asegurados.asegurado'])], 201);

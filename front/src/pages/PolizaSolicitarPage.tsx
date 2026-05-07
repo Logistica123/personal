@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import type {
   Clausula,
   ClausulaAplicada,
+  DistribuidorEnriquecido,
   Poliza,
   PolizaAsegurado,
   PolizaSolicitud,
@@ -10,6 +11,8 @@ import type {
   TipoClausulaGlobal,
   TipoEmail,
 } from '../features/polizas/types';
+import { SearchInput } from '../features/polizas/SearchInput';
+import { EstadoDistribuidorBadge } from '../features/polizas/EstadoDistribuidorBadge';
 
 type DashboardLayoutProps = {
   title: string;
@@ -36,8 +39,13 @@ export const PolizaSolicitarPage: React.FC<Props> = ({ DashboardLayout, resolveA
   const [paso, setPaso] = useState<Paso>('seleccion');
 
   const [poliza, setPoliza] = useState<Poliza | null>(null);
+  // Para BAJAS: lista de PolizaAsegurado activos en la póliza.
   const [asegurados, setAsegurados] = useState<PolizaAsegurado[]>([]);
+  // Para ALTAS: lista de personas (proveedores + solicitudes) que NO son asegurados.
+  const [personasDisponibles, setPersonasDisponibles] = useState<DistribuidorEnriquecido[]>([]);
+  // Selección: para baja → asegurado_id, para alta → persona_id (universos disjuntos).
   const [seleccion, setSeleccion] = useState<Set<number>>(new Set());
+  const [searchSeleccion, setSearchSeleccion] = useState('');
 
   // Estado de cláusulas
   const [clausulasCatalogo, setClausulasCatalogo] = useState<Clausula[]>([]);
@@ -59,14 +67,31 @@ export const PolizaSolicitarPage: React.FC<Props> = ({ DashboardLayout, resolveA
       .catch(() => setError('Error al cargar póliza'));
   }, [polizaId, apiBaseUrl]);
 
+  // Cargar candidatos según el tipo:
+  // - alta: personas (proveedores/solicitudes) que NO son asegurados activos.
+  // - baja: asegurados activos en la póliza.
   useEffect(() => {
     if (!polizaId) return;
-    const filtro = tipo === 'alta' ? 'no_matcheado' : 'activo';
-    fetch(`${apiBaseUrl}/api/polizas/${polizaId}/asegurados?estado=${filtro}`, { cache: 'no-store' })
-      .then((r) => r.json()).then(({ data }) => setAsegurados(data ?? []))
-      .catch(() => setError('Error al cargar asegurados'));
     setSeleccion(new Set());
-  }, [polizaId, apiBaseUrl, tipo]);
+    const params = new URLSearchParams();
+    if (searchSeleccion) params.set('search', searchSeleccion);
+
+    if (tipo === 'alta') {
+      const url = `${apiBaseUrl}/api/polizas/${polizaId}/personas-disponibles-para-alta${
+        params.toString() ? '?' + params : ''
+      }`;
+      fetch(url, { cache: 'no-store' })
+        .then((r) => r.json())
+        .then(({ data }) => setPersonasDisponibles(data ?? []))
+        .catch(() => setError('Error al cargar personas disponibles'));
+    } else {
+      params.set('estado', 'activo');
+      fetch(`${apiBaseUrl}/api/polizas/${polizaId}/asegurados?${params}`, { cache: 'no-store' })
+        .then((r) => r.json())
+        .then(({ data }) => setAsegurados(data ?? []))
+        .catch(() => setError('Error al cargar asegurados'));
+    }
+  }, [polizaId, apiBaseUrl, tipo, searchSeleccion]);
 
   // Cargar cláusulas + vigentes (sólo si tipo=alta — bajas no las usan)
   useEffect(() => {
@@ -91,7 +116,10 @@ export const PolizaSolicitarPage: React.FC<Props> = ({ DashboardLayout, resolveA
     });
   };
   const seleccionarTodos = () => {
-    setSeleccion(seleccion.size === asegurados.length ? new Set() : new Set(asegurados.map((a) => a.id)));
+    const ids = tipo === 'alta'
+      ? personasDisponibles.map((p) => p.id)
+      : asegurados.map((a) => a.id);
+    setSeleccion(seleccion.size === ids.length ? new Set() : new Set(ids));
   };
 
   const setIndividual = (aseguradoId: number, clausulaId: number | null) => {
@@ -118,20 +146,25 @@ export const PolizaSolicitarPage: React.FC<Props> = ({ DashboardLayout, resolveA
       setLoading(true);
       setError(null);
 
-      const payload: Record<string, unknown> = {
-        tipo,
-        asegurado_ids: Array.from(seleccion),
-      };
+      const payload: Record<string, unknown> = { tipo };
+
+      // Alta: el wizard selecciona personas (no asegurados todavía).
+      // Baja: el wizard selecciona asegurados activos existentes.
       if (tipo === 'alta') {
+        payload.persona_ids = Array.from(seleccion);
         payload.tipo_clausula_global = tipoClausulaGlobal;
         if (tipoClausulaGlobal === 'aplicar' && clausulaGlobalId) {
           payload.clausula_global_id = clausulaGlobalId;
         }
         if (clausulasIndividuales.size > 0) {
+          // En alta las cláusulas individuales se asignan por persona_id; el backend
+          // las re-mapea al asegurado_id creado on-the-fly.
           payload.clausulas_individuales = Array.from(clausulasIndividuales.entries()).map(
             ([asegurado_id, clausula_id]) => ({ asegurado_id, clausula_id })
           );
         }
+      } else {
+        payload.asegurado_ids = Array.from(seleccion);
       }
 
       const respCrear = await fetch(`${apiBaseUrl}/api/polizas/${polizaId}/solicitudes`, {
@@ -175,7 +208,12 @@ export const PolizaSolicitarPage: React.FC<Props> = ({ DashboardLayout, resolveA
     }
   }, [solicitud, apiBaseUrl]);
 
-  const aseguradosSeleccionados = asegurados.filter((a) => seleccion.has(a.id));
+  // En alta `seleccion` es Set<persona_id>; aquí no aplica el cruce con asegurados.
+  // Lo dejamos vacío para alta — el paso "Cláusulas individuales" se mantiene
+  // funcional vía persona_ids (ver sub-paso B).
+  const aseguradosSeleccionados = tipo === 'baja'
+    ? asegurados.filter((a) => seleccion.has(a.id))
+    : [];
 
   return (
     <DashboardLayout
@@ -194,10 +232,12 @@ export const PolizaSolicitarPage: React.FC<Props> = ({ DashboardLayout, resolveA
       <Stepper paso={paso} tipo={tipo} />
 
       {paso === 'seleccion' && (
-        <SeleccionAsegurados
-          asegurados={asegurados}
+        <SeleccionStep
           tipo={tipo} setTipo={setTipo}
+          asegurados={asegurados}
+          personasDisponibles={personasDisponibles}
           seleccion={seleccion} toggle={toggle} seleccionarTodos={seleccionarTodos}
+          search={searchSeleccion} setSearch={setSearchSeleccion}
           loading={loading}
           onContinuar={irAClausulas}
         />
@@ -281,77 +321,135 @@ const Stepper: React.FC<{ paso: Paso; tipo: TipoEmail }> = ({ paso, tipo }) => {
 // -----------------------------------------------------------------------------
 
 type SeleccionProps = {
-  asegurados: PolizaAsegurado[];
   tipo: TipoEmail; setTipo: (t: TipoEmail) => void;
+  asegurados: PolizaAsegurado[];
+  personasDisponibles: DistribuidorEnriquecido[];
   seleccion: Set<number>; toggle: (id: number) => void; seleccionarTodos: () => void;
+  search: string; setSearch: (s: string) => void;
   loading: boolean;
   onContinuar: () => void;
 };
 
-const SeleccionAsegurados: React.FC<SeleccionProps> = ({
-  asegurados, tipo, setTipo, seleccion, toggle, seleccionarTodos, loading, onContinuar,
-}) => (
-  <>
-    <div className="dashboard-card" style={{ marginBottom: '1rem' }}>
-      <h3 style={{ margin: 0 }}>Paso 1 — Seleccionar asegurados</h3>
-      <div className="liq-tabbar" style={{ alignSelf: 'flex-start' }}>
-        {(['alta', 'baja'] as const).map((t) => (
-          <button key={t} type="button" className="tab-btn" onClick={() => setTipo(t)}
-            style={tipo === t ? { background: '#1d74f5', color: '#fff' } : undefined}>
-            Solicitar {t}
-          </button>
-        ))}
-      </div>
-      <div style={{ fontSize: '0.85rem', color: '#666' }}>
-        {tipo === 'alta'
-          ? 'Mostrando asegurados sin match en personas (candidatos a alta).'
-          : 'Mostrando asegurados activos (candidatos a baja).'}
-      </div>
-    </div>
+const SeleccionStep: React.FC<SeleccionProps> = ({
+  tipo, setTipo, asegurados, personasDisponibles, seleccion, toggle, seleccionarTodos,
+  search, setSearch, loading, onContinuar,
+}) => {
+  const total = tipo === 'alta' ? personasDisponibles.length : asegurados.length;
+  const universo = tipo === 'alta' ? 'personas' : 'asegurados';
 
-    <div className="dashboard-card">
-      {asegurados.length === 0 ? (
-        <div style={{ padding: '0.5rem', color: '#666' }}>No hay asegurados disponibles.</div>
-      ) : (
-        <>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
-            <button type="button" className="secondary-action secondary-action--ghost" onClick={seleccionarTodos}>
-              {seleccion.size === asegurados.length ? 'Deseleccionar todos' : `Seleccionar todos (${asegurados.length})`}
+  return (
+    <>
+      <div className="dashboard-card" style={{ marginBottom: '1rem' }}>
+        <h3 style={{ margin: 0 }}>Paso 1 — Seleccionar {tipo === 'alta' ? 'personas' : 'asegurados'}</h3>
+        <div className="liq-tabbar" style={{ alignSelf: 'flex-start' }}>
+          {(['alta', 'baja'] as const).map((t) => (
+            <button key={t} type="button" className="tab-btn" onClick={() => setTipo(t)}
+              style={tipo === t ? { background: '#1d74f5', color: '#fff' } : undefined}>
+              Solicitar {t}
             </button>
-            <span style={{ fontSize: '0.85rem' }}>{seleccion.size} seleccionados</span>
+          ))}
+        </div>
+        <div style={{ fontSize: '0.85rem', color: '#666' }}>
+          {tipo === 'alta'
+            ? 'Personas (proveedores y solicitudes pendientes) que NO son asegurados activos en esta póliza. El badge muestra su estado actual en la plataforma.'
+            : 'Asegurados activos en la póliza (candidatos a baja).'}
+        </div>
+        <div style={{ marginTop: '0.5rem', maxWidth: 480 }}>
+          <SearchInput
+            value={search}
+            onChange={setSearch}
+            placeholder={tipo === 'alta'
+              ? 'Buscar por nombre, CUIL, patente…'
+              : 'Buscar por patente, CUIL, nombre, distribuidor…'}
+          />
+        </div>
+      </div>
+
+      <div className="dashboard-card">
+        {total === 0 ? (
+          <div style={{ padding: '0.5rem', color: '#666' }}>
+            {search
+              ? `No se encontraron ${universo} para "${search}".`
+              : tipo === 'alta'
+                ? 'No hay personas disponibles para alta — todos los proveedores y solicitudes ya están asegurados en esta póliza.'
+                : 'No hay asegurados activos en esta póliza.'}
           </div>
-          <div className="table-wrapper">
-            <table className="bdd-activos-table" style={{ width: '100%' }}>
-              <thead>
-                <tr><th></th><th>Identificador</th><th>Nombre / Vehículo</th><th>Distribuidor</th><th>Estado</th></tr>
-              </thead>
-              <tbody>
-                {asegurados.map((a) => (
-                  <tr key={a.id}>
-                    <td><input type="checkbox" checked={seleccion.has(a.id)} onChange={() => toggle(a.id)} /></td>
-                    <td><code>{a.identificador}</code> <small style={{ color: '#888' }}>({a.identificador_tipo})</small></td>
-                    <td>{a.nombre_apellido_pdf ?? a.marca_modelo_pdf ?? '—'}</td>
-                    <td>{a.persona ? a.persona.nombre_completo : <span style={{ color: '#c00' }}>sin match</span>}</td>
-                    <td>{a.estado}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          <div style={{ marginTop: '1rem' }}>
-            <button type="button" disabled={seleccion.size === 0 || loading} onClick={onContinuar}
-              style={{
-                background: seleccion.size === 0 ? '#aaa' : '#1d74f5',
-                color: '#fff', padding: '0.6rem 1.2rem', borderRadius: 10, border: 0, cursor: 'pointer',
-              }}>
-              Continuar ({seleccion.size}) ▶
-            </button>
-          </div>
-        </>
-      )}
-    </div>
-  </>
-);
+        ) : (
+          <>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+              <button type="button" className="secondary-action secondary-action--ghost" onClick={seleccionarTodos}>
+                {seleccion.size === total ? 'Deseleccionar todos' : `Seleccionar todos (${total})`}
+              </button>
+              <span style={{ fontSize: '0.85rem' }}>{seleccion.size} seleccionados</span>
+            </div>
+
+            <div className="table-wrapper">
+              {tipo === 'alta' ? (
+                <table className="bdd-activos-table" style={{ width: '100%' }}>
+                  <thead>
+                    <tr>
+                      <th></th>
+                      <th>Distribuidor</th>
+                      <th>CUIL</th>
+                      <th>Patente</th>
+                      <th>Estado</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {personasDisponibles.map((p) => (
+                      <tr key={p.id}>
+                        <td><input type="checkbox" checked={seleccion.has(p.id)} onChange={() => toggle(p.id)} /></td>
+                        <td>
+                          <Link to={`/personal/${p.id}/editar`}>{p.nombre_completo}</Link>
+                        </td>
+                        <td><code style={{ fontSize: '0.8rem' }}>{p.cuil ?? '—'}</code></td>
+                        <td><code style={{ fontSize: '0.8rem' }}>{p.patente ?? '—'}</code></td>
+                        <td><EstadoDistribuidorBadge estado={p.estado_actual} /></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              ) : (
+                <table className="bdd-activos-table" style={{ width: '100%' }}>
+                  <thead>
+                    <tr>
+                      <th></th>
+                      <th>Identificador</th>
+                      <th>Nombre / Vehículo</th>
+                      <th>Distribuidor</th>
+                      <th>Estado dist.</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {asegurados.map((a) => (
+                      <tr key={a.id}>
+                        <td><input type="checkbox" checked={seleccion.has(a.id)} onChange={() => toggle(a.id)} /></td>
+                        <td><code>{a.identificador}</code> <small style={{ color: '#888' }}>({a.identificador_tipo})</small></td>
+                        <td>{a.nombre_apellido_pdf ?? a.marca_modelo_pdf ?? '—'}</td>
+                        <td>{a.persona ? a.persona.nombre_completo : <span style={{ color: '#c00' }}>sin match</span>}</td>
+                        <td><EstadoDistribuidorBadge estado={a.persona?.estado_actual ?? null} alerta={a.persona_alerta_estado} /></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+
+            <div style={{ marginTop: '1rem' }}>
+              <button type="button" disabled={seleccion.size === 0 || loading} onClick={onContinuar}
+                style={{
+                  background: seleccion.size === 0 ? '#aaa' : '#1d74f5',
+                  color: '#fff', padding: '0.6rem 1.2rem', borderRadius: 10, border: 0, cursor: 'pointer',
+                }}>
+                Continuar ({seleccion.size}) ▶
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+    </>
+  );
+};
 
 // -----------------------------------------------------------------------------
 

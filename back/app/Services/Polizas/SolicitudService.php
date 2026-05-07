@@ -31,10 +31,16 @@ class SolicitudService
     }
 
     /**
+     * @param array $aseguradoIds  IDs de `polizas_asegurados` (camino tradicional —
+     *                              los del cargado de PDF que están sin match o ya activos).
      * @param array $opciones {
      *     tipo_clausula_global?: 'ninguna'|'aplicar'|'previa_existente',
      *     clausula_global_id?: ?int,
-     *     clausulas_individuales?: array<int,int>  // [asegurado_id => clausula_id]
+     *     clausulas_individuales?: array<int,int>,  // [asegurado_id => clausula_id]
+     *     persona_ids?: int[]   // BUGFIX 02 Issue 2: personas (proveedores/solicitudes
+     *                           // pendientes) que NO son asegurados todavía. Cuando el
+     *                           // tipo es 'alta' se crea un PolizaAsegurado on-the-fly
+     *                           // por cada persona y se incluye en la solicitud.
      * }
      */
     public function crearBorrador(
@@ -47,11 +53,15 @@ class SolicitudService
         if (!in_array($tipo, ['alta', 'baja'], true)) {
             throw new RuntimeException('tipo debe ser alta o baja');
         }
-        if (empty($aseguradoIds)) {
-            throw new RuntimeException('Sin asegurados seleccionados');
+        $personaIds = $opciones['persona_ids'] ?? [];
+        if (empty($aseguradoIds) && empty($personaIds)) {
+            throw new RuntimeException('Sin asegurados ni personas seleccionados');
+        }
+        if (!empty($personaIds) && $tipo !== 'alta') {
+            throw new RuntimeException('persona_ids sólo admitido para tipo=alta');
         }
 
-        return DB::transaction(function () use ($poliza, $tipo, $aseguradoIds, $admin, $opciones) {
+        return DB::transaction(function () use ($poliza, $tipo, $aseguradoIds, $personaIds, $admin, $opciones) {
             $solicitud = PolizaSolicitud::create([
                 'poliza_id'                  => $poliza->id,
                 'tipo'                       => $tipo,
@@ -66,8 +76,17 @@ class SolicitudService
                 'clausulas_individuales'     => $opciones['clausulas_individuales'] ?? null,
             ]);
 
-            foreach ($aseguradoIds as $aid) {
-                PolizaSolicitudAsegurado::create([
+            // Asegurados ya existentes (path original).
+            $idsFinal = $aseguradoIds;
+
+            // BUGFIX 02 Issue 2 — crear PolizaAsegurado on-the-fly por persona.
+            if (!empty($personaIds)) {
+                $idsCreados = $this->crearAseguradosDesdePersonas($poliza, $personaIds);
+                $idsFinal = array_values(array_unique([...$idsFinal, ...$idsCreados]));
+            }
+
+            foreach ($idsFinal as $aid) {
+                PolizaSolicitudAsegurado::firstOrCreate([
                     'solicitud_id' => $solicitud->id,
                     'asegurado_id' => $aid,
                 ]);
@@ -75,6 +94,81 @@ class SolicitudService
 
             return $solicitud;
         });
+    }
+
+    /**
+     * Crea (o reusa) `polizas_asegurados` para cada persona dada. Devuelve los IDs
+     * de los registros (creados o existentes) listos para vincular a la solicitud.
+     *
+     * - Pólizas de personas (`tipo_asegurado='persona'`): identificador = CUIL.
+     * - Pólizas de vehículos: identificador = `personas.patente` (la principal). Si
+     *   la persona no tiene patente principal cargada se descarta con warning en
+     *   los logs (la tabla `polizas_asegurados` tiene UNIQUE por póliza+identificador).
+     */
+    private function crearAseguradosDesdePersonas(Poliza $poliza, array $personaIds): array
+    {
+        $personas = \App\Models\Persona::query()
+            ->whereIn('id', $personaIds)
+            ->select(['id', 'apellidos', 'nombres', 'cuil', 'patente'])
+            ->get();
+
+        $ids = [];
+        foreach ($personas as $p) {
+            if ($poliza->tipo_asegurado === 'vehiculo') {
+                $identificador = MatchingService::normalizarPatente($p->patente);
+                $idTipo = 'patente';
+                if (!$identificador) {
+                    \Log::warning("Persona {$p->id} sin patente cargada — no se crea PolizaAsegurado", [
+                        'poliza_id' => $poliza->id,
+                    ]);
+                    continue;
+                }
+            } else {
+                $identificador = $p->cuil;
+                $idTipo = 'cuil';
+                if (!$identificador) {
+                    \Log::warning("Persona {$p->id} sin CUIL cargado — no se crea PolizaAsegurado", [
+                        'poliza_id' => $poliza->id,
+                    ]);
+                    continue;
+                }
+            }
+
+            $existente = PolizaAsegurado::query()
+                ->where('poliza_id', $poliza->id)
+                ->where('identificador', $identificador)
+                ->first();
+
+            if ($existente) {
+                // Reutilizar: vincular persona si faltaba, marcar como manual.
+                if (!$existente->persona_id) {
+                    $existente->update([
+                        'persona_id'                 => $p->id,
+                        'match_metodo'               => 'manual',
+                        'match_score'                => 1.0,
+                        'persona_estado_al_matchear' => MatchingService::calcularEstadoPersona($p),
+                    ]);
+                }
+                $ids[] = $existente->id;
+                continue;
+            }
+
+            $estadoSnap = MatchingService::calcularEstadoPersona($p);
+            $nuevo = PolizaAsegurado::create([
+                'poliza_id'                  => $poliza->id,
+                'persona_id'                 => $p->id,
+                'tipo_asegurado'             => $poliza->tipo_asegurado,
+                'identificador'              => $identificador,
+                'identificador_tipo'         => $idTipo,
+                'nombre_apellido_pdf'        => trim(($p->apellidos ?? '') . ' ' . ($p->nombres ?? '')) ?: null,
+                'estado'                     => 'activo',  // `enviar()` lo pasa a 'alta_solicitada'
+                'match_metodo'               => 'manual',
+                'match_score'                => 1.0,
+                'persona_estado_al_matchear' => $estadoSnap,
+            ]);
+            $ids[] = $nuevo->id;
+        }
+        return $ids;
     }
 
     /**
