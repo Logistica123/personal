@@ -66,6 +66,23 @@ Route::post('/twofactor/enable', [AuthController::class, 'enableTotp']);
 // integridad. El resto de los endpoints OAuth sí requieren auth.api.
 Route::get('/oauth/microsoft/callback', [OAuthMicrosoftController::class, 'callback']);
 
+// ADDENDUM 12 — fix orden de rutas. Sin esto, `GET /polizas/{poliza}` capturaba
+// literales como `/polizas/admins`, `/polizas/clausulas`, `/polizas/solicitudes`
+// y devolvía 404 al intentar resolver `Poliza::find('admins')`. Restringimos los
+// placeholders de IDs a solo dígitos para que Laravel matchee las rutas
+// específicas primero. Aplicar acá garantiza el patrón en TODO `routes/api.php`.
+Route::pattern('poliza',       '[0-9]+');
+Route::pattern('asegurado',    '[0-9]+');
+Route::pattern('solicitud',    '[0-9]+');
+Route::pattern('clausula',     '[0-9]+');
+Route::pattern('aplicacion',   '[0-9]+');
+Route::pattern('config',       '[0-9]+');
+Route::pattern('admin',        '[0-9]+');
+Route::pattern('persona',      '[0-9]+');
+Route::pattern('relacion',     '[0-9]+');
+Route::pattern('notificacion', '[0-9]+');
+Route::pattern('comentario',   '[0-9]+');
+
 Route::middleware('auth.api')->group(function () {
     // ----- Pólizas -----
     Route::get('/polizas',                                 [PolizasController::class, 'index']);
