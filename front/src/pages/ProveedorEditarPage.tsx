@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import type { PersonalRecord } from '../features/personal/types';
 import { ChoferesSection } from '../features/personal/ChoferesSection';
+import { PolizasDelProveedorSection } from '../features/personal/PolizasDelProveedorSection';
 
 type DashboardLayoutProps = {
   title: string;
@@ -2495,6 +2496,16 @@ export const ProveedorEditarPage: React.FC<ProveedorEditarPageProps> = ({
             </label>
           </div>
         </section>
+      ) : null}
+
+      {/* Bloque A.1 — pólizas en las que el proveedor figura, con sugeridas y alertas. */}
+      {detail?.id ? (
+        <PolizasDelProveedorSection
+          apiBaseUrl={apiBaseUrl}
+          personaId={detail.id}
+          proveedorEnBaja={Boolean(detail.fechaBaja) || /baja/i.test(detail.estado ?? '')}
+          proveedorEnSolicitud={Boolean(detail.esSolicitud)}
+        />
       ) : null}
 
       {/* ADDENDUM 10 Parte C — choferes vinculados a este titular. */}

@@ -42,6 +42,58 @@ class PolizasController extends Controller
         ]]);
     }
 
+    /**
+     * Bloque D.1 — comparte el certificado individual de un asegurado por email
+     * a su `personas.email`. El PDF va como adjunto. Si el asegurado no tiene
+     * persona vinculada o la persona no tiene email, devuelve 422.
+     *
+     * Genera el certificado al vuelo (no asume que ya esté en `archivos`) para
+     * que siempre sea la versión actualizada con cláusulas vigentes del momento.
+     */
+    public function compartirCertificadoConDistribuidor(Request $request, PolizaAsegurado $asegurado): JsonResponse
+    {
+        $asegurado->loadMissing(['persona:id,apellidos,nombres,email', 'poliza:id,numero_poliza,nombre_descriptivo']);
+        if (!$asegurado->persona) {
+            return response()->json(['message' => 'El asegurado no tiene persona vinculada.'], 422);
+        }
+        $email = trim((string) $asegurado->persona->email);
+        if (!$email) {
+            return response()->json([
+                'message' => 'El distribuidor no tiene email cargado en su ficha. ' .
+                             'Cargá el email en /personal/'.$asegurado->persona->id.'/editar.',
+            ], 422);
+        }
+
+        try {
+            $pdf = $this->certificadoService->renderPdf($asegurado);
+        } catch (\Throwable $e) {
+            return response()->json(['message' => 'No se pudo generar el certificado: ' . $e->getMessage()], 422);
+        }
+
+        $nombrePoliza = $asegurado->poliza?->nombre_descriptivo ?? 'póliza';
+        $numero = $asegurado->poliza?->numero_poliza ?? '?';
+        $admin = $request->user();
+        $body = "Hola " . trim(($asegurado->persona->apellidos ?? '') . ' ' . ($asegurado->persona->nombres ?? '')) . ",\n\n"
+              . "Te adjuntamos tu certificado de cobertura de la {$nombrePoliza} (N° {$numero}).\n\n"
+              . "Si tenés dudas, respondé este mensaje.\n\n"
+              . "Saludos,\nLogística Argentina S.R.L.";
+        $asunto = "Tu certificado de cobertura — {$nombrePoliza}";
+
+        \Illuminate\Support\Facades\Mail::raw($body, function ($mail) use ($email, $asunto, $pdf, $admin) {
+            $mail->subject($asunto);
+            $mail->to($email);
+            if ($admin?->email) {
+                $mail->replyTo($admin->email, $admin->name ?: '');
+            }
+            $mail->attachData($pdf, 'certificado_cobertura.pdf', ['mime' => 'application/pdf']);
+        });
+
+        return response()->json(['data' => [
+            'enviado_a' => $email,
+            'asunto'    => $asunto,
+        ]]);
+    }
+
     public function index(): JsonResponse
     {
         $polizas = Poliza::query()
@@ -51,6 +103,126 @@ class PolizasController extends Controller
             ->get();
 
         return response()->json(['data' => $polizas]);
+    }
+
+    /** Bloque C.1 — listado simple de aseguradoras (para selector de pólizas). */
+    public function aseguradoras(): JsonResponse
+    {
+        $rows = \App\Models\PolizaAseguradora::query()
+            ->where('activa', true)
+            ->orderBy('nombre')
+            ->get(['id', 'nombre', 'parser_perfil', 'cuit']);
+        return response()->json(['data' => $rows]);
+    }
+
+    /** Bloque C.1 — crear póliza nueva. */
+    public function store(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'aseguradora_id'         => ['required', 'integer', 'exists:polizas_aseguradoras,id'],
+            'nombre_descriptivo'     => ['required', 'string', 'max:150'],
+            'ramo'                   => ['required', 'in:accidentes_personales,vehiculos'],
+            'subramo'                => ['nullable', 'string', 'max:100'],
+            'tipo_asegurado'         => ['required', 'in:persona,vehiculo'],
+            'numero_poliza'          => ['required', 'string', 'max:50'],
+            'numero_cuenta_cliente'  => ['nullable', 'string', 'max:50'],
+            'vigencia_desde'         => ['required', 'date'],
+            'vigencia_hasta'         => ['required', 'date', 'after_or_equal:vigencia_desde'],
+            'tomador_cuit'           => ['nullable', 'string', 'max:15'],
+            'tomador_razon_social'   => ['nullable', 'string', 'max:150'],
+            'tomador_domicilio'      => ['nullable', 'string', 'max:255'],
+            'alerta_dias_antes_vencimiento' => ['nullable', 'integer', 'min:1', 'max:120'],
+            'notas'                  => ['nullable', 'string'],
+        ]);
+        $data['activa'] = true;
+        $poliza = Poliza::create($data);
+        return response()->json(['data' => $poliza->fresh('aseguradora')], 201);
+    }
+
+    /** Bloque C.1 — editar póliza. */
+    public function update(Request $request, Poliza $poliza): JsonResponse
+    {
+        $data = $request->validate([
+            'nombre_descriptivo'     => ['nullable', 'string', 'max:150'],
+            'subramo'                => ['nullable', 'string', 'max:100'],
+            'numero_cuenta_cliente'  => ['nullable', 'string', 'max:50'],
+            'vigencia_desde'         => ['nullable', 'date'],
+            'vigencia_hasta'         => ['nullable', 'date'],
+            'tomador_cuit'           => ['nullable', 'string', 'max:15'],
+            'tomador_razon_social'   => ['nullable', 'string', 'max:150'],
+            'tomador_domicilio'      => ['nullable', 'string', 'max:255'],
+            'alerta_dias_antes_vencimiento'         => ['nullable', 'integer', 'min:1', 'max:120'],
+            'ofrecer_auto_aprobacion_distribuidor'  => ['nullable', 'boolean'],
+            'activa'                 => ['nullable', 'boolean'],
+            'clausulas_especiales'   => ['nullable', 'string'],
+            'notas'                  => ['nullable', 'string'],
+        ]);
+        $poliza->fill(array_filter($data, fn ($v) => $v !== null))->save();
+        return response()->json(['data' => $poliza->fresh('aseguradora')]);
+    }
+
+    /** Bloque C.1 — soft delete (marca `activa=false` para preservar histórico). */
+    public function destroy(Poliza $poliza): JsonResponse
+    {
+        $poliza->update(['activa' => false]);
+        return response()->json(['data' => ['deactivated' => true]]);
+    }
+
+    /**
+     * Bloque C.2 — resumen para dashboard: pólizas que vencen pronto +
+     * solicitudes pendientes + asegurados sin persona ("fantasmas") globales.
+     * Útil para una card de KPIs en la home del módulo.
+     */
+    public function dashboardAlertas(): JsonResponse
+    {
+        $hoy = \Illuminate\Support\Carbon::today();
+
+        $polizasPorVencer = Poliza::query()
+            ->where('activa', true)
+            ->whereDate('vigencia_hasta', '>=', $hoy)
+            ->whereDate('vigencia_hasta', '<=', $hoy->copy()->addDays(30))
+            ->orderBy('vigencia_hasta')
+            ->get(['id', 'nombre_descriptivo', 'numero_poliza', 'vigencia_hasta', 'aseguradora_id'])
+            ->map(fn ($p) => [
+                'id'                => $p->id,
+                'nombre'             => $p->nombre_descriptivo,
+                'numero_poliza'     => $p->numero_poliza,
+                'vigencia_hasta'    => $p->vigencia_hasta?->toDateString(),
+                'dias_restantes'    => max(0, (int) $p->vigencia_hasta->diffInDays($hoy, false) * -1),
+            ]);
+
+        $solicitudesPendientes = \App\Models\PolizaSolicitud::query()
+            ->where('estado', 'enviado')
+            ->where('enviado_en', '<=', $hoy->copy()->subDays(7))
+            ->count();
+
+        $aseguradosSinPersona = PolizaAsegurado::query()
+            ->whereNull('persona_id')
+            ->whereIn('estado', ['activo', 'no_matcheado', 'alta_solicitada'])
+            ->count();
+
+        $estadosInconsistentes = PolizaAsegurado::query()
+            ->whereNotNull('persona_alerta_estado')
+            ->where('estado', 'activo')
+            ->count();
+
+        return response()->json(['data' => [
+            'polizas_por_vencer'        => $polizasPorVencer,
+            'solicitudes_sin_respuesta' => $solicitudesPendientes,
+            'asegurados_sin_persona'    => $aseguradosSinPersona,
+            'estados_inconsistentes'    => $estadosInconsistentes,
+        ]]);
+    }
+
+    /** Bloque C.4 — listado de endosos cargados en una póliza (para tab Endosos). */
+    public function endosos(Poliza $poliza): JsonResponse
+    {
+        $rows = \App\Models\PolizaEndoso::query()
+            ->where('poliza_id', $poliza->id)
+            ->orderByDesc('fecha_emision')
+            ->orderByDesc('id')
+            ->get();
+        return response()->json(['data' => $rows]);
     }
 
     public function show(Poliza $poliza): JsonResponse
@@ -186,6 +358,52 @@ class PolizasController extends Controller
             ]);
 
         return response()->json(['data' => $rows]);
+    }
+
+    /**
+     * Bloque D.2 — listado de certificados de pólizas del proveedor.
+     *
+     * Devuelve los archivos con `categoria='poliza_individual'` asociados a la
+     * persona, con metadata para que la UI los agrupe en un bloque dedicado en
+     * la sección de pólizas. Cada certificado vincula a un asegurado activo
+     * para poder dispararle "compartir con distribuidor".
+     */
+    public function certificadosPolizas(Persona $persona): JsonResponse
+    {
+        $archivos = \App\Models\Archivo::query()
+            ->where('persona_id', $persona->id)
+            ->where('categoria', \App\Services\Polizas\PolizaCertificadoIndividualService::CATEGORIA)
+            ->whereNull('deleted_at')
+            ->orderByDesc('created_at')
+            ->get(['id', 'nombre_original', 'ruta', 'download_url', 'created_at', 'mime', 'size']);
+
+        // Resolver el asegurado correspondiente a cada certificado para que la UI
+        // pueda mostrar contexto y permitir "Compartir con distribuidor".
+        $aseguradoPorPersona = PolizaAsegurado::query()
+            ->where('persona_id', $persona->id)
+            ->where('estado', 'activo')
+            ->with('poliza:id,nombre_descriptivo,numero_poliza,aseguradora_id', 'poliza.aseguradora:id,nombre')
+            ->get()
+            ->keyBy('poliza_id');
+
+        $rows = $archivos->map(function ($a) use ($aseguradoPorPersona) {
+            // Heurística: linkear cada archivo a un asegurado activo cualquiera (la
+            // mayoría de los proveedores tienen 1-2 pólizas activas). En caso de
+            // ambigüedad, el frontend muestra todos los asegurados disponibles.
+            $primero = $aseguradoPorPersona->first();
+            return [
+                'id'              => $a->id,
+                'nombre_original' => $a->nombre_original,
+                'download_url'    => $a->download_url,
+                'created_at'      => $a->created_at?->toIso8601String(),
+                'tamano_kb'       => $a->size ? (int) round($a->size / 1024) : null,
+                'asegurado_id'    => $primero?->id,
+                'poliza_nombre'   => $primero?->poliza?->nombre_descriptivo,
+                'aseguradora'     => $primero?->poliza?->aseguradora?->nombre,
+            ];
+        });
+
+        return response()->json(['data' => $rows->values()]);
     }
 
     /** Lista las pólizas en las que figura un proveedor (Persona) como asegurado. */

@@ -16,6 +16,7 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->alias([
             'auth.api' => \App\Http\Middleware\ApiTokenAuth::class,
             'distriapp.readonly' => \App\Http\Middleware\DistriappReadonlyAuth::class,
+            'polizas.permission' => \App\Http\Middleware\PolizasPermission::class,
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {

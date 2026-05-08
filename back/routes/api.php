@@ -22,6 +22,8 @@ use App\Http\Controllers\Api\PolizaNotificacionDistribuidorController;
 use App\Http\Controllers\Api\OAuthMicrosoftController;
 use App\Http\Controllers\Api\PolizaAseguradoComentarioController;
 use App\Http\Controllers\Api\ChoferesController;
+use App\Http\Controllers\Api\PolizaAdminController;
+use App\Http\Controllers\Api\PolizaEmailConfigController;
 use App\Http\Controllers\Api\ReclamoController;
 use App\Http\Controllers\Api\NotificationController;
 use App\Http\Controllers\Api\PersonalDocumentController;
@@ -68,7 +70,14 @@ Route::get('/oauth/microsoft/callback', [OAuthMicrosoftController::class, 'callb
 Route::middleware('auth.api')->group(function () {
     // ----- Pólizas -----
     Route::get('/polizas',                                 [PolizasController::class, 'index']);
+    // Bloque C.1 — CRUD pólizas + aseguradoras + dashboard alertas.
+    Route::get   ('/polizas/aseguradoras',                 [PolizasController::class, 'aseguradoras']);
+    Route::get   ('/polizas/dashboard/alertas',            [PolizasController::class, 'dashboardAlertas']);
+    Route::post  ('/polizas',                              [PolizasController::class, 'store']);
     Route::get('/polizas/{poliza}',                        [PolizasController::class, 'show']);
+    Route::put   ('/polizas/{poliza}',                     [PolizasController::class, 'update']);
+    Route::delete('/polizas/{poliza}',                     [PolizasController::class, 'destroy']);
+    Route::get   ('/polizas/{poliza}/endosos',             [PolizasController::class, 'endosos']);
     Route::get('/polizas/{poliza}/discrepancias',          [PolizasController::class, 'discrepancias']);
     Route::get('/polizas/{poliza}/asegurados',             [PolizasController::class, 'asegurados']);
     // ADDENDUM 10 sub-fase 2 — listado enriquecido con choferes (solo vehículos)
@@ -78,6 +87,8 @@ Route::middleware('auth.api')->group(function () {
     Route::post('/polizas/auditoria/matches-fuzzy/{asegurado}/resolver',[PolizasController::class, 'resolverSugerenciaFuzzy']);
     // ADDENDUM 9 Parte B — regenerar certificado individual de un asegurado
     Route::post('/polizas/asegurados/{asegurado}/certificado-individual', [PolizasController::class, 'regenerarCertificadoIndividual']);
+    // Bloque D.1 — compartir certificado individual con el distribuidor por email
+    Route::post('/polizas/asegurados/{asegurado}/compartir-certificado',  [PolizasController::class, 'compartirCertificadoConDistribuidor']);
     // ADDENDUM 10 Parte B — comentarios histórico por asegurado
     Route::get   ('/polizas/asegurados/{asegurado}/comentarios',          [PolizaAseguradoComentarioController::class, 'index']);
     Route::post  ('/polizas/asegurados/{asegurado}/comentarios',          [PolizaAseguradoComentarioController::class, 'store']);
@@ -92,34 +103,64 @@ Route::middleware('auth.api')->group(function () {
     Route::get ('/oauth/microsoft/authorize', [OAuthMicrosoftController::class, 'authorize']);
     Route::get ('/oauth/microsoft/status',    [OAuthMicrosoftController::class, 'status']);
     Route::post('/oauth/microsoft/unlink',    [OAuthMicrosoftController::class, 'unlink']);
-    Route::post('/polizas/{poliza}/cargar-pdf',            [PolizasController::class, 'cargarPdf']);
-    Route::post('/polizas/{poliza}/confirmar-carga',       [PolizasController::class, 'confirmarCarga']);
+    // Bloque B — admins del módulo Pólizas (CRUD permisos). El controller valida rol admin.
+    Route::get   ('/polizas/admins',              [PolizaAdminController::class, 'index']);
+    Route::get   ('/polizas/admins/whoami',       [PolizaAdminController::class, 'whoami']);
+    Route::get   ('/polizas/admins/usuarios',     [PolizaAdminController::class, 'usuariosDisponibles']);
+    Route::post  ('/polizas/admins',              [PolizaAdminController::class, 'store']);
+    Route::put   ('/polizas/admins/{admin}',      [PolizaAdminController::class, 'update']);
+    Route::delete('/polizas/admins/{admin}',      [PolizaAdminController::class, 'destroy']);
+    Route::post('/polizas/{poliza}/cargar-pdf',            [PolizasController::class, 'cargarPdf'])
+        ->middleware('polizas.permission:puede_cargar_pdf');
+    Route::post('/polizas/{poliza}/confirmar-carga',       [PolizasController::class, 'confirmarCarga'])
+        ->middleware('polizas.permission:puede_cargar_pdf');
     // BUGFIX 02 — selector de personas para wizard "Solicitar alta"
     Route::get ('/polizas/{poliza}/personas-disponibles-para-alta', [PolizasController::class, 'personasDisponiblesParaAlta']);
     // Solicitudes (alta / baja)
-    Route::post('/polizas/{poliza}/solicitudes',            [PolizaSolicitudController::class, 'store']);
+    // El middleware permisos: store/enviar requiere puede_solicitar_alta o
+    // puede_solicitar_baja según el tipo. Para no duplicar la ruta por tipo,
+    // permitimos cualquiera de los dos flags vía rol admin o validación interna.
+    // Acá tildamos `puede_solicitar_alta` (la baja también lo cubre el rol admin).
+    Route::post('/polizas/{poliza}/solicitudes',            [PolizaSolicitudController::class, 'store'])
+        ->middleware('polizas.permission:puede_solicitar_alta');
     Route::get ('/polizas/solicitudes',                     [PolizaSolicitudController::class, 'index']);
     Route::get ('/polizas/solicitudes/{solicitud}',         [PolizaSolicitudController::class, 'show']);
     Route::post('/polizas/solicitudes/{solicitud}/preview', [PolizaSolicitudController::class, 'preview']);
-    Route::post('/polizas/solicitudes/{solicitud}/enviar',  [PolizaSolicitudController::class, 'enviar']);
-    Route::post('/polizas/solicitudes/{solicitud}/confirmar',[PolizaSolicitudController::class, 'confirmar']);
+    Route::post('/polizas/solicitudes/{solicitud}/enviar',  [PolizaSolicitudController::class, 'enviar'])
+        ->middleware('polizas.permission:puede_solicitar_alta');
+    Route::post('/polizas/solicitudes/{solicitud}/confirmar',[PolizaSolicitudController::class, 'confirmar'])
+        ->middleware('polizas.permission:puede_confirmar_respuesta');
+    Route::post('/polizas/solicitudes/{solicitud}/cancelar', [PolizaSolicitudController::class, 'cancelar']);
+    // Bloque C.5 — email-config CRUD + envío de prueba.
+    Route::put ('/polizas/{poliza}/email-config/{tipo}',     [PolizaEmailConfigController::class, 'update'])
+        ->middleware('polizas.permission:puede_editar_email_config');
+    Route::post('/polizas/email-config/{config}/probar',     [PolizaEmailConfigController::class, 'probar'])
+        ->middleware('polizas.permission:puede_editar_email_config');
     // Cláusulas (catálogo + aplicación a pólizas)
     Route::get   ('/polizas/clausulas',                       [PolizaClausulaController::class, 'index']);
-    Route::post  ('/polizas/clausulas',                       [PolizaClausulaController::class, 'store']);
-    Route::put   ('/polizas/clausulas/{clausula}',            [PolizaClausulaController::class, 'update']);
+    Route::post  ('/polizas/clausulas',                       [PolizaClausulaController::class, 'store'])
+        ->middleware('polizas.permission:puede_gestionar_clausulas');
+    Route::put   ('/polizas/clausulas/{clausula}',            [PolizaClausulaController::class, 'update'])
+        ->middleware('polizas.permission:puede_gestionar_clausulas');
     Route::get   ('/polizas/{poliza}/clausulas-vigentes',     [PolizaClausulaController::class, 'vigentesPorPoliza']);
-    Route::post  ('/polizas/{poliza}/clausulas-aplicar',      [PolizaClausulaController::class, 'aplicar']);
-    Route::post  ('/polizas/clausulas-aplicadas/{aplicacion}/remover', [PolizaClausulaController::class, 'remover']);
+    Route::post  ('/polizas/{poliza}/clausulas-aplicar',      [PolizaClausulaController::class, 'aplicar'])
+        ->middleware('polizas.permission:puede_gestionar_clausulas');
+    Route::post  ('/polizas/clausulas-aplicadas/{aplicacion}/remover', [PolizaClausulaController::class, 'remover'])
+        ->middleware('polizas.permission:puede_gestionar_clausulas');
     // Notificación al distribuidor (ADD 13B)
     Route::post('/polizas/{poliza}/notificaciones-distribuidor/preview',  [PolizaNotificacionDistribuidorController::class, 'preview']);
-    Route::post('/polizas/{poliza}/notificaciones-distribuidor/enviar',   [PolizaNotificacionDistribuidorController::class, 'enviar']);
+    Route::post('/polizas/{poliza}/notificaciones-distribuidor/enviar',   [PolizaNotificacionDistribuidorController::class, 'enviar'])
+        ->middleware('polizas.permission:puede_notificar_distribuidores');
     Route::get ('/polizas/notificaciones-distribuidor',                    [PolizaNotificacionDistribuidorController::class, 'index']);
-    Route::post('/polizas/notificaciones-distribuidor/{notificacion}/reenviar', [PolizaNotificacionDistribuidorController::class, 'reenviar']);
+    Route::post('/polizas/notificaciones-distribuidor/{notificacion}/reenviar', [PolizaNotificacionDistribuidorController::class, 'reenviar'])
+        ->middleware('polizas.permission:puede_notificar_distribuidores');
     // ADD 15 — flujo bidireccional CRM Aprobaciones ↔ Pólizas
     Route::post('/polizas/personas/aprobar-masivo',          [PolizaSolicitudController::class, 'aprobarPersonas']);
     Route::get ('/personal/{persona}/polizas-aplicables',    [PolizasController::class, 'polizasAplicablesParaPersona']);
     // Integración con módulo Proveedores
     Route::get('/personal/{persona}/polizas',                [PolizasController::class, 'polizasDePersona']);
+    // Bloque D.2 — certificados de pólizas (poliza_individual) del proveedor
+    Route::get('/personal/{persona}/certificados-polizas',   [PolizasController::class, 'certificadosPolizas']);
 
     Route::get('/personal/documentos/tipos', [PersonalDocumentController::class, 'types']);
     Route::post('/personal/documentos/tipos', [PersonalDocumentController::class, 'storeType']);

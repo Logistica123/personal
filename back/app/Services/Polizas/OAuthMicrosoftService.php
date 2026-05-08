@@ -262,6 +262,37 @@ class OAuthMicrosoftService
         return (array) $resp->json();
     }
 
+    /**
+     * Bloque D.3 — busca mensajes recibidos en el inbox del admin desde una
+     * fecha dada. Filtra por `receivedDateTime > $since`. Devuelve el shape
+     * de Graph (sender, subject, bodyPreview, internetMessageId, etc.) — el
+     * caller decide cómo matchearlos contra solicitudes.
+     *
+     * Solo lee Inbox (no carpetas custom). Un volumen típico de admin con
+     * pocas solicitudes activas devuelve <100 mensajes — `top=200` alcanza.
+     */
+    public function listInboxMessagesSince(PolizaAdminEmailAccount $acc, Carbon $since, int $top = 200): array
+    {
+        $acc = $this->ensureValidToken($acc);
+        $isoSince = $since->copy()->utc()->format('Y-m-d\TH:i:s\Z');
+
+        $url = rtrim($this->config()['graph_base'], '/') . '/me/mailFolders/Inbox/messages';
+        $resp = Http::withToken($acc->access_token)->get($url, [
+            // Filtrar por fecha de recepción para no traer todo el inbox.
+            '$filter' => "receivedDateTime gt {$isoSince}",
+            '$select' => 'id,internetMessageId,internetMessageHeaders,subject,bodyPreview,from,receivedDateTime,isRead,conversationId',
+            '$orderby' => 'receivedDateTime desc',
+            '$top'    => $top,
+        ]);
+
+        if (!$resp->successful()) {
+            throw new RuntimeException("Graph listInbox falló: {$resp->status()} {$resp->body()}");
+        }
+
+        $body = $resp->json();
+        return $body['value'] ?? [];
+    }
+
     /** Devuelve la cuenta vinculada al user, o null. */
     public function findByUser(User $user): ?PolizaAdminEmailAccount
     {

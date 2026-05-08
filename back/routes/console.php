@@ -39,6 +39,15 @@ Schedule::command('polizas:refresh-tokens-outlook')
     ->withoutOverlapping()
     ->appendOutputTo(storage_path('logs/polizas-oauth.log'));
 
+// Bloque D.3 — auto-detección de respuestas de aseguradoras en Outlook
+// (cada 30 min). Solo registra candidatos en `respuesta_resumen`; el admin
+// confirma manualmente desde la bandeja para evitar falsos positivos.
+Schedule::command('polizas:procesar-respuestas-aseguradora --ventana=2')
+    ->everyThirtyMinutes()
+    ->timezone('America/Argentina/Buenos_Aires')
+    ->withoutOverlapping()
+    ->appendOutputTo(storage_path('logs/polizas-oauth.log'));
+
 Artisan::command('inspire', function () {
     $this->comment(Inspiring::quote());
 })->purpose('Display an inspiring quote');

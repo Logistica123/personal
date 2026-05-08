@@ -130,6 +130,44 @@ class PolizaSolicitudController extends Controller
         ]]);
     }
 
+    /**
+     * Bloque C.3 — cancela una solicitud que está en estado `borrador` o
+     * `enviado`. Si estaba `enviado`, los asegurados que pasaron a
+     * `alta_solicitada`/`baja_solicitada` vuelven a su estado anterior
+     * razonable (`no_matcheado` para alta, `activo` para baja).
+     */
+    public function cancelar(Request $request, PolizaSolicitud $solicitud): JsonResponse
+    {
+        if (!in_array($solicitud->estado, ['borrador', 'enviado'], true)) {
+            return response()->json([
+                'message' => "No se puede cancelar una solicitud en estado '{$solicitud->estado}'.",
+            ], 422);
+        }
+        $resumen = $request->input('motivo');
+
+        \DB::transaction(function () use ($solicitud, $resumen) {
+            $estabaEnviado = $solicitud->estado === 'enviado';
+            $solicitud->update([
+                'estado'             => 'cancelada',
+                'respuesta_resumen'  => $resumen
+                    ? "Cancelada: {$resumen}"
+                    : 'Cancelada manualmente.',
+                'respuesta_recibida_en' => now(),
+            ]);
+
+            if ($estabaEnviado) {
+                $aseguradoIds = \App\Models\PolizaSolicitudAsegurado::where('solicitud_id', $solicitud->id)
+                    ->pluck('asegurado_id')
+                    ->all();
+                $estadoVuelta = $solicitud->tipo === 'alta' ? 'no_matcheado' : 'activo';
+                \App\Models\PolizaAsegurado::whereIn('id', $aseguradoIds)
+                    ->update(['estado' => $estadoVuelta]);
+            }
+        });
+
+        return response()->json(['data' => $solicitud->fresh()]);
+    }
+
     /** ADD 15 — aprueba varias personas a la vez tras confirmar un alta. */
     public function aprobarPersonas(Request $request): JsonResponse
     {

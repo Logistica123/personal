@@ -641,6 +641,26 @@ type PreviewStepProps = {
 const PreviewStep: React.FC<PreviewStepProps> = ({ preview, loading, onVolver, onEnviar }) => (
   <div className="dashboard-card" style={{ marginBottom: '1rem' }}>
     <h3 style={{ margin: 0 }}>Preview del email</h3>
+    {/* Bloque A.3 — indicador del remitente. */}
+    {preview.remitente && (
+      <div style={{
+        display: 'flex', alignItems: 'flex-start', gap: '0.5rem',
+        background: preview.remitente.modo === 'oauth' ? '#e7f7ed' : '#eef4ff',
+        border: `1px solid ${preview.remitente.modo === 'oauth' ? '#0a8c3a' : '#1d74f5'}`,
+        borderRadius: 8, padding: '0.5rem 0.75rem', fontSize: '0.85rem',
+      }}>
+        <span style={{ fontSize: '1.1rem' }}>{preview.remitente.modo === 'oauth' ? '✉' : '🏢'}</span>
+        <div>
+          <div>
+            <b>De:</b>{' '}
+            {preview.remitente.modo === 'oauth'
+              ? <>tu Outlook (<code>{preview.remitente.email ?? '—'}</code>)</>
+              : <>casilla institucional (<code>{preview.remitente.email ?? '—'}</code>)</>}
+          </div>
+          <small style={{ color: '#444' }}>{preview.remitente.desc}</small>
+        </div>
+      </div>
+    )}
     <div style={{ fontSize: '0.85rem' }}><b>To:</b> {preview.destinatarios_to.join(', ') || '—'}</div>
     {preview.destinatarios_cc.length > 0 && (
       <div style={{ fontSize: '0.85rem' }}><b>CC:</b> {preview.destinatarios_cc.join(', ')}</div>

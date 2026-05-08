@@ -194,6 +194,23 @@ class SolicitudService
             $check = $this->adjuntosCheck->verificar($asegurados, $config->adjuntos_requeridos);
         }
 
+        // Bloque A.3 — informar al admin desde qué casilla saldrá el email.
+        // Si tiene OAuth Outlook activa: sale desde su cuenta (Microsoft Graph).
+        // Si no: SMTP institucional con Reply-To al admin.
+        $oauthAccount = $admin ? $this->oauth->findByUser($admin) : null;
+        $remitente = $oauthAccount && $oauthAccount->activo
+            ? [
+                'modo'  => 'oauth',
+                'email' => $oauthAccount->ms_account_email,
+                'desc'  => 'Se enviará desde tu Outlook personal — quedará en tu carpeta "Enviados".',
+            ]
+            : [
+                'modo'  => 'smtp',
+                'email' => config('mail.from.address'),
+                'desc'  => 'Se enviará desde la casilla institucional con Reply-To a tu cuenta. '
+                         . 'Vinculá tu Outlook en /polizas/configuracion/mi-outlook si querés que salga desde tu casilla.',
+            ];
+
         return [
             'solicitud_id'        => $solicitud->id,
             'tipo'                => $solicitud->tipo,
@@ -205,6 +222,7 @@ class SolicitudService
             'destinatarios_bcc'   => $rendered['destinatarios_bcc'],
             'adjuntos_requeridos' => $config->adjuntos_requeridos ?? [],
             'adjuntos_check'      => $check,
+            'remitente'           => $remitente,
         ];
     }
 

@@ -6444,6 +6444,20 @@ const sucursalOptions = useMemo(() => {
                       >
                         {registro.solicitudTipo && registro.solicitudTipo !== 'alta' ? '↗' : '👁️'}
                       </button>
+                      {/* Bloque A.2 — atajo "Solicitar alta en póliza".
+                          Solo aparece para solicitudes de alta de proveedor (las otras
+                          son adelanto/combustible/vacaciones/etc., no aplica). Lleva al
+                          listado de pólizas en modo "elegir póliza para alta AP". */}
+                      {registro.solicitudTipo === 'alta' && (
+                        <button
+                          type="button"
+                          aria-label={`Solicitar alta en póliza para ${registro.nombre ?? registro.id}`}
+                          title="Solicitar alta en una póliza para este postulante"
+                          onClick={() => navigate(`/polizas?solicitar_alta_persona=${registro.id}`)}
+                        >
+                          📋
+                        </button>
+                      )}
                       <button
                         type="button"
                         aria-label={`Eliminar solicitud ${registro.nombre ?? registro.id}`}

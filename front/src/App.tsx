@@ -52,6 +52,7 @@ import { PersonaPolizasPage } from './pages/PersonaPolizasPage';
 import { PolizaClausulasPage } from './pages/PolizaClausulasPage';
 import { PolizaNotificacionesPage } from './pages/PolizaNotificacionesPage';
 import { PolizasConfigMiOutlookPage } from './pages/PolizasConfigMiOutlookPage';
+import { PolizaAdminsPage } from './pages/PolizaAdminsPage';
 import { MembresiaPanelPage } from './pages/MembresiaPanelPage';
 import { ProveedorNuevoPage } from './pages/ProveedorNuevoPage';
 import { WebRtcCallsPage } from './pages/WebRtcCallsPage';
@@ -3744,6 +3745,13 @@ const DashboardLayout: React.FC<{
                     onClick={() => navigate('/polizas/configuracion/mi-outlook')}
                   >
                     Mi Outlook
+                  </button>
+                  <button
+                    type="button"
+                    className={`sidebar-sublink${location.pathname === '/polizas/admins' ? ' is-active' : ''}`}
+                    onClick={() => navigate('/polizas/admins')}
+                  >
+                    Permisos
                   </button>
                 </div>
               ) : null}
@@ -21129,6 +21137,18 @@ const AppRoutes: React.FC = () => {
         element={
           <RequireAccess section="personal">
             <PolizasConfigMiOutlookPage
+              DashboardLayout={DashboardLayout}
+              resolveApiBaseUrl={resolveApiBaseUrl}
+            />
+          </RequireAccess>
+        }
+      />
+      {/* Bloque B — pantalla de permisos del módulo Pólizas */}
+      <Route
+        path="/polizas/admins"
+        element={
+          <RequireAccess section="personal">
+            <PolizaAdminsPage
               DashboardLayout={DashboardLayout}
               resolveApiBaseUrl={resolveApiBaseUrl}
             />

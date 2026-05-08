@@ -352,6 +352,12 @@ export type SolicitudPreview = {
     ok: boolean;
     faltantes: Array<{ asegurado_id: number; identificador: string; faltan: string[]; motivo?: string }>;
   };
+  // Bloque A.3 — desde dónde sale el email.
+  remitente?: {
+    modo: 'oauth' | 'smtp';
+    email: string | null;
+    desc: string;
+  };
 };
 
 export type EstadoNotificacionDistribuidor = 'pendiente' | 'enviado' | 'rebotado' | 'sin_email';
