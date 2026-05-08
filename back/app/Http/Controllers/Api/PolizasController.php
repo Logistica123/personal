@@ -296,6 +296,15 @@ class PolizasController extends Controller
             ->with([
                 'persona:id,apellidos,nombres,cuil,patente,estado_id,fecha_baja,es_solicitud,aprobado',
                 'sugerenciaFuzzyPersona:id,apellidos,nombres,cuil',
+            ])
+            // ADDENDUM 10 Parte B — count + último comentario para el badge.
+            ->withCount('comentarios as comentarios_count')
+            ->addSelect([
+                'ultimo_comentario' => \App\Models\PolizaAseguradoComentario::query()
+                    ->select('comentario')
+                    ->whereColumn('asegurado_id', 'polizas_asegurados.id')
+                    ->orderByDesc('created_at')
+                    ->limit(1),
             ]);
 
         if ($estado = $request->query('estado')) {
@@ -338,6 +347,131 @@ class PolizasController extends Controller
                     'cuil'     => $a->sugerenciaFuzzyPersona->cuil,
                     'score'    => $a->sugerencia_fuzzy_score,
                 ] : null;
+                return $arr;
+            });
+
+        return response()->json(['data' => $rows]);
+    }
+
+    /**
+     * ADDENDUM 10 sub-fase 2 — listado enriquecido para pólizas de vehículos.
+     *
+     * Devuelve cada asegurado titular + sus choferes vinculados con el estado
+     * AP de cada uno. Permite renderizar el expand ▼ en el frontend para ver
+     * "Pedro Pérez (titular vehículo) → Juan García (chofer, AP MAPFRE OK), Carlos López (chofer, ⚠ Sin AP)".
+     *
+     * Solo aplica a pólizas con `tipo_asegurado='vehiculo'`. Para AP devolvemos
+     * 422 — la lista plana de `asegurados()` ya cubre ese caso.
+     *
+     * Filtros: hereda los mismos que `asegurados()` (`?estado=`, `?search=`,
+     * `?solo_dudosos=`).
+     */
+    public function aseguradosConChoferes(Request $request, Poliza $poliza): JsonResponse
+    {
+        if ($poliza->tipo_asegurado !== 'vehiculo') {
+            return response()->json([
+                'message' => 'Este endpoint solo aplica a pólizas de vehículos.',
+            ], 422);
+        }
+
+        $query = PolizaAsegurado::query()
+            ->where('poliza_id', $poliza->id)
+            ->with([
+                'persona:id,apellidos,nombres,cuil,patente,estado_id,fecha_baja,es_solicitud,aprobado',
+                'sugerenciaFuzzyPersona:id,apellidos,nombres,cuil',
+                // Choferes activos del titular + sus pólizas AP activas (1-2 niveles).
+                'persona.relacionesComoTitular' => function ($q) {
+                    $q->with([
+                        'chofer:id,apellidos,nombres,cuil,patente,estado_id,fecha_baja,es_solicitud,aprobado,email,telefono',
+                        // Para cada chofer: solo sus polizas_asegurados con ramo AP activos.
+                        'chofer.polizasVigentes' => function ($qp) {
+                            $qp->whereHas('poliza', fn ($qq) => $qq->where('ramo', 'accidentes_personales'));
+                        },
+                    ]);
+                },
+            ])
+            ->withCount('comentarios as comentarios_count')
+            ->addSelect([
+                'ultimo_comentario' => \App\Models\PolizaAseguradoComentario::query()
+                    ->select('comentario')
+                    ->whereColumn('asegurado_id', 'polizas_asegurados.id')
+                    ->orderByDesc('created_at')
+                    ->limit(1),
+            ]);
+
+        if ($estado = $request->query('estado')) {
+            $query->where('estado', $estado);
+        }
+        if ($request->boolean('solo_dudosos')) {
+            $query->where(fn ($q) => $q
+                ->where('revision_manual_pendiente', true)
+                ->orWhereNotNull('sugerencia_fuzzy_persona_id'));
+        }
+        if ($search = trim((string) $request->query('search', ''))) {
+            $like = '%' . str_replace('%', '\\%', $search) . '%';
+            $likeUpper = mb_strtoupper($like);
+            $cuilDigits = preg_replace('/\D/', '', $search);
+            $query->where(function ($q) use ($like, $likeUpper, $cuilDigits) {
+                $q->where('identificador', 'LIKE', $likeUpper)
+                  ->orWhere('nombre_apellido_pdf', 'LIKE', $likeUpper)
+                  ->orWhere('marca_modelo_pdf', 'LIKE', $likeUpper)
+                  ->orWhereHas('persona', function ($qp) use ($like, $cuilDigits) {
+                      $qp->where('apellidos', 'LIKE', $like)
+                         ->orWhere('nombres', 'LIKE', $like)
+                         ->orWhere('patente', 'LIKE', $like);
+                      if ($cuilDigits !== '') {
+                          $qp->orWhereRaw('REPLACE(REPLACE(REPLACE(cuil, "-", ""), ".", ""), " ", "") LIKE ?', ['%' . $cuilDigits . '%']);
+                      }
+                  });
+            });
+        }
+
+        $rows = $query->orderBy('numero_orden_aseguradora')
+            ->orderBy('id')
+            ->get()
+            ->map(function (PolizaAsegurado $a) {
+                $arr = $a->toArray();
+                $arr['persona'] = self::serializarDistribuidor($a->persona);
+                $arr['sugerencia_fuzzy_persona'] = $a->sugerenciaFuzzyPersona ? [
+                    'id'     => $a->sugerenciaFuzzyPersona->id,
+                    'nombre' => self::nombreCompletoPersona($a->sugerenciaFuzzyPersona),
+                    'cuil'   => $a->sugerenciaFuzzyPersona->cuil,
+                    'score'  => $a->sugerencia_fuzzy_score,
+                ] : null;
+
+                // Construir el array de choferes a partir de las relaciones del titular.
+                $choferes = [];
+                if ($a->persona && $a->persona->relacionesComoTitular) {
+                    foreach ($a->persona->relacionesComoTitular as $rel) {
+                        if (!$rel->chofer) continue;
+                        $choferes[] = [
+                            'relacion_id'        => $rel->id,
+                            'persona_id'         => $rel->chofer->id,
+                            'nombre_completo'    => trim(($rel->chofer->apellidos ?? '') . ' ' . ($rel->chofer->nombres ?? '')) ?: '—',
+                            'cuil'               => $rel->chofer->cuil,
+                            'rol'                => $rel->rol,
+                            'fecha_vinculacion'  => $rel->fecha_vinculacion?->toDateString(),
+                            'estado_persona'     => \App\Services\Polizas\MatchingService::calcularEstadoPersona($rel->chofer),
+                            'polizas_ap_activas' => collect($rel->chofer->polizasVigentes ?? [])
+                                ->map(fn ($pa) => [
+                                    'asegurado_id' => $pa->id,
+                                    'poliza_id'    => $pa->poliza_id,
+                                    'nombre'       => $pa->poliza?->nombre_descriptivo,
+                                    'aseguradora'  => $pa->poliza?->aseguradora?->nombre,
+                                ])
+                                ->values()
+                                ->all(),
+                        ];
+                    }
+                }
+                $arr['choferes']           = $choferes;
+                $arr['choferes_count']     = count($choferes);
+                // Para el filtro "Cobertura completa": titular tiene póliza acá +
+                // todos sus choferes tienen ≥1 póliza AP activa.
+                $arr['cobertura_completa'] = empty($choferes)
+                    ? null   // n/a — no tiene choferes vinculados
+                    : !collect($choferes)->contains(fn ($c) => empty($c['polizas_ap_activas']));
+
                 return $arr;
             });
 

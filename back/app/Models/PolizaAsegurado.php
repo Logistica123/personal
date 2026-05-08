@@ -66,6 +66,13 @@ class PolizaAsegurado extends Model
         return $this->belongsTo(Persona::class, 'sugerencia_fuzzy_persona_id');
     }
 
+    /** ADDENDUM 10 Parte B — comentarios histórico (autor + timestamp). */
+    public function comentarios()
+    {
+        return $this->hasMany(PolizaAseguradoComentario::class, 'asegurado_id')
+            ->orderByDesc('created_at');
+    }
+
     public function altaEndoso()
     {
         return $this->belongsTo(PolizaEndoso::class, 'alta_endoso_id');

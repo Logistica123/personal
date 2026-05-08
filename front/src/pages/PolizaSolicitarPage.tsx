@@ -35,6 +35,18 @@ export const PolizaSolicitarPage: React.FC<Props> = ({ DashboardLayout, resolveA
   const apiBaseUrl = useMemo(() => resolveApiBaseUrl(), [resolveApiBaseUrl]);
 
   const tipoInicial = (searchParams.get('tipo') === 'baja' ? 'baja' : 'alta') as TipoEmail;
+  // ADDENDUM 10 sub-fase 2 — pre-selección por query param. Si llegamos con
+  // `?persona_id=N&tipo=alta`, intentamos auto-seleccionar a esa persona en el
+  // paso 1 una vez que el listado de candidatos esté cargado. Lo consumimos
+  // una sola vez (`prefillConsumido`) para no re-aplicarlo si el user
+  // deselecciona manualmente.
+  const personaIdPreFill = useMemo(() => {
+    const raw = searchParams.get('persona_id');
+    if (!raw) return null;
+    const n = Number(raw);
+    return Number.isFinite(n) && n > 0 ? n : null;
+  }, [searchParams]);
+  const [prefillConsumido, setPrefillConsumido] = useState(false);
   const [tipo, setTipo] = useState<TipoEmail>(tipoInicial);
   const [paso, setPaso] = useState<Paso>('seleccion');
 
@@ -72,7 +84,11 @@ export const PolizaSolicitarPage: React.FC<Props> = ({ DashboardLayout, resolveA
   // - baja: asegurados activos en la póliza.
   useEffect(() => {
     if (!polizaId) return;
-    setSeleccion(new Set());
+    // Solo limpiar selección cuando el user cambia tipo o search. NO en el primer
+    // load si tenemos un persona_id pendiente de aplicar.
+    if (prefillConsumido || !personaIdPreFill || tipo !== 'alta') {
+      setSeleccion(new Set());
+    }
     const params = new URLSearchParams();
     if (searchSeleccion) params.set('search', searchSeleccion);
 
@@ -82,7 +98,24 @@ export const PolizaSolicitarPage: React.FC<Props> = ({ DashboardLayout, resolveA
       }`;
       fetch(url, { cache: 'no-store' })
         .then((r) => r.json())
-        .then(({ data }) => setPersonasDisponibles(data ?? []))
+        .then(({ data }) => {
+          setPersonasDisponibles(data ?? []);
+          // ADDENDUM 10 sub-fase 2 — auto-seleccionar si vino por ?persona_id=
+          // y la persona aparece en la lista (de lo contrario el user vería
+          // selección vacía y no entendería el flujo).
+          if (!prefillConsumido && personaIdPreFill) {
+            const enLista = (data as Array<{ id: number }>)?.some((p) => p.id === personaIdPreFill);
+            if (enLista) {
+              setSeleccion(new Set([personaIdPreFill]));
+            } else {
+              setError(
+                `La persona #${personaIdPreFill} no está disponible para alta en esta póliza ` +
+                `(quizás ya es asegurado activo, o no tiene la patente/CUIL requerido).`
+              );
+            }
+            setPrefillConsumido(true);
+          }
+        })
         .catch(() => setError('Error al cargar personas disponibles'));
     } else {
       params.set('estado', 'activo');
@@ -91,7 +124,7 @@ export const PolizaSolicitarPage: React.FC<Props> = ({ DashboardLayout, resolveA
         .then(({ data }) => setAsegurados(data ?? []))
         .catch(() => setError('Error al cargar asegurados'));
     }
-  }, [polizaId, apiBaseUrl, tipo, searchSeleccion]);
+  }, [polizaId, apiBaseUrl, tipo, searchSeleccion, personaIdPreFill, prefillConsumido]);
 
   // Cargar cláusulas + vigentes (sólo si tipo=alta — bajas no las usan)
   useEffect(() => {

@@ -128,6 +128,48 @@ export type PolizaAsegurado = {
   notas: string | null;
   // `persona` es ahora la versión enriquecida (con `estado_actual`)
   persona?: DistribuidorEnriquecido | null;
+  // ADDENDUM 10 Parte B — comentarios histórico
+  comentarios_count?: number;
+  ultimo_comentario?: string | null;
+};
+
+// ADDENDUM 10 sub-fase 2 — choferes vinculados al titular del asegurado.
+export type ChoferDeAsegurado = {
+  relacion_id: number;
+  persona_id: number;
+  nombre_completo: string;
+  cuil: string | null;
+  rol: string;
+  fecha_vinculacion: string | null;
+  estado_persona: EstadoPersonaSnapshot;
+  polizas_ap_activas: Array<{
+    asegurado_id: number;
+    poliza_id: number;
+    nombre: string | null;
+    aseguradora: string | null;
+  }>;
+};
+
+export type PolizaAseguradoConChoferes = PolizaAsegurado & {
+  choferes: ChoferDeAsegurado[];
+  choferes_count: number;
+  /**
+   * `true` si todos los choferes vinculados tienen ≥1 póliza AP activa.
+   * `false` si al menos uno NO tiene cobertura AP.
+   * `null` si el titular no tiene choferes vinculados.
+   */
+  cobertura_completa: boolean | null;
+};
+
+export type ComentarioAsegurado = {
+  id: number;
+  comentario: string;
+  created_at: string | null;
+  user: {
+    id: number | null;
+    name: string | null;
+    email: string | null;
+  };
 };
 
 export type DiscrepanciaSinPersona = {

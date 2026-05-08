@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import type { Poliza } from '../features/polizas/types';
 
 type DashboardLayoutProps = {
@@ -39,12 +39,50 @@ function badgeVigencia(p: Poliza): { label: string; cssClass: string } {
   return { label: 'Vigente', cssClass: 'estado-badge--activo' };
 }
 
+type PersonaResumen = {
+  id: number;
+  nombre_completo: string;
+  cuil: string | null;
+  estado_actual: string;
+};
+
 export const PolizasPage: React.FC<Props> = ({ DashboardLayout, resolveApiBaseUrl }) => {
   const navigate = useNavigate();
   const apiBaseUrl = useMemo(() => resolveApiBaseUrl(), [resolveApiBaseUrl]);
   const [polizas, setPolizas] = useState<Poliza[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  // ADDENDUM 10 sub-fase 2 — banner cuando se llega desde "Solicitar alta AP"
+  // del expand de choferes (`?solicitar_alta_persona=N`).
+  const [searchParams] = useSearchParams();
+  const altaPersonaId = useMemo(() => {
+    const raw = searchParams.get('solicitar_alta_persona');
+    if (!raw) return null;
+    const n = Number(raw);
+    return Number.isFinite(n) && n > 0 ? n : null;
+  }, [searchParams]);
+  const [personaResumen, setPersonaResumen] = useState<PersonaResumen | null>(null);
+
+  useEffect(() => {
+    if (!altaPersonaId) { setPersonaResumen(null); return; }
+    let cancelled = false;
+    (async () => {
+      try {
+        const resp = await fetch(`${apiBaseUrl}/api/personal/${altaPersonaId}`, { cache: 'no-store' });
+        if (!resp.ok || cancelled) return;
+        const payload = await resp.json();
+        const d = payload?.data ?? payload?.personalRecord ?? payload;
+        setPersonaResumen({
+          id: d.id ?? altaPersonaId,
+          nombre_completo: (d.nombre as string) ?? `Persona #${altaPersonaId}`,
+          cuil: d.cuil ?? null,
+          estado_actual: d.estado ?? '—',
+        });
+      } catch { /* noop */ }
+    })();
+    return () => { cancelled = true; };
+  }, [altaPersonaId, apiBaseUrl]);
 
   const fetchPolizas = useCallback(async (signal?: AbortSignal) => {
     try {
@@ -68,31 +106,72 @@ export const PolizasPage: React.FC<Props> = ({ DashboardLayout, resolveApiBaseUr
     return () => controller.abort();
   }, [fetchPolizas]);
 
+  // En modo "solicitar alta para persona X" mostramos solo pólizas AP activas.
+  // Las pólizas vehículo no aplican porque el chofer maneja el vehículo del titular,
+  // no necesita su propia póliza vehículo.
+  const polizasFiltradas = altaPersonaId
+    ? polizas.filter((p) => p.activa && p.ramo === 'accidentes_personales')
+    : polizas;
+
   return (
     <DashboardLayout title="Pólizas" subtitle="Gestión de pólizas de seguros (MAPFRE / San Cristóbal / La Segunda)">
+      {/* ADDENDUM 10 sub-fase 2 — banner alta AP de chofer. */}
+      {altaPersonaId && (
+        <div style={{
+          padding: '0.9rem 1.1rem', marginBottom: '1rem', borderRadius: 12,
+          background: '#eef4ff', border: '1px solid #1d74f5',
+          display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '1rem', flexWrap: 'wrap',
+        }}>
+          <div style={{ fontSize: '0.9rem' }}>
+            <b>Solicitar alta AP para:</b>{' '}
+            {personaResumen?.nombre_completo ?? `Persona #${altaPersonaId}`}
+            {personaResumen?.cuil && <small style={{ color: '#666' }}> · CUIL {personaResumen.cuil}</small>}
+            <div style={{ fontSize: '0.8rem', color: '#666', marginTop: 2 }}>
+              Elegí en qué póliza de Accidentes Personales dar de alta a esta persona. Click en una card para abrir el wizard pre-cargado.
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => navigate('/polizas', { replace: true })}
+            className="secondary-action secondary-action--ghost"
+          >
+            Cancelar
+          </button>
+        </div>
+      )}
+
       {loading && <div style={{ padding: '2rem', textAlign: 'center' }}>Cargando pólizas…</div>}
       {error && (
         <div style={{ padding: '1rem', background: '#fee', color: '#900', borderRadius: 12, margin: '1rem 0' }}>
           {error}
         </div>
       )}
-      {!loading && !error && polizas.length === 0 && (
+      {!loading && !error && polizasFiltradas.length === 0 && !altaPersonaId && (
         <div style={{ padding: '2rem', textAlign: 'center', color: '#666' }}>
           No hay pólizas cargadas. Verificar que el seeder se haya corrido.
         </div>
       )}
+      {!loading && !error && polizasFiltradas.length === 0 && altaPersonaId && (
+        <div style={{ padding: '2rem', textAlign: 'center', color: '#666' }}>
+          No hay pólizas AP activas disponibles para dar de alta.
+        </div>
+      )}
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: '1rem' }}>
-        {polizas.map((p) => {
+        {polizasFiltradas.map((p) => {
           const badge = badgeVigencia(p);
+          // En modo "solicitar alta AP" cada card abre directo el wizard con la persona.
+          const targetUrl = altaPersonaId
+            ? `/polizas/${p.id}/solicitar?tipo=alta&persona_id=${altaPersonaId}`
+            : `/polizas/${p.id}`;
           return (
             <div
               key={p.id}
               className="dashboard-card"
               role="button"
               tabIndex={0}
-              onClick={() => navigate(`/polizas/${p.id}`)}
-              onKeyDown={(e) => { if (e.key === 'Enter') navigate(`/polizas/${p.id}`); }}
+              onClick={() => navigate(targetUrl)}
+              onKeyDown={(e) => { if (e.key === 'Enter') navigate(targetUrl); }}
               style={{ cursor: 'pointer', padding: '1.25rem', gap: '0.75rem' }}
             >
               <div className="card-header" style={{ alignItems: 'flex-start' }}>

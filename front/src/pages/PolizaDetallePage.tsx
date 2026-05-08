@@ -5,10 +5,12 @@ import type {
   Discrepancias,
   Poliza,
   PolizaAsegurado,
+  PolizaAseguradoConChoferes,
   PolizaEmailConfig,
 } from '../features/polizas/types';
 import { SearchInput } from '../features/polizas/SearchInput';
 import { EstadoDistribuidorBadge } from '../features/polizas/EstadoDistribuidorBadge';
+import { ComentariosAseguradoModal } from '../features/polizas/ComentariosAseguradoModal';
 
 type DashboardLayoutProps = {
   title: string;
@@ -48,7 +50,9 @@ export const PolizaDetallePage: React.FC<Props> = ({ DashboardLayout, resolveApi
   const [tab, setTab] = useState<Tab>('resumen');
   const [error, setError] = useState<string | null>(null);
 
-  const [asegurados, setAsegurados] = useState<PolizaAsegurado[] | null>(null);
+  // En pólizas vehículos cargamos el endpoint enriquecido con choferes; en AP, el plano.
+  // Tipamos como union — el render decide qué columnas mostrar.
+  const [asegurados, setAsegurados] = useState<Array<PolizaAsegurado | PolizaAseguradoConChoferes> | null>(null);
   const [discrepancias, setDiscrepancias] = useState<Discrepancias | null>(null);
   const [clausulasVigentes, setClausulasVigentes] = useState<ClausulaAplicada[] | null>(null);
   const [filterEstado, setFilterEstado] = useState<string>('');
@@ -75,19 +79,25 @@ export const PolizaDetallePage: React.FC<Props> = ({ DashboardLayout, resolveApi
   }, [polizaId, apiBaseUrl]);
 
   // ---- fetch asegurados (lazy al activar tab; refetch al cambiar filtros) ----
+  // En pólizas vehículos pegamos al endpoint enriquecido `/asegurados-con-choferes`
+  // para que cada fila titular venga con los choferes vinculados + estado AP. Para
+  // AP usamos el plano `/asegurados` (no aplica el concepto de chofer).
   const fetchAsegurados = useCallback(async () => {
     if (!polizaId) return;
     const params = new URLSearchParams();
     if (filterEstado) params.set('estado', filterEstado);
     if (filterDudosos) params.set('solo_dudosos', '1');
     if (searchAsegurados) params.set('search', searchAsegurados);
-    const url = `${apiBaseUrl}/api/polizas/${polizaId}/asegurados${params.toString() ? '?' + params : ''}`;
+    const path = poliza?.tipo_asegurado === 'vehiculo'
+      ? `/api/polizas/${polizaId}/asegurados-con-choferes`
+      : `/api/polizas/${polizaId}/asegurados`;
+    const url = `${apiBaseUrl}${path}${params.toString() ? '?' + params : ''}`;
     const resp = await fetch(url, { cache: 'no-store' });
     if (resp.ok) {
-      const { data } = (await resp.json()) as { data: PolizaAsegurado[] };
+      const { data } = (await resp.json()) as { data: Array<PolizaAsegurado | PolizaAseguradoConChoferes> };
       setAsegurados(data ?? []);
     }
-  }, [polizaId, apiBaseUrl, filterEstado, filterDudosos, searchAsegurados]);
+  }, [polizaId, apiBaseUrl, filterEstado, filterDudosos, searchAsegurados, poliza?.tipo_asegurado]);
 
   useEffect(() => {
     if (tab === 'asegurados') fetchAsegurados();
@@ -188,12 +198,15 @@ export const PolizaDetallePage: React.FC<Props> = ({ DashboardLayout, resolveApi
       {tab === 'asegurados' && (
         <TabAsegurados
           asegurados={asegurados}
+          tipoAsegurado={poliza.tipo_asegurado}
           filterEstado={filterEstado}
           setFilterEstado={setFilterEstado}
           filterDudosos={filterDudosos}
           setFilterDudosos={setFilterDudosos}
           search={searchAsegurados}
           setSearch={setSearchAsegurados}
+          apiBaseUrl={apiBaseUrl}
+          onComentariosChange={fetchAsegurados}
         />
       )}
       {tab === 'discrepancias' && <TabDiscrepancias discrepancias={discrepancias} />}
@@ -239,109 +252,438 @@ const Row: React.FC<{ label: string; value: React.ReactNode }> = ({ label, value
 );
 
 type TabAseguradosProps = {
-  asegurados: PolizaAsegurado[] | null;
+  asegurados: Array<PolizaAsegurado | PolizaAseguradoConChoferes> | null;
+  /** Si es 'vehiculo' renderizamos columna expand ▼ con choferes vinculados. */
+  tipoAsegurado: 'persona' | 'vehiculo';
   filterEstado: string;
   setFilterEstado: (v: string) => void;
   filterDudosos: boolean;
   setFilterDudosos: (v: boolean) => void;
   search: string;
   setSearch: (v: string) => void;
+  apiBaseUrl: string;
+  onComentariosChange?: () => void | Promise<void>;
 };
 
-const TabAsegurados: React.FC<TabAseguradosProps> = ({
-  asegurados, filterEstado, setFilterEstado, filterDudosos, setFilterDudosos, search, setSearch,
-}) => (
-  <div className="dashboard-card">
-    <div className="filters-bar" style={{ marginBottom: '1rem', alignItems: 'center', gap: '1rem' }}>
-      <label className="filter-field">
-        <span>Estado</span>
-        <select value={filterEstado} onChange={(e) => setFilterEstado(e.target.value)}>
-          <option value="">Todos</option>
-          <option value="activo">Activo</option>
-          <option value="alta_solicitada">Alta solicitada</option>
-          <option value="baja_solicitada">Baja solicitada</option>
-          <option value="dado_de_baja">Dado de baja</option>
-          <option value="no_matcheado">Sin match</option>
-        </select>
-      </label>
-      <label className="filter-field" style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-        <input type="checkbox" checked={filterDudosos} onChange={(e) => setFilterDudosos(e.target.checked)} />
-        <span>Sólo dudosos / sugerencia fuzzy</span>
-      </label>
-      <label className="filter-field" style={{ flex: '1 1 240px', minWidth: 200 }}>
-        <span>Buscar</span>
-        <SearchInput
-          value={search}
-          onChange={setSearch}
-          placeholder="patente, CUIL, nombre, distribuidor…"
-        />
-      </label>
-    </div>
+// ADDENDUM 10 Parte A — preset filter de fecha de alta. Cliente-side; cuando
+// crezca >500 asegurados, migrar a query param backend (nota del usuario).
+type FechaAltaPreset = '' | 'last30' | 'last60' | 'last90' | 'custom';
 
-    {asegurados === null && <div style={{ padding: '1rem' }}>Cargando…</div>}
-    {asegurados !== null && asegurados.length === 0 && (
-      <div style={{ padding: '1rem', color: '#666' }}>
-        {search
-          ? `No se encontraron resultados para "${search}".`
-          : 'No hay asegurados cargados todavía. Cargá un PDF desde "Cargar PDF".'}
+// Type-guard para distinguir el shape enriquecido del plano cuando la póliza es de vehículos.
+function tieneChoferes(a: PolizaAsegurado | PolizaAseguradoConChoferes): a is PolizaAseguradoConChoferes {
+  return 'choferes' in a && Array.isArray((a as PolizaAseguradoConChoferes).choferes);
+}
+
+const TabAsegurados: React.FC<TabAseguradosProps> = ({
+  asegurados, tipoAsegurado, filterEstado, setFilterEstado, filterDudosos, setFilterDudosos, search, setSearch,
+  apiBaseUrl, onComentariosChange,
+}) => {
+  const [fechaAltaPreset, setFechaAltaPreset] = useState<FechaAltaPreset>('');
+  const [fechaAltaDesde, setFechaAltaDesde] = useState<string>('');
+  const [fechaAltaHasta, setFechaAltaHasta] = useState<string>('');
+  // ADDENDUM 10 Parte B — modal de comentarios.
+  const [modalComentarios, setModalComentarios] = useState<{ id: number; identificador: string } | null>(null);
+  // ADDENDUM 10 sub-fase 2 — expand ▼ por fila + filtro cobertura completa.
+  const [filterCobertura, setFilterCobertura] = useState<'' | 'completa' | 'incompleta'>('');
+  const [expandidos, setExpandidos] = useState<Set<number>>(new Set());
+
+  const esVehiculo = tipoAsegurado === 'vehiculo';
+
+  const toggleExpand = (id: number) => {
+    setExpandidos((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+  const expandirTodos = () => {
+    if (!asegurados) return;
+    const conChoferes = asegurados
+      .filter(tieneChoferes)
+      .filter((a) => a.choferes_count > 0)
+      .map((a) => a.id);
+    setExpandidos(new Set(conChoferes));
+  };
+  const colapsarTodos = () => setExpandidos(new Set());
+
+  const aseguradosFiltrados = useMemo(() => {
+    if (!asegurados) return null;
+    let result = asegurados;
+
+    if (fechaAltaPreset) {
+      const now = new Date();
+      let desdeMs: number | null = null;
+      let hastaMs: number | null = null;
+
+      if (fechaAltaPreset === 'last30' || fechaAltaPreset === 'last60' || fechaAltaPreset === 'last90') {
+        const dias = fechaAltaPreset === 'last30' ? 30 : fechaAltaPreset === 'last60' ? 60 : 90;
+        desdeMs = now.getTime() - dias * 86400000;
+      } else if (fechaAltaPreset === 'custom') {
+        if (fechaAltaDesde) desdeMs = new Date(fechaAltaDesde + 'T00:00:00').getTime();
+        if (fechaAltaHasta) hastaMs = new Date(fechaAltaHasta + 'T23:59:59').getTime();
+      }
+
+      result = result.filter((a) => {
+        if (!a.fecha_alta_efectiva) return false;
+        const t = new Date(a.fecha_alta_efectiva.slice(0, 10) + 'T00:00:00').getTime();
+        if (desdeMs !== null && t < desdeMs) return false;
+        if (hastaMs !== null && t > hastaMs) return false;
+        return true;
+      });
+    }
+
+    if (filterCobertura && esVehiculo) {
+      result = result.filter((a) => {
+        if (!tieneChoferes(a)) return true;  // sin info de choferes: no filtramos
+        if (filterCobertura === 'completa') {
+          // Cobertura completa = sin choferes vinculados, o todos con AP.
+          return a.cobertura_completa === null || a.cobertura_completa === true;
+        } else {
+          // Incompleta = al menos un chofer sin AP.
+          return a.cobertura_completa === false;
+        }
+      });
+    }
+
+    return result;
+  }, [asegurados, fechaAltaPreset, fechaAltaDesde, fechaAltaHasta, filterCobertura, esVehiculo]);
+
+  const handleExportCsv = () => {
+    if (!aseguradosFiltrados || aseguradosFiltrados.length === 0) return;
+    const headers = [
+      'N° orden', 'Identificador', 'Tipo identificador', 'Nombre / Vehículo',
+      'Distribuidor', 'CUIL distribuidor', 'Estado distribuidor',
+      'Estado póliza', 'Fecha alta', 'Match método',
+    ];
+    const rows = aseguradosFiltrados.map((a) => [
+      a.numero_orden_aseguradora ?? '',
+      a.identificador,
+      a.identificador_tipo,
+      a.nombre_apellido_pdf ?? a.marca_modelo_pdf ?? '',
+      a.persona?.nombre_completo ?? '',
+      a.persona?.cuil ?? '',
+      a.persona?.estado_actual ?? '',
+      a.estado,
+      a.fecha_alta_efectiva ?? '',
+      a.match_metodo ?? '',
+    ]);
+    const csv = [headers, ...rows]
+      .map((r) => r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(','))
+      .join('\n');
+    const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `asegurados_${new Date().toISOString().slice(0, 10)}.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+
+  return (
+    <div className="dashboard-card">
+      <div className="filters-bar" style={{ marginBottom: '1rem', alignItems: 'center', gap: '1rem' }}>
+        <label className="filter-field">
+          <span>Estado</span>
+          <select value={filterEstado} onChange={(e) => setFilterEstado(e.target.value)}>
+            <option value="">Todos</option>
+            <option value="activo">Activo</option>
+            <option value="alta_solicitada">Alta solicitada</option>
+            <option value="baja_solicitada">Baja solicitada</option>
+            <option value="dado_de_baja">Dado de baja</option>
+            <option value="no_matcheado">Sin match</option>
+          </select>
+        </label>
+        <label className="filter-field" style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+          <input type="checkbox" checked={filterDudosos} onChange={(e) => setFilterDudosos(e.target.checked)} />
+          <span>Sólo dudosos / sugerencia fuzzy</span>
+        </label>
+        <label className="filter-field">
+          <span>Fecha alta</span>
+          <select value={fechaAltaPreset} onChange={(e) => setFechaAltaPreset(e.target.value as FechaAltaPreset)}>
+            <option value="">Cualquiera</option>
+            <option value="last30">Últimos 30 días</option>
+            <option value="last60">Últimos 60 días</option>
+            <option value="last90">Últimos 90 días</option>
+            <option value="custom">Personalizado…</option>
+          </select>
+        </label>
+        {fechaAltaPreset === 'custom' && (
+          <>
+            <label className="filter-field">
+              <span>Desde</span>
+              <input type="date" value={fechaAltaDesde} onChange={(e) => setFechaAltaDesde(e.target.value)} />
+            </label>
+            <label className="filter-field">
+              <span>Hasta</span>
+              <input type="date" value={fechaAltaHasta} onChange={(e) => setFechaAltaHasta(e.target.value)} />
+            </label>
+          </>
+        )}
+        {esVehiculo && (
+          <label className="filter-field">
+            <span>Cobertura</span>
+            <select
+              value={filterCobertura}
+              onChange={(e) => setFilterCobertura(e.target.value as '' | 'completa' | 'incompleta')}
+              title="Filtrar titulares según si todos sus choferes tienen cobertura AP"
+            >
+              <option value="">Cualquiera</option>
+              <option value="completa">Completa (titular + todos los choferes con AP)</option>
+              <option value="incompleta">Incompleta (algún chofer sin AP)</option>
+            </select>
+          </label>
+        )}
+        <label className="filter-field" style={{ flex: '1 1 240px', minWidth: 200 }}>
+          <span>Buscar</span>
+          <SearchInput
+            value={search}
+            onChange={setSearch}
+            placeholder="patente, CUIL, nombre, distribuidor…"
+          />
+        </label>
+        {esVehiculo && (
+          <div style={{ display: 'flex', gap: '0.4rem', alignSelf: 'flex-end' }}>
+            <button
+              type="button"
+              onClick={expandirTodos}
+              className="secondary-action secondary-action--ghost"
+              title="Expandir todas las filas con choferes vinculados"
+            >
+              ▼ Expandir todos
+            </button>
+            <button
+              type="button"
+              onClick={colapsarTodos}
+              className="secondary-action secondary-action--ghost"
+              title="Colapsar todas las filas"
+            >
+              ▶ Colapsar
+            </button>
+          </div>
+        )}
+        <button
+          type="button"
+          onClick={handleExportCsv}
+          disabled={!aseguradosFiltrados || aseguradosFiltrados.length === 0}
+          className="secondary-action secondary-action--ghost"
+          style={{ alignSelf: 'flex-end' }}
+          title="Exportar lista filtrada como CSV (compatible con Excel)"
+        >
+          ⇪ Export CSV
+        </button>
       </div>
-    )}
-    {asegurados !== null && asegurados.length > 0 && (
-      <div className="table-wrapper">
-        <table className="bdd-activos-table" style={{ width: '100%' }}>
-          <thead>
-            <tr>
-              <th>N° orden</th>
-              <th>Identificador</th>
-              <th>Nombre / Vehículo</th>
-              <th>Distribuidor</th>
-              <th>Estado dist.</th>
-              <th>Estado póliza</th>
-            </tr>
-          </thead>
-          <tbody>
-            {asegurados.map((a) => (
-              <tr key={a.id} style={a.revision_manual_pendiente ? { background: '#fffbe6' } : undefined}>
-                <td>{a.numero_orden_aseguradora ?? '—'}</td>
-                <td>
-                  <code>{a.identificador}</code>{' '}
-                  <small style={{ color: '#888' }}>({a.identificador_tipo})</small>
-                  {a.match_metodo && (
-                    <small style={{ display: 'block', color: '#666' }}>
-                      match {a.match_metodo}
-                    </small>
-                  )}
-                </td>
-                <td>{a.nombre_apellido_pdf ?? a.marca_modelo_pdf ?? '—'}</td>
-                <td>
-                  {a.persona ? (
-                    <Link to={`/personal/${a.persona.id}/editar`}>
-                      {a.persona.nombre_completo}
-                    </Link>
-                  ) : a.sugerencia_fuzzy_persona ? (
-                    <small style={{ color: '#666' }}>
-                      sugerencia: {a.sugerencia_fuzzy_persona.nombre}
-                      {a.sugerencia_fuzzy_score && ` (${parseFloat(a.sugerencia_fuzzy_score).toFixed(2)})`}
-                    </small>
-                  ) : (
-                    <span style={{ color: '#c00' }}>sin match</span>
-                  )}
-                </td>
-                <td>
-                  <EstadoDistribuidorBadge
-                    estado={a.persona?.estado_actual ?? null}
-                    alerta={a.persona_alerta_estado}
-                  />
-                </td>
-                <td><span className={`estado-badge estado-badge--${cssEstado(a.estado)}`}>{a.estado}</span></td>
+
+      {aseguradosFiltrados === null && <div style={{ padding: '1rem' }}>Cargando…</div>}
+      {aseguradosFiltrados !== null && aseguradosFiltrados.length === 0 && (
+        <div style={{ padding: '1rem', color: '#666' }}>
+          {search
+            ? `No se encontraron resultados para "${search}".`
+            : fechaAltaPreset
+              ? 'No hay asegurados con fecha de alta en el rango seleccionado.'
+              : 'No hay asegurados cargados todavía. Cargá un PDF desde "Cargar PDF".'}
+        </div>
+      )}
+      {aseguradosFiltrados !== null && aseguradosFiltrados.length > 0 && (
+        <div className="table-wrapper">
+          <table className="bdd-activos-table" style={{ width: '100%' }}>
+            <thead>
+              <tr>
+                {esVehiculo && <th style={{ width: 28 }}></th>}
+                <th>N° orden</th>
+                <th>Identificador</th>
+                <th>Nombre / Vehículo</th>
+                <th>Distribuidor</th>
+                <th>Estado dist.</th>
+                <th>Estado póliza</th>
+                <th>Fecha alta</th>
+                <th>Comentarios</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    )}
-  </div>
-);
+            </thead>
+            <tbody>
+              {aseguradosFiltrados.map((a) => {
+                const enr = tieneChoferes(a) ? a : null;
+                const tieneChoferesVinculados = !!enr && enr.choferes_count > 0;
+                const expandido = expandidos.has(a.id);
+                const incompleta = enr?.cobertura_completa === false;
+                const filaStyle: React.CSSProperties | undefined = a.revision_manual_pendiente
+                  ? { background: '#fffbe6' }
+                  : incompleta
+                    ? { background: '#fff5e6' }  // ámbar suave si tiene choferes sin AP
+                    : undefined;
+                const totalCols = esVehiculo ? 9 : 8;
+
+                return (
+                  <React.Fragment key={a.id}>
+                    <tr style={filaStyle}>
+                      {esVehiculo && (
+                        <td style={{ textAlign: 'center' }}>
+                          {tieneChoferesVinculados ? (
+                            <button
+                              type="button"
+                              onClick={() => toggleExpand(a.id)}
+                              aria-label={expandido ? 'Colapsar choferes' : 'Expandir choferes'}
+                              title={`${enr!.choferes_count} chofer(es) vinculado(s)`}
+                              style={{
+                                background: 'transparent', border: 0, cursor: 'pointer',
+                                fontSize: '0.9rem', padding: '0.1rem 0.3rem', color: incompleta ? '#c70' : '#1d74f5',
+                              }}
+                            >
+                              {expandido ? '▼' : '▶'}
+                            </button>
+                          ) : (
+                            <span style={{ color: '#ccc', fontSize: '0.75rem' }} title="Sin choferes vinculados">·</span>
+                          )}
+                        </td>
+                      )}
+                      <td>{a.numero_orden_aseguradora ?? '—'}</td>
+                      <td>
+                        <code>{a.identificador}</code>{' '}
+                        <small style={{ color: '#888' }}>({a.identificador_tipo})</small>
+                        {a.match_metodo && (
+                          <small style={{ display: 'block', color: '#666' }}>
+                            match {a.match_metodo}
+                          </small>
+                        )}
+                      </td>
+                      <td>{a.nombre_apellido_pdf ?? a.marca_modelo_pdf ?? '—'}</td>
+                      <td>
+                        {a.persona ? (
+                          <Link to={`/personal/${a.persona.id}/editar`}>
+                            {a.persona.nombre_completo}
+                          </Link>
+                        ) : a.sugerencia_fuzzy_persona ? (
+                          <small style={{ color: '#666' }}>
+                            sugerencia: {a.sugerencia_fuzzy_persona.nombre}
+                            {a.sugerencia_fuzzy_score && ` (${parseFloat(a.sugerencia_fuzzy_score).toFixed(2)})`}
+                          </small>
+                        ) : (
+                          <span style={{ color: '#c00' }}>sin match</span>
+                        )}
+                        {tieneChoferesVinculados && (
+                          <small style={{ display: 'block', color: incompleta ? '#c70' : '#0a8c3a', marginTop: 2 }}>
+                            {incompleta ? '⚠' : '✅'} {enr!.choferes_count} chofer{enr!.choferes_count > 1 ? 'es' : ''} vinculado{enr!.choferes_count > 1 ? 's' : ''}
+                          </small>
+                        )}
+                      </td>
+                      <td>
+                        <EstadoDistribuidorBadge
+                          estado={a.persona?.estado_actual ?? null}
+                          alerta={a.persona_alerta_estado}
+                        />
+                      </td>
+                      <td><span className={`estado-badge estado-badge--${cssEstado(a.estado)}`}>{a.estado}</span></td>
+                      <td>{a.fecha_alta_efectiva ? fmtDate(a.fecha_alta_efectiva) : '—'}</td>
+                      <td>
+                        <button
+                          type="button"
+                          onClick={() => setModalComentarios({ id: a.id, identificador: a.identificador })}
+                          title={a.ultimo_comentario ?? 'Agregar comentario'}
+                          style={{
+                            background: 'transparent', border: '1px solid #d0d7e1',
+                            padding: '0.2rem 0.5rem', borderRadius: 6, cursor: 'pointer', fontSize: '0.8rem',
+                          }}
+                        >
+                          {(a.comentarios_count ?? 0) > 0 ? `💬 ${a.comentarios_count}` : '+ Comentar'}
+                        </button>
+                        {a.ultimo_comentario && (
+                          <small style={{ display: 'block', color: '#888', maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            {a.ultimo_comentario}
+                          </small>
+                        )}
+                      </td>
+                    </tr>
+
+                    {expandido && tieneChoferesVinculados && (
+                      <tr style={{ background: '#fafbfd' }}>
+                        <td colSpan={totalCols} style={{ padding: '0.5rem 1rem 0.75rem 2.4rem' }}>
+                          <div style={{ fontSize: '0.85rem', color: '#666', marginBottom: '0.4rem' }}>
+                            ↳ Backup choferes ({enr!.choferes.length}):
+                          </div>
+                          <table style={{ width: '100%', fontSize: '0.85rem', borderCollapse: 'collapse' }}>
+                            <tbody>
+                              {enr!.choferes.map((c) => {
+                                const sinAp = c.polizas_ap_activas.length === 0;
+                                return (
+                                  <tr key={c.relacion_id} style={{ borderBottom: '1px solid #eef1f6' }}>
+                                    <td style={{ padding: '0.35rem 0.5rem' }}>
+                                      <Link to={`/personal/${c.persona_id}/editar`}>
+                                        <b>{c.nombre_completo}</b>
+                                      </Link>
+                                    </td>
+                                    <td style={{ padding: '0.35rem 0.5rem', color: '#666' }}>
+                                      <code style={{ fontSize: '0.75rem' }}>{c.cuil ?? '—'}</code>
+                                    </td>
+                                    <td style={{ padding: '0.35rem 0.5rem' }}>
+                                      <EstadoDistribuidorBadge estado={c.estado_persona} />
+                                    </td>
+                                    <td style={{ padding: '0.35rem 0.5rem', color: '#888' }}>
+                                      {c.rol} · vinc. {c.fecha_vinculacion ?? '—'}
+                                    </td>
+                                    <td style={{ padding: '0.35rem 0.5rem' }}>
+                                      {sinAp ? (
+                                        <span
+                                          style={{
+                                            background: '#fff5e6', color: '#c70',
+                                            padding: '0.15rem 0.5rem', borderRadius: 6, fontSize: '0.78rem',
+                                          }}
+                                        >
+                                          ⚠ Sin AP
+                                        </span>
+                                      ) : (
+                                        <span
+                                          title={c.polizas_ap_activas.map((p) => p.nombre).join(' · ')}
+                                          style={{
+                                            background: '#e7f7ed', color: '#0a8c3a',
+                                            padding: '0.15rem 0.5rem', borderRadius: 6, fontSize: '0.78rem',
+                                          }}
+                                        >
+                                          ✅ AP en {c.polizas_ap_activas.length === 1
+                                            ? c.polizas_ap_activas[0].aseguradora ?? 'aseguradora'
+                                            : `${c.polizas_ap_activas.length} pólizas`}
+                                        </span>
+                                      )}
+                                    </td>
+                                    <td style={{ padding: '0.35rem 0.5rem', textAlign: 'right' }}>
+                                      {sinAp && (
+                                        <Link
+                                          to={`/polizas?solicitar_alta_persona=${c.persona_id}`}
+                                          style={{
+                                            background: '#1d74f5', color: '#fff', textDecoration: 'none',
+                                            padding: '0.25rem 0.6rem', borderRadius: 6, fontSize: '0.78rem',
+                                            whiteSpace: 'nowrap',
+                                          }}
+                                        >
+                                          Solicitar alta AP →
+                                        </Link>
+                                      )}
+                                    </td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                        </td>
+                      </tr>
+                    )}
+                  </React.Fragment>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {modalComentarios && (
+        <ComentariosAseguradoModal
+          apiBaseUrl={apiBaseUrl}
+          asegurado={modalComentarios}
+          onClose={() => setModalComentarios(null)}
+          onChange={() => { onComentariosChange?.(); }}
+        />
+      )}
+    </div>
+  );
+};
 
 const cssEstado = (e: string): string => ({
   activo:           'activo',

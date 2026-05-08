@@ -133,6 +133,9 @@ export const ProveedoresPage: React.FC<ProveedoresPageProps> = ({
   const [coberturaPolizaIdFilter, setCoberturaPolizaIdFilter] = useState<string>('');
   const [coberturaApFilter, setCoberturaApFilter] = useState<'' | 'con' | 'sin'>('');
   const [coberturaVehFilter, setCoberturaVehFilter] = useState<'' | 'con' | 'sin'>('');
+  // ADDENDUM 10 sub-fase 2 — filtros titular/chofer.
+  const [tipoVinculoFilter, setTipoVinculoFilter] = useState<'' | 'titular' | 'chofer' | 'ambos'>('');
+  const [vinculadoATitularFilter, setVinculadoATitularFilter] = useState<string>('');
   const [docsSortActive, setDocsSortActive] = useState(false);
   const sinEstadoFilterValue = 'sin_estado';
   const noCitadoFilterValue = 'no_citado';
@@ -588,6 +591,21 @@ export const ProveedoresPage: React.FC<ProveedoresPageProps> = ({
         if (coberturaVehFilter === 'sin' && tieneVeh) return false;
       }
 
+      // ADDENDUM 10 sub-fase 2 — filtros titular/chofer.
+      if (tipoVinculoFilter) {
+        const esTitular = (registro.esTitularConChoferes ?? false) === true;
+        const esChofer = (registro.esChoferDe ?? []).length > 0;
+        if (tipoVinculoFilter === 'titular' && !esTitular) return false;
+        if (tipoVinculoFilter === 'chofer' && !esChofer) return false;
+        if (tipoVinculoFilter === 'ambos' && !(esTitular && esChofer)) return false;
+      }
+      if (vinculadoATitularFilter) {
+        const titIdNum = Number(vinculadoATitularFilter);
+        if (!(registro.esChoferDe ?? []).some((r) => r.titular_id === titIdNum)) {
+          return false;
+        }
+      }
+
       if (term.length === 0) {
         return true;
       }
@@ -642,6 +660,8 @@ export const ProveedoresPage: React.FC<ProveedoresPageProps> = ({
     coberturaPolizaIdFilter,
     coberturaApFilter,
     coberturaVehFilter,
+    tipoVinculoFilter,
+    vinculadoATitularFilter,
     altaDateFrom,
     altaDateTo,
     perfilNames,
@@ -799,6 +819,22 @@ export const ProveedoresPage: React.FC<ProveedoresPageProps> = ({
       (registro.polizasVigentes ?? []).forEach((pa) => {
         if (pa.poliza_id && !m.has(pa.poliza_id)) {
           m.set(pa.poliza_id, pa.nombre_descriptivo ?? `Póliza #${pa.poliza_id}`);
+        }
+      });
+    });
+    return Array.from(m.entries())
+      .map(([id, nombre]) => ({ id, nombre }))
+      .sort((a, b) => a.nombre.localeCompare(b.nombre));
+  }, [personal]);
+
+  // ADDENDUM 10 sub-fase 2 — opciones de titulares para el filtro "Vinculado a".
+  // Solo titulares que efectivamente tienen al menos un chofer vinculado.
+  const titularOptionsConChoferes = useMemo(() => {
+    const m = new Map<number, string>();
+    personal.forEach((registro) => {
+      (registro.esChoferDe ?? []).forEach((r) => {
+        if (r.titular_id && !m.has(r.titular_id)) {
+          m.set(r.titular_id, r.titular_nombre);
         }
       });
     });
@@ -1416,6 +1452,34 @@ export const ProveedoresPage: React.FC<ProveedoresPageProps> = ({
             <option value="sin">Sin cobertura vehículos</option>
           </select>
         </label>
+        {/* ADDENDUM 10 sub-fase 2 — filtros titular/chofer. */}
+        <label className="filter-field">
+          <span>Tipo</span>
+          <select
+            value={tipoVinculoFilter}
+            onChange={(event) => setTipoVinculoFilter(event.target.value as '' | 'titular' | 'chofer' | 'ambos')}
+            title="Filtrar por personas que son titulares con choferes vinculados o choferes vinculados a algún titular"
+          >
+            <option value="">Todos</option>
+            <option value="titular">Titulares (con choferes)</option>
+            <option value="chofer">Choferes (vinculados a un titular)</option>
+            <option value="ambos">Ambos (titular y chofer)</option>
+          </select>
+        </label>
+        {titularOptionsConChoferes.length > 0 && (
+          <label className="filter-field">
+            <span>Vinculado al titular</span>
+            <select
+              value={vinculadoATitularFilter}
+              onChange={(event) => setVinculadoATitularFilter(event.target.value)}
+            >
+              <option value="">Todos</option>
+              {titularOptionsConChoferes.map((t) => (
+                <option key={t.id} value={t.id}>{t.nombre}</option>
+              ))}
+            </select>
+          </label>
+        )}
       </div>
 
       <div className="filters-actions">

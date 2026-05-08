@@ -619,7 +619,7 @@ export const ProveedorNuevoPage: React.FC<ProveedorNuevoPageProps> = ({
                 </label>
               ) : null}
               {renderInput('Fecha de alta', 'fechaAlta', false, 'date')}
-              {renderInput('Patente', 'patente')}
+              {renderPatenteInput('Patente', 'patente')}
               {renderInput('Patentes adicionales', 'patentesAdicionales')}
             </div>
 
@@ -672,7 +672,7 @@ export const ProveedorNuevoPage: React.FC<ProveedorNuevoPageProps> = ({
                 </label>
               ) : null}
               {renderInput('Fecha de alta', 'fechaAlta', false, 'date')}
-              {renderInput('Patente', 'patente')}
+              {renderPatenteInput('Patente', 'patente')}
               {renderInput('Patentes adicionales', 'patentesAdicionales')}
             </div>
 
@@ -726,7 +726,7 @@ export const ProveedorNuevoPage: React.FC<ProveedorNuevoPageProps> = ({
               {renderCheckbox('Tarifa especial', 'tarifaEspecial', 'Tiene tarifa especial')}
               {renderInput('Observación tarifa', 'observacionTarifa')}
               {renderInput('Fecha de alta', 'fechaAlta', false, 'date')}
-              {renderInput('Patente', 'patente')}
+              {renderPatenteInput('Patente', 'patente')}
               {renderInput('Patentes adicionales', 'patentesAdicionales')}
             </div>
 
@@ -793,6 +793,28 @@ export const ProveedorNuevoPage: React.FC<ProveedorNuevoPageProps> = ({
         value={formValues[field] as string}
         onChange={(event) => setFormValues((prev) => ({ ...prev, [field]: event.target.value }))}
         placeholder="Ingresar"
+        required={required}
+      />
+    </label>
+  );
+
+  const renderPatenteInput = (label: string, field: keyof typeof formValues, required = false) => (
+    <label className="input-control">
+      <span>{label}</span>
+      <input
+        type="text"
+        value={formValues[field] as string}
+        onChange={(event) =>
+          setFormValues((prev) => ({
+            ...prev,
+            [field]: event.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 7),
+          }))
+        }
+        placeholder="Ingresar"
+        maxLength={7}
+        minLength={6}
+        pattern="[A-Z0-9]{6,7}"
+        title="6 a 7 caracteres, solo letras y números"
         required={required}
       />
     </label>

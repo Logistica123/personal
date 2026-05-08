@@ -982,6 +982,10 @@ class PersonalController extends Controller
                 'aprobadoPor:id,name',
                 // ADDENDUM 9 Parte C — pólizas activas para columna "Pólizas vigentes" y filtros.
                 'polizasVigentes',
+                // ADDENDUM 10 sub-fase 2 — relaciones titular/chofer para flags y filtros.
+                'relacionesComoTitular:id,titular_persona_id,chofer_persona_id,activo',
+                'relacionesComoChofer:id,titular_persona_id,chofer_persona_id,activo',
+                'relacionesComoChofer.titular:id,apellidos,nombres',
                 'documentosVencimientos' => function ($documentsQuery) use ($includePending) {
                     $documentsQuery
                         ->select('id', 'persona_id', 'fecha_vencimiento', 'tipo_archivo_id', 'es_pendiente')
@@ -2801,6 +2805,18 @@ class PersonalController extends Controller
                     'aseguradora_id'      => $a->poliza?->aseguradora_id,
                     'aseguradora'         => $a->poliza?->aseguradora?->nombre,
                     'ramo'                => $a->poliza?->ramo,
+                ])
+                ->values()
+                ->all(),
+            // ADDENDUM 10 sub-fase 2 — flags titular/chofer.
+            'esTitularConChoferes' => ($persona->relacionesComoTitular?->count() ?? 0) > 0,
+            'esChoferDe' => collect($persona->relacionesComoChofer ?? [])
+                ->map(fn ($rel) => [
+                    'relacion_id' => $rel->id,
+                    'titular_id'  => $rel->titular_persona_id,
+                    'titular_nombre' => $rel->titular
+                        ? trim(($rel->titular->apellidos ?? '') . ' ' . ($rel->titular->nombres ?? '')) ?: '—'
+                        : '—',
                 ])
                 ->values()
                 ->all(),

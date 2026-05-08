@@ -181,6 +181,56 @@ class Persona extends Model
                    'poliza.aseguradora:id,nombre,parser_perfil');
     }
 
+    // ─── ADDENDUM 10 Parte C — relaciones titular ↔ chofer ────────────────────
+    //
+    // Cada Persona puede:
+    //  - Ser titular de N choferes (vista "tab Choferes" del titular).
+    //  - Ser chofer de N titulares (caso edge: maneja para varios dueños).
+    //
+    // Las relaciones se filtran por `activo=true` para excluir desvinculados.
+
+    /** Relaciones donde ESTA persona es titular (sus choferes). */
+    public function relacionesComoTitular()
+    {
+        return $this->hasMany(\App\Models\PersonaRelacionChofer::class, 'titular_persona_id')
+            ->where('activo', true);
+    }
+
+    /** Relaciones donde ESTA persona es chofer (sus titulares). */
+    public function relacionesComoChofer()
+    {
+        return $this->hasMany(\App\Models\PersonaRelacionChofer::class, 'chofer_persona_id')
+            ->where('activo', true);
+    }
+
+    /** Choferes vinculados (atajo via belongsToMany). */
+    public function choferes()
+    {
+        return $this->belongsToMany(
+            self::class,
+            'personas_relacion_chofer',
+            'titular_persona_id',
+            'chofer_persona_id'
+        )
+            ->withPivot(['id', 'fecha_vinculacion', 'fecha_desvinculacion', 'rol', 'notas', 'activo'])
+            ->wherePivot('activo', true)
+            ->withTimestamps();
+    }
+
+    /** Titulares para los que esta persona maneja como chofer. */
+    public function titulares()
+    {
+        return $this->belongsToMany(
+            self::class,
+            'personas_relacion_chofer',
+            'chofer_persona_id',
+            'titular_persona_id'
+        )
+            ->withPivot(['id', 'fecha_vinculacion', 'fecha_desvinculacion', 'rol', 'notas', 'activo'])
+            ->wherePivot('activo', true)
+            ->withTimestamps();
+    }
+
     /**
      * Determina si este distribuidor tiene un cobrador designado.
      */

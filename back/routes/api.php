@@ -20,6 +20,8 @@ use App\Http\Controllers\Api\PolizaClausulaController;
 use App\Http\Controllers\Api\PolizaSolicitudController;
 use App\Http\Controllers\Api\PolizaNotificacionDistribuidorController;
 use App\Http\Controllers\Api\OAuthMicrosoftController;
+use App\Http\Controllers\Api\PolizaAseguradoComentarioController;
+use App\Http\Controllers\Api\ChoferesController;
 use App\Http\Controllers\Api\ReclamoController;
 use App\Http\Controllers\Api\NotificationController;
 use App\Http\Controllers\Api\PersonalDocumentController;
@@ -69,11 +71,23 @@ Route::middleware('auth.api')->group(function () {
     Route::get('/polizas/{poliza}',                        [PolizasController::class, 'show']);
     Route::get('/polizas/{poliza}/discrepancias',          [PolizasController::class, 'discrepancias']);
     Route::get('/polizas/{poliza}/asegurados',             [PolizasController::class, 'asegurados']);
+    // ADDENDUM 10 sub-fase 2 — listado enriquecido con choferes (solo vehículos)
+    Route::get('/polizas/{poliza}/asegurados-con-choferes', [PolizasController::class, 'aseguradosConChoferes']);
     // BUGFIX 02 Issue 1 — Auditoría de matches fuzzy (históricos + nuevos)
     Route::get ('/polizas/auditoria/matches-fuzzy',                    [PolizasController::class, 'auditoriaMatchesFuzzy']);
     Route::post('/polizas/auditoria/matches-fuzzy/{asegurado}/resolver',[PolizasController::class, 'resolverSugerenciaFuzzy']);
     // ADDENDUM 9 Parte B — regenerar certificado individual de un asegurado
     Route::post('/polizas/asegurados/{asegurado}/certificado-individual', [PolizasController::class, 'regenerarCertificadoIndividual']);
+    // ADDENDUM 10 Parte B — comentarios histórico por asegurado
+    Route::get   ('/polizas/asegurados/{asegurado}/comentarios',          [PolizaAseguradoComentarioController::class, 'index']);
+    Route::post  ('/polizas/asegurados/{asegurado}/comentarios',          [PolizaAseguradoComentarioController::class, 'store']);
+    Route::delete('/polizas/asegurados/comentarios/{comentario}',         [PolizaAseguradoComentarioController::class, 'destroy']);
+    // ADDENDUM 10 Parte C — choferes vinculados a titulares
+    Route::get   ('/personal/{persona}/choferes',          [ChoferesController::class, 'indexChoferes']);
+    Route::get   ('/personal/{persona}/titulares',         [ChoferesController::class, 'indexTitulares']);
+    Route::post  ('/personal/{persona}/choferes',          [ChoferesController::class, 'store']);
+    Route::put   ('/personal/relacion-chofer/{relacion}',  [ChoferesController::class, 'update']);
+    Route::delete('/personal/relacion-chofer/{relacion}',  [ChoferesController::class, 'destroy']);
     // ADDENDUM 9 Parte A — vinculación OAuth Outlook (admins del módulo Pólizas)
     Route::get ('/oauth/microsoft/authorize', [OAuthMicrosoftController::class, 'authorize']);
     Route::get ('/oauth/microsoft/status',    [OAuthMicrosoftController::class, 'status']);

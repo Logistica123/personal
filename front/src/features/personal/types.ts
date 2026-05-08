@@ -118,4 +118,11 @@ export type PersonalRecord = {
     aseguradora: string | null;
     ramo: 'accidentes_personales' | 'vehiculos' | null;
   }>;
+  // ADDENDUM 10 sub-fase 2 — flags titular/chofer.
+  esTitularConChoferes?: boolean;
+  esChoferDe?: Array<{
+    relacion_id: number;
+    titular_id: number;
+    titular_nombre: string;
+  }>;
 };

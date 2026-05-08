@@ -4927,6 +4927,27 @@ const sucursalOptions = useMemo(() => {
     );
   };
 
+  const renderAltaPatenteInput = (label: string, field: AltaEditableField, required = false) => (
+    <label className="input-control">
+      <span>{label}</span>
+      <input
+        type="text"
+        value={altaForm[field]}
+        onChange={(event) => {
+          const sanitized = event.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 7);
+          setAltaFormDirty(true);
+          setAltaForm((prev) => ({ ...prev, [field]: sanitized }));
+        }}
+        placeholder="Ingresar"
+        maxLength={7}
+        minLength={6}
+        pattern="[A-Z0-9]{6,7}"
+        title="6 a 7 caracteres, solo letras y números"
+        required={required}
+      />
+    </label>
+  );
+
   const renderAltaCuilInput = (
     label: string,
     field: 'cuil' | 'cobradorCuil',
@@ -6475,7 +6496,7 @@ const sucursalOptions = useMemo(() => {
               {renderAltaInput('Fecha de nacimiento', 'duenoFechaNacimiento', false, 'date')}
               {renderAltaCheckbox('Combustible', 'combustible', 'Cuenta corrientes combustible')}
               {renderAltaInput('Fecha de alta', 'fechaAlta', false, 'date')}
-              {renderAltaInput('Patente', 'patente', true)}
+              {renderAltaPatenteInput('Patente', 'patente', true)}
             </div>
 
             <div className="personal-subsection" style={{ marginTop: '1rem' }}>
@@ -6512,7 +6533,7 @@ const sucursalOptions = useMemo(() => {
               {renderAltaInput('Fecha de nacimiento', 'duenoFechaNacimiento', false, 'date')}
               {renderAltaCheckbox('Combustible', 'combustible', 'Cuenta corrientes combustible')}
               {renderAltaInput('Fecha de alta', 'fechaAlta', false, 'date')}
-              {renderAltaInput('Patente', 'patente', true)}
+              {renderAltaPatenteInput('Patente', 'patente', true)}
               {renderAltaSelect(
                 'Cliente',
                 'clienteId',
@@ -6639,7 +6660,7 @@ const sucursalOptions = useMemo(() => {
               {renderAltaCheckbox('Tarifa especial', 'tarifaEspecial', 'Tiene tarifa especial')}
               {renderAltaInput('Observación tarifa', 'observacionTarifa')}
               {renderAltaInput('Fecha de alta', 'fechaAlta', false, 'date')}
-              {renderAltaInput('Patente', 'patente', true)}
+              {renderAltaPatenteInput('Patente', 'patente', true)}
               {renderAltaInput('Fecha de nacimiento', 'duenoFechaNacimiento', false, 'date')}
             </div>
 
@@ -6672,7 +6693,7 @@ const sucursalOptions = useMemo(() => {
               {renderAltaCheckbox('Combustible', 'combustible', 'Cuenta corrientes combustible')}
               {renderAltaInput('Fecha de alta', 'fechaAlta', false, 'date')}
               {renderAltaInput('Fecha de nacimiento', 'duenoFechaNacimiento', false, 'date')}
-              {renderAltaInput('Patente', 'patente', true)}
+              {renderAltaPatenteInput('Patente', 'patente', true)}
             </div>
           </div>
         );

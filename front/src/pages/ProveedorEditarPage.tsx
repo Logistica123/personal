@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import type { PersonalRecord } from '../features/personal/types';
+import { ChoferesSection } from '../features/personal/ChoferesSection';
 
 type DashboardLayoutProps = {
   title: string;
@@ -2494,6 +2495,15 @@ export const ProveedorEditarPage: React.FC<ProveedorEditarPageProps> = ({
             </label>
           </div>
         </section>
+      ) : null}
+
+      {/* ADDENDUM 10 Parte C — choferes vinculados a este titular. */}
+      {detail?.id ? (
+        <ChoferesSection
+          apiBaseUrl={apiBaseUrl}
+          titularPersonaId={detail.id}
+          isReadOnly={isReadOnly}
+        />
       ) : null}
 
       <section className="personal-edit-section">
