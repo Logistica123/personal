@@ -43,6 +43,246 @@ class PolizasController extends Controller
     }
 
     /**
+     * ADDENDUM 12 Parte G — busca asegurados activos por CUIL/DNI/patente
+     * (una entrada por línea de input). Devuelve `encontrados` y
+     * `no_encontrados` para que la UI arme el wizard de baja masiva.
+     *
+     * Acepta variantes: CUIL con/sin guiones, DNI 8 dígitos, patente vieja o
+     * Mercosur. Normaliza antes de buscar.
+     */
+    public function buscarAseguradosBulk(Request $request, Poliza $poliza): JsonResponse
+    {
+        $data = $request->validate([
+            'lineas'   => ['required', 'array', 'min:1', 'max:1000'],
+            'lineas.*' => ['nullable', 'string', 'max:50'],
+        ]);
+
+        $entradas = collect($data['lineas'])
+            ->map(fn ($l) => trim((string) $l))
+            ->filter()
+            ->unique()
+            ->values();
+
+        $encontrados = [];
+        $noEncontrados = [];
+
+        foreach ($entradas as $linea) {
+            $asegurado = $this->buscarAseguradoPorEntrada($poliza, $linea);
+            if ($asegurado) {
+                $encontrados[] = [
+                    'linea_input'   => $linea,
+                    'asegurado_id'  => $asegurado->id,
+                    'persona_id'    => $asegurado->persona_id,
+                    'identificador' => $asegurado->identificador,
+                    'nombre'        => $asegurado->persona
+                        ? trim(($asegurado->persona->apellidos ?? '') . ' ' . ($asegurado->persona->nombres ?? '')) ?: '—'
+                        : ($asegurado->nombre_apellido_pdf ?? '—'),
+                    'cuil'          => $asegurado->persona?->cuil,
+                    'estado'        => $asegurado->estado,
+                ];
+            } else {
+                $noEncontrados[] = [
+                    'linea_input' => $linea,
+                    'razon'       => 'Sin coincidencia exacta como asegurado activo en esta póliza.',
+                ];
+            }
+        }
+
+        return response()->json(['data' => [
+            'encontrados'    => $encontrados,
+            'no_encontrados' => $noEncontrados,
+        ]]);
+    }
+
+    /**
+     * Helper para `buscarAseguradosBulk`. Decide si la entrada es CUIL/DNI o
+     * patente y busca un asegurado activo de la póliza que matchee.
+     */
+    private function buscarAseguradoPorEntrada(Poliza $poliza, string $linea): ?PolizaAsegurado
+    {
+        $digitos = preg_replace('/\D/', '', $linea);
+
+        // Para pólizas de personas: CUIL (11 dígitos) o DNI (8 dígitos extraído).
+        if ($poliza->tipo_asegurado === 'persona') {
+            $cuil = strlen($digitos) === 11 ? $digitos : null;
+            $dni  = strlen($digitos) === 8 ? $digitos
+                  : (strlen($digitos) === 11 ? substr($digitos, 2, 8) : null);
+
+            // Match por persona (CUIL exacto).
+            if ($cuil) {
+                $a = PolizaAsegurado::query()
+                    ->where('poliza_id', $poliza->id)
+                    ->whereIn('estado', ['activo', 'alta_solicitada'])
+                    ->whereHas('persona', fn ($q) => $q->whereRaw(
+                        'REPLACE(REPLACE(REPLACE(cuil, "-", ""), ".", ""), " ", "") = ?', [$cuil]
+                    ))
+                    ->with('persona:id,apellidos,nombres,cuil')
+                    ->first();
+                if ($a) return $a;
+            }
+            // Match por DNI (extraído del CUIL central).
+            if ($dni) {
+                $a = PolizaAsegurado::query()
+                    ->where('poliza_id', $poliza->id)
+                    ->whereIn('estado', ['activo', 'alta_solicitada'])
+                    ->whereHas('persona', fn ($q) => $q->whereRaw(
+                        'SUBSTRING(REPLACE(REPLACE(REPLACE(cuil, "-", ""), ".", ""), " ", ""), 3, 8) = ?', [$dni]
+                    ))
+                    ->with('persona:id,apellidos,nombres,cuil')
+                    ->first();
+                if ($a) return $a;
+            }
+            // Match por identificador directo (cuando el asegurado quedó como `no_matcheado`).
+            $a = PolizaAsegurado::query()
+                ->where('poliza_id', $poliza->id)
+                ->whereIn('estado', ['activo', 'alta_solicitada'])
+                ->where(function ($q) use ($cuil, $dni) {
+                    if ($cuil) $q->orWhere('identificador', $cuil);
+                    if ($dni)  $q->orWhere('identificador', $dni);
+                })
+                ->with('persona:id,apellidos,nombres,cuil')
+                ->first();
+            return $a;
+        }
+
+        // Pólizas de vehículos: patente normalizada (mayúsculas, sin espacios/guiones).
+        $patente = strtoupper(preg_replace('/[\s\-]/', '', $linea));
+        if (!$patente) return null;
+        return PolizaAsegurado::query()
+            ->where('poliza_id', $poliza->id)
+            ->whereIn('estado', ['activo', 'alta_solicitada'])
+            ->where('identificador', $patente)
+            ->with('persona:id,apellidos,nombres,cuil')
+            ->first();
+    }
+
+    /**
+     * ADDENDUM 12 Parte E — soft delete de un asegurado individual.
+     * Requiere permiso `puede_eliminar_asegurados`. Motivo es obligatorio.
+     */
+    public function eliminarAsegurado(Request $request, PolizaAsegurado $asegurado): JsonResponse
+    {
+        $data = $request->validate([
+            'motivo' => ['required', 'string', 'min:3', 'max:255'],
+        ]);
+        $user = $request->user();
+        if (!$user) return response()->json(['message' => 'No autenticado.'], 401);
+
+        $asegurado->update([
+            'eliminado_en'           => now(),
+            'eliminado_por_user_id'  => $user->id,
+            'motivo_eliminacion'     => $data['motivo'],
+        ]);
+        return response()->json(['data' => ['eliminado' => true, 'asegurado_id' => $asegurado->id]]);
+    }
+
+    /**
+     * ADDENDUM 12 Parte E — eliminación masiva. Si son <=10 ítems requiere
+     * `puede_eliminar_asegurados`. Si son >10, requiere
+     * `puede_eliminar_asegurados_masivo` (típicamente solo super admin).
+     */
+    public function eliminarAseguradosMasivo(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'asegurado_ids'   => ['required', 'array', 'min:1'],
+            'asegurado_ids.*' => ['integer'],
+            'motivo'          => ['required', 'string', 'min:3', 'max:255'],
+        ]);
+        $user = $request->user();
+        if (!$user) return response()->json(['message' => 'No autenticado.'], 401);
+
+        $cantidad = count($data['asegurado_ids']);
+        if ($cantidad > 10) {
+            // Permiso reforzado para operaciones de gran impacto.
+            $perm = \App\Models\PolizaAdminPermiso::where('user_id', $user->id)->first();
+            $isAdmin = ($user->role ?? null) === 'admin';
+            if (!$isAdmin && !($perm?->puede_eliminar_asegurados_masivo ?? false)) {
+                return response()->json([
+                    'message' => "Eliminación de {$cantidad} asegurados requiere permiso `puede_eliminar_asegurados_masivo`.",
+                ], 403);
+            }
+        }
+
+        $ids = $data['asegurado_ids'];
+        $afectados = PolizaAsegurado::query()
+            ->whereIn('id', $ids)
+            ->whereNull('eliminado_en')
+            ->update([
+                'eliminado_en'          => now(),
+                'eliminado_por_user_id' => $user->id,
+                'motivo_eliminacion'    => $data['motivo'],
+                'updated_at'            => now(),
+            ]);
+
+        return response()->json(['data' => [
+            'solicitados' => $cantidad,
+            'eliminados'  => $afectados,
+        ]]);
+    }
+
+    /**
+     * ADDENDUM 12 Parte E — listado de asegurados eliminados (panel auditoría).
+     * Solo super admin (`role='admin'`).
+     */
+    public function aseguradosEliminados(Request $request): JsonResponse
+    {
+        $user = $request->user();
+        if (!$user || ($user->role ?? null) !== 'admin') {
+            return response()->json(['message' => 'Solo super admin.'], 403);
+        }
+
+        $rows = PolizaAsegurado::query()
+            ->soloEliminados()
+            ->with([
+                'poliza:id,nombre_descriptivo,numero_poliza,aseguradora_id',
+                'poliza.aseguradora:id,nombre',
+                'persona:id,apellidos,nombres,cuil',
+            ])
+            ->orderByDesc('eliminado_en')
+            ->limit(500)
+            ->get();
+
+        // Resolver el user que hizo la eliminación con join manual (no hay relación tipada).
+        $userIds = $rows->pluck('eliminado_por_user_id')->filter()->unique();
+        $users = \App\Models\User::whereIn('id', $userIds)->get(['id', 'name', 'email'])->keyBy('id');
+
+        $rows = $rows->map(function ($a) use ($users) {
+            $arr = $a->toArray();
+            $arr['eliminado_por'] = $a->eliminado_por_user_id
+                ? ($users->get($a->eliminado_por_user_id)?->only(['id', 'name', 'email']))
+                : null;
+            return $arr;
+        });
+
+        return response()->json(['data' => $rows]);
+    }
+
+    /**
+     * ADDENDUM 12 Parte E — restaura un asegurado eliminado. Solo super admin.
+     */
+    public function restaurarAsegurado(Request $request, int $aseguradoId): JsonResponse
+    {
+        $user = $request->user();
+        if (!$user || ($user->role ?? null) !== 'admin') {
+            return response()->json(['message' => 'Solo super admin.'], 403);
+        }
+
+        $asegurado = PolizaAsegurado::query()
+            ->soloEliminados()
+            ->where('id', $aseguradoId)
+            ->first();
+        if (!$asegurado) {
+            return response()->json(['message' => 'No existe o no está eliminado.'], 404);
+        }
+        $asegurado->update([
+            'eliminado_en'          => null,
+            'eliminado_por_user_id' => null,
+            'motivo_eliminacion'    => null,
+        ]);
+        return response()->json(['data' => ['restaurado' => true]]);
+    }
+
+    /**
      * Bloque D.1 — comparte el certificado individual de un asegurado por email
      * a su `personas.email`. El PDF va como adjunto. Si el asegurado no tiene
      * persona vinculada o la persona no tiene email, devuelve 422.
@@ -152,6 +392,7 @@ class PolizasController extends Controller
             'tomador_razon_social'   => ['nullable', 'string', 'max:150'],
             'tomador_domicilio'      => ['nullable', 'string', 'max:255'],
             'alerta_dias_antes_vencimiento'         => ['nullable', 'integer', 'min:1', 'max:120'],
+            'dias_alerta_sin_respuesta'             => ['nullable', 'integer', 'min:1', 'max:90'],
             'ofrecer_auto_aprobacion_distribuidor'  => ['nullable', 'boolean'],
             'activa'                 => ['nullable', 'boolean'],
             'clausulas_especiales'   => ['nullable', 'string'],
@@ -191,9 +432,13 @@ class PolizasController extends Controller
                 'dias_restantes'    => max(0, (int) $p->vigencia_hasta->diffInDays($hoy, false) * -1),
             ]);
 
+        // Solicitudes "sin respuesta prolongada": el threshold es por póliza
+        // (campo `dias_alerta_sin_respuesta`, default 7). Cada solicitud usa el
+        // umbral de su póliza para detectar si está "atrasada".
         $solicitudesPendientes = \App\Models\PolizaSolicitud::query()
             ->where('estado', 'enviado')
-            ->where('enviado_en', '<=', $hoy->copy()->subDays(7))
+            ->whereNotNull('enviado_en')
+            ->whereRaw('DATEDIFF(NOW(), enviado_en) >= COALESCE((SELECT dias_alerta_sin_respuesta FROM polizas WHERE polizas.id = polizas_solicitudes.poliza_id), 7)')
             ->count();
 
         $aseguradosSinPersona = PolizaAsegurado::query()

@@ -415,12 +415,10 @@ class SolicitudService
     }
 
     /**
-     * Envía el email. ADDENDUM 9 Parte A: si el admin tiene cuenta OAuth de
-     * Outlook vinculada y activa, el email sale desde su Outlook personal vía
-     * Microsoft Graph (remitente = el admin, mismo workflow que si lo mandara
-     * con su cliente normal). Si no tiene cuenta vinculada, falla el OAuth, o
-     * la cuenta está inactiva → fallback al SMTP institucional con Reply-To
-     * apuntando al admin.
+     * Envía el email vía OAuth Microsoft Graph desde el Outlook personal del
+     * admin. ADDENDUM 11: el módulo opera SOLO con OAuth. Si el admin no tiene
+     * cuenta vinculada o el OAuth falla, lanza `OAuthRequiredException` y
+     * deja la solicitud en `borrador` para que reintente tras re-vincular.
      *
      * Devuelve el `Message-ID` para correlación de respuestas.
      */
@@ -428,41 +426,33 @@ class SolicitudService
     {
         $messageId = '<polizas-' . uniqid() . '@logisticaargentina.com.ar>';
 
-        // 1) Intento via OAuth/Graph si el admin tiene cuenta activa.
         $account = $this->oauth->findByUser($admin);
-        if ($account && $account->activo) {
-            try {
-                return $this->oauth->sendEmail($account, $rendered, $messageId);
-            } catch (\Throwable $e) {
-                \Log::warning("OAuth sendMail falló para admin {$admin->id}, fallback a SMTP: " . $e->getMessage());
-                // Sigue al SMTP institucional. El último error queda registrado en
-                // la cuenta para que el admin sepa que tiene que re-vincular.
-                $account->update(['last_error' => $e->getMessage()]);
-            }
+        if (!$account) {
+            throw new \App\Exceptions\Polizas\OAuthRequiredException(
+                'Para enviar emails desde Pólizas tenés que vincular tu Outlook empresarial.',
+                'sin_vincular'
+            );
+        }
+        if (!$account->activo) {
+            throw new \App\Exceptions\Polizas\OAuthRequiredException(
+                'Tu vinculación de Outlook está inactiva (último error: ' . ($account->last_error ?: 'sin detalle') . '). Re-vinculá para reintentar.',
+                'inactivo'
+            );
         }
 
-        // 2) Fallback SMTP institucional. Reply-To = email del admin para que
-        //    las respuestas le lleguen a él aunque el remitente sea el genérico.
-        Mail::raw($rendered['body'], function ($mail) use ($rendered, $admin, $messageId) {
-            $mail->subject($rendered['asunto']);
-            if (!empty($rendered['destinatarios_to'])) {
-                $mail->to($rendered['destinatarios_to']);
-            }
-            if (!empty($rendered['destinatarios_cc'])) {
-                $mail->cc($rendered['destinatarios_cc']);
-            }
-            if (!empty($rendered['destinatarios_bcc'])) {
-                $mail->bcc($rendered['destinatarios_bcc']);
-            }
-            if ($admin->email) {
-                $mail->replyTo($admin->email, $admin->name ?: '');
-            }
-            // Forzar Message-ID conocido para correlacionar con respuestas.
-            $symfony = $mail->getSymfonyMessage();
-            $symfony->getHeaders()->addIdHeader('Message-ID', trim($messageId, '<>'));
-        });
-
-        return $messageId;
+        try {
+            return $this->oauth->sendEmail($account, $rendered, $messageId);
+        } catch (\Throwable $e) {
+            // Log + persistir el error para que el admin lo vea en la pantalla
+            // "Mi Outlook" y entienda por qué tiene que re-vincular.
+            \Log::warning("OAuth sendMail falló para admin {$admin->id}: " . $e->getMessage());
+            $account->update(['last_error' => $e->getMessage()]);
+            throw new \App\Exceptions\Polizas\OAuthRequiredException(
+                'Microsoft rechazó el envío. Probablemente tu vinculación de Outlook expiró o fue revocada. Re-vinculá para reintentar. (' . $e->getMessage() . ')',
+                'envio_fallido',
+                previous: $e
+            );
+        }
     }
 
     /** Resuelve las cláusulas (global + individuales) guardadas en la solicitud para pasar al renderer. */

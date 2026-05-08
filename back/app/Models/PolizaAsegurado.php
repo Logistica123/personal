@@ -38,12 +38,40 @@ class PolizaAsegurado extends Model
         'sugerencia_fuzzy_score',
         'revision_manual_pendiente',
         'notas',
+        'eliminado_en',
+        'eliminado_por_user_id',
+        'motivo_eliminacion',
     ];
+
+    /**
+     * ADDENDUM 12 Parte E — global scope que excluye los asegurados eliminados
+     * de TODAS las queries por default. Para auditoría se usa
+     * `PolizaAsegurado::withTrashed()` (helper local abajo).
+     */
+    protected static function booted(): void
+    {
+        static::addGlobalScope('noEliminados', function ($q) {
+            $q->whereNull('polizas_asegurados.eliminado_en');
+        });
+    }
+
+    /** Equivalente a `withTrashed()` del trait nativo — incluye eliminados. */
+    public function scopeIncluyendoEliminados($query)
+    {
+        return $query->withoutGlobalScope('noEliminados');
+    }
+
+    /** Solo eliminados — para la pantalla de auditoría. */
+    public function scopeSoloEliminados($query)
+    {
+        return $query->withoutGlobalScope('noEliminados')->whereNotNull('eliminado_en');
+    }
 
     protected $casts = [
         'fecha_nacimiento_pdf'      => 'date',
         'fecha_alta_efectiva'       => 'date',
         'fecha_baja_efectiva'       => 'date',
+        'eliminado_en'              => 'datetime',
         'suma_asegurada'            => 'decimal:2',
         'premio_individual'         => 'decimal:2',
         'match_score'               => 'decimal:3',

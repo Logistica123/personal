@@ -64,7 +64,10 @@ class PolizaSolicitudController extends Controller
     {
         $query = PolizaSolicitud::query()
             ->with([
-                'poliza:id,nombre_descriptivo,numero_poliza,aseguradora_id',
+                // Incluye `dias_alerta_sin_respuesta` para que la bandeja
+                // pueda calcular el badge de "sin respuesta prolongada"
+                // por póliza (ADDENDUM 12 Parte A).
+                'poliza:id,nombre_descriptivo,numero_poliza,aseguradora_id,dias_alerta_sin_respuesta',
                 'poliza.aseguradora:id,nombre',
                 'administrativo:id,name,email',
             ])
@@ -108,10 +111,25 @@ class PolizaSolicitudController extends Controller
         return response()->json(['data' => $preview]);
     }
 
-    /** Envía vía SMTP y deja la solicitud en estado 'enviado'. */
+    /**
+     * Envía la solicitud vía OAuth Microsoft Graph. Si el admin no tiene
+     * Outlook vinculado o el OAuth falla, devuelve 422 con `oauth_required=true`
+     * para que el frontend muestre el banner "Re-vincular".
+     *
+     * La solicitud queda en `borrador` en ese caso (no se marca como enviada).
+     */
     public function enviar(PolizaSolicitud $solicitud): JsonResponse
     {
-        $solicitud = $this->service->enviar($solicitud);
+        try {
+            $solicitud = $this->service->enviar($solicitud);
+        } catch (\App\Exceptions\Polizas\OAuthRequiredException $e) {
+            return response()->json([
+                'oauth_required' => true,
+                'razon'          => $e->razon,
+                'message'        => $e->getMessage(),
+                'revincular_url' => '/polizas/configuracion/mi-outlook',
+            ], 422);
+        }
         return response()->json(['data' => $solicitud]);
     }
 

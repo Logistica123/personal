@@ -50,9 +50,10 @@ import { PolizaSolicitudesPage } from './pages/PolizaSolicitudesPage';
 import { PolizaSolicitudDetallePage } from './pages/PolizaSolicitudDetallePage';
 import { PersonaPolizasPage } from './pages/PersonaPolizasPage';
 import { PolizaClausulasPage } from './pages/PolizaClausulasPage';
-import { PolizaNotificacionesPage } from './pages/PolizaNotificacionesPage';
 import { PolizasConfigMiOutlookPage } from './pages/PolizasConfigMiOutlookPage';
 import { PolizaAdminsPage } from './pages/PolizaAdminsPage';
+import { PolizaBajaMasivaPage } from './pages/PolizaBajaMasivaPage';
+import { PolizaConfiguracionPage } from './pages/PolizaConfiguracionPage';
 import { MembresiaPanelPage } from './pages/MembresiaPanelPage';
 import { ProveedorNuevoPage } from './pages/ProveedorNuevoPage';
 import { WebRtcCallsPage } from './pages/WebRtcCallsPage';
@@ -3731,13 +3732,6 @@ const DashboardLayout: React.FC<{
                     onClick={() => navigate('/polizas/configuracion/clausulas')}
                   >
                     Cláusulas
-                  </button>
-                  <button
-                    type="button"
-                    className={`sidebar-sublink${location.pathname === '/polizas/notificaciones' ? ' is-active' : ''}`}
-                    onClick={() => navigate('/polizas/notificaciones')}
-                  >
-                    Notificaciones a distribuidor
                   </button>
                   <button
                     type="button"
@@ -21120,17 +21114,6 @@ const AppRoutes: React.FC = () => {
           </RequireAccess>
         }
       />
-      <Route
-        path="/polizas/notificaciones"
-        element={
-          <RequireAccess section="personal">
-            <PolizaNotificacionesPage
-              DashboardLayout={DashboardLayout}
-              resolveApiBaseUrl={resolveApiBaseUrl}
-            />
-          </RequireAccess>
-        }
-      />
       {/* ADDENDUM 9 Parte A — vinculación OAuth de Outlook por admin */}
       <Route
         path="/polizas/configuracion/mi-outlook"
@@ -21149,6 +21132,30 @@ const AppRoutes: React.FC = () => {
         element={
           <RequireAccess section="personal">
             <PolizaAdminsPage
+              DashboardLayout={DashboardLayout}
+              resolveApiBaseUrl={resolveApiBaseUrl}
+            />
+          </RequireAccess>
+        }
+      />
+      {/* ADDENDUM 12 Parte G — baja masiva por bulk import */}
+      <Route
+        path="/polizas/:polizaId/baja-masiva"
+        element={
+          <RequireAccess section="personal">
+            <PolizaBajaMasivaPage
+              DashboardLayout={DashboardLayout}
+              resolveApiBaseUrl={resolveApiBaseUrl}
+            />
+          </RequireAccess>
+        }
+      />
+      {/* ADDENDUM 12 Parte C — configuración de email-config por póliza */}
+      <Route
+        path="/polizas/:polizaId/configuracion"
+        element={
+          <RequireAccess section="personal">
+            <PolizaConfiguracionPage
               DashboardLayout={DashboardLayout}
               resolveApiBaseUrl={resolveApiBaseUrl}
             />

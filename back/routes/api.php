@@ -18,7 +18,6 @@ use App\Http\Controllers\Api\PersonalController;
 use App\Http\Controllers\Api\PolizasController;
 use App\Http\Controllers\Api\PolizaClausulaController;
 use App\Http\Controllers\Api\PolizaSolicitudController;
-use App\Http\Controllers\Api\PolizaNotificacionDistribuidorController;
 use App\Http\Controllers\Api\OAuthMicrosoftController;
 use App\Http\Controllers\Api\PolizaAseguradoComentarioController;
 use App\Http\Controllers\Api\ChoferesController;
@@ -89,6 +88,15 @@ Route::middleware('auth.api')->group(function () {
     Route::post('/polizas/asegurados/{asegurado}/certificado-individual', [PolizasController::class, 'regenerarCertificadoIndividual']);
     // Bloque D.1 — compartir certificado individual con el distribuidor por email
     Route::post('/polizas/asegurados/{asegurado}/compartir-certificado',  [PolizasController::class, 'compartirCertificadoConDistribuidor']);
+    // ADDENDUM 12 Parte E — soft delete + auditoría de asegurados eliminados
+    Route::delete('/polizas/asegurados/{asegurado}',                      [PolizasController::class, 'eliminarAsegurado'])
+        ->middleware('polizas.permission:puede_eliminar_asegurados');
+    Route::post('/polizas/asegurados/eliminar-masivo',                    [PolizasController::class, 'eliminarAseguradosMasivo'])
+        ->middleware('polizas.permission:puede_eliminar_asegurados');
+    Route::get ('/polizas/auditoria/asegurados-eliminados',               [PolizasController::class, 'aseguradosEliminados']);
+    Route::post('/polizas/auditoria/asegurados-eliminados/{asegurado}/restaurar', [PolizasController::class, 'restaurarAsegurado']);
+    // ADDENDUM 12 Parte G — bulk import por CUIL/DNI/patente
+    Route::post('/polizas/{poliza}/buscar-asegurados-bulk',               [PolizasController::class, 'buscarAseguradosBulk']);
     // ADDENDUM 10 Parte B — comentarios histórico por asegurado
     Route::get   ('/polizas/asegurados/{asegurado}/comentarios',          [PolizaAseguradoComentarioController::class, 'index']);
     Route::post  ('/polizas/asegurados/{asegurado}/comentarios',          [PolizaAseguradoComentarioController::class, 'store']);
@@ -148,12 +156,9 @@ Route::middleware('auth.api')->group(function () {
     Route::post  ('/polizas/clausulas-aplicadas/{aplicacion}/remover', [PolizaClausulaController::class, 'remover'])
         ->middleware('polizas.permission:puede_gestionar_clausulas');
     // Notificación al distribuidor (ADD 13B)
-    Route::post('/polizas/{poliza}/notificaciones-distribuidor/preview',  [PolizaNotificacionDistribuidorController::class, 'preview']);
-    Route::post('/polizas/{poliza}/notificaciones-distribuidor/enviar',   [PolizaNotificacionDistribuidorController::class, 'enviar'])
-        ->middleware('polizas.permission:puede_notificar_distribuidores');
-    Route::get ('/polizas/notificaciones-distribuidor',                    [PolizaNotificacionDistribuidorController::class, 'index']);
-    Route::post('/polizas/notificaciones-distribuidor/{notificacion}/reenviar', [PolizaNotificacionDistribuidorController::class, 'reenviar'])
-        ->middleware('polizas.permission:puede_notificar_distribuidores');
+    // ADDENDUM 11 — endpoints de notificación al distribuidor eliminados.
+    // Las tablas y modelos quedan inertes para preservar histórico; si en el
+    // futuro se quiere reactivar la feature, restaurar el bloque desde git.
     // ADD 15 — flujo bidireccional CRM Aprobaciones ↔ Pólizas
     Route::post('/polizas/personas/aprobar-masivo',          [PolizaSolicitudController::class, 'aprobarPersonas']);
     Route::get ('/personal/{persona}/polizas-aplicables',    [PolizasController::class, 'polizasAplicablesParaPersona']);

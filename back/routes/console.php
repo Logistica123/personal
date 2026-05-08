@@ -12,19 +12,11 @@ Schedule::command('cierre:sync-kommo')
     ->withoutOverlapping()
     ->appendOutputTo(storage_path('logs/cierre-sync.log'));
 
-// ─── Pólizas: alertas de vencimiento + recordatorios diarios a las 08:00 ────
-Schedule::command('polizas:alertas-vencimiento')
-    ->dailyAt('08:00')
-    ->timezone('America/Argentina/Buenos_Aires')
-    ->withoutOverlapping()
-    ->appendOutputTo(storage_path('logs/polizas-alertas.log'));
-
-Schedule::command('polizas:recordar-solicitudes-pendientes')
-    ->dailyAt('08:05')
-    ->timezone('America/Argentina/Buenos_Aires')
-    ->withoutOverlapping()
-    ->appendOutputTo(storage_path('logs/polizas-alertas.log'));
-
+// ─── Pólizas: recálculo de estados (sin emails automáticos — ADDENDUM 11) ────
+// Las alertas de vencimiento y recordatorios de solicitudes se eliminaron a
+// favor de indicadores in-app (badges en /polizas y "días sin respuesta" en
+// la bandeja /polizas/solicitudes). El módulo solo envía emails cuando un
+// admin dispara la acción explícitamente vía OAuth.
 Schedule::command('polizas:recalcular-estados-asegurados')
     ->dailyAt('08:10')
     ->timezone('America/Argentina/Buenos_Aires')

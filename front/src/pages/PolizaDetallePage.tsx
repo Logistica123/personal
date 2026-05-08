@@ -167,6 +167,22 @@ export const PolizaDetallePage: React.FC<Props> = ({ DashboardLayout, resolveApi
           >
             − Solicitar baja
           </Link>
+          {/* ADDENDUM 12 Parte G — baja masiva por bulk import. */}
+          <Link
+            to={`/polizas/${poliza.id}/baja-masiva`}
+            className="secondary-action secondary-action--ghost"
+            title="Pegar lista de CUILs/patentes para baja masiva"
+          >
+            ⊟ Baja masiva
+          </Link>
+          {/* ADDENDUM 12 Parte C — configuración de email-config. */}
+          <Link
+            to={`/polizas/${poliza.id}/configuracion`}
+            className="secondary-action secondary-action--ghost"
+            title="Editar destinatarios y templates de email"
+          >
+            ⚙ Configuración
+          </Link>
         </div>
       }
     >
@@ -286,6 +302,17 @@ const TabAsegurados: React.FC<TabAseguradosProps> = ({
   // ADDENDUM 10 sub-fase 2 — expand ▼ por fila + filtro cobertura completa.
   const [filterCobertura, setFilterCobertura] = useState<'' | 'completa' | 'incompleta'>('');
   const [expandidos, setExpandidos] = useState<Set<number>>(new Set());
+  // ADDENDUM 12 Parte E — selección múltiple para acción "Eliminar".
+  const [seleccionadas, setSeleccionadas] = useState<Set<number>>(new Set());
+  const [eliminarModal, setEliminarModal] = useState<{ ids: number[]; descripcion: string } | null>(null);
+
+  const toggleSel = (id: number) => {
+    setSeleccionadas((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
 
   const esVehiculo = tipoAsegurado === 'vehiculo';
 
@@ -473,6 +500,36 @@ const TabAsegurados: React.FC<TabAseguradosProps> = ({
         </button>
       </div>
 
+      {/* ADDENDUM 12 Parte E — barra de acción cuando hay selección. */}
+      {seleccionadas.size > 0 && (
+        <div style={{
+          display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+          padding: '0.6rem 0.9rem', background: '#fff5e6', border: '1px solid #c70',
+          borderRadius: 8, marginBottom: '0.5rem', fontSize: '0.9rem',
+        }}>
+          <span><b>{seleccionadas.size}</b> asegurado{seleccionadas.size > 1 ? 's' : ''} seleccionado{seleccionadas.size > 1 ? 's' : ''}</span>
+          <div style={{ display: 'flex', gap: '0.4rem' }}>
+            <button
+              type="button"
+              onClick={() => setEliminarModal({
+                ids: Array.from(seleccionadas),
+                descripcion: `${seleccionadas.size} asegurado${seleccionadas.size > 1 ? 's' : ''}`,
+              })}
+              style={{
+                background: '#c4392a', color: '#fff', border: 0,
+                padding: '0.4rem 0.9rem', borderRadius: 6, cursor: 'pointer', fontSize: '0.85rem',
+              }}
+            >
+              🗑 Eliminar seleccionados
+            </button>
+            <button type="button" onClick={() => setSeleccionadas(new Set())}
+                    className="secondary-action secondary-action--ghost">
+              Limpiar
+            </button>
+          </div>
+        </div>
+      )}
+
       {aseguradosFiltrados === null && <div style={{ padding: '1rem' }}>Cargando…</div>}
       {aseguradosFiltrados !== null && aseguradosFiltrados.length === 0 && (
         <div style={{ padding: '1rem', color: '#666' }}>
@@ -488,6 +545,22 @@ const TabAsegurados: React.FC<TabAseguradosProps> = ({
           <table className="bdd-activos-table" style={{ width: '100%' }}>
             <thead>
               <tr>
+                <th style={{ width: 28 }}>
+                  {/* Select-all sobre las filas visibles. */}
+                  <input
+                    type="checkbox"
+                    checked={aseguradosFiltrados.length > 0
+                      && aseguradosFiltrados.every((a) => seleccionadas.has(a.id))}
+                    onChange={(e) => {
+                      if (e.target.checked) {
+                        setSeleccionadas(new Set(aseguradosFiltrados.map((a) => a.id)));
+                      } else {
+                        setSeleccionadas(new Set());
+                      }
+                    }}
+                    aria-label="Seleccionar todos los visibles"
+                  />
+                </th>
                 {esVehiculo && <th style={{ width: 28 }}></th>}
                 <th>N° orden</th>
                 <th>Identificador</th>
@@ -497,6 +570,7 @@ const TabAsegurados: React.FC<TabAseguradosProps> = ({
                 <th>Estado póliza</th>
                 <th>Fecha alta</th>
                 <th>Comentarios</th>
+                <th></th>
               </tr>
             </thead>
             <tbody>
@@ -510,11 +584,20 @@ const TabAsegurados: React.FC<TabAseguradosProps> = ({
                   : incompleta
                     ? { background: '#fff5e6' }  // ámbar suave si tiene choferes sin AP
                     : undefined;
-                const totalCols = esVehiculo ? 9 : 8;
+                // +1 por checkbox, +1 por columna acción al final.
+                const totalCols = (esVehiculo ? 9 : 8) + 2;
 
                 return (
                   <React.Fragment key={a.id}>
                     <tr style={filaStyle}>
+                      <td style={{ textAlign: 'center' }}>
+                        <input
+                          type="checkbox"
+                          checked={seleccionadas.has(a.id)}
+                          onChange={() => toggleSel(a.id)}
+                          aria-label={`Seleccionar ${a.identificador}`}
+                        />
+                      </td>
                       {esVehiculo && (
                         <td style={{ textAlign: 'center' }}>
                           {tieneChoferesVinculados ? (
@@ -571,8 +654,28 @@ const TabAsegurados: React.FC<TabAseguradosProps> = ({
                           alerta={a.persona_alerta_estado}
                         />
                       </td>
-                      <td><span className={`estado-badge estado-badge--${cssEstado(a.estado)}`}>{a.estado}</span></td>
-                      <td>{a.fecha_alta_efectiva ? fmtDate(a.fecha_alta_efectiva) : '—'}</td>
+                      <td>
+                        {/* ADDENDUM 12 Parte D — distingue "baja_solicitada" como
+                            "Baja en proceso" (ámbar) del terminal "dado_de_baja". */}
+                        {a.estado === 'baja_solicitada' ? (
+                          <span
+                            className="estado-badge estado-badge--pendiente"
+                            title="Solicitud de baja enviada — esperando confirmación de la aseguradora"
+                          >
+                            ⏳ Baja en proceso
+                          </span>
+                        ) : (
+                          <span className={`estado-badge estado-badge--${cssEstado(a.estado)}`}>{a.estado}</span>
+                        )}
+                      </td>
+                      <td>
+                        {a.fecha_alta_efectiva ? fmtDate(a.fecha_alta_efectiva) : '—'}
+                        {a.fecha_baja_efectiva && (
+                          <small style={{ display: 'block', color: '#c4392a', fontSize: '0.75rem' }}>
+                            Baja: {fmtDate(a.fecha_baja_efectiva)}
+                          </small>
+                        )}
+                      </td>
                       <td>
                         <button
                           type="button"
@@ -590,6 +693,24 @@ const TabAsegurados: React.FC<TabAseguradosProps> = ({
                             {a.ultimo_comentario}
                           </small>
                         )}
+                      </td>
+                      <td style={{ textAlign: 'center' }}>
+                        {/* ADDENDUM 12 Parte E — eliminar individual. */}
+                        <button
+                          type="button"
+                          onClick={() => setEliminarModal({
+                            ids: [a.id],
+                            descripcion: `${a.identificador}${a.persona ? ` (${a.persona.nombre_completo})` : ''}`,
+                          })}
+                          aria-label={`Eliminar asegurado ${a.identificador}`}
+                          title="Eliminar asegurado (soft delete con motivo obligatorio)"
+                          style={{
+                            background: 'transparent', border: 0, cursor: 'pointer',
+                            color: '#c4392a', fontSize: '0.95rem', padding: '0.2rem 0.4rem',
+                          }}
+                        >
+                          🗑
+                        </button>
                       </td>
                     </tr>
 
@@ -681,6 +802,128 @@ const TabAsegurados: React.FC<TabAseguradosProps> = ({
           onChange={() => { onComentariosChange?.(); }}
         />
       )}
+
+      {/* ADDENDUM 12 Parte E — modal de motivo de eliminación. */}
+      {eliminarModal && (
+        <EliminarAseguradosModal
+          apiBaseUrl={apiBaseUrl}
+          ids={eliminarModal.ids}
+          descripcion={eliminarModal.descripcion}
+          onClose={() => setEliminarModal(null)}
+          onConfirmed={() => {
+            setEliminarModal(null);
+            setSeleccionadas(new Set());
+            onComentariosChange?.();  // refetch del listado
+          }}
+        />
+      )}
+    </div>
+  );
+};
+
+// ─── ADDENDUM 12 Parte E — Modal eliminación con motivo obligatorio ──────────
+
+const EliminarAseguradosModal: React.FC<{
+  apiBaseUrl: string;
+  ids: number[];
+  descripcion: string;
+  onClose: () => void;
+  onConfirmed: () => void;
+}> = ({ apiBaseUrl, ids, descripcion, onClose, onConfirmed }) => {
+  const [motivo, setMotivo] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const eliminar = async () => {
+    if (motivo.trim().length < 3) {
+      setError('Motivo obligatorio (mínimo 3 caracteres).');
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      const url = ids.length === 1
+        ? `${apiBaseUrl}/api/polizas/asegurados/${ids[0]}`
+        : `${apiBaseUrl}/api/polizas/asegurados/eliminar-masivo`;
+      const init: RequestInit = ids.length === 1
+        ? {
+          method: 'DELETE',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ motivo: motivo.trim() }),
+        }
+        : {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ asegurado_ids: ids, motivo: motivo.trim() }),
+        };
+      const resp = await fetch(url, init);
+      if (!resp.ok) {
+        const t = await resp.text();
+        let msg = t;
+        try { msg = JSON.parse(t)?.message ?? t; } catch { /* noop */ }
+        throw new Error(msg);
+      }
+      onConfirmed();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
+      style={{
+        position: 'fixed', inset: 0, zIndex: 1000, background: 'rgba(0,0,0,0.4)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+      }}
+    >
+      <div className="dashboard-card" style={{ width: 'min(560px, 92vw)' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+          <h3 style={{ margin: 0, color: '#c4392a' }}>Eliminar {descripcion}</h3>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Cerrar"
+            style={{ background: 'transparent', border: 0, fontSize: '1.4rem', cursor: 'pointer' }}
+          >×</button>
+        </div>
+        <p style={{ fontSize: '0.85rem', color: '#666', margin: '0.5rem 0' }}>
+          Motivo de eliminación (obligatorio). Esta acción es <b>reversible solo desde el panel de auditoría</b>
+          {' '}por un super admin (se preserva la fila en BD con flags soft-delete).
+        </p>
+        <textarea
+          value={motivo}
+          onChange={(e) => setMotivo(e.target.value)}
+          rows={3}
+          placeholder="Ej: cargado por error en parser, duplicado, etc."
+          style={{ width: '100%', padding: '0.5rem', borderRadius: 6, border: '1px solid #d0d7e1', resize: 'vertical' }}
+        />
+        {error && (
+          <div style={{ background: '#fee', color: '#900', padding: '0.5rem', borderRadius: 6, marginTop: '0.5rem', fontSize: '0.85rem' }}>
+            {error}
+          </div>
+        )}
+        <div style={{ marginTop: '0.75rem', display: 'flex', justifyContent: 'flex-end', gap: '0.5rem' }}>
+          <button type="button" onClick={onClose} className="secondary-action secondary-action--ghost">
+            Cancelar
+          </button>
+          <button
+            type="button"
+            onClick={eliminar}
+            disabled={saving || motivo.trim().length < 3}
+            style={{
+              background: saving || motivo.trim().length < 3 ? '#aaa' : '#c4392a',
+              color: '#fff', padding: '0.5rem 1rem', borderRadius: 8, border: 0, cursor: 'pointer',
+            }}
+          >
+            {saving ? 'Eliminando…' : `Confirmar eliminación de ${ids.length}`}
+          </button>
+        </div>
+      </div>
     </div>
   );
 };

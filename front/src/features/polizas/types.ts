@@ -334,7 +334,7 @@ export type PolizaSolicitud = {
   clausula_global_id?: number | null;
   clausulas_individuales?: Array<{ asegurado_id: number; clausula_id: number }> | null;
   asegurados_count?: number;
-  poliza?: { id: number; nombre_descriptivo: string; numero_poliza: string; aseguradora?: { id: number; nombre: string } };
+  poliza?: { id: number; nombre_descriptivo: string; numero_poliza: string; dias_alerta_sin_respuesta?: number; aseguradora?: { id: number; nombre: string } };
   administrativo?: { id: number; name: string | null; email: string | null };
 };
 

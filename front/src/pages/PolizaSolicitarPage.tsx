@@ -121,7 +121,21 @@ export const PolizaSolicitarPage: React.FC<Props> = ({ DashboardLayout, resolveA
       params.set('estado', 'activo');
       fetch(`${apiBaseUrl}/api/polizas/${polizaId}/asegurados?${params}`, { cache: 'no-store' })
         .then((r) => r.json())
-        .then(({ data }) => setAsegurados(data ?? []))
+        .then(({ data }) => {
+          setAsegurados(data ?? []);
+          // ADDENDUM 12 Parte G — si venimos de baja masiva, pre-seleccionar los IDs pasados.
+          if (searchParams.get('from') === 'baja_masiva') {
+            try {
+              const raw = sessionStorage.getItem('polizas:baja_masiva_pre_seleccion');
+              if (raw) {
+                const ids = JSON.parse(raw) as number[];
+                const enLista = (data as Array<{ id: number }>).map((a) => a.id);
+                setSeleccion(new Set(ids.filter((id) => enLista.includes(id))));
+                sessionStorage.removeItem('polizas:baja_masiva_pre_seleccion');
+              }
+            } catch { /* noop */ }
+          }
+        })
         .catch(() => setError('Error al cargar asegurados'));
     }
   }, [polizaId, apiBaseUrl, tipo, searchSeleccion, personaIdPreFill, prefillConsumido]);
@@ -223,13 +237,33 @@ export const PolizaSolicitarPage: React.FC<Props> = ({ DashboardLayout, resolveA
     }
   }, [polizaId, seleccion, tipo, apiBaseUrl, tipoClausulaGlobal, clausulaGlobalId, clausulasIndividuales]);
 
+  // ADDENDUM 11 — si el envío falla por OAuth (admin sin Outlook vinculado o
+  // token vencido/revocado), el backend devuelve 422 con `oauth_required=true`
+  // y la solicitud queda en `borrador`. Mostramos un banner con CTA directo a
+  // /polizas/configuracion/mi-outlook para que vincule y reintente.
+  const [oauthError, setOauthError] = useState<{ razon: string; message: string; revincular_url: string } | null>(null);
+
   const enviarSolicitud = useCallback(async () => {
     if (!solicitud) return;
     try {
-      setLoading(true); setError(null);
+      setLoading(true); setError(null); setOauthError(null);
       const resp = await fetch(`${apiBaseUrl}/api/polizas/solicitudes/${solicitud.id}/enviar`, {
         method: 'POST', headers: { Accept: 'application/json' },
       });
+      if (resp.status === 422) {
+        const body = await resp.json().catch(() => null) as
+          | { oauth_required?: boolean; razon?: string; message?: string; revincular_url?: string }
+          | null;
+        if (body?.oauth_required) {
+          setOauthError({
+            razon: body.razon ?? 'desconocido',
+            message: body.message ?? 'No se puede enviar — re-vinculá tu Outlook.',
+            revincular_url: body.revincular_url ?? '/polizas/configuracion/mi-outlook',
+          });
+          return;
+        }
+        throw new Error(body?.message ?? `Error 422`);
+      }
       if (!resp.ok) throw new Error(await resp.text());
       const { data } = (await resp.json()) as { data: PolizaSolicitud };
       setSolicitud(data);
@@ -260,6 +294,35 @@ export const PolizaSolicitarPage: React.FC<Props> = ({ DashboardLayout, resolveA
     >
       {error && (
         <div style={{ padding: '1rem', background: '#fee', color: '#900', borderRadius: 12, margin: '1rem 0' }}>{error}</div>
+      )}
+
+      {/* ADDENDUM 11 — banner OAuth requerido. La solicitud sigue en borrador
+          y el admin puede reintentar después de re-vincular. */}
+      {oauthError && (
+        <div style={{
+          padding: '1rem 1.2rem', margin: '1rem 0', borderRadius: 12,
+          background: '#fff5e6', border: '1px solid #c70', color: '#7a4a00',
+          display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '1rem', flexWrap: 'wrap',
+        }}>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontWeight: 700, marginBottom: '0.25rem' }}>
+              ⚠ No se pudo enviar — {oauthError.razon === 'sin_vincular' ? 'tenés que vincular tu Outlook' : 'tu vinculación de Outlook expiró'}
+            </div>
+            <div style={{ fontSize: '0.9rem' }}>{oauthError.message}</div>
+            <div style={{ fontSize: '0.85rem', color: '#666', marginTop: '0.25rem' }}>
+              La solicitud quedó en borrador. Después de re-vincular volvé acá y tocá "Enviar email" de nuevo.
+            </div>
+          </div>
+          <Link
+            to={oauthError.revincular_url}
+            style={{
+              background: '#1d74f5', color: '#fff', padding: '0.6rem 1rem',
+              borderRadius: 8, textDecoration: 'none', whiteSpace: 'nowrap',
+            }}
+          >
+            {oauthError.razon === 'sin_vincular' ? 'Vincular Outlook ▶' : 'Re-vincular ahora ▶'}
+          </Link>
+        </div>
       )}
 
       <Stepper paso={paso} tipo={tipo} />

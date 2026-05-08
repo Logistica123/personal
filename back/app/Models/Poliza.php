@@ -29,6 +29,7 @@ class Poliza extends Model
         'cantidad_vidas_unidades',
         'clausulas_especiales',
         'alerta_dias_antes_vencimiento',
+        'dias_alerta_sin_respuesta',
         'ofrecer_auto_aprobacion_distribuidor',
         'activa',
         'notas',

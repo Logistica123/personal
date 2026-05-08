@@ -46,6 +46,14 @@ type PersonaResumen = {
   estado_actual: string;
 };
 
+// ADDENDUM 12 Parte A — KPIs del dashboard.
+type DashboardAlertas = {
+  polizas_por_vencer: Array<{ id: number; nombre: string; numero_poliza: string; vigencia_hasta: string; dias_restantes: number }>;
+  solicitudes_sin_respuesta: number;
+  asegurados_sin_persona: number;
+  estados_inconsistentes: number;
+};
+
 export const PolizasPage: React.FC<Props> = ({ DashboardLayout, resolveApiBaseUrl }) => {
   const navigate = useNavigate();
   const apiBaseUrl = useMemo(() => resolveApiBaseUrl(), [resolveApiBaseUrl]);
@@ -63,6 +71,7 @@ export const PolizasPage: React.FC<Props> = ({ DashboardLayout, resolveApiBaseUr
     return Number.isFinite(n) && n > 0 ? n : null;
   }, [searchParams]);
   const [personaResumen, setPersonaResumen] = useState<PersonaResumen | null>(null);
+  const [alertas, setAlertas] = useState<DashboardAlertas | null>(null);
 
   useEffect(() => {
     if (!altaPersonaId) { setPersonaResumen(null); return; }
@@ -106,6 +115,21 @@ export const PolizasPage: React.FC<Props> = ({ DashboardLayout, resolveApiBaseUr
     return () => controller.abort();
   }, [fetchPolizas]);
 
+  // ADDENDUM 12 Parte A — KPIs del dashboard. Se cargan en paralelo con las
+  // pólizas pero no bloquean el render si fallan.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const resp = await fetch(`${apiBaseUrl}/api/polizas/dashboard/alertas`, { cache: 'no-store' });
+        if (!resp.ok || cancelled) return;
+        const { data } = (await resp.json()) as { data: DashboardAlertas };
+        setAlertas(data);
+      } catch { /* noop */ }
+    })();
+    return () => { cancelled = true; };
+  }, [apiBaseUrl]);
+
   // En modo "solicitar alta para persona X" mostramos solo pólizas AP activas.
   // Las pólizas vehículo no aplican porque el chofer maneja el vehículo del titular,
   // no necesita su propia póliza vehículo.
@@ -137,6 +161,43 @@ export const PolizasPage: React.FC<Props> = ({ DashboardLayout, resolveApiBaseUr
           >
             Cancelar
           </button>
+        </div>
+      )}
+
+      {/* ADDENDUM 12 Parte A — KPIs del dashboard. No aparecen en modo "alta persona". */}
+      {!altaPersonaId && alertas && (
+        <div style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+          gap: '0.75rem',
+          marginBottom: '1rem',
+        }}>
+          <DashboardKpi
+            titulo="Pólizas por vencer"
+            valor={alertas.polizas_por_vencer.length}
+            descripcion="Próximas 30 días"
+            color={alertas.polizas_por_vencer.length > 0 ? '#c70' : '#0a8c3a'}
+            tooltip={alertas.polizas_por_vencer.map((p) => `${p.nombre} (${p.dias_restantes}d)`).join('\n')}
+          />
+          <DashboardKpi
+            titulo="Solicitudes sin respuesta"
+            valor={alertas.solicitudes_sin_respuesta}
+            descripcion="Más allá del umbral configurado"
+            color={alertas.solicitudes_sin_respuesta > 0 ? '#c70' : '#0a8c3a'}
+            link={alertas.solicitudes_sin_respuesta > 0 ? '/polizas/solicitudes?estado=enviado' : null}
+          />
+          <DashboardKpi
+            titulo="Asegurados sin persona"
+            valor={alertas.asegurados_sin_persona}
+            descripcion="'Fantasmas' — sin match en el maestro"
+            color={alertas.asegurados_sin_persona > 0 ? '#c4392a' : '#0a8c3a'}
+          />
+          <DashboardKpi
+            titulo="Estados inconsistentes"
+            valor={alertas.estados_inconsistentes}
+            descripcion="Persona en baja/suspendida con cobertura activa"
+            color={alertas.estados_inconsistentes > 0 ? '#c4392a' : '#0a8c3a'}
+          />
         </div>
       )}
 
@@ -219,5 +280,42 @@ export const PolizasPage: React.FC<Props> = ({ DashboardLayout, resolveApiBaseUr
         })}
       </div>
     </DashboardLayout>
+  );
+};
+
+// ─── KPI card del dashboard (ADDENDUM 12 Parte A) ────────────────────────────
+
+const DashboardKpi: React.FC<{
+  titulo: string;
+  valor: number;
+  descripcion: string;
+  color: string;
+  link?: string | null;
+  tooltip?: string;
+}> = ({ titulo, valor, descripcion, color, link, tooltip }) => {
+  const navigate = useNavigate();
+  const onClick = link ? () => navigate(link) : undefined;
+  return (
+    <div
+      role={link ? 'button' : undefined}
+      tabIndex={link ? 0 : undefined}
+      onClick={onClick}
+      onKeyDown={link ? (e) => { if (e.key === 'Enter') navigate(link); } : undefined}
+      title={tooltip}
+      style={{
+        background: '#fff',
+        border: `1px solid ${color}33`,
+        borderLeft: `4px solid ${color}`,
+        borderRadius: 10,
+        padding: '0.75rem 1rem',
+        cursor: link ? 'pointer' : 'default',
+      }}
+    >
+      <div style={{ fontSize: '0.75rem', color: '#666', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+        {titulo}
+      </div>
+      <div style={{ fontSize: '1.6rem', fontWeight: 700, color, marginTop: '0.15rem' }}>{valor}</div>
+      <div style={{ fontSize: '0.75rem', color: '#888' }}>{descripcion}</div>
+    </div>
   );
 };
