@@ -459,6 +459,114 @@ class PolizasController extends Controller
         ]]);
     }
 
+    /**
+     * ADDENDUM 13 Parte C — discrepancias consolidadas de TODAS las pólizas activas.
+     * Drilldown desde los KPIs del dashboard.
+     */
+    public function discrepanciasGlobales(): JsonResponse
+    {
+        $polizasActivas = Poliza::query()->where('activa', true)->with('aseguradora:id,nombre')->get()->keyBy('id');
+        $polizaIds = $polizasActivas->keys();
+
+        // A — fantasmas (asegurados sin persona) en pólizas activas.
+        $sinPersona = PolizaAsegurado::query()
+            ->whereIn('poliza_id', $polizaIds)
+            ->whereNull('persona_id')
+            ->whereIn('estado', ['activo', 'no_matcheado', 'alta_solicitada'])
+            ->select(['id', 'poliza_id', 'identificador', 'identificador_tipo', 'nombre_apellido_pdf', 'marca_modelo_pdf', 'estado', 'created_at'])
+            ->get()
+            ->map(fn ($a) => [
+                'asegurado_id'        => $a->id,
+                'identificador'       => $a->identificador,
+                'identificador_tipo'  => $a->identificador_tipo,
+                'nombre_apellido_pdf' => $a->nombre_apellido_pdf,
+                'marca_modelo_pdf'    => $a->marca_modelo_pdf,
+                'estado'              => $a->estado,
+                'antiguedad_dias'     => $a->created_at ? (int) $a->created_at->diffInDays(now()) : null,
+                'poliza'              => [
+                    'id'                 => $a->poliza_id,
+                    'nombre_descriptivo' => $polizasActivas[$a->poliza_id]?->nombre_descriptivo,
+                    'aseguradora'        => $polizasActivas[$a->poliza_id]?->aseguradora?->nombre,
+                ],
+            ]);
+
+        // B — personas activas sin cobertura.
+        $sinPoliza = Persona::query()
+            ->where('estado_id', \App\Services\Polizas\MatchingService::ESTADO_ACTIVO_ID)
+            ->whereDoesntHave('polizasVigentes')
+            ->select(['id', 'apellidos', 'nombres', 'cuil', 'patente', 'tipo'])
+            ->limit(500)
+            ->get()
+            ->map(fn ($p) => [
+                'persona_id' => $p->id,
+                'nombre'     => trim(($p->apellidos ?? '') . ', ' . ($p->nombres ?? '')),
+                'cuil'       => $p->cuil,
+                'patente'    => $p->patente,
+                'perfil'     => $p->tipo,
+            ]);
+
+        // C — sugerencias fuzzy pendientes.
+        $sugerencias = PolizaAsegurado::query()
+            ->whereIn('poliza_id', $polizaIds)
+            ->whereNull('persona_id')
+            ->whereNotNull('sugerencia_fuzzy_persona_id')
+            ->with('sugerenciaFuzzyPersona:id,apellidos,nombres,cuil')
+            ->select(['id', 'poliza_id', 'identificador', 'identificador_tipo', 'nombre_apellido_pdf', 'sugerencia_fuzzy_persona_id', 'sugerencia_fuzzy_score'])
+            ->orderByDesc('sugerencia_fuzzy_score')
+            ->get()
+            ->map(function ($a) use ($polizasActivas) {
+                $sug = $a->sugerenciaFuzzyPersona;
+                return [
+                    'asegurado_id'        => $a->id,
+                    'identificador'       => $a->identificador,
+                    'nombre_apellido_pdf' => $a->nombre_apellido_pdf,
+                    'sugerencia'          => $sug ? [
+                        'id'     => $sug->id,
+                        'nombre' => trim(($sug->apellidos ?? '') . ', ' . ($sug->nombres ?? '')),
+                        'cuil'   => $sug->cuil,
+                        'score'  => $a->sugerencia_fuzzy_score,
+                    ] : null,
+                    'poliza'              => [
+                        'id'                 => $a->poliza_id,
+                        'nombre_descriptivo' => $polizasActivas[$a->poliza_id]?->nombre_descriptivo,
+                        'aseguradora'        => $polizasActivas[$a->poliza_id]?->aseguradora?->nombre,
+                    ],
+                ];
+            });
+
+        // D — estados inconsistentes.
+        $estadoIncons = PolizaAsegurado::query()
+            ->whereIn('poliza_id', $polizaIds)
+            ->whereNotNull('persona_alerta_estado')
+            ->where('estado', 'activo')
+            ->whereNotNull('persona_id')
+            ->with('persona:id,apellidos,nombres,cuil,fecha_baja')
+            ->select(['id', 'poliza_id', 'identificador', 'persona_id', 'persona_estado_al_matchear', 'persona_alerta_estado'])
+            ->get()
+            ->map(fn ($a) => [
+                'asegurado_id'               => $a->id,
+                'identificador'              => $a->identificador,
+                'persona_id'                 => $a->persona_id,
+                'persona_nombre'             => $a->persona ? trim(($a->persona->apellidos ?? '') . ', ' . ($a->persona->nombres ?? '')) : '—',
+                'persona_cuil'               => $a->persona?->cuil,
+                'persona_estado_al_matchear' => $a->persona_estado_al_matchear,
+                'alerta_estado'              => $a->persona_alerta_estado,
+                'persona_fecha_baja'         => $a->persona?->fecha_baja?->toDateString(),
+                'poliza'                     => [
+                    'id'                 => $a->poliza_id,
+                    'nombre_descriptivo' => $polizasActivas[$a->poliza_id]?->nombre_descriptivo,
+                    'aseguradora'        => $polizasActivas[$a->poliza_id]?->aseguradora?->nombre,
+                ],
+            ]);
+
+        return response()->json(['data' => [
+            'sin_persona'           => $sinPersona->values()->all(),
+            'sin_poliza'            => $sinPoliza->values()->all(),
+            'sugerencias_fuzzy'     => $sugerencias->values()->all(),
+            'estado_inconsistente'  => $estadoIncons->values()->all(),
+        ]]);
+    }
+
     /** Bloque C.4 — listado de endosos cargados en una póliza (para tab Endosos). */
     public function endosos(Poliza $poliza): JsonResponse
     {

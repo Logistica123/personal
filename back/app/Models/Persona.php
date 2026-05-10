@@ -196,6 +196,17 @@ class Persona extends Model
             ->where('activo', true);
     }
 
+    /**
+     * ADDENDUM 13 Parte A — todas las relaciones (activas + históricas).
+     * Necesario para el export CSV que incluye choferes desvinculados con su
+     * `fecha_desvinculacion`.
+     */
+    public function relacionesComoTitularHistoricas()
+    {
+        return $this->hasMany(\App\Models\PersonaRelacionChofer::class, 'titular_persona_id')
+            ->orderBy('fecha_vinculacion');
+    }
+
     /** Relaciones donde ESTA persona es chofer (sus titulares). */
     public function relacionesComoChofer()
     {

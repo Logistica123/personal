@@ -139,6 +139,19 @@ export const PolizasPage: React.FC<Props> = ({ DashboardLayout, resolveApiBaseUr
 
   return (
     <DashboardLayout title="Pólizas" subtitle="Gestión de pólizas de seguros (MAPFRE / San Cristóbal / La Segunda)">
+      {/* ADDENDUM 13 — accesos rápidos al inbox / auditoría / discrepancias */}
+      {!altaPersonaId && (
+        <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginBottom: '0.75rem' }}>
+          <button type="button" onClick={() => navigate('/polizas/inbox')}
+            className="secondary-action secondary-action--ghost">📬 Inbox</button>
+          <button type="button" onClick={() => navigate('/polizas/auditoria')}
+            className="secondary-action secondary-action--ghost">📋 Auditoría</button>
+          <button type="button" onClick={() => navigate('/polizas/discrepancias-globales')}
+            className="secondary-action secondary-action--ghost">⚠ Discrepancias</button>
+          <button type="button" onClick={() => navigate('/polizas/solicitudes')}
+            className="secondary-action secondary-action--ghost">📨 Solicitudes</button>
+        </div>
+      )}
       {/* ADDENDUM 10 sub-fase 2 — banner alta AP de chofer. */}
       {altaPersonaId && (
         <div style={{
@@ -186,17 +199,20 @@ export const PolizasPage: React.FC<Props> = ({ DashboardLayout, resolveApiBaseUr
             color={alertas.solicitudes_sin_respuesta > 0 ? '#c70' : '#0a8c3a'}
             link={alertas.solicitudes_sin_respuesta > 0 ? '/polizas/solicitudes?estado=enviado' : null}
           />
+          {/* ADDENDUM 13 Parte C — drilldown global a /polizas/discrepancias-globales */}
           <DashboardKpi
             titulo="Asegurados sin persona"
             valor={alertas.asegurados_sin_persona}
             descripcion="'Fantasmas' — sin match en el maestro"
             color={alertas.asegurados_sin_persona > 0 ? '#c4392a' : '#0a8c3a'}
+            link={alertas.asegurados_sin_persona > 0 ? '/polizas/discrepancias-globales?tab=sin_persona' : null}
           />
           <DashboardKpi
             titulo="Estados inconsistentes"
             valor={alertas.estados_inconsistentes}
             descripcion="Persona en baja/suspendida con cobertura activa"
             color={alertas.estados_inconsistentes > 0 ? '#c4392a' : '#0a8c3a'}
+            link={alertas.estados_inconsistentes > 0 ? '/polizas/discrepancias-globales?tab=estado_inconsistente' : null}
           />
         </div>
       )}

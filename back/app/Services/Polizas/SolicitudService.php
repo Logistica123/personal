@@ -260,7 +260,21 @@ class SolicitudService
 
         $messageId = $this->mandarMail($rendered, $admin);
 
-        return DB::transaction(function () use ($solicitud, $rendered, $messageId, $asegurados) {
+        // ADDENDUM 13 Parte D — capturar el `conversationId` de Graph para que el
+        // cron de Inbox pueda correlacionar las respuestas de la aseguradora.
+        // Hace polling porque Graph no devuelve esto sincrónico desde sendMail.
+        // Best-effort: si falla, lo intenta capturar el cron de inbox después.
+        $conversationId = null;
+        $oauthAccount = $this->oauth->findByUser($admin);
+        if ($oauthAccount && $oauthAccount->activo) {
+            try {
+                $conversationId = $this->oauth->buscarConversationIdPorMessageId($oauthAccount, $messageId);
+            } catch (\Throwable $e) {
+                \Log::warning("No se pudo capturar conversationId post-envío: " . $e->getMessage());
+            }
+        }
+
+        return DB::transaction(function () use ($solicitud, $rendered, $messageId, $conversationId, $asegurados) {
             $solicitud->update([
                 'destinatarios_to_resueltos' => $rendered['destinatarios_to'],
                 'destinatarios_cc_resueltos' => $rendered['destinatarios_cc'],
@@ -269,6 +283,25 @@ class SolicitudService
                 'estado'                     => 'enviado',
                 'enviado_en'                 => now(),
                 'email_message_id'           => $messageId,
+                'microsoft_conversation_id'  => $conversationId,
+            ]);
+
+            // ADDENDUM 13 Parte D — registrar el email enviado en el cache.
+            \App\Models\PolizaSolicitudEmail::create([
+                'solicitud_id'         => $solicitud->id,
+                'direccion'            => 'enviado',
+                'microsoft_message_id' => trim($messageId, '<>'),
+                'conversation_id'      => $conversationId,
+                'fecha_email'          => now(),
+                'de_email'             => $solicitud->administrativo?->email ?? '',
+                'de_nombre'            => $solicitud->administrativo?->name,
+                'para_emails'          => $rendered['destinatarios_to'] ?? [],
+                'cc_emails'            => $rendered['destinatarios_cc'] ?? [],
+                'asunto'               => $rendered['asunto'] ?? '',
+                'body_preview'         => mb_substr($rendered['body'] ?? '', 0, 500),
+                'body_completo'        => $rendered['body'] ?? '',
+                'tiene_adjuntos'       => false,
+                'procesado'            => true,
             ]);
 
             $nuevoEstado = $solicitud->tipo === 'alta' ? 'alta_solicitada' : 'baja_solicitada';

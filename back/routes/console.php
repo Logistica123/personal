@@ -40,6 +40,16 @@ Schedule::command('polizas:procesar-respuestas-aseguradora --ventana=2')
     ->withoutOverlapping()
     ->appendOutputTo(storage_path('logs/polizas-oauth.log'));
 
+// ADDENDUM 13 Parte D — sincronización del Inbox con cache local
+// (cada 15 min). Cachea los emails de cada thread (`microsoft_conversation_id`)
+// en `polizas_solicitud_emails` + adjuntos. Auto-vincula como endoso los PDFs
+// detectados si la póliza tiene `auto_guardar_endosos_recibidos=true`.
+Schedule::command('polizas:sincronizar-inbox')
+    ->everyFifteenMinutes()
+    ->timezone('America/Argentina/Buenos_Aires')
+    ->withoutOverlapping()
+    ->appendOutputTo(storage_path('logs/polizas-inbox.log'));
+
 Artisan::command('inspire', function () {
     $this->comment(Inspiring::quote());
 })->purpose('Display an inspiring quote');

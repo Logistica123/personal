@@ -52,8 +52,11 @@ import { PersonaPolizasPage } from './pages/PersonaPolizasPage';
 import { PolizaClausulasPage } from './pages/PolizaClausulasPage';
 import { PolizasConfigMiOutlookPage } from './pages/PolizasConfigMiOutlookPage';
 import { PolizaAdminsPage } from './pages/PolizaAdminsPage';
+import { PolizaAuditoriaPage } from './pages/PolizaAuditoriaPage';
 import { PolizaBajaMasivaPage } from './pages/PolizaBajaMasivaPage';
 import { PolizaConfiguracionPage } from './pages/PolizaConfiguracionPage';
+import { PolizaDiscrepanciasGlobalesPage } from './pages/PolizaDiscrepanciasGlobalesPage';
+import { PolizaInboxPage } from './pages/PolizaInboxPage';
 import { MembresiaPanelPage } from './pages/MembresiaPanelPage';
 import { ProveedorNuevoPage } from './pages/ProveedorNuevoPage';
 import { WebRtcCallsPage } from './pages/WebRtcCallsPage';
@@ -21132,6 +21135,42 @@ const AppRoutes: React.FC = () => {
         element={
           <RequireAccess section="personal">
             <PolizaAdminsPage
+              DashboardLayout={DashboardLayout}
+              resolveApiBaseUrl={resolveApiBaseUrl}
+            />
+          </RequireAccess>
+        }
+      />
+      {/* ADDENDUM 13 Parte B — Auditoría unificada (4 tabs) */}
+      <Route
+        path="/polizas/auditoria"
+        element={
+          <RequireAccess section="personal">
+            <PolizaAuditoriaPage
+              DashboardLayout={DashboardLayout}
+              resolveApiBaseUrl={resolveApiBaseUrl}
+            />
+          </RequireAccess>
+        }
+      />
+      {/* ADDENDUM 13 Parte C — Discrepancias consolidadas */}
+      <Route
+        path="/polizas/discrepancias-globales"
+        element={
+          <RequireAccess section="personal">
+            <PolizaDiscrepanciasGlobalesPage
+              DashboardLayout={DashboardLayout}
+              resolveApiBaseUrl={resolveApiBaseUrl}
+            />
+          </RequireAccess>
+        }
+      />
+      {/* ADDENDUM 13 Parte D — Inbox de respuestas de aseguradoras */}
+      <Route
+        path="/polizas/inbox"
+        element={
+          <RequireAccess section="personal">
+            <PolizaInboxPage
               DashboardLayout={DashboardLayout}
               resolveApiBaseUrl={resolveApiBaseUrl}
             />

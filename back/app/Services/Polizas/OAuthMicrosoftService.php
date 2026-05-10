@@ -250,6 +250,98 @@ class OAuthMicrosoftService
     }
 
     /**
+     * ADDENDUM 13 Parte D — busca el último mensaje saliente del admin que matchee
+     * el `x-polizas-message-id` que pusimos al enviar. Devuelve el `conversationId`
+     * de Graph para correlacionar todas las respuestas posteriores.
+     *
+     * Hace polling: como `sendMail` es asíncrono en Graph, el mensaje puede tardar
+     * varios segundos en aparecer en SentItems. Reintenta hasta `maxRetries` veces
+     * con delay creciente.
+     */
+    public function buscarConversationIdPorMessageId(PolizaAdminEmailAccount $acc, string $messageId, int $maxRetries = 5): ?string
+    {
+        $acc = $this->ensureValidToken($acc);
+        $messageIdClean = trim($messageId, '<>');
+        $url = rtrim($this->config()['graph_base'], '/') . '/me/mailFolders/SentItems/messages';
+
+        for ($i = 0; $i < $maxRetries; $i++) {
+            if ($i > 0) sleep(2 + $i);  // 2, 3, 4, 5, 6 segundos
+
+            $resp = Http::withToken($acc->access_token)->get($url, [
+                '$select'  => 'id,conversationId,internetMessageHeaders,sentDateTime',
+                '$orderby' => 'sentDateTime desc',
+                '$top'     => 20,
+            ]);
+            if (!$resp->successful()) continue;
+
+            foreach ($resp->json('value', []) as $msg) {
+                foreach ($msg['internetMessageHeaders'] ?? [] as $h) {
+                    if (strtolower($h['name'] ?? '') === 'x-polizas-message-id'
+                        && trim((string) ($h['value'] ?? '')) === $messageIdClean) {
+                        return $msg['conversationId'] ?? null;
+                    }
+                }
+            }
+        }
+        return null;
+    }
+
+    /**
+     * ADDENDUM 13 Parte D — trae todos los mensajes de una conversación.
+     * Incluye el mensaje original enviado por nosotros + todas las respuestas
+     * de la aseguradora.
+     *
+     * @return array<int,array> raw messages de Graph
+     */
+    public function listarMensajesDeConversacion(PolizaAdminEmailAccount $acc, string $conversationId, int $top = 50): array
+    {
+        $acc = $this->ensureValidToken($acc);
+        $url = rtrim($this->config()['graph_base'], '/') . '/me/messages';
+        $resp = Http::withToken($acc->access_token)->get($url, [
+            '$filter'  => "conversationId eq '{$conversationId}'",
+            '$select'  => 'id,internetMessageId,subject,bodyPreview,body,from,toRecipients,ccRecipients,receivedDateTime,sentDateTime,hasAttachments,conversationId,isDraft',
+            '$orderby' => 'receivedDateTime asc',
+            '$top'     => $top,
+        ]);
+        if (!$resp->successful()) {
+            throw new RuntimeException("Graph listMessages conversación falló: {$resp->status()} {$resp->body()}");
+        }
+        return $resp->json('value', []);
+    }
+
+    /**
+     * ADDENDUM 13 Parte D — listado de adjuntos de un mensaje específico.
+     * Incluye el contenido base64 si pasamos `$expandContent=true` (cuidado con
+     * tamaños — Graph limita el body a unos pocos MB).
+     */
+    public function listarAdjuntosDeMensaje(PolizaAdminEmailAccount $acc, string $messageId, bool $expandContent = false): array
+    {
+        $acc = $this->ensureValidToken($acc);
+        $url = rtrim($this->config()['graph_base'], '/') . "/me/messages/{$messageId}/attachments";
+        $params = $expandContent ? [] : ['$select' => 'id,name,contentType,size,isInline'];
+        $resp = Http::withToken($acc->access_token)->get($url, $params);
+        if (!$resp->successful()) {
+            throw new RuntimeException("Graph listAttachments falló: {$resp->status()} {$resp->body()}");
+        }
+        return $resp->json('value', []);
+    }
+
+    /**
+     * ADDENDUM 13 Parte D — descarga UN adjunto específico con su contenido.
+     * Devuelve el array Graph completo (`contentBytes` viene en base64).
+     */
+    public function descargarAdjunto(PolizaAdminEmailAccount $acc, string $messageId, string $attachmentId): array
+    {
+        $acc = $this->ensureValidToken($acc);
+        $url = rtrim($this->config()['graph_base'], '/') . "/me/messages/{$messageId}/attachments/{$attachmentId}";
+        $resp = Http::withToken($acc->access_token)->get($url);
+        if (!$resp->successful()) {
+            throw new RuntimeException("Graph getAttachment falló: {$resp->status()} {$resp->body()}");
+        }
+        return (array) $resp->json();
+    }
+
+    /**
      * GET /me — devuelve datos básicos del usuario logueado en Microsoft.
      */
     public function fetchMe(string $accessToken): array

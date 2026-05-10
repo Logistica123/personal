@@ -1063,6 +1063,24 @@ export const ProveedoresPage: React.FC<ProveedoresPageProps> = ({
             },
     ];
 
+    // ADDENDUM 13 Parte A — columnas dinámicas de choferes (4 por chofer).
+    // El N de columnas se deriva del proveedor con MÁS choferes vinculados (activos
+    // + históricos). Si nadie tiene choferes, no se agregan columnas extras.
+    // Orden: por `fecha_vinculacion` ascendente (el chofer más antiguo en col 1).
+    const maxChoferes = dataset.reduce(
+      (max, r) => Math.max(max, (r.choferesDetalle ?? []).length),
+      0
+    );
+    for (let i = 0; i < maxChoferes; i++) {
+      const idx = i;  // captura por closure
+      columns.push(
+        { header: `Nombre Chofer ${i + 1}`,      resolve: (r) => r.choferesDetalle?.[idx]?.nombre_completo      ?? '' },
+        { header: `CUIL Chofer ${i + 1}`,        resolve: (r) => r.choferesDetalle?.[idx]?.cuil                 ?? '' },
+        { header: `Fecha Alta Chofer ${i + 1}`,  resolve: (r) => r.choferesDetalle?.[idx]?.fecha_vinculacion    ?? '' },
+        { header: `Fecha Baja Chofer ${i + 1}`,  resolve: (r) => r.choferesDetalle?.[idx]?.fecha_desvinculacion ?? '' },
+      );
+    }
+
     const sanitizeCell = (raw: string): string => {
       const cleaned = raw.replace(/[\t\r\n]+/g, ' ').trim();
       if (/^\d+$/.test(cleaned) && (cleaned.length >= 10 || cleaned.startsWith('0'))) {
@@ -1526,7 +1544,12 @@ export const ProveedoresPage: React.FC<ProveedoresPageProps> = ({
         <button type="button" className="secondary-action" onClick={() => void fetchPersonal()} disabled={loading}>
           Actualizar
         </button>
-        <button type="button" className="secondary-action" onClick={handleExportCsv}>
+        <button
+          type="button"
+          className="secondary-action"
+          onClick={handleExportCsv}
+          title="Incluye columnas dinámicas para choferes vinculados (Nombre, CUIL, Fecha Alta, Fecha Baja). Incluye choferes activos e históricos."
+        >
           Exportar CSV
         </button>
         <button

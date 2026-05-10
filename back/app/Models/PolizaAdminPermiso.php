@@ -22,6 +22,8 @@ class PolizaAdminPermiso extends Model
         'puede_notificar_distribuidores',
         'puede_eliminar_asegurados',
         'puede_eliminar_asegurados_masivo',
+        'puede_ver_auditoria',
+        'puede_ver_inbox_otros_admins',
         'recibe_alertas_vencimiento',
         'notas',
     ];
@@ -36,6 +38,8 @@ class PolizaAdminPermiso extends Model
         'puede_notificar_distribuidores'    => 'boolean',
         'puede_eliminar_asegurados'         => 'boolean',
         'puede_eliminar_asegurados_masivo'  => 'boolean',
+        'puede_ver_auditoria'               => 'boolean',
+        'puede_ver_inbox_otros_admins'      => 'boolean',
         'recibe_alertas_vencimiento'        => 'boolean',
     ];
 
@@ -50,6 +54,8 @@ class PolizaAdminPermiso extends Model
         'puede_notificar_distribuidores',
         'puede_eliminar_asegurados',
         'puede_eliminar_asegurados_masivo',
+        'puede_ver_auditoria',
+        'puede_ver_inbox_otros_admins',
         'recibe_alertas_vencimiento',
     ];
 

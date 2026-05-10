@@ -125,4 +125,14 @@ export type PersonalRecord = {
     titular_id: number;
     titular_nombre: string;
   }>;
+  // ADDENDUM 13 Parte A — detalle histórico de choferes vinculados (para CSV).
+  choferesDetalle?: Array<{
+    persona_id: number;
+    nombre_completo: string;
+    cuil: string | null;
+    fecha_vinculacion: string | null;
+    fecha_desvinculacion: string | null;
+    rol: string;
+    activo: boolean;
+  }>;
 };

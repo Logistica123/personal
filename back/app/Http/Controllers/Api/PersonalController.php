@@ -986,6 +986,9 @@ class PersonalController extends Controller
                 'relacionesComoTitular:id,titular_persona_id,chofer_persona_id,activo',
                 'relacionesComoChofer:id,titular_persona_id,chofer_persona_id,activo',
                 'relacionesComoChofer.titular:id,apellidos,nombres',
+                // ADDENDUM 13 Parte A — relación histórica completa para el CSV.
+                'relacionesComoTitularHistoricas',
+                'relacionesComoTitularHistoricas.chofer:id,apellidos,nombres,cuil',
                 'documentosVencimientos' => function ($documentsQuery) use ($includePending) {
                     $documentsQuery
                         ->select('id', 'persona_id', 'fecha_vencimiento', 'tipo_archivo_id', 'es_pendiente')
@@ -2817,6 +2820,23 @@ class PersonalController extends Controller
                     'titular_nombre' => $rel->titular
                         ? trim(($rel->titular->apellidos ?? '') . ' ' . ($rel->titular->nombres ?? '')) ?: '—'
                         : '—',
+                ])
+                ->values()
+                ->all(),
+            // ADDENDUM 13 Parte A — detalle histórico completo de choferes para el CSV.
+            // Ordenado por `fecha_vinculacion` ascendente (chofer más antiguo primero).
+            // Incluye desvinculados con su `fecha_desvinculacion`.
+            'choferesDetalle' => collect($persona->relacionesComoTitularHistoricas ?? [])
+                ->map(fn ($rel) => [
+                    'persona_id'           => $rel->chofer_persona_id,
+                    'nombre_completo'      => $rel->chofer
+                        ? trim(($rel->chofer->apellidos ?? '') . ' ' . ($rel->chofer->nombres ?? '')) ?: '—'
+                        : '—',
+                    'cuil'                 => $rel->chofer?->cuil,
+                    'fecha_vinculacion'    => $rel->fecha_vinculacion?->toDateString(),
+                    'fecha_desvinculacion' => $rel->fecha_desvinculacion?->toDateString(),
+                    'rol'                  => $rel->rol,
+                    'activo'               => (bool) $rel->activo,
                 ])
                 ->values()
                 ->all(),

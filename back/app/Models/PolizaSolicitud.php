@@ -26,6 +26,7 @@ class PolizaSolicitud extends Model
         'respuesta_recibida_en',
         'respuesta_resumen',
         'email_message_id',
+        'microsoft_conversation_id',
         'tipo_clausula_global',
         'clausula_global_id',
         'clausulas_individuales',
@@ -59,5 +60,11 @@ class PolizaSolicitud extends Model
     public function clausulaGlobal()
     {
         return $this->belongsTo(PolizaClausula::class, 'clausula_global_id');
+    }
+
+    /** ADDENDUM 13 Parte D — emails enviados/recibidos cacheados de esta solicitud. */
+    public function emails()
+    {
+        return $this->hasMany(PolizaSolicitudEmail::class, 'solicitud_id')->orderByDesc('fecha_email');
     }
 }

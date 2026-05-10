@@ -22,6 +22,8 @@ use App\Http\Controllers\Api\OAuthMicrosoftController;
 use App\Http\Controllers\Api\PolizaAseguradoComentarioController;
 use App\Http\Controllers\Api\ChoferesController;
 use App\Http\Controllers\Api\PolizaAdminController;
+use App\Http\Controllers\Api\PolizaAuditoriaController;
+use App\Http\Controllers\Api\PolizaInboxController;
 use App\Http\Controllers\Api\PolizaEmailConfigController;
 use App\Http\Controllers\Api\ReclamoController;
 use App\Http\Controllers\Api\NotificationController;
@@ -82,6 +84,8 @@ Route::pattern('persona',      '[0-9]+');
 Route::pattern('relacion',     '[0-9]+');
 Route::pattern('notificacion', '[0-9]+');
 Route::pattern('comentario',   '[0-9]+');
+Route::pattern('email',        '[0-9]+');
+Route::pattern('adjunto',      '[0-9]+');
 
 Route::middleware('auth.api')->group(function () {
     // ----- Pólizas -----
@@ -135,6 +139,27 @@ Route::middleware('auth.api')->group(function () {
     Route::post  ('/polizas/admins',              [PolizaAdminController::class, 'store']);
     Route::put   ('/polizas/admins/{admin}',      [PolizaAdminController::class, 'update']);
     Route::delete('/polizas/admins/{admin}',      [PolizaAdminController::class, 'destroy']);
+
+    // ADDENDUM 13 Parte B — Auditoría unificada (4 sub-endpoints).
+    // Permiso: `puede_ver_auditoria` (default true para todos los admins del módulo).
+    Route::middleware('polizas.permission:puede_ver_auditoria')->group(function () {
+        Route::get('/polizas/auditoria/solicitudes',   [PolizaAuditoriaController::class, 'solicitudes']);
+        Route::get('/polizas/auditoria/eliminaciones', [PolizaAuditoriaController::class, 'eliminaciones']);
+        Route::get('/polizas/auditoria/choferes',      [PolizaAuditoriaController::class, 'choferes']);
+        Route::get('/polizas/auditoria/clausulas',     [PolizaAuditoriaController::class, 'clausulas']);
+    });
+
+    // ADDENDUM 13 Parte C — Discrepancias consolidadas (todas las pólizas activas).
+    // Para drilldown desde el dashboard de KPIs.
+    Route::get('/polizas/discrepancias-globales', [PolizasController::class, 'discrepanciasGlobales']);
+
+    // ADDENDUM 13 Parte D — Inbox de respuestas de aseguradoras.
+    Route::get   ('/polizas/inbox',                                  [PolizaInboxController::class, 'index']);
+    Route::post  ('/polizas/inbox/sincronizar',                      [PolizaInboxController::class, 'sincronizar']);
+    Route::get   ('/polizas/inbox/adjuntos/{adjunto}/descargar',     [PolizaInboxController::class, 'descargarAdjunto']);
+    Route::post  ('/polizas/inbox/adjuntos/{adjunto}/guardar-endoso',[PolizaInboxController::class, 'guardarEndoso']);
+    Route::post  ('/polizas/inbox/{email}/marcar-procesado',         [PolizaInboxController::class, 'marcarProcesado']);
+    Route::get   ('/polizas/inbox/{email}',                          [PolizaInboxController::class, 'show']);
     Route::post('/polizas/{poliza}/cargar-pdf',            [PolizasController::class, 'cargarPdf'])
         ->middleware('polizas.permission:puede_cargar_pdf');
     Route::post('/polizas/{poliza}/confirmar-carga',       [PolizasController::class, 'confirmarCarga'])

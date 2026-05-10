@@ -30,6 +30,7 @@ class Poliza extends Model
         'clausulas_especiales',
         'alerta_dias_antes_vencimiento',
         'dias_alerta_sin_respuesta',
+        'auto_guardar_endosos_recibidos',
         'ofrecer_auto_aprobacion_distribuidor',
         'activa',
         'notas',
@@ -42,6 +43,7 @@ class Poliza extends Model
         'premio_anual'          => 'decimal:2',
         'activa'                => 'boolean',
         'ofrecer_auto_aprobacion_distribuidor' => 'boolean',
+        'auto_guardar_endosos_recibidos'       => 'boolean',
     ];
 
     public function aseguradora()
