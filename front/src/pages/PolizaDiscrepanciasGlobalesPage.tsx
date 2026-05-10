@@ -59,6 +59,29 @@ type Payload = {
   sin_poliza: SinPoliza[];
   sugerencias_fuzzy: SugerenciaFuzzy[];
   estado_inconsistente: EstadoInconsistente[];
+  totales?: { sin_persona: number; sin_poliza: number; sugerencias_fuzzy: number; estado_inconsistente: number };
+  errores?: Array<{ categoria: string; mensaje: string }>;
+};
+
+// BUGFIX 03 #2 — título descriptivo cuando se llega desde un KPI específico.
+// Sin `?tab=` queda el título genérico (vista desde tab "Discrepancias" del header).
+const TITULOS: Record<Tab, { titulo: string; subtitulo: string }> = {
+  sin_persona: {
+    titulo: 'Asegurados sin persona en sistema',
+    subtitulo: '"Fantasmas" — pagamos seguro de personas o vehículos no registrados en el maestro',
+  },
+  sin_poliza: {
+    titulo: 'Personas activas sin póliza',
+    subtitulo: 'Distribuidores activos sin alta en una póliza vigente',
+  },
+  sugerencias_fuzzy: {
+    titulo: 'Match dudoso',
+    subtitulo: 'Sugerencias fuzzy pendientes de revisión humana',
+  },
+  estado_inconsistente: {
+    titulo: 'Estados inconsistentes',
+    subtitulo: 'Persona en baja/suspendida con cobertura activa',
+  },
 };
 
 /**
@@ -73,7 +96,10 @@ type Payload = {
 export const PolizaDiscrepanciasGlobalesPage: React.FC<Props> = ({ DashboardLayout, resolveApiBaseUrl }) => {
   const apiBaseUrl = useMemo(() => resolveApiBaseUrl(), [resolveApiBaseUrl]);
   const [searchParams, setSearchParams] = useSearchParams();
-  const initialTab = (searchParams.get('tab') as Tab) ?? 'sin_persona';
+  const tabFromUrl = searchParams.get('tab') as Tab | null;
+  // BUGFIX 03 #2 — distinguir "vino de un KPI" (con query param) vs "vino del header" (sin query).
+  const llegoDesdeKpi = !!tabFromUrl && tabFromUrl in TITULOS;
+  const initialTab: Tab = llegoDesdeKpi ? (tabFromUrl as Tab) : 'sin_persona';
   const [tab, setTab] = useState<Tab>(initialTab);
   const [data, setData] = useState<Payload | null>(null);
   const [loading, setLoading] = useState(true);
@@ -108,17 +134,33 @@ export const PolizaDiscrepanciasGlobalesPage: React.FC<Props> = ({ DashboardLayo
     { key: 'estado_inconsistente',  label: 'Estado inconsistente', count: data?.estado_inconsistente.length ?? 0,  tone: 'red' },
   ];
 
+  // Título dinámico: si llegó desde un KPI (con `?tab=`) usa el específico,
+  // sino mantiene el genérico (vista desde tab "Discrepancias" del header).
+  const titulo = llegoDesdeKpi ? TITULOS[tab].titulo : 'Discrepancias globales';
+  const subtitulo = llegoDesdeKpi
+    ? TITULOS[tab].subtitulo
+    : 'Auditoría consolidada de todas las pólizas activas';
+
   return (
-    <DashboardLayout
-      title="Discrepancias globales"
-      subtitle="Auditoría consolidada de todas las pólizas activas"
-    >
+    <DashboardLayout title={titulo} subtitle={subtitulo}>
       <div className="mb-4 flex items-center gap-3">
         <Link to="/polizas" className="text-sm text-indigo-600 hover:underline">← Volver al dashboard</Link>
       </div>
 
       {error && (
         <div className="mb-4 rounded-md border border-red-300 bg-red-50 p-3 text-sm text-red-800">{error}</div>
+      )}
+
+      {/* BUGFIX 03 — el endpoint devuelve `errores[]` con detalle si alguna categoría falló (ej. migración no aplicada). */}
+      {data?.errores && data.errores.length > 0 && (
+        <div className="mb-4 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+          <div className="font-semibold mb-1">Resultado parcial — algunas categorías fallaron:</div>
+          <ul className="list-disc pl-5 space-y-0.5">
+            {data.errores.map((e, i) => (
+              <li key={i}><strong>{e.categoria}:</strong> {e.mensaje}</li>
+            ))}
+          </ul>
+        </div>
       )}
 
       <div className="border-b border-slate-200 mb-4">

@@ -133,12 +133,39 @@ export const PolizasPage: React.FC<Props> = ({ DashboardLayout, resolveApiBaseUr
   // En modo "solicitar alta para persona X" mostramos solo pólizas AP activas.
   // Las pólizas vehículo no aplican porque el chofer maneja el vehículo del titular,
   // no necesita su propia póliza vehículo.
+  // BUGFIX 03 #3 — `?proximas_a_vencer=1` desde el KPI muestra solo las que están
+  // dentro del umbral configurado por póliza (o ya vencidas).
+  const filtroProxVencer = searchParams.get('proximas_a_vencer') === '1';
   const polizasFiltradas = altaPersonaId
     ? polizas.filter((p) => p.activa && p.ramo === 'accidentes_personales')
-    : polizas;
+    : filtroProxVencer
+      ? polizas.filter((p) => {
+          const dias = diasHastaVencimiento(p.vigencia_hasta);
+          return dias <= p.alerta_dias_antes_vencimiento;
+        })
+      : polizas;
 
   return (
     <DashboardLayout title="Pólizas" subtitle="Gestión de pólizas de seguros (MAPFRE / San Cristóbal / La Segunda)">
+      {/* BUGFIX 03 #3 — banner cuando llegó desde KPI "Pólizas por vencer". */}
+      {filtroProxVencer && !altaPersonaId && (
+        <div style={{
+          padding: '0.75rem 1rem', marginBottom: '0.75rem', borderRadius: 10,
+          background: '#fff7ed', border: '1px solid #fb923c',
+          display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '1rem',
+        }}>
+          <div style={{ fontSize: '0.9rem' }}>
+            ⚠ Filtro activo: <b>solo pólizas próximas a vencer o vencidas</b> ({polizasFiltradas.length})
+          </div>
+          <button
+            type="button"
+            onClick={() => navigate('/polizas', { replace: true })}
+            className="secondary-action secondary-action--ghost"
+          >
+            Ver todas
+          </button>
+        </div>
+      )}
       {/* ADDENDUM 13 — accesos rápidos al inbox / auditoría / discrepancias */}
       {!altaPersonaId && (
         <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginBottom: '0.75rem' }}>
@@ -191,6 +218,7 @@ export const PolizasPage: React.FC<Props> = ({ DashboardLayout, resolveApiBaseUr
             descripcion="Próximas 30 días"
             color={alertas.polizas_por_vencer.length > 0 ? '#c70' : '#0a8c3a'}
             tooltip={alertas.polizas_por_vencer.map((p) => `${p.nombre} (${p.dias_restantes}d)`).join('\n')}
+            link={alertas.polizas_por_vencer.length > 0 ? '/polizas?proximas_a_vencer=1' : null}
           />
           <DashboardKpi
             titulo="Solicitudes sin respuesta"

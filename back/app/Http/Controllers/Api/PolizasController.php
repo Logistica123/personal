@@ -462,109 +462,160 @@ class PolizasController extends Controller
     /**
      * ADDENDUM 13 Parte C — discrepancias consolidadas de TODAS las pólizas activas.
      * Drilldown desde los KPIs del dashboard.
+     *
+     * BUGFIX 03 — Cada bloque va envuelto en try/catch para evitar que el endpoint
+     * tire 500 si una migración acumulada no se corrió: en ese caso devuelve la
+     * categoría vacía y reporta el detalle en `errores[]` para diagnóstico.
      */
     public function discrepanciasGlobales(): JsonResponse
     {
         $polizasActivas = Poliza::query()->where('activa', true)->with('aseguradora:id,nombre')->get()->keyBy('id');
         $polizaIds = $polizasActivas->keys();
+        $errores = [];
 
         // A — fantasmas (asegurados sin persona) en pólizas activas.
-        $sinPersona = PolizaAsegurado::query()
-            ->whereIn('poliza_id', $polizaIds)
-            ->whereNull('persona_id')
-            ->whereIn('estado', ['activo', 'no_matcheado', 'alta_solicitada'])
-            ->select(['id', 'poliza_id', 'identificador', 'identificador_tipo', 'nombre_apellido_pdf', 'marca_modelo_pdf', 'estado', 'created_at'])
-            ->get()
-            ->map(fn ($a) => [
-                'asegurado_id'        => $a->id,
-                'identificador'       => $a->identificador,
-                'identificador_tipo'  => $a->identificador_tipo,
-                'nombre_apellido_pdf' => $a->nombre_apellido_pdf,
-                'marca_modelo_pdf'    => $a->marca_modelo_pdf,
-                'estado'              => $a->estado,
-                'antiguedad_dias'     => $a->created_at ? (int) $a->created_at->diffInDays(now()) : null,
-                'poliza'              => [
-                    'id'                 => $a->poliza_id,
-                    'nombre_descriptivo' => $polizasActivas[$a->poliza_id]?->nombre_descriptivo,
-                    'aseguradora'        => $polizasActivas[$a->poliza_id]?->aseguradora?->nombre,
-                ],
-            ]);
-
-        // B — personas activas sin cobertura.
-        $sinPoliza = Persona::query()
-            ->where('estado_id', \App\Services\Polizas\MatchingService::ESTADO_ACTIVO_ID)
-            ->whereDoesntHave('polizasVigentes')
-            ->select(['id', 'apellidos', 'nombres', 'cuil', 'patente', 'tipo'])
-            ->limit(500)
-            ->get()
-            ->map(fn ($p) => [
-                'persona_id' => $p->id,
-                'nombre'     => trim(($p->apellidos ?? '') . ', ' . ($p->nombres ?? '')),
-                'cuil'       => $p->cuil,
-                'patente'    => $p->patente,
-                'perfil'     => $p->tipo,
-            ]);
-
-        // C — sugerencias fuzzy pendientes.
-        $sugerencias = PolizaAsegurado::query()
-            ->whereIn('poliza_id', $polizaIds)
-            ->whereNull('persona_id')
-            ->whereNotNull('sugerencia_fuzzy_persona_id')
-            ->with('sugerenciaFuzzyPersona:id,apellidos,nombres,cuil')
-            ->select(['id', 'poliza_id', 'identificador', 'identificador_tipo', 'nombre_apellido_pdf', 'sugerencia_fuzzy_persona_id', 'sugerencia_fuzzy_score'])
-            ->orderByDesc('sugerencia_fuzzy_score')
-            ->get()
-            ->map(function ($a) use ($polizasActivas) {
-                $sug = $a->sugerenciaFuzzyPersona;
-                return [
+        $sinPersona = collect();
+        try {
+            $sinPersona = PolizaAsegurado::query()
+                ->whereIn('poliza_id', $polizaIds)
+                ->whereNull('persona_id')
+                ->whereIn('estado', ['activo', 'no_matcheado', 'alta_solicitada'])
+                ->select(['id', 'poliza_id', 'identificador', 'identificador_tipo', 'nombre_apellido_pdf', 'marca_modelo_pdf', 'estado', 'created_at'])
+                ->get()
+                ->map(fn ($a) => [
                     'asegurado_id'        => $a->id,
                     'identificador'       => $a->identificador,
+                    'identificador_tipo'  => $a->identificador_tipo,
                     'nombre_apellido_pdf' => $a->nombre_apellido_pdf,
-                    'sugerencia'          => $sug ? [
-                        'id'     => $sug->id,
-                        'nombre' => trim(($sug->apellidos ?? '') . ', ' . ($sug->nombres ?? '')),
-                        'cuil'   => $sug->cuil,
-                        'score'  => $a->sugerencia_fuzzy_score,
-                    ] : null,
+                    'marca_modelo_pdf'    => $a->marca_modelo_pdf,
+                    'estado'              => $a->estado,
+                    'antiguedad_dias'     => $a->created_at ? (int) abs($a->created_at->diffInDays(now())) : null,
                     'poliza'              => [
                         'id'                 => $a->poliza_id,
                         'nombre_descriptivo' => $polizasActivas[$a->poliza_id]?->nombre_descriptivo,
                         'aseguradora'        => $polizasActivas[$a->poliza_id]?->aseguradora?->nombre,
                     ],
-                ];
-            });
+                ]);
+        } catch (\Throwable $e) {
+            $errores[] = ['categoria' => 'sin_persona', 'mensaje' => $this->resumenError($e)];
+            \Log::warning('discrepanciasGlobales[sin_persona]: ' . $e->getMessage());
+        }
+
+        // B — personas activas sin cobertura.
+        $sinPoliza = collect();
+        try {
+            $sinPoliza = Persona::query()
+                ->where('estado_id', \App\Services\Polizas\MatchingService::ESTADO_ACTIVO_ID)
+                ->whereDoesntHave('polizasVigentes')
+                ->select(['id', 'apellidos', 'nombres', 'cuil', 'patente', 'tipo'])
+                ->limit(500)
+                ->get()
+                ->map(fn ($p) => [
+                    'persona_id' => $p->id,
+                    'nombre'     => trim(($p->apellidos ?? '') . ', ' . ($p->nombres ?? '')),
+                    'cuil'       => $p->cuil,
+                    'patente'    => $p->patente,
+                    'perfil'     => $p->tipo,
+                ]);
+        } catch (\Throwable $e) {
+            $errores[] = ['categoria' => 'sin_poliza', 'mensaje' => $this->resumenError($e)];
+            \Log::warning('discrepanciasGlobales[sin_poliza]: ' . $e->getMessage());
+        }
+
+        // C — sugerencias fuzzy pendientes.
+        $sugerencias = collect();
+        try {
+            $sugerencias = PolizaAsegurado::query()
+                ->whereIn('poliza_id', $polizaIds)
+                ->whereNull('persona_id')
+                ->whereNotNull('sugerencia_fuzzy_persona_id')
+                ->with('sugerenciaFuzzyPersona:id,apellidos,nombres,cuil')
+                ->select(['id', 'poliza_id', 'identificador', 'identificador_tipo', 'nombre_apellido_pdf', 'sugerencia_fuzzy_persona_id', 'sugerencia_fuzzy_score'])
+                ->orderByDesc('sugerencia_fuzzy_score')
+                ->get()
+                ->map(function ($a) use ($polizasActivas) {
+                    $sug = $a->sugerenciaFuzzyPersona;
+                    return [
+                        'asegurado_id'        => $a->id,
+                        'identificador'       => $a->identificador,
+                        'nombre_apellido_pdf' => $a->nombre_apellido_pdf,
+                        'sugerencia'          => $sug ? [
+                            'id'     => $sug->id,
+                            'nombre' => trim(($sug->apellidos ?? '') . ', ' . ($sug->nombres ?? '')),
+                            'cuil'   => $sug->cuil,
+                            'score'  => $a->sugerencia_fuzzy_score,
+                        ] : null,
+                        'poliza'              => [
+                            'id'                 => $a->poliza_id,
+                            'nombre_descriptivo' => $polizasActivas[$a->poliza_id]?->nombre_descriptivo,
+                            'aseguradora'        => $polizasActivas[$a->poliza_id]?->aseguradora?->nombre,
+                        ],
+                    ];
+                });
+        } catch (\Throwable $e) {
+            $errores[] = ['categoria' => 'sugerencias_fuzzy', 'mensaje' => $this->resumenError($e)];
+            \Log::warning('discrepanciasGlobales[sugerencias_fuzzy]: ' . $e->getMessage());
+        }
 
         // D — estados inconsistentes.
-        $estadoIncons = PolizaAsegurado::query()
-            ->whereIn('poliza_id', $polizaIds)
-            ->whereNotNull('persona_alerta_estado')
-            ->where('estado', 'activo')
-            ->whereNotNull('persona_id')
-            ->with('persona:id,apellidos,nombres,cuil,fecha_baja')
-            ->select(['id', 'poliza_id', 'identificador', 'persona_id', 'persona_estado_al_matchear', 'persona_alerta_estado'])
-            ->get()
-            ->map(fn ($a) => [
-                'asegurado_id'               => $a->id,
-                'identificador'              => $a->identificador,
-                'persona_id'                 => $a->persona_id,
-                'persona_nombre'             => $a->persona ? trim(($a->persona->apellidos ?? '') . ', ' . ($a->persona->nombres ?? '')) : '—',
-                'persona_cuil'               => $a->persona?->cuil,
-                'persona_estado_al_matchear' => $a->persona_estado_al_matchear,
-                'alerta_estado'              => $a->persona_alerta_estado,
-                'persona_fecha_baja'         => $a->persona?->fecha_baja?->toDateString(),
-                'poliza'                     => [
-                    'id'                 => $a->poliza_id,
-                    'nombre_descriptivo' => $polizasActivas[$a->poliza_id]?->nombre_descriptivo,
-                    'aseguradora'        => $polizasActivas[$a->poliza_id]?->aseguradora?->nombre,
-                ],
-            ]);
+        $estadoIncons = collect();
+        try {
+            $estadoIncons = PolizaAsegurado::query()
+                ->whereIn('poliza_id', $polizaIds)
+                ->whereNotNull('persona_alerta_estado')
+                ->where('estado', 'activo')
+                ->whereNotNull('persona_id')
+                ->with('persona:id,apellidos,nombres,cuil,fecha_baja')
+                ->select(['id', 'poliza_id', 'identificador', 'persona_id', 'persona_estado_al_matchear', 'persona_alerta_estado'])
+                ->get()
+                ->map(fn ($a) => [
+                    'asegurado_id'               => $a->id,
+                    'identificador'              => $a->identificador,
+                    'persona_id'                 => $a->persona_id,
+                    'persona_nombre'             => $a->persona ? trim(($a->persona->apellidos ?? '') . ', ' . ($a->persona->nombres ?? '')) : '—',
+                    'persona_cuil'               => $a->persona?->cuil,
+                    'persona_estado_al_matchear' => $a->persona_estado_al_matchear,
+                    'alerta_estado'              => $a->persona_alerta_estado,
+                    'persona_fecha_baja'         => $a->persona?->fecha_baja?->toDateString(),
+                    'poliza'                     => [
+                        'id'                 => $a->poliza_id,
+                        'nombre_descriptivo' => $polizasActivas[$a->poliza_id]?->nombre_descriptivo,
+                        'aseguradora'        => $polizasActivas[$a->poliza_id]?->aseguradora?->nombre,
+                    ],
+                ]);
+        } catch (\Throwable $e) {
+            $errores[] = ['categoria' => 'estado_inconsistente', 'mensaje' => $this->resumenError($e)];
+            \Log::warning('discrepanciasGlobales[estado_inconsistente]: ' . $e->getMessage());
+        }
 
         return response()->json(['data' => [
             'sin_persona'           => $sinPersona->values()->all(),
             'sin_poliza'            => $sinPoliza->values()->all(),
             'sugerencias_fuzzy'     => $sugerencias->values()->all(),
             'estado_inconsistente'  => $estadoIncons->values()->all(),
+            'totales' => [
+                'sin_persona'          => $sinPersona->count(),
+                'sin_poliza'           => $sinPoliza->count(),
+                'sugerencias_fuzzy'    => $sugerencias->count(),
+                'estado_inconsistente' => $estadoIncons->count(),
+            ],
+            'errores' => $errores,
         ]]);
+    }
+
+    /** Resume errores SQL típicos para mostrar al admin sin filtrar info sensible. */
+    private function resumenError(\Throwable $e): string
+    {
+        $msg = $e->getMessage();
+        // Patrón "Column not found: 1054 Unknown column 'tabla.columna'"
+        if (preg_match("/Unknown column '([^']+)'/", $msg, $m)) {
+            return "Falta la columna `{$m[1]}` — corré `php artisan migrate` en el servidor.";
+        }
+        // Tabla faltante
+        if (preg_match("/Table '[^.]+\\.([^']+)' doesn't exist/", $msg, $m)) {
+            return "Falta la tabla `{$m[1]}` — corré `php artisan migrate` en el servidor.";
+        }
+        return mb_substr($msg, 0, 200);
     }
 
     /** Bloque C.4 — listado de endosos cargados en una póliza (para tab Endosos). */
