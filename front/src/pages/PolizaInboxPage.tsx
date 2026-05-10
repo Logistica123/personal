@@ -146,7 +146,7 @@ export const PolizaInboxPage: React.FC<Props> = ({ DashboardLayout, resolveApiBa
 
   const guardarEndoso = useCallback(async (a: Adjunto) => {
     if (!seleccionado) return;
-    if (!confirm(`¿Vincular "${a.nombre_archivo}" como endoso de la póliza?`)) return;
+    if (!window.confirm(`¿Vincular "${a.nombre_archivo}" como endoso de la póliza?`)) return;
     try {
       const resp = await fetch(`${apiBaseUrl}/api/polizas/inbox/adjuntos/${a.id}/guardar-endoso`, { method: 'POST' });
       if (!resp.ok) throw new Error(await resp.text());
