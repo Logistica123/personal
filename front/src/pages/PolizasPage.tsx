@@ -177,6 +177,15 @@ export const PolizasPage: React.FC<Props> = ({ DashboardLayout, resolveApiBaseUr
             className="secondary-action secondary-action--ghost">⚠ Discrepancias</button>
           <button type="button" onClick={() => navigate('/polizas/solicitudes')}
             className="secondary-action secondary-action--ghost">📨 Solicitudes</button>
+          {/* ADDENDUM 14 Parte A — diagnóstico OAuth E2E */}
+          <button type="button" onClick={() => navigate('/polizas/configuracion/test-correos')}
+            className="secondary-action secondary-action--ghost">🧪 Test correos</button>
+          {/* ADDENDUM 14 Parte C — bulk baja global (destacado) */}
+          <button type="button" onClick={() => navigate('/polizas/bulk-bajas-global')}
+            className="secondary-action"
+            style={{ background: '#dc2626', color: 'white' }}>
+            ▶ Baja masiva global
+          </button>
         </div>
       )}
       {/* ADDENDUM 10 sub-fase 2 — banner alta AP de chofer. */}

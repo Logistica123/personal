@@ -1061,6 +1061,24 @@ export const ProveedoresPage: React.FC<ProveedoresPageProps> = ({
                   .map((pa) => pa.nombre_descriptivo ?? `Póliza #${pa.poliza_id}`)
                   .join(' | '),
             },
+            // ADDENDUM 14 Parte B — separar pólizas por ramo para que sea pivot-friendly en Excel.
+            // Las celdas quedan vacías si el proveedor no tiene cobertura de ese ramo.
+            {
+              header: 'Pólizas AP',
+              resolve: (registro) =>
+                (registro.polizasVigentes ?? [])
+                  .filter((pa) => pa.ramo === 'accidentes_personales')
+                  .map((pa) => pa.nombre_descriptivo ?? `Póliza #${pa.poliza_id}`)
+                  .join(' | '),
+            },
+            {
+              header: 'Pólizas Vehículos',
+              resolve: (registro) =>
+                (registro.polizasVigentes ?? [])
+                  .filter((pa) => pa.ramo === 'vehiculos')
+                  .map((pa) => pa.nombre_descriptivo ?? `Póliza #${pa.poliza_id}`)
+                  .join(' | '),
+            },
     ];
 
     // ADDENDUM 13 Parte A — columnas dinámicas de choferes (4 por chofer).

@@ -23,7 +23,9 @@ use App\Http\Controllers\Api\PolizaAseguradoComentarioController;
 use App\Http\Controllers\Api\ChoferesController;
 use App\Http\Controllers\Api\PolizaAdminController;
 use App\Http\Controllers\Api\PolizaAuditoriaController;
+use App\Http\Controllers\Api\PolizaBulkBajaGlobalController;
 use App\Http\Controllers\Api\PolizaInboxController;
+use App\Http\Controllers\Api\PolizaTestCorreosController;
 use App\Http\Controllers\Api\PolizaEmailConfigController;
 use App\Http\Controllers\Api\ReclamoController;
 use App\Http\Controllers\Api\NotificationController;
@@ -86,6 +88,7 @@ Route::pattern('notificacion', '[0-9]+');
 Route::pattern('comentario',   '[0-9]+');
 Route::pattern('email',        '[0-9]+');
 Route::pattern('adjunto',      '[0-9]+');
+Route::pattern('bulk',         '[0-9]+');
 
 Route::middleware('auth.api')->group(function () {
     // ----- Pólizas -----
@@ -160,6 +163,24 @@ Route::middleware('auth.api')->group(function () {
     Route::post  ('/polizas/inbox/adjuntos/{adjunto}/guardar-endoso',[PolizaInboxController::class, 'guardarEndoso']);
     Route::post  ('/polizas/inbox/{email}/marcar-procesado',         [PolizaInboxController::class, 'marcarProcesado']);
     Route::get   ('/polizas/inbox/{email}',                          [PolizaInboxController::class, 'show']);
+
+    // ADDENDUM 14 Parte A — Tests E2E del flujo de correos OAuth.
+    Route::post('/polizas/test-correos/envio-basico',  [PolizaTestCorreosController::class, 'envioBasico']);
+    Route::post('/polizas/test-correos/loop-completo', [PolizaTestCorreosController::class, 'loopCompleto']);
+    Route::post('/polizas/test-correos/con-adjunto',   [PolizaTestCorreosController::class, 'conAdjunto']);
+    Route::get ('/polizas/test-correos/ultimos',       [PolizaTestCorreosController::class, 'ultimos']);
+
+    // ADDENDUM 14 Parte C — Bulk de bajas global (multi-aseguradora).
+    Route::get ('/polizas/bulk-bajas-global',                 [PolizaBulkBajaGlobalController::class, 'index']);
+    Route::post('/polizas/bulk-bajas-global/buscar',          [PolizaBulkBajaGlobalController::class, 'buscar'])
+        ->middleware('polizas.permission:puede_bulk_bajas_global');
+    Route::post('/polizas/bulk-bajas-global/crear',           [PolizaBulkBajaGlobalController::class, 'crear'])
+        ->middleware('polizas.permission:puede_bulk_bajas_global');
+    Route::get ('/polizas/bulk-bajas-global/{bulk}/preview',  [PolizaBulkBajaGlobalController::class, 'preview'])
+        ->middleware('polizas.permission:puede_bulk_bajas_global');
+    Route::post('/polizas/bulk-bajas-global/{bulk}/ejecutar', [PolizaBulkBajaGlobalController::class, 'ejecutar'])
+        ->middleware('polizas.permission:puede_bulk_bajas_global');
+    Route::get ('/polizas/bulk-bajas-global/{bulk}',          [PolizaBulkBajaGlobalController::class, 'show']);
     Route::post('/polizas/{poliza}/cargar-pdf',            [PolizasController::class, 'cargarPdf'])
         ->middleware('polizas.permission:puede_cargar_pdf');
     Route::post('/polizas/{poliza}/confirmar-carga',       [PolizasController::class, 'confirmarCarga'])

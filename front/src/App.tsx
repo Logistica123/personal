@@ -54,9 +54,11 @@ import { PolizasConfigMiOutlookPage } from './pages/PolizasConfigMiOutlookPage';
 import { PolizaAdminsPage } from './pages/PolizaAdminsPage';
 import { PolizaAuditoriaPage } from './pages/PolizaAuditoriaPage';
 import { PolizaBajaMasivaPage } from './pages/PolizaBajaMasivaPage';
+import { PolizaBulkBajasGlobalPage } from './pages/PolizaBulkBajasGlobalPage';
 import { PolizaConfiguracionPage } from './pages/PolizaConfiguracionPage';
 import { PolizaDiscrepanciasGlobalesPage } from './pages/PolizaDiscrepanciasGlobalesPage';
 import { PolizaInboxPage } from './pages/PolizaInboxPage';
+import { PolizaTestCorreosPage } from './pages/PolizaTestCorreosPage';
 import { MembresiaPanelPage } from './pages/MembresiaPanelPage';
 import { ProveedorNuevoPage } from './pages/ProveedorNuevoPage';
 import { WebRtcCallsPage } from './pages/WebRtcCallsPage';
@@ -21171,6 +21173,30 @@ const AppRoutes: React.FC = () => {
         element={
           <RequireAccess section="personal">
             <PolizaInboxPage
+              DashboardLayout={DashboardLayout}
+              resolveApiBaseUrl={resolveApiBaseUrl}
+            />
+          </RequireAccess>
+        }
+      />
+      {/* ADDENDUM 14 Parte A — Test E2E del flujo de correos OAuth */}
+      <Route
+        path="/polizas/configuracion/test-correos"
+        element={
+          <RequireAccess section="personal">
+            <PolizaTestCorreosPage
+              DashboardLayout={DashboardLayout}
+              resolveApiBaseUrl={resolveApiBaseUrl}
+            />
+          </RequireAccess>
+        }
+      />
+      {/* ADDENDUM 14 Parte C — Bulk de bajas global (multi-aseguradora) */}
+      <Route
+        path="/polizas/bulk-bajas-global"
+        element={
+          <RequireAccess section="personal">
+            <PolizaBulkBajasGlobalPage
               DashboardLayout={DashboardLayout}
               resolveApiBaseUrl={resolveApiBaseUrl}
             />

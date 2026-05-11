@@ -27,6 +27,7 @@ class PolizaSolicitud extends Model
         'respuesta_resumen',
         'email_message_id',
         'microsoft_conversation_id',
+        'bulk_baja_global_id',
         'tipo_clausula_global',
         'clausula_global_id',
         'clausulas_individuales',
@@ -50,6 +51,11 @@ class PolizaSolicitud extends Model
     public function administrativo()
     {
         return $this->belongsTo(User::class, 'administrativo_user_id');
+    }
+
+    public function bulkBajaGlobal()
+    {
+        return $this->belongsTo(PolizaBulkBajaGlobal::class, 'bulk_baja_global_id');
     }
 
     public function asegurados()
