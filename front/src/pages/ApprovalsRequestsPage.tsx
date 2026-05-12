@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Navigate, useLocation, useNavigate } from 'react-router-dom';
 import type { PersonalRecord } from '../features/personal/types';
+import { CbuInput } from '../lib/CbuInput';
 
 type DashboardLayoutProps = {
   title: string;
@@ -2248,6 +2249,12 @@ const sucursalOptions = useMemo(() => {
         ...(field === 'clienteId' ? { sucursalId: '' } : {}),
       }));
     };
+
+  // Setter directo por field para componentes controlados que no pasan event (ej. CbuInput).
+  const setAltaFieldValue = (field: AltaEditableField, value: string): void => {
+    setAltaFormDirty(true);
+    setAltaForm((prev) => ({ ...prev, [field]: value }));
+  };
 
   const lookupAltaNosisByDocumento = useCallback(
     async (target: 'titular' | 'cobrador', showValidationError = true) => {
@@ -6505,7 +6512,11 @@ const sucursalOptions = useMemo(() => {
               {renderAltaCheckbox('Tarifa especial', 'tarifaEspecial', 'Tiene tarifa especial')}
               {renderAltaInput('Observación tarifa', 'observacionTarifa')}
               {renderAltaCuilInput(PERSON_TAX_ID_LABEL, 'cuil', 'titular')}
-              {renderAltaInput('CBU/Alias', 'cbuAlias')}
+              <CbuInput
+                label="CBU"
+                value={altaForm.cbuAlias}
+                onChange={(v) => setAltaFieldValue('cbuAlias', v)}
+              />
               {renderAltaSelect('Pago', 'pago', PAGO_SELECT_OPTIONS, { placeholder: 'S/N factura' })}
               {renderAltaInput('Fecha de nacimiento', 'duenoFechaNacimiento', false, 'date')}
               {renderAltaCheckbox('Combustible', 'combustible', 'Cuenta corrientes combustible')}
@@ -6526,7 +6537,12 @@ const sucursalOptions = useMemo(() => {
                 {renderAltaInput('Nombre completo del cobrador', 'cobradorNombre', altaForm.esCobrador)}
                 {renderAltaInput('Correo del cobrador', 'cobradorEmail', false, 'email')}
                 {renderAltaCuilInput(COLLECTOR_TAX_ID_LABEL, 'cobradorCuil', 'cobrador', altaForm.esCobrador, !altaForm.esCobrador)}
-                {renderAltaInput('CBU/Alias del cobrador', 'cobradorCbuAlias', altaForm.esCobrador)}
+                <CbuInput
+                  label="CBU del cobrador"
+                  value={altaForm.cobradorCbuAlias}
+                  onChange={(v) => setAltaFieldValue('cobradorCbuAlias', v)}
+                  required={altaForm.esCobrador}
+                />
               </div>
             </div>
           </div>
@@ -6542,7 +6558,11 @@ const sucursalOptions = useMemo(() => {
               {renderAltaCheckbox('Tarifa especial', 'tarifaEspecial', 'Tiene tarifa especial')}
               {renderAltaInput('Observación tarifa', 'observacionTarifa')}
               {renderAltaCuilInput(PERSON_TAX_ID_LABEL, 'cuil', 'titular')}
-              {renderAltaInput('CBU/Alias', 'cbuAlias')}
+              <CbuInput
+                label="CBU"
+                value={altaForm.cbuAlias}
+                onChange={(v) => setAltaFieldValue('cbuAlias', v)}
+              />
               {renderAltaSelect('Pago', 'pago', PAGO_SELECT_OPTIONS, { placeholder: 'S/N factura' })}
               {renderAltaInput('Fecha de nacimiento', 'duenoFechaNacimiento', false, 'date')}
               {renderAltaCheckbox('Combustible', 'combustible', 'Cuenta corrientes combustible')}
@@ -6646,7 +6666,11 @@ const sucursalOptions = useMemo(() => {
               {renderAltaInput('Correo (Dueño)', 'duenoEmail', false, 'email')}
               {renderAltaInput(OWNER_TAX_ID_LABEL, 'duenoCuil')}
               {renderAltaInput(OWNER_COLLECTOR_TAX_ID_LABEL, 'duenoCuilCobrador')}
-              {renderAltaInput('CBU/Alias (Dueño)', 'duenoCbuAlias')}
+              <CbuInput
+                label="CBU (Dueño)"
+                value={altaForm.duenoCbuAlias}
+                onChange={(v) => setAltaFieldValue('duenoCbuAlias', v)}
+              />
               {renderAltaInput('Teléfono (Dueño)', 'duenoTelefono', false, 'tel')}
               <label className="input-control" style={{ gridColumn: '1 / -1' }}>
                 <span>Observaciones</span>
@@ -6702,7 +6726,11 @@ const sucursalOptions = useMemo(() => {
               {renderAltaCheckbox('Tarifa especial', 'tarifaEspecial', 'Tiene tarifa especial')}
               {renderAltaInput('Observación tarifa', 'observacionTarifa')}
               {renderAltaCuilInput(PERSON_TAX_ID_LABEL, 'cuil', 'titular')}
-              {renderAltaInput('CBU/Alias', 'cbuAlias')}
+              <CbuInput
+                label="CBU"
+                value={altaForm.cbuAlias}
+                onChange={(v) => setAltaFieldValue('cbuAlias', v)}
+              />
               {renderAltaSelect('Pago', 'pago', PAGO_SELECT_OPTIONS, { placeholder: 'S/N factura' })}
               {renderAltaCheckbox('Combustible', 'combustible', 'Cuenta corrientes combustible')}
               {renderAltaInput('Fecha de alta', 'fechaAlta', false, 'date')}

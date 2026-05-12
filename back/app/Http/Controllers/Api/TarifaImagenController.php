@@ -51,7 +51,7 @@ class TarifaImagenController extends Controller
                 return $this->transform($record, $publicUrl, [
                     'clienteNombre' => $record->cliente?->nombre,
                     'sucursalNombre' => $record->sucursal?->nombre,
-                ]);
+                ], false);
             }),
         ]);
     }
@@ -219,7 +219,7 @@ class TarifaImagenController extends Controller
             ->orderByDesc('updated_at');
     }
 
-    protected function transform(TarifaImagen $record, ?string $publicUrl, array $extra = []): array
+    protected function transform(TarifaImagen $record, ?string $publicUrl, array $extra = [], bool $includeDataUrl = true): array
     {
         return [
             'id' => $record->id,
@@ -231,7 +231,7 @@ class TarifaImagenController extends Controller
             'nombreOriginal' => $record->nombre_original,
             'url' => $publicUrl ?? $record->url,
             'relativeUrl' => $this->buildRelativeUrl($record->disk, $record->path),
-            'dataUrl' => $this->buildDataUrl($record),
+            'dataUrl' => $includeDataUrl ? $this->buildDataUrl($record) : null,
             'templateData' => $record->template_data,
             'mime' => $record->mime,
             'size' => $record->size,

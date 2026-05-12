@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { CbuInput } from '../lib/CbuInput';
 
 type DashboardLayoutProps = {
   title: string;
@@ -600,7 +601,11 @@ export const ProveedorNuevoPage: React.FC<ProveedorNuevoPageProps> = ({
               {renderCheckbox('Tarifa especial', 'tarifaEspecial', 'Tiene tarifa especial')}
               {renderInput('Observación tarifa', 'observacionTarifa')}
               {renderCuilInput()}
-              {renderInput('CBU/Alias', 'cbuAlias')}
+              <CbuInput
+                label="CBU"
+                value={formValues.cbuAlias}
+                onChange={(v) => setFormValues((prev) => ({ ...prev, cbuAlias: v }))}
+              />
               {renderPagoSelect()}
               {renderCheckbox('Combustible', 'combustible', 'Cuenta corrientes combustible')}
               {formValues.combustible ? (
@@ -636,7 +641,12 @@ export const ProveedorNuevoPage: React.FC<ProveedorNuevoPageProps> = ({
                 {renderInput('Nombre completo del cobrador', 'cobradorNombre', formValues.esCobrador)}
                 {renderInput('Correo del cobrador', 'cobradorEmail', false, 'email')}
                 {renderInput(COLLECTOR_TAX_ID_LABEL, 'cobradorCuil', formValues.esCobrador)}
-                {renderInput('CBU/Alias del cobrador', 'cobradorCbuAlias', formValues.esCobrador)}
+                <CbuInput
+                  label="CBU del cobrador"
+                  value={formValues.cobradorCbuAlias}
+                  onChange={(v) => setFormValues((prev) => ({ ...prev, cobradorCbuAlias: v }))}
+                  required={formValues.esCobrador}
+                />
               </div>
             </div>
           </section>
@@ -653,7 +663,11 @@ export const ProveedorNuevoPage: React.FC<ProveedorNuevoPageProps> = ({
               {renderCheckbox('Tarifa especial', 'tarifaEspecial', 'Tiene tarifa especial')}
               {renderInput('Observación tarifa', 'observacionTarifa')}
               {renderCuilInput()}
-              {renderInput('CBU/Alias', 'cbuAlias')}
+              <CbuInput
+                label="CBU"
+                value={formValues.cbuAlias}
+                onChange={(v) => setFormValues((prev) => ({ ...prev, cbuAlias: v }))}
+              />
               {renderPagoSelect()}
               {renderCheckbox('Combustible', 'combustible', 'Cuenta corrientes combustible')}
               {formValues.combustible ? (
@@ -683,7 +697,11 @@ export const ProveedorNuevoPage: React.FC<ProveedorNuevoPageProps> = ({
               {renderInput('Correo (Dueño)', 'duenoEmail', false, 'email')}
               {renderInput(OWNER_TAX_ID_LABEL, 'duenoCuil')}
               {renderInput(OWNER_COLLECTOR_TAX_ID_LABEL, 'duenoCuilCobrador')}
-              {renderInput('CBU/Alias (Dueño)', 'duenoCbuAlias')}
+              <CbuInput
+                label="CBU (Dueño)"
+                value={formValues.duenoCbuAlias}
+                onChange={(v) => setFormValues((prev) => ({ ...prev, duenoCbuAlias: v }))}
+              />
               {renderInput('Teléfono (Dueño)', 'duenoTelefono')}
               <label className="input-control" style={{ gridColumn: '1 / -1' }}>
                 <span>Observaciones</span>

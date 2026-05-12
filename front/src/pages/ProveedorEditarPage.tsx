@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import type { PersonalRecord } from '../features/personal/types';
+import { CbuInput } from '../lib/CbuInput';
 import { ChoferesSection } from '../features/personal/ChoferesSection';
 import { PolizasDelProveedorSection } from '../features/personal/PolizasDelProveedorSection';
 
@@ -2128,16 +2129,12 @@ export const ProveedorEditarPage: React.FC<ProveedorEditarPageProps> = ({
               disabled={isReadOnly}
             />
           </label>
-          <label className="input-control">
-            <span>CBU / Alias</span>
-            <input
-              type="text"
-              value={formValues.cbuAlias}
-              onChange={(event) => setFormValues((prev) => ({ ...prev, cbuAlias: event.target.value }))}
-              placeholder="Ingresar"
-              disabled={isReadOnly || !canEditCbu}
-            />
-          </label>
+          <CbuInput
+            label="CBU"
+            value={formValues.cbuAlias}
+            onChange={(v) => setFormValues((prev) => ({ ...prev, cbuAlias: v }))}
+            disabled={isReadOnly || !canEditCbu}
+          />
           <label className="input-control">
             <span>Pago</span>
             <select
@@ -2270,16 +2267,12 @@ export const ProveedorEditarPage: React.FC<ProveedorEditarPageProps> = ({
                   disabled={isReadOnly}
                 />
               </label>
-              <label className="input-control">
-                <span>CBU/Alias del cobrador</span>
-                <input
-                  type="text"
-                  value={formValues.cobradorCbuAlias}
-                  onChange={(event) => setFormValues((prev) => ({ ...prev, cobradorCbuAlias: event.target.value }))}
-                  placeholder="Ingresar"
-                  disabled={isReadOnly || !canEditCbu}
-                />
-              </label>
+              <CbuInput
+                label="CBU del cobrador"
+                value={formValues.cobradorCbuAlias}
+                onChange={(v) => setFormValues((prev) => ({ ...prev, cobradorCbuAlias: v }))}
+                disabled={isReadOnly || !canEditCbu}
+              />
             </>
           ) : null}
         </div>
@@ -2475,16 +2468,12 @@ export const ProveedorEditarPage: React.FC<ProveedorEditarPageProps> = ({
                 placeholder="Ingresar"
               />
             </label>
-            <label className="input-control">
-              <span>CBU/Alias (Dueño)</span>
-              <input
-                type="text"
-                value={formValues.duenoCbuAlias}
-                onChange={(event) => setFormValues((prev) => ({ ...prev, duenoCbuAlias: event.target.value }))}
-                placeholder="Ingresar"
-                disabled={isReadOnly || !canEditCbu}
-              />
-            </label>
+            <CbuInput
+              label="CBU (Dueño)"
+              value={formValues.duenoCbuAlias}
+              onChange={(v) => setFormValues((prev) => ({ ...prev, duenoCbuAlias: v }))}
+              disabled={isReadOnly || !canEditCbu}
+            />
             <label className="input-control">
               <span>Teléfono (Dueño)</span>
               <input
