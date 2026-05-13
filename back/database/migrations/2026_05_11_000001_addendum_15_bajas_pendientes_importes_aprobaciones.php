@@ -18,23 +18,36 @@ return new class extends Migration {
     public function up(): void
     {
         // ── Bloque 1.A ── Bandeja de bajas pendientes ────────────────────────
+        // Idempotente: si quedó a medias por una corrida previa, dropea antes.
+        Schema::dropIfExists('polizas_solicitudes_baja_pendientes');
         Schema::create('polizas_solicitudes_baja_pendientes', function (Blueprint $table) {
+            // MySQL tiene límite de 64 chars en nombres de índices/constraints.
+            // El nombre de la tabla ya es largo (38 chars), por eso forzamos
+            // nombres custom cortos en cada FK/index.
             $table->id();
-            $table->foreignId('persona_id')->constrained('personas');
-            $table->foreignId('solicitada_por_user_id')->constrained('users');
+            $table->unsignedBigInteger('persona_id');
+            $table->unsignedBigInteger('solicitada_por_user_id');
             $table->timestamp('fecha_solicitud')->useCurrent();
             $table->text('motivo_baja');
             $table->text('comentarios_adicionales')->nullable();
             $table->json('polizas_sugeridas')->nullable();   // poliza_ids sugeridos por el solicitante
             $table->enum('estado', ['pendiente', 'procesada', 'rechazada', 'cancelada'])
                   ->default('pendiente');
-            $table->foreignId('procesada_por_user_id')->nullable()->constrained('users');
+            $table->unsignedBigInteger('procesada_por_user_id')->nullable();
             $table->timestamp('procesada_en')->nullable();
             $table->json('polizas_dadas_de_baja')->nullable();   // poliza_ids efectivamente procesados
             $table->text('motivo_rechazo')->nullable();
-            $table->foreignId('bulk_baja_global_id')->nullable()
-                  ->constrained('polizas_bulk_bajas_global')->nullOnDelete();
+            $table->unsignedBigInteger('bulk_baja_global_id')->nullable();
             $table->timestamps();
+
+            $table->foreign('persona_id', 'fk_bajapend_persona')
+                  ->references('id')->on('personas');
+            $table->foreign('solicitada_por_user_id', 'fk_bajapend_solicita')
+                  ->references('id')->on('users');
+            $table->foreign('procesada_por_user_id', 'fk_bajapend_procesa')
+                  ->references('id')->on('users');
+            $table->foreign('bulk_baja_global_id', 'fk_bajapend_bulk')
+                  ->references('id')->on('polizas_bulk_bajas_global')->nullOnDelete();
 
             $table->index('estado', 'idx_baja_pend_estado');
             $table->index(['persona_id', 'estado'], 'idx_baja_pend_persona');
