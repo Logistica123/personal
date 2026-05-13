@@ -108,10 +108,15 @@ type AltaRequestForm = {
   // ADDENDUM 15 Bloque 3.E — choferes adicionales del distribuidor.
   choferesAdicionales: ChoferAdicional[];
   // ADDENDUM 15 Bloque 3.F — pólizas a solicitar (AP + Vehículos).
+  // BUGFIX 04 #1 — además del ID, guardamos `aseguradoraNombre`/`clausulaNombre`
+  // redundantes para mostrar en pantallas de revisión sin tener que re-fetch.
   polizasSolicitadas: {
-    ap: { solicitar: boolean; aseguradoraId: string; clausulaId: string };
-    vehiculos: { solicitar: boolean; aseguradoraId: string; tipo: 'autos' | 'motos' | '';
-                 patente: string; clausulaId: string; importeNegociadoMensual: string };
+    ap: { solicitar: boolean; aseguradoraId: string; aseguradoraNombre: string;
+          clausulaId: string; clausulaNombre: string };
+    vehiculos: { solicitar: boolean; aseguradoraId: string; aseguradoraNombre: string;
+                 tipo: 'autos' | 'motos' | ''; patente: string;
+                 clausulaId: string; clausulaNombre: string;
+                 importeNegociadoMensual: string };
   };
 };
 
@@ -1168,8 +1173,9 @@ export const ApprovalsRequestsPage: React.FC<ApprovalsRequestsPageProps> = ({
     duenoObservaciones: '',
     choferesAdicionales: [],
     polizasSolicitadas: {
-      ap: { solicitar: false, aseguradoraId: '', clausulaId: '' },
-      vehiculos: { solicitar: false, aseguradoraId: '', tipo: '', patente: '', clausulaId: '', importeNegociadoMensual: '' },
+      ap: { solicitar: false, aseguradoraId: '', aseguradoraNombre: '', clausulaId: '', clausulaNombre: '' },
+      vehiculos: { solicitar: false, aseguradoraId: '', aseguradoraNombre: '', tipo: '', patente: '',
+                   clausulaId: '', clausulaNombre: '', importeNegociadoMensual: '' },
     },
   }));
   const [combustibleForm, setCombustibleForm] = useState<CombustibleRequestForm>(() => ({
@@ -2813,18 +2819,24 @@ const sucursalOptions = useMemo(() => {
           fecha_nacimiento: c.fechaNacimiento || null,
         })),
       // ADDENDUM 15 Bloque 3.F — pólizas a solicitar.
+      // BUGFIX 04 #1 — guardamos ID + nombre redundante para que las pantallas
+      // de revisión muestren el nombre legible sin hacer fetch del catálogo.
       solicitudPolizas: (form.polizasSolicitadas.ap.solicitar || form.polizasSolicitadas.vehiculos.solicitar) ? {
         ap: form.polizasSolicitadas.ap.solicitar ? {
           solicitar: true,
-          aseguradora_id: form.polizasSolicitadas.ap.aseguradoraId ? Number(form.polizasSolicitadas.ap.aseguradoraId) : null,
-          clausula_id:    form.polizasSolicitadas.ap.clausulaId    ? Number(form.polizasSolicitadas.ap.clausulaId)    : null,
+          aseguradora_id:     form.polizasSolicitadas.ap.aseguradoraId ? Number(form.polizasSolicitadas.ap.aseguradoraId) : null,
+          aseguradora_nombre: form.polizasSolicitadas.ap.aseguradoraNombre || null,
+          clausula_id:        form.polizasSolicitadas.ap.clausulaId    ? Number(form.polizasSolicitadas.ap.clausulaId)    : null,
+          clausula_nombre:    form.polizasSolicitadas.ap.clausulaNombre || null,
         } : undefined,
         vehiculos: form.polizasSolicitadas.vehiculos.solicitar ? {
           solicitar: true,
-          aseguradora_id: form.polizasSolicitadas.vehiculos.aseguradoraId ? Number(form.polizasSolicitadas.vehiculos.aseguradoraId) : null,
-          tipo:           form.polizasSolicitadas.vehiculos.tipo || null,
-          patente:        form.polizasSolicitadas.vehiculos.patente.trim() || form.patente.trim() || null,
-          clausula_id:    form.polizasSolicitadas.vehiculos.clausulaId ? Number(form.polizasSolicitadas.vehiculos.clausulaId) : null,
+          aseguradora_id:     form.polizasSolicitadas.vehiculos.aseguradoraId ? Number(form.polizasSolicitadas.vehiculos.aseguradoraId) : null,
+          aseguradora_nombre: form.polizasSolicitadas.vehiculos.aseguradoraNombre || null,
+          tipo:               form.polizasSolicitadas.vehiculos.tipo || null,
+          patente:            form.polizasSolicitadas.vehiculos.patente.trim() || form.patente.trim() || null,
+          clausula_id:        form.polizasSolicitadas.vehiculos.clausulaId ? Number(form.polizasSolicitadas.vehiculos.clausulaId) : null,
+          clausula_nombre:    form.polizasSolicitadas.vehiculos.clausulaNombre || null,
           importe_negociado_mensual: form.polizasSolicitadas.vehiculos.importeNegociadoMensual
             ? Number(form.polizasSolicitadas.vehiculos.importeNegociadoMensual) : null,
         } : undefined,
@@ -3085,8 +3097,9 @@ const sucursalOptions = useMemo(() => {
         duenoObservaciones: '',
         choferesAdicionales: [],
         polizasSolicitadas: {
-          ap: { solicitar: false, aseguradoraId: '', clausulaId: '' },
-          vehiculos: { solicitar: false, aseguradoraId: '', tipo: '', patente: '', clausulaId: '', importeNegociadoMensual: '' },
+          ap: { solicitar: false, aseguradoraId: '', aseguradoraNombre: '', clausulaId: '', clausulaNombre: '' },
+          vehiculos: { solicitar: false, aseguradoraId: '', aseguradoraNombre: '', tipo: '', patente: '',
+                       clausulaId: '', clausulaNombre: '', importeNegociadoMensual: '' },
         },
       }));
       setAltaAttachments([]);
@@ -6609,6 +6622,7 @@ const sucursalOptions = useMemo(() => {
 
             {/* ADDENDUM 15 Bloque 3.F — pólizas a solicitar */}
             <PolizasSolicitarSection
+              apiBaseUrl={apiBaseUrl}
               datos={altaForm.polizasSolicitadas}
               patenteTitular={altaForm.patente}
               onChange={(next) => setAltaForm((prev) => ({ ...prev, polizasSolicitadas: next }))}
@@ -9016,12 +9030,49 @@ const ChoferesAdicionalesSection: React.FC<{
 
 // ─── ADDENDUM 15 Bloque 3.F — Sección de pólizas a solicitar ─────────────────
 
+// BUGFIX 04 #1 — Catálogos cargados del backend para los dropdowns.
+type AseguradoraOpt = { id: number; nombre: string; parser_perfil: string | null };
+type ClausulaOpt = { id: number; nombre_corto: string; alias: string | null; razon_social_titular: string | null };
+
+// Acepta los 3 formatos de patente argentina:
+//   - Vieja:           3 letras + 3 dígitos (LLL999)
+//   - Mercosur autos:  2 letras + 3 dígitos + 2 letras (LL999LL)
+//   - Mercosur motos:  1 letra + 3 dígitos + 3 letras (L999LLL)
+const PATENTE_REGEX = /^(?:[A-Z]{3}\d{3}|[A-Z]{2}\d{3}[A-Z]{2}|[A-Z]\d{3}[A-Z]{3})$/;
+const validarPatente = (p: string): boolean => p.length === 0 || PATENTE_REGEX.test(p);
+
 const PolizasSolicitarSection: React.FC<{
+  apiBaseUrl: string;
   datos: AltaRequestForm['polizasSolicitadas'];
   patenteTitular: string;
   onChange: (next: AltaRequestForm['polizasSolicitadas']) => void;
   setDirty: (b: boolean) => void;
-}> = ({ datos, patenteTitular, onChange, setDirty }) => {
+}> = ({ apiBaseUrl, datos, patenteTitular, onChange, setDirty }) => {
+  const [aseguradorasAP, setAseguradorasAP] = useState<AseguradoraOpt[]>([]);
+  const [aseguradorasVeh, setAseguradorasVeh] = useState<AseguradoraOpt[]>([]);
+  const [clausulas, setClausulas] = useState<ClausulaOpt[]>([]);
+  const [loadingCat, setLoadingCat] = useState(false);
+
+  useEffect(() => {
+    let cancel = false;
+    (async () => {
+      setLoadingCat(true);
+      try {
+        const [r1, r2, r3] = await Promise.all([
+          fetch(`${apiBaseUrl}/api/polizas/aseguradoras?ramo=accidentes_personales`, { cache: 'no-store' }),
+          fetch(`${apiBaseUrl}/api/polizas/aseguradoras?ramo=vehiculos`, { cache: 'no-store' }),
+          fetch(`${apiBaseUrl}/api/polizas/clausulas?activas_solo=true`, { cache: 'no-store' }),
+        ]);
+        if (cancel) return;
+        if (r1.ok) { const { data } = await r1.json(); setAseguradorasAP(data ?? []); }
+        if (r2.ok) { const { data } = await r2.json(); setAseguradorasVeh(data ?? []); }
+        if (r3.ok) { const { data } = await r3.json(); setClausulas(data ?? []); }
+      } catch { /* noop — los dropdowns quedan vacíos y el form muestra warning */ }
+      finally { if (!cancel) setLoadingCat(false); }
+    })();
+    return () => { cancel = true; };
+  }, [apiBaseUrl]);
+
   const toggleAp = (b: boolean): void => {
     setDirty(true);
     onChange({ ...datos, ap: { ...datos.ap, solicitar: b } });
@@ -9037,14 +9088,37 @@ const PolizasSolicitarSection: React.FC<{
       },
     });
   };
-  const updateAp = (campo: 'aseguradoraId' | 'clausulaId', v: string): void => {
+  const setApAseguradora = (id: string): void => {
     setDirty(true);
-    onChange({ ...datos, ap: { ...datos.ap, [campo]: v } });
+    const found = aseguradorasAP.find((a) => String(a.id) === id);
+    onChange({ ...datos, ap: { ...datos.ap, aseguradoraId: id, aseguradoraNombre: found?.nombre ?? '' } });
   };
-  const updateVeh = (campo: keyof AltaRequestForm['polizasSolicitadas']['vehiculos'], v: string): void => {
+  const setApClausula = (id: string): void => {
     setDirty(true);
-    onChange({ ...datos, vehiculos: { ...datos.vehiculos, [campo]: v } });
+    const found = clausulas.find((c) => String(c.id) === id);
+    onChange({ ...datos, ap: { ...datos.ap, clausulaId: id, clausulaNombre: found?.nombre_corto ?? '' } });
   };
+  const setVehAseguradora = (id: string): void => {
+    setDirty(true);
+    const found = aseguradorasVeh.find((a) => String(a.id) === id);
+    onChange({ ...datos, vehiculos: { ...datos.vehiculos, aseguradoraId: id, aseguradoraNombre: found?.nombre ?? '' } });
+  };
+  const setVehClausula = (id: string): void => {
+    setDirty(true);
+    const found = clausulas.find((c) => String(c.id) === id);
+    onChange({ ...datos, vehiculos: { ...datos.vehiculos, clausulaId: id, clausulaNombre: found?.nombre_corto ?? '' } });
+  };
+  const updateVeh = (campo: 'tipo' | 'patente' | 'importeNegociadoMensual', v: string): void => {
+    setDirty(true);
+    onChange({ ...datos, vehiculos: { ...datos.vehiculos, [campo]: v } as AltaRequestForm['polizasSolicitadas']['vehiculos'] });
+  };
+  const updateVehPatente = (v: string): void => {
+    // Auto-uppercase + descartar espacios, guiones y puntos.
+    const clean = v.toUpperCase().replace(/[\s\-\.]/g, '');
+    updateVeh('patente', clean);
+  };
+
+  const patenteOk = validarPatente(datos.vehiculos.patente);
 
   return (
     <div className="personal-subsection" style={{ marginTop: '1rem' }}>
@@ -9053,6 +9127,7 @@ const PolizasSolicitarSection: React.FC<{
         Indicá qué pólizas debería tener este distribuidor. Al aprobar la solicitud, el
         administrativo de Pólizas va a usar estos datos para iniciar las solicitudes de alta.
       </p>
+      {loadingCat && <p style={{ fontSize: '0.75rem', color: '#94a3b8' }}>Cargando catálogos…</p>}
 
       {/* AP */}
       <div style={{ marginBottom: '0.75rem', padding: '0.6rem', border: '1px solid #e2e8f0', borderRadius: 6 }}>
@@ -9063,16 +9138,27 @@ const PolizasSolicitarSection: React.FC<{
         {datos.ap.solicitar && (
           <div className="form-grid">
             <label className="input-control">
-              <span>Aseguradora ID</span>
-              <input type="number" min="1" value={datos.ap.aseguradoraId}
-                onChange={(e) => updateAp('aseguradoraId', e.target.value)}
-                placeholder="1 = MAPFRE, 2 = San Cristóbal" />
+              <span>Aseguradora *</span>
+              <select required value={datos.ap.aseguradoraId} onChange={(e) => setApAseguradora(e.target.value)}>
+                <option value="">Seleccionar…</option>
+                {aseguradorasAP.map((a) => (
+                  <option key={a.id} value={a.id}>{a.nombre}</option>
+                ))}
+              </select>
+              {aseguradorasAP.length === 0 && !loadingCat && (
+                <small style={{ color: '#c4392a' }}>Sin aseguradoras AP cargadas en el sistema.</small>
+              )}
             </label>
             <label className="input-control">
-              <span>Cláusula ID (opcional)</span>
-              <input type="number" min="1" value={datos.ap.clausulaId}
-                onChange={(e) => updateAp('clausulaId', e.target.value)}
-                placeholder="ID de la cláusula" />
+              <span>Cláusula a aplicar (opcional)</span>
+              <select value={datos.ap.clausulaId} onChange={(e) => setApClausula(e.target.value)}>
+                <option value="">— Sin cláusula —</option>
+                {clausulas.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.nombre_corto}{c.razon_social_titular ? ` (${c.razon_social_titular})` : ''}
+                  </option>
+                ))}
+              </select>
             </label>
           </div>
         )}
@@ -9087,29 +9173,49 @@ const PolizasSolicitarSection: React.FC<{
         {datos.vehiculos.solicitar && (
           <div className="form-grid">
             <label className="input-control">
-              <span>Aseguradora ID</span>
-              <input type="number" min="1" value={datos.vehiculos.aseguradoraId}
-                onChange={(e) => updateVeh('aseguradoraId', e.target.value)}
-                placeholder="3 = La Segunda" />
+              <span>Aseguradora *</span>
+              <select required value={datos.vehiculos.aseguradoraId} onChange={(e) => setVehAseguradora(e.target.value)}>
+                <option value="">Seleccionar…</option>
+                {aseguradorasVeh.map((a) => (
+                  <option key={a.id} value={a.id}>{a.nombre}</option>
+                ))}
+              </select>
             </label>
             <label className="input-control">
-              <span>Tipo</span>
-              <select value={datos.vehiculos.tipo}
-                onChange={(e) => updateVeh('tipo', e.target.value as 'autos' | 'motos' | '')}>
+              <span>Tipo *</span>
+              <select required value={datos.vehiculos.tipo} onChange={(e) => updateVeh('tipo', e.target.value)}>
                 <option value="">Seleccionar…</option>
                 <option value="autos">Autos</option>
                 <option value="motos">Motos</option>
               </select>
             </label>
             <label className="input-control">
-              <span>Patente</span>
-              <input value={datos.vehiculos.patente} onChange={(e) => updateVeh('patente', e.target.value.toUpperCase())}
-                placeholder={patenteTitular || 'Patente'} />
+              <span>Patente *</span>
+              <input
+                required
+                value={datos.vehiculos.patente}
+                onChange={(e) => updateVehPatente(e.target.value)}
+                placeholder={patenteTitular || 'AA123BB'}
+                maxLength={7}
+                style={!patenteOk ? { borderColor: '#c4392a' } : undefined}
+                title="Formatos válidos: AAA999, AA999AA, A999AAA"
+              />
+              {!patenteOk && (
+                <small style={{ color: '#c4392a', fontSize: '0.75rem' }}>
+                  Formato inválido. Aceptados: AAA999 / AA999AA / A999AAA.
+                </small>
+              )}
             </label>
             <label className="input-control">
-              <span>Cláusula ID (opcional)</span>
-              <input type="number" min="1" value={datos.vehiculos.clausulaId}
-                onChange={(e) => updateVeh('clausulaId', e.target.value)} />
+              <span>Cláusula a aplicar (opcional)</span>
+              <select value={datos.vehiculos.clausulaId} onChange={(e) => setVehClausula(e.target.value)}>
+                <option value="">— Sin cláusula —</option>
+                {clausulas.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.nombre_corto}{c.razon_social_titular ? ` (${c.razon_social_titular})` : ''}
+                  </option>
+                ))}
+              </select>
             </label>
             <label className="input-control">
               <span>Importe negociado mensual ($)</span>

@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import type { PolizaAsegurado } from '../polizas/types';
+import { SolicitarBajaModal } from '../polizas/SolicitarBajaModal';
 
 /**
  * Bloque A.1 — sección "Pólizas" embebida en `ProveedorEditarPage` (reemplaza
@@ -50,6 +51,11 @@ type Props = {
   apiBaseUrl: string;
   personaId: number;
   /**
+   * Nombre completo del proveedor — para mostrar en el modal de "Solicitar baja".
+   * Opcional para back-compat; si no se pasa, el modal usa "este proveedor".
+   */
+  personaNombreCompleto?: string | null;
+  /**
    * Estado actual del proveedor en la plataforma — afecta qué alertas
    * mostramos. Si el proveedor está dado de baja pero figura activo en una
    * póliza, sale un warning con CTA "Pedir baja en póliza".
@@ -70,12 +76,14 @@ const fmtDate = (s: string): string =>
   new Date(s.slice(0, 10) + 'T00:00:00').toLocaleDateString('es-AR');
 
 export const PolizasDelProveedorSection: React.FC<Props> = ({
-  apiBaseUrl, personaId, proveedorEnBaja = false, proveedorEnSolicitud = false,
+  apiBaseUrl, personaId, personaNombreCompleto, proveedorEnBaja = false, proveedorEnSolicitud = false,
 }) => {
   const [asegurados, setAsegurados] = useState<AseguradoConPoliza[] | null>(null);
   const [aplicables, setAplicables] = useState<PolizaAplicable[]>([]);
   const [certificados, setCertificados] = useState<CertificadoPoliza[] | null>(null);
   const [enviandoCertId, setEnviandoCertId] = useState<number | null>(null);
+  // BUGFIX 04 #2 — modal de "Solicitar baja" en lugar de redirect al wizard del módulo Pólizas.
+  const [modalBaja, setModalBaja] = useState(false);
 
   const fetchAll = useCallback(async () => {
     try {
@@ -171,6 +179,25 @@ export const PolizasDelProveedorSection: React.FC<Props> = ({
           titulo={`Activas (${activos.length})`}
           rows={activos}
           mostrarBoton="baja"
+          onSolicitarBaja={() => setModalBaja(true)}
+        />
+      )}
+
+      {/* BUGFIX 04 #2 — Modal "Solicitar baja" (crea entrada en bandeja, NO envía correo). */}
+      {modalBaja && (
+        <SolicitarBajaModal
+          apiBaseUrl={apiBaseUrl}
+          personaId={personaId}
+          nombreCompleto={personaNombreCompleto || 'este proveedor'}
+          polizasActivas={activos.map((a) => ({
+            asegurado_id: a.id,
+            identificador: a.identificador,
+            poliza_id: a.poliza.id,
+            poliza_nombre: a.poliza.nombre_descriptivo,
+            aseguradora_nombre: a.poliza.aseguradora.nombre,
+          }))}
+          onClose={() => setModalBaja(false)}
+          onCreada={() => { setModalBaja(false); fetchAll(); }}
         />
       )}
 
@@ -288,9 +315,10 @@ type TablaProps = {
   titulo: string;
   rows: AseguradoConPoliza[];
   mostrarBoton: 'baja' | null;
+  onSolicitarBaja?: () => void;
 };
 
-const PolizasTabla: React.FC<TablaProps> = ({ titulo, rows, mostrarBoton }) => (
+const PolizasTabla: React.FC<TablaProps> = ({ titulo, rows, mostrarBoton, onSolicitarBaja }) => (
   <div style={{ marginTop: '0.75rem' }}>
     <h4 style={{ margin: '0 0 0.4rem 0', fontSize: '0.95rem', color: '#444' }}>{titulo}</h4>
     <div className="table-wrapper">
@@ -316,17 +344,19 @@ const PolizasTabla: React.FC<TablaProps> = ({ titulo, rows, mostrarBoton }) => (
               </td>
               <td><span className={`estado-badge ${ESTADO_BADGE[a.estado] ?? 'estado-badge--default'}`}>{a.estado}</span></td>
               <td>
+                {/* BUGFIX 04 #2 — abre modal en lugar de redirect al wizard del módulo Pólizas. */}
                 {mostrarBoton === 'baja' && (
-                  <Link
-                    to={`/polizas/${a.poliza.id}/solicitar?tipo=baja`}
+                  <button
+                    type="button"
+                    onClick={onSolicitarBaja}
                     style={{
-                      background: '#c4392a', color: '#fff', textDecoration: 'none',
+                      background: '#c4392a', color: '#fff', border: 0, cursor: 'pointer',
                       padding: '0.25rem 0.6rem', borderRadius: 6, fontSize: '0.78rem',
                       whiteSpace: 'nowrap',
                     }}
                   >
-                    Solicitar baja
-                  </Link>
+                    Solicitar baja…
+                  </button>
                 )}
               </td>
             </tr>

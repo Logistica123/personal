@@ -1763,12 +1763,16 @@ class PersonalController extends Controller
             'solicitudPolizas' => ['nullable', 'array'],
             'solicitudPolizas.ap.solicitar' => ['nullable', 'boolean'],
             'solicitudPolizas.ap.aseguradora_id' => ['nullable', 'integer', 'exists:polizas_aseguradoras,id'],
+            'solicitudPolizas.ap.aseguradora_nombre' => ['nullable', 'string', 'max:255'],
             'solicitudPolizas.ap.clausula_id' => ['nullable', 'integer', 'exists:polizas_clausulas,id'],
+            'solicitudPolizas.ap.clausula_nombre' => ['nullable', 'string', 'max:255'],
             'solicitudPolizas.vehiculos.solicitar' => ['nullable', 'boolean'],
             'solicitudPolizas.vehiculos.aseguradora_id' => ['nullable', 'integer', 'exists:polizas_aseguradoras,id'],
+            'solicitudPolizas.vehiculos.aseguradora_nombre' => ['nullable', 'string', 'max:255'],
             'solicitudPolizas.vehiculos.tipo' => ['nullable', 'string', 'in:autos,motos'],
             'solicitudPolizas.vehiculos.patente' => ['nullable', 'string', 'max:50'],
             'solicitudPolizas.vehiculos.clausula_id' => ['nullable', 'integer', 'exists:polizas_clausulas,id'],
+            'solicitudPolizas.vehiculos.clausula_nombre' => ['nullable', 'string', 'max:255'],
             'solicitudPolizas.vehiculos.importe_negociado_mensual' => ['nullable', 'numeric', 'min:0'],
         ]);
 

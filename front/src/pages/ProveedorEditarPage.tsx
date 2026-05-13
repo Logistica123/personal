@@ -2492,6 +2492,7 @@ export const ProveedorEditarPage: React.FC<ProveedorEditarPageProps> = ({
         <PolizasDelProveedorSection
           apiBaseUrl={apiBaseUrl}
           personaId={detail.id}
+          personaNombreCompleto={[detail.nombres, detail.apellidos].filter(Boolean).join(' ').trim() || null}
           proveedorEnBaja={Boolean(detail.fechaBaja) || /baja/i.test(detail.estado ?? '')}
           proveedorEnSolicitud={Boolean(detail.esSolicitud)}
         />

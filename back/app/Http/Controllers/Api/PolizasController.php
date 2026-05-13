@@ -410,14 +410,24 @@ class PolizasController extends Controller
         return response()->json(['data' => $polizas]);
     }
 
-    /** Bloque C.1 — listado simple de aseguradoras (para selector de pólizas). */
-    public function aseguradoras(): JsonResponse
+    /**
+     * Bloque C.1 — listado simple de aseguradoras (para selector de pólizas).
+     *
+     * BUGFIX 04 #1 — acepta `?ramo=accidentes_personales|vehiculos` para
+     * devolver solo aseguradoras que tienen pólizas activas de ese ramo.
+     */
+    public function aseguradoras(Request $request): JsonResponse
     {
-        $rows = \App\Models\PolizaAseguradora::query()
+        $q = \App\Models\PolizaAseguradora::query()
             ->where('activa', true)
-            ->orderBy('nombre')
-            ->get(['id', 'nombre', 'parser_perfil', 'cuit']);
-        return response()->json(['data' => $rows]);
+            ->orderBy('nombre');
+
+        $ramo = $request->query('ramo');
+        if (in_array($ramo, ['accidentes_personales', 'vehiculos'], true)) {
+            $q->whereHas('polizas', fn ($qp) => $qp->where('ramo', $ramo)->where('activa', true));
+        }
+
+        return response()->json(['data' => $q->get(['id', 'nombre', 'parser_perfil', 'cuit'])]);
     }
 
     /** Bloque C.1 — crear póliza nueva. */
