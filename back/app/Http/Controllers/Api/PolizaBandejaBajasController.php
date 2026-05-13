@@ -138,7 +138,25 @@ class PolizaBandejaBajasController extends Controller
             \Log::warning("BandejaBajas.show polizas activas falló: {$e->getMessage()}");
         }
 
-        $payload = $this->serializar($pendiente);
+        try {
+            $payload = $this->serializar($pendiente);
+        } catch (\Throwable $e) {
+            // Último resort: si serializar falla con datos corruptos, devolvemos
+            // un detalle mínimo con el ID y los campos planos del modelo, así el
+            // modal abre igual y el admin puede al menos rechazar la solicitud.
+            \Log::error("BandejaBajas.show serializar falló: {$e->getMessage()}");
+            $warnings[] = 'Error al armar el detalle completo: ' . mb_substr($e->getMessage(), 0, 200);
+            $payload = [
+                'id'              => $pendiente->id,
+                'motivo_baja'     => $pendiente->motivo_baja,
+                'estado'          => $pendiente->estado,
+                'fecha_solicitud' => null,
+                'polizas_sugeridas' => $pendiente->polizas_sugeridas ?? [],
+                'persona'         => null,
+                'solicitada_por'  => null,
+                'procesada_por'   => null,
+            ];
+        }
         $payload['polizas_activas'] = $polizasActivas;
         if (!empty($warnings)) {
             $payload['warnings'] = $warnings;
@@ -182,14 +200,33 @@ class PolizaBandejaBajasController extends Controller
 
     private function serializar(PolizaSolicitudBajaPendiente $p): array
     {
+        // BUGFIX 05 — helpers defensivos para fechas. En Persona, `fecha_alta`
+        // está declarada en `$dates` (deprecated en Laravel 11) y puede llegar
+        // como string en lugar de Carbon, rompiendo `?->toDateString()` con
+        // "Call to a member function on string".
+        $toIso = function ($value): ?string {
+            if (!$value) return null;
+            try {
+                if ($value instanceof \DateTimeInterface) return $value->format('c');
+                return \Carbon\Carbon::parse((string) $value)->toIso8601String();
+            } catch (\Throwable $e) { return null; }
+        };
+        $toDate = function ($value): ?string {
+            if (!$value) return null;
+            try {
+                if ($value instanceof \DateTimeInterface) return $value->format('Y-m-d');
+                return \Carbon\Carbon::parse((string) $value)->toDateString();
+            } catch (\Throwable $e) { return null; }
+        };
+
         return [
             'id'                    => $p->id,
-            'fecha_solicitud'       => $p->fecha_solicitud?->toIso8601String(),
+            'fecha_solicitud'       => $toIso($p->fecha_solicitud),
             'motivo_baja'           => $p->motivo_baja,
             'comentarios_adicionales' => $p->comentarios_adicionales,
             'polizas_sugeridas'     => $p->polizas_sugeridas ?? [],
             'estado'                => $p->estado,
-            'procesada_en'          => $p->procesada_en?->toIso8601String(),
+            'procesada_en'          => $toIso($p->procesada_en),
             'polizas_dadas_de_baja' => $p->polizas_dadas_de_baja ?? [],
             'motivo_rechazo'        => $p->motivo_rechazo,
             'persona'               => $p->persona ? [
@@ -197,7 +234,7 @@ class PolizaBandejaBajasController extends Controller
                 'nombre'    => trim(($p->persona->apellidos ?? '') . ', ' . ($p->persona->nombres ?? '')),
                 'cuil'      => $p->persona->cuil,
                 'patente'   => $p->persona->patente,
-                'fecha_alta'=> $p->persona->fecha_alta?->toDateString(),
+                'fecha_alta'=> $toDate($p->persona->fecha_alta),
                 'cliente'   => $p->persona->cliente?->nombre,
                 'sucursal'  => $p->persona->sucursal?->nombre,
                 'estado_id' => $p->persona->estado_id,
