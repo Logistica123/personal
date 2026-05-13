@@ -1871,10 +1871,10 @@ class PersonalController extends Controller
             'combustible_estado' => $validated['combustible'] ? ($validated['combustibleEstado'] ?? null) : null,
             'tarifaespecial' => $validated['tarifaEspecial'],
             'es_cobrador' => $validated['esCobrador'] ?? false,
-            'cobrador_nombre' => $validated['esCobrador'] ? ($validated['cobradorNombre'] ?? null) : null,
-            'cobrador_email' => $validated['esCobrador'] ? ($validated['cobradorEmail'] ?? null) : null,
-            'cobrador_cuil' => $validated['esCobrador'] ? ($validated['cobradorCuil'] ?? null) : null,
-            'cobrador_cbu_alias' => $validated['esCobrador'] ? ($validated['cobradorCbuAlias'] ?? null) : null,
+            'cobrador_nombre' => ($validated['esCobrador'] ?? false) ? ($validated['cobradorNombre'] ?? null) : null,
+            'cobrador_email' => ($validated['esCobrador'] ?? false) ? ($validated['cobradorEmail'] ?? null) : null,
+            'cobrador_cuil' => ($validated['esCobrador'] ?? false) ? ($validated['cobradorCuil'] ?? null) : null,
+            'cobrador_cbu_alias' => ($validated['esCobrador'] ?? false) ? ($validated['cobradorCbuAlias'] ?? null) : null,
             'es_solicitud' => ! $autoApprove,
             // ADDENDUM 15 Bloque 3 — datos extendidos para procesar al aprobar.
             'solicitud_choferes_json' => !empty($validated['solicitudChoferes'])
