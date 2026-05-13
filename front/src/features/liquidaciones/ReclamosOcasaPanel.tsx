@@ -118,6 +118,7 @@ export function ReclamosOcasaPanel({ liqId, api, refreshKey = 0 }: Props) {
   const [porCategoria, setPorCategoria] = useState<PorCategoria[]>([]);
   const [filtroCategoria, setFiltroCategoria] = useState<MotivoCategoria | 'todas'>('todas');
   const [error, setError] = useState<string | null>(null);
+  const [ultimaDeteccion, setUltimaDeteccion] = useState<string | null>(null);
 
   const cargar = useCallback(async () => {
     setLoading(true);
@@ -129,6 +130,7 @@ export function ReclamosOcasaPanel({ liqId, api, refreshKey = 0 }: Props) {
       setTotales(d.totales ?? null);
       setPorSucursal(d.por_sucursal ?? []);
       setPorCategoria(d.por_categoria ?? []);
+      setUltimaDeteccion(d.ultima_deteccion_at ?? null);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Error cargando reclamos');
     } finally {
@@ -174,11 +176,27 @@ export function ReclamosOcasaPanel({ liqId, api, refreshKey = 0 }: Props) {
   }
 
   if (!loading && reclamos.length === 0) {
+    const corrida = !!ultimaDeteccion;
+    const fechaFmt = corrida ? new Date(ultimaDeteccion!).toLocaleString('es-AR', { dateStyle: 'short', timeStyle: 'short' }) : null;
     return (
       <div className="dashboard-card">
         <header className="card-header"><h3 style={{ margin: 0 }}>Reclamos OCASA (subpagos detectados)</h3></header>
-        <div className="card-body" style={{ fontSize: 13, color: '#6b7280' }}>
-          Sin reclamos detectados en esta liquidación. Click "Reclamos OCASA" arriba para correr la detección.
+        <div className="card-body" style={{ fontSize: 13 }}>
+          {corrida ? (
+            <div style={{ padding: 10, background: '#dcfce7', border: '1px solid #86efac', borderRadius: 6, color: '#166534' }}>
+              <strong>✓ Sin subpagos detectados</strong>
+              <div style={{ marginTop: 4, fontSize: 12, color: '#374151' }}>
+                Última detección: {fechaFmt}. No se encontraron operaciones con diferencia superior al 5% vs tarifa de contrato.
+              </div>
+            </div>
+          ) : (
+            <div style={{ padding: 10, background: '#fef3c7', border: '1px solid #fcd34d', borderRadius: 6, color: '#92400e' }}>
+              <strong>⚠ Aún no se corrió la detección de subpagos</strong>
+              <div style={{ marginTop: 4, fontSize: 12, color: '#374151' }}>
+                Click "Reclamos OCASA" en la cabecera para correr el detector y comparar CostoFijo_TMS contra la tarifa de contrato vigente.
+              </div>
+            </div>
+          )}
         </div>
       </div>
     );
@@ -187,7 +205,14 @@ export function ReclamosOcasaPanel({ liqId, api, refreshKey = 0 }: Props) {
   return (
     <div className="dashboard-card">
       <header className="card-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <h3 style={{ margin: 0 }}>Reclamos OCASA (subpagos detectados)</h3>
+        <div>
+          <h3 style={{ margin: 0 }}>Reclamos OCASA (subpagos detectados)</h3>
+          {ultimaDeteccion && (
+            <div style={{ fontSize: 11, color: '#6b7280', marginTop: 2 }}>
+              Última detección: {new Date(ultimaDeteccion).toLocaleString('es-AR', { dateStyle: 'short', timeStyle: 'short' })}
+            </div>
+          )}
+        </div>
         <div style={{ display: 'flex', gap: 6 }}>
           <button
             type="button"

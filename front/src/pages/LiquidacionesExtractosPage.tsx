@@ -68,6 +68,15 @@ export function LiquidacionesExtractosPage({
   const [opFiltroEstado, setOpFiltroEstado] = useState('');
   const [opPage, setOpPage] = useState<{ current: number; last: number }>({ current: 1, last: 1 });
   const [selectedLiqIds, setSelectedLiqIds] = useState<Record<number, boolean>>({});
+  // Filtros y vista del listado de liquidaciones (Fase 3a — agrupado por cliente + año).
+  const [filtroClienteId, setFiltroClienteId] = useState<number | ''>('');
+  const [filtroAnio, setFiltroAnio] = useState<number | ''>(new Date().getFullYear());
+  const [filtroEstado, setFiltroEstado] = useState<string>('');
+  const [filtroBusqueda, setFiltroBusqueda] = useState('');
+  const [vistaListado, setVistaListado] = useState<'agrupado' | 'plana'>('agrupado');
+  const [gruposColapsados, setGruposColapsados] = useState<Record<string, boolean>>({});
+  // Fase 3c: lista de archivos cargados colapsable. Default colapsado cuando hay > 5.
+  const [archivosExpandido, setArchivosExpandido] = useState<boolean>(false);
   const [selectedArchivoIds, setSelectedArchivoIds] = useState<Record<number, boolean>>({});
   const [selectedOpIds, setSelectedOpIds] = useState<Record<number, boolean>>({});
   const [pdfGenerating, setPdfGenerating] = useState<Record<number, boolean>>({});
@@ -537,6 +546,8 @@ export function LiquidacionesExtractosPage({
       ]);
       const archList = (archRes.data ?? []) as LiqArchivoEntrada[];
       setArchivos(archList);
+      // Auto-expandir si hay pocos archivos; mantener colapsado por default cuando hay muchos.
+      setArchivosExpandido(archList.length > 0 && archList.length <= 5);
       setArchivoSucursalEdit((prev) => {
         const next = { ...prev };
         for (const a of archList) {
@@ -1214,6 +1225,100 @@ export function LiquidacionesExtractosPage({
 
   const fmtDate = (s: string) => s?.slice(0, 10) ?? '';
 
+  const liquidacionesFiltradas = useMemo(() => {
+    const term = filtroBusqueda.trim().toLowerCase();
+    return liquidaciones.filter((l) => {
+      if (filtroClienteId !== '' && l.cliente_id !== filtroClienteId) return false;
+      if (filtroEstado && l.estado !== filtroEstado) return false;
+      if (filtroAnio !== '') {
+        const year = parseInt((l.periodo_desde ?? '').slice(0, 4), 10);
+        if (year !== filtroAnio) return false;
+      }
+      if (term) {
+        const clienteLabel = (l.cliente?.nombre_corto ?? l.cliente?.razon_social ?? '').toLowerCase();
+        const hay = `${l.id} ${clienteLabel} ${l.periodo_desde ?? ''} ${l.periodo_hasta ?? ''} ${l.total_importe_cliente ?? ''}`.toLowerCase();
+        if (!hay.includes(term)) return false;
+      }
+      return true;
+    });
+  }, [liquidaciones, filtroClienteId, filtroAnio, filtroEstado, filtroBusqueda]);
+
+  const gruposLiquidaciones = useMemo(() => {
+    const map = new Map<string, { key: string; clienteId: number; clienteLabel: string; anio: number; items: LiqLiquidacionCliente[] }>();
+    for (const l of liquidacionesFiltradas) {
+      const anio = parseInt((l.periodo_desde ?? '').slice(0, 4), 10) || 0;
+      const clienteLabel = l.cliente?.nombre_corto ?? l.cliente?.razon_social ?? `Cliente ${l.cliente_id}`;
+      const key = `${l.cliente_id}-${anio}`;
+      if (!map.has(key)) {
+        map.set(key, { key, clienteId: l.cliente_id, clienteLabel, anio, items: [] });
+      }
+      map.get(key)!.items.push(l);
+    }
+    // Orden: cliente alfabético, año descendente.
+    return Array.from(map.values()).sort((a, b) => {
+      if (a.clienteLabel !== b.clienteLabel) return a.clienteLabel.localeCompare(b.clienteLabel);
+      return b.anio - a.anio;
+    });
+  }, [liquidacionesFiltradas]);
+
+  const aniosDisponibles = useMemo(() => {
+    const set = new Set<number>();
+    for (const l of liquidaciones) {
+      const y = parseInt((l.periodo_desde ?? '').slice(0, 4), 10);
+      if (y) set.add(y);
+    }
+    return Array.from(set).sort((a, b) => b - a);
+  }, [liquidaciones]);
+
+  const estadoLiqClienteBadge = (estado: string | null | undefined, diferencia?: string | number | null) => {
+    const label = (estado ?? '').toLowerCase();
+    const palette: Record<string, { bg: string; fg: string; border: string }> = {
+      pendiente:  { bg: '#f3f4f6', fg: '#374151', border: '#e5e7eb' },
+      en_proceso: { bg: '#fef3c7', fg: '#92400e', border: '#fcd34d' },
+      auditada:   { bg: '#dbeafe', fg: '#1e40af', border: '#93c5fd' },
+      aprobada:   { bg: '#dcfce7', fg: '#166534', border: '#86efac' },
+      rechazada:  { bg: '#fee2e2', fg: '#991b1b', border: '#fca5a5' },
+    };
+    const cfg = palette[label] ?? { bg: '#f3f4f6', fg: '#374151', border: '#e5e7eb' };
+    const dif = diferencia != null ? parseFloat(String(diferencia)) : 0;
+    return (
+      <span style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}>
+        <span style={{
+          display: 'inline-block', padding: '2px 8px', borderRadius: 999, fontSize: 12,
+          background: cfg.bg, color: cfg.fg, border: `1px solid ${cfg.border}`, whiteSpace: 'nowrap',
+        }}>
+          {ESTADO_LIQ_LABELS[(estado ?? '') as keyof typeof ESTADO_LIQ_LABELS] ?? estado ?? '—'}
+        </span>
+        {dif > 0 ? (
+          <span title={`Diferencia ${fmt(diferencia ?? 0)}`} style={{
+            display: 'inline-block', padding: '2px 6px', borderRadius: 999, fontSize: 11,
+            background: '#fef3c7', color: '#92400e', border: '1px solid #fcd34d',
+          }}>!</span>
+        ) : null}
+      </span>
+    );
+  };
+
+  const estadoDistribuidorBadge = (estado: string | null | undefined) => {
+    const label = (estado ?? '').toLowerCase();
+    const palette: Record<string, { bg: string; fg: string; border: string; text: string }> = {
+      generada:  { bg: '#fef3c7', fg: '#92400e', border: '#fcd34d', text: 'Generada' },
+      preparada: { bg: '#dbeafe', fg: '#1e40af', border: '#93c5fd', text: 'Preparada' },
+      aprobada:  { bg: '#dcfce7', fg: '#166534', border: '#86efac', text: 'Aprobada' },
+      pagada:    { bg: '#e0f2fe', fg: '#075985', border: '#7dd3fc', text: 'Pagada' },
+      anulada:   { bg: '#fee2e2', fg: '#991b1b', border: '#fca5a5', text: 'Anulada' },
+    };
+    const cfg = palette[label] ?? { bg: '#f3f4f6', fg: '#374151', border: '#e5e7eb', text: estado ?? '—' };
+    return (
+      <span style={{
+        display: 'inline-block', padding: '2px 8px', borderRadius: 999, fontSize: 11,
+        background: cfg.bg, color: cfg.fg, border: `1px solid ${cfg.border}`, whiteSpace: 'nowrap',
+      }}>
+        {cfg.text}
+      </span>
+    );
+  };
+
   return (
     <DashboardLayout title="Liquidaciones" subtitle="Control de Extractos">
       {error && (
@@ -1284,9 +1389,84 @@ export function LiquidacionesExtractosPage({
           )}
 
           <div className="dashboard-card">
-            <header className="card-header"><h3>Todas las liquidaciones</h3></header>
+            <header className="card-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <h3>
+                Liquidaciones
+                <span style={{ marginLeft: 8, fontSize: 13, color: '#6b7280', fontWeight: 400 }}>
+                  ({liquidacionesFiltradas.length}{liquidacionesFiltradas.length !== liquidaciones.length ? ` de ${liquidaciones.length}` : ''})
+                </span>
+              </h3>
+              <div style={{ display: 'flex', gap: 4, fontSize: 12 }}>
+                <button
+                  type="button"
+                  className="btn-sm"
+                  style={{ background: vistaListado === 'agrupado' ? '#3b82f6' : '#f3f4f6', color: vistaListado === 'agrupado' ? '#fff' : '#374151' }}
+                  onClick={() => setVistaListado('agrupado')}
+                >Agrupado</button>
+                <button
+                  type="button"
+                  className="btn-sm"
+                  style={{ background: vistaListado === 'plana' ? '#3b82f6' : '#f3f4f6', color: vistaListado === 'plana' ? '#fff' : '#374151' }}
+                  onClick={() => setVistaListado('plana')}
+                >Tabla plana</button>
+              </div>
+            </header>
             <div className="card-body">
-              {loading ? <p>Cargando…</p> : (
+              {/* Barra de filtros */}
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', marginBottom: 12 }}>
+                <select
+                  value={filtroClienteId}
+                  onChange={(e) => setFiltroClienteId(e.target.value === '' ? '' : Number(e.target.value))}
+                  style={{ padding: '4px 8px', minWidth: 140 }}
+                >
+                  <option value="">Cliente: todos</option>
+                  {clientes.map((c) => (
+                    <option key={c.id} value={c.id}>{c.nombre_corto ?? c.razon_social ?? `Cliente ${c.id}`}</option>
+                  ))}
+                </select>
+                <select
+                  value={filtroAnio}
+                  onChange={(e) => setFiltroAnio(e.target.value === '' ? '' : Number(e.target.value))}
+                  style={{ padding: '4px 8px', minWidth: 110 }}
+                >
+                  <option value="">Año: todos</option>
+                  {aniosDisponibles.map((y) => <option key={y} value={y}>{y}</option>)}
+                </select>
+                <select
+                  value={filtroEstado}
+                  onChange={(e) => setFiltroEstado(e.target.value)}
+                  style={{ padding: '4px 8px', minWidth: 140 }}
+                >
+                  <option value="">Estado: todos</option>
+                  <option value="pendiente">Pendiente</option>
+                  <option value="en_proceso">En proceso</option>
+                  <option value="auditada">Auditada</option>
+                  <option value="aprobada">Aprobada</option>
+                  <option value="rechazada">Rechazada</option>
+                </select>
+                <input
+                  type="text"
+                  placeholder="Buscar (ID, monto, período…)"
+                  value={filtroBusqueda}
+                  onChange={(e) => setFiltroBusqueda(e.target.value)}
+                  style={{ padding: '4px 8px', minWidth: 220, flex: 1 }}
+                />
+                {(filtroClienteId !== '' || filtroAnio !== '' || filtroEstado || filtroBusqueda) && (
+                  <button
+                    type="button"
+                    className="btn-sm"
+                    onClick={() => { setFiltroClienteId(''); setFiltroAnio(''); setFiltroEstado(''); setFiltroBusqueda(''); }}
+                  >
+                    Limpiar
+                  </button>
+                )}
+              </div>
+
+              {loading ? <p>Cargando…</p> : liquidacionesFiltradas.length === 0 ? (
+                <p style={{ color: '#6b7280', textAlign: 'center', padding: '24px 0' }}>
+                  {liquidaciones.length === 0 ? 'Sin liquidaciones' : 'Ninguna liquidación coincide con los filtros'}
+                </p>
+              ) : vistaListado === 'plana' ? (
                 <table className="data-table">
                   <thead>
                     <tr>
@@ -1294,12 +1474,12 @@ export function LiquidacionesExtractosPage({
                         <input
                           type="checkbox"
                           aria-label="Seleccionar todo"
-                          checked={liquidaciones.length > 0 && liquidaciones.every((l) => !!selectedLiqIds[l.id])}
+                          checked={liquidacionesFiltradas.length > 0 && liquidacionesFiltradas.every((l) => !!selectedLiqIds[l.id])}
                           onChange={(e) => {
                             const checked = e.target.checked;
                             setSelectedLiqIds((prev) => {
                               const next = { ...prev };
-                              for (const l of liquidaciones) next[l.id] = checked;
+                              for (const l of liquidacionesFiltradas) next[l.id] = checked;
                               return next;
                             });
                           }}
@@ -1309,45 +1489,99 @@ export function LiquidacionesExtractosPage({
                     </tr>
                   </thead>
                   <tbody>
-                    {liquidaciones.map((l) => (
-	                      <tr key={l.id}>
-                          <td>
-                            <input
-                              type="checkbox"
-                              aria-label={`Seleccionar liquidación ${l.id}`}
-                              checked={!!selectedLiqIds[l.id]}
-                              onChange={(e) => setSelectedLiqIds((prev) => ({ ...prev, [l.id]: e.target.checked }))}
-                            />
-                          </td>
-	                        <td>{l.id}</td>
-	                        <td><strong>{l.cliente?.nombre_corto ?? l.cliente?.razon_social ?? `Cliente ${l.cliente_id}`}</strong></td>
-	                        <td style={{ fontSize: 13 }}>{fmtDate(l.periodo_desde)} → {fmtDate(l.periodo_hasta)}</td>
+                    {liquidacionesFiltradas.map((l) => (
+                      <tr key={l.id}>
                         <td>
-                          <span style={{ padding: '2px 8px', borderRadius: 10, fontSize: 12, background: '#e5e7eb', color: '#374151' }}>
-                            {ESTADO_LIQ_LABELS[l.estado]}
-                          </span>
+                          <input
+                            type="checkbox"
+                            aria-label={`Seleccionar liquidación ${l.id}`}
+                            checked={!!selectedLiqIds[l.id]}
+                            onChange={(e) => setSelectedLiqIds((prev) => ({ ...prev, [l.id]: e.target.checked }))}
+                          />
                         </td>
+                        <td>{l.id}</td>
+                        <td><strong>{l.cliente?.nombre_corto ?? l.cliente?.razon_social ?? `Cliente ${l.cliente_id}`}</strong></td>
+                        <td style={{ fontSize: 13 }}>{fmtDate(l.periodo_desde)} → {fmtDate(l.periodo_hasta)}</td>
+                        <td>{estadoLiqClienteBadge(l.estado, l.total_diferencia)}</td>
                         <td>{l.total_operaciones}</td>
                         <td>{fmt(l.total_importe_cliente)}</td>
                         <td style={{ color: parseFloat(l.total_diferencia) !== 0 ? '#d97706' : '#16a34a' }}>{fmt(l.total_diferencia)}</td>
                         <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
-                          <button type="button" className="btn-sm btn-primary" onClick={() => openLiq(l)}>
-                            Ver detalle
-                          </button>
-                          <button
-                            type="button"
-                            className="btn-sm btn-danger"
-                            style={{ marginLeft: 8 }}
-                            onClick={() => eliminarLiquidacion(l.id)}
-                          >
-                            Eliminar
-                          </button>
+                          <button type="button" className="btn-sm btn-primary" onClick={() => openLiq(l)}>Ver detalle</button>
+                          <button type="button" className="btn-sm btn-danger" style={{ marginLeft: 8 }} onClick={() => eliminarLiquidacion(l.id)}>Eliminar</button>
                         </td>
                       </tr>
                     ))}
-                    {liquidaciones.length === 0 && <tr><td colSpan={9} style={{ textAlign: 'center', color: '#6b7280' }}>Sin liquidaciones</td></tr>}
                   </tbody>
                 </table>
+              ) : (
+                // Vista agrupada por Cliente + Año.
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  {gruposLiquidaciones.map((grupo) => {
+                    const colapsado = gruposColapsados[grupo.key] === true;
+                    const totalGrupo = grupo.items.reduce((s, l) => s + (parseFloat(l.total_importe_cliente as any) || 0), 0);
+                    return (
+                      <div key={grupo.key} style={{ border: '1px solid #e5e7eb', borderRadius: 8, overflow: 'hidden' }}>
+                        <button
+                          type="button"
+                          onClick={() => setGruposColapsados((prev) => ({ ...prev, [grupo.key]: !colapsado }))}
+                          style={{
+                            width: '100%', textAlign: 'left', padding: '10px 14px', background: '#f9fafb',
+                            border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 10,
+                            borderBottom: colapsado ? 'none' : '1px solid #e5e7eb',
+                          }}
+                        >
+                          <span style={{ fontSize: 12, color: '#6b7280' }}>{colapsado ? '▶' : '▼'}</span>
+                          <strong style={{ fontSize: 14 }}>{grupo.clienteLabel}</strong>
+                          <span style={{ color: '#6b7280' }}>· {grupo.anio || 'Sin año'}</span>
+                          <span style={{ marginLeft: 'auto', fontSize: 12, color: '#6b7280' }}>
+                            {grupo.items.length} liq · {fmt(totalGrupo)}
+                          </span>
+                        </button>
+                        {!colapsado && (
+                          <table className="data-table" style={{ marginBottom: 0 }}>
+                            <thead>
+                              <tr>
+                                <th style={{ width: 34 }}></th>
+                                <th style={{ width: 60 }}>ID</th>
+                                <th>Período</th>
+                                <th>Estado</th>
+                                <th>Operaciones</th>
+                                <th>Total cliente</th>
+                                <th>Diferencia</th>
+                                <th></th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {grupo.items.map((l) => (
+                                <tr key={l.id}>
+                                  <td>
+                                    <input
+                                      type="checkbox"
+                                      aria-label={`Seleccionar liquidación ${l.id}`}
+                                      checked={!!selectedLiqIds[l.id]}
+                                      onChange={(e) => setSelectedLiqIds((prev) => ({ ...prev, [l.id]: e.target.checked }))}
+                                    />
+                                  </td>
+                                  <td>{l.id}</td>
+                                  <td style={{ fontSize: 13 }}>{fmtDate(l.periodo_desde)} → {fmtDate(l.periodo_hasta)}</td>
+                                  <td>{estadoLiqClienteBadge(l.estado, l.total_diferencia)}</td>
+                                  <td>{l.total_operaciones}</td>
+                                  <td>{fmt(l.total_importe_cliente)}</td>
+                                  <td style={{ color: parseFloat(l.total_diferencia) !== 0 ? '#d97706' : '#16a34a' }}>{fmt(l.total_diferencia)}</td>
+                                  <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
+                                    <button type="button" className="btn-sm btn-primary" onClick={() => openLiq(l)}>Ver detalle</button>
+                                    <button type="button" className="btn-sm btn-danger" style={{ marginLeft: 8 }} onClick={() => eliminarLiquidacion(l.id)}>Eliminar</button>
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
               )}
             </div>
           </div>
@@ -1407,27 +1641,7 @@ export function LiquidacionesExtractosPage({
               </button>
             )}
               <span style={{ marginLeft: 'auto', display: 'flex', gap: 8, alignItems: 'center' }}>
-                <button
-                  type="button"
-                  className="btn-sm"
-                  style={{ background: '#e0f2fe', color: '#0369a1', border: '1px solid #7dd3fc' }}
-                  onClick={() => { if (showAuditoria) { setShowAuditoria(false); } else { void loadAuditoria(); } }}
-                  disabled={auditoriaLoading}
-                >
-                  {auditoriaLoading ? 'Cargando…' : showAuditoria ? 'Ocultar auditoría' : 'Ver auditoría'}
-                </button>
-                <button type="button" className="btn-sm" style={{ background: '#dbeafe', color: '#1e40af', border: '1px solid #93c5fd' }} onClick={async () => {
-                  if (!selectedLiq) return;
-                  if (!window.confirm('¿Revincular operaciones sin_distribuidor? (sin reprocesar archivos)')) return;
-                  try {
-                    const res = await api.post(`/liquidaciones/${selectedLiq.id}/revincular-distribuidores`, {});
-                    showSuccess(res.message ?? 'Revinculado');
-                    await loadOps(selectedLiq.id, opFiltroEstado, 1);
-                  } catch (e: unknown) { setError(e instanceof Error ? e.message : 'Error'); }
-                }}>
-                  Revincular distribuidores
-                </button>
-                {/* SPEC v5: pipeline completo en 1 click — motor + eficiencia + PDFs distribuidor */}
+                {/* Pipeline completo: 1ª acción principal por uso frecuente. */}
                 <button
                   type="button"
                   className="btn-sm"
@@ -1450,29 +1664,15 @@ export function LiquidacionesExtractosPage({
                 >
                   {procesandoCadena ? 'Procesando…' : '⚡ Procesar liquidación'}
                 </button>
-                <button type="button" className="btn-sm" style={{ background: '#fef3c7', color: '#92400e', border: '1px solid #fcd34d' }} onClick={async () => {
-                  if (!selectedLiq) return;
-                  if (!window.confirm('¿Reparsear los PDFs OCASA ya subidos? Llama al microservicio Python y puebla imp_gravado / imp_no_gravado sobre operaciones existentes.')) return;
-                  try {
-                    const res = await api.post(`/liquidaciones/${selectedLiq.id}/reparsear-pdfs-ocasa`, {});
-                    showSuccess(res.message ?? 'PDFs reparseados');
-                    await openLiq(selectedLiq);
-                  } catch (e: unknown) { setError(e instanceof Error ? e.message : 'Error al reparsear PDFs'); }
-                }}>
-                  Reparsear PDFs OCASA
+                <button
+                  type="button"
+                  className="btn-sm"
+                  style={{ background: '#e0f2fe', color: '#0369a1', border: '1px solid #7dd3fc' }}
+                  onClick={() => { if (showAuditoria) { setShowAuditoria(false); } else { void loadAuditoria(); } }}
+                  disabled={auditoriaLoading}
+                >
+                  {auditoriaLoading ? 'Cargando…' : showAuditoria ? 'Ocultar auditoría' : 'Ver auditoría'}
                 </button>
-                {/* BUGFIX 28: regenerar estado de cuenta (upsert por sucursal, respeta filas facturadas) */}
-                <button type="button" className="btn-sm" style={{ background: '#e0f2fe', color: '#0369a1', border: '1px solid #7dd3fc' }} onClick={async () => {
-                  if (!selectedLiq) return;
-                  if (!window.confirm('¿Regenerar el Estado de Cuenta del cliente para este período? Crea/actualiza filas por sucursal. Respeta filas ya FACTURADAS/COBRADAS.')) return;
-                  try {
-                    const res = await api.post(`/liquidaciones/${selectedLiq.id}/regenerar-estado-cuenta`, { forzar: true });
-                    showSuccess(res.message ?? 'Estado de cuenta regenerado');
-                  } catch (e: unknown) { setError(e instanceof Error ? e.message : 'Error al regenerar estado de cuenta'); }
-                }}>
-                  Regenerar Estado de Cuenta
-                </button>
-                {/* SPEC v3 · BUG B: detectar subpagos OCASA y abrir panel de reclamos */}
                 <button type="button" className="btn-sm" style={{ background: '#fef3c7', color: '#92400e', border: '1px solid #fbbf24' }} onClick={async () => {
                   if (!selectedLiq) return;
                   if (!window.confirm('¿Correr detección de subpagos OCASA ahora?\n\nCompara CostoFijo_TMS contra liq_tarifas_contrato_cliente y registra las diferencias > 5% en liq_reclamos_ocasa.\n\nEs idempotente: re-correr borra los reclamos previos y los recrea.')) return;
@@ -1480,18 +1680,169 @@ export function LiquidacionesExtractosPage({
                     const res = await api.post(`/liquidaciones/${selectedLiq.id}/reclamos-ocasa/detectar`, { tolerancia: 0.05 });
                     showSuccess(res.message ?? 'Detección completada');
                     setReclamosOcasaKey((k) => k + 1); // dispara recarga del panel
+                    // Refrescar selectedLiq para que el wizard refleje `reclamos_ocasa_detectado_at`.
+                    try {
+                      const detalle = await api.get(`/liquidaciones/${selectedLiq.id}`);
+                      if (detalle?.data) setSelectedLiq(detalle.data as LiqLiquidacionCliente);
+                    } catch { /* no bloquear si falla el refresh */ }
                   } catch (e: unknown) { setError(e instanceof Error ? e.message : 'Error detectando reclamos'); }
                 }}>
                   Reclamos OCASA
                 </button>
-                <button type="button" className="btn-sm btn-danger" onClick={eliminarLiquidacionDesdeDetalle}>
-                  Eliminar liquidación
-                </button>
-                <button type="button" className="btn-sm btn-danger" onClick={eliminarOperaciones}>
-                  Eliminar operaciones
-                </button>
+
+                {/* Dropdown nativo de acciones avanzadas/peligrosas. <details> evita lógica de click-outside. */}
+                <details className="acciones-avanzadas-dropdown" style={{ position: 'relative' }}>
+                  <summary
+                    className="btn-sm"
+                    style={{ background: '#f3f4f6', color: '#374151', border: '1px solid #d1d5db', cursor: 'pointer', listStyle: 'none', userSelect: 'none' }}
+                  >
+                    Acciones ▾
+                  </summary>
+                  <div style={{
+                    position: 'absolute', top: 'calc(100% + 4px)', right: 0, zIndex: 10,
+                    background: '#fff', border: '1px solid #e5e7eb', borderRadius: 8,
+                    boxShadow: '0 4px 12px rgba(0,0,0,0.08)', minWidth: 240, padding: 6,
+                    display: 'flex', flexDirection: 'column', gap: 2,
+                  }}>
+                    <button type="button" className="btn-sm" style={{ background: 'transparent', border: 'none', textAlign: 'left', padding: '8px 10px', color: '#1e40af', cursor: 'pointer' }} onClick={async () => {
+                      if (!selectedLiq) return;
+                      if (!window.confirm('¿Revincular operaciones sin_distribuidor? (sin reprocesar archivos)')) return;
+                      try {
+                        const res = await api.post(`/liquidaciones/${selectedLiq.id}/revincular-distribuidores`, {});
+                        showSuccess(res.message ?? 'Revinculado');
+                        await loadOps(selectedLiq.id, opFiltroEstado, 1);
+                      } catch (e: unknown) { setError(e instanceof Error ? e.message : 'Error'); }
+                    }}>Revincular distribuidores</button>
+                    <button type="button" className="btn-sm" style={{ background: 'transparent', border: 'none', textAlign: 'left', padding: '8px 10px', color: '#92400e', cursor: 'pointer' }} onClick={async () => {
+                      if (!selectedLiq) return;
+                      if (!window.confirm('¿Reparsear los PDFs OCASA ya subidos? Llama al microservicio Python y puebla imp_gravado / imp_no_gravado sobre operaciones existentes.')) return;
+                      try {
+                        const res = await api.post(`/liquidaciones/${selectedLiq.id}/reparsear-pdfs-ocasa`, {});
+                        showSuccess(res.message ?? 'PDFs reparseados');
+                        await openLiq(selectedLiq);
+                      } catch (e: unknown) { setError(e instanceof Error ? e.message : 'Error al reparsear PDFs'); }
+                    }}>Reparsear PDFs OCASA</button>
+                    <button type="button" className="btn-sm" style={{ background: 'transparent', border: 'none', textAlign: 'left', padding: '8px 10px', color: '#0369a1', cursor: 'pointer' }} onClick={async () => {
+                      if (!selectedLiq) return;
+                      if (!window.confirm('¿Regenerar el Estado de Cuenta del cliente para este período? Crea/actualiza filas por sucursal. Respeta filas ya FACTURADAS/COBRADAS.')) return;
+                      try {
+                        const res = await api.post(`/liquidaciones/${selectedLiq.id}/regenerar-estado-cuenta`, { forzar: true });
+                        showSuccess(res.message ?? 'Estado de cuenta regenerado');
+                      } catch (e: unknown) { setError(e instanceof Error ? e.message : 'Error al regenerar estado de cuenta'); }
+                    }}>Regenerar Estado de Cuenta</button>
+                    <hr style={{ margin: '4px 6px', border: 'none', borderTop: '1px solid #e5e7eb' }} />
+                    <button type="button" className="btn-sm" style={{ background: 'transparent', border: 'none', textAlign: 'left', padding: '8px 10px', color: '#dc2626', cursor: 'pointer' }} onClick={eliminarOperaciones}>
+                      🗑 Eliminar operaciones
+                    </button>
+                    <button type="button" className="btn-sm" style={{ background: 'transparent', border: 'none', textAlign: 'left', padding: '8px 10px', color: '#dc2626', cursor: 'pointer' }} onClick={eliminarLiquidacionDesdeDetalle}>
+                      🗑 Eliminar liquidación
+                    </button>
+                  </div>
+                </details>
               </span>
 	          </div>
+
+          {/* Fase 3e — Wizard de progreso. Muestra dónde está la liquidación en el flujo
+              y permite saltar a la sección correspondiente. La UI debajo no cambia. */}
+          {(() => {
+            const archivosOk = archivos.length > 0;
+            const opsTotal = parseInt(String(selectedLiq.total_operaciones ?? 0), 10) || operaciones.length;
+            const opsOk = opsTotal > 0;
+            const diferenciaTotal = parseFloat(String(selectedLiq.total_diferencia ?? 0)) || 0;
+            const sinDiferencias = opsOk && diferenciaTotal === 0;
+            const distribOk = distribuidores.length > 0;
+            // ultimaDeteccion lo guarda el panel; acá usamos selectedLiq.reclamos_ocasa_detectado_at si está expuesto.
+            const reclamosCorridos = !!(selectedLiq as any)?.reclamos_ocasa_detectado_at;
+            const aprobada = selectedLiq.estado === 'aprobada';
+            const auditada = selectedLiq.estado === 'auditada' || aprobada;
+
+            type StepState = 'done' | 'current' | 'pending' | 'warn';
+            const steps: Array<{ id: string; titulo: string; estado: StepState; hint?: string; targetId?: string }> = [
+              {
+                id: '1', titulo: '1. Cargar archivos',
+                estado: archivosOk ? 'done' : 'current',
+                hint: archivosOk ? `${archivos.length} archivo(s) cargado(s)` : 'Cargá TMS, YCC y/o PDFs',
+                targetId: 'seccion-archivos',
+              },
+              {
+                id: '2', titulo: '2. Procesar operaciones',
+                estado: opsOk ? 'done' : (archivosOk ? 'current' : 'pending'),
+                hint: opsOk ? `${opsTotal} operaciones` : 'Click "⚡ Procesar liquidación"',
+                targetId: 'seccion-operaciones',
+              },
+              {
+                id: '3', titulo: '3. Revisar diferencias',
+                estado: opsOk ? (sinDiferencias ? 'done' : 'warn') : 'pending',
+                hint: opsOk ? (sinDiferencias ? 'Sin diferencias' : `Diferencia: ${fmt(diferenciaTotal)}`) : '—',
+                targetId: 'seccion-operaciones',
+              },
+              {
+                id: '4', titulo: '4. Generar liquidaciones distribuidor',
+                estado: distribOk ? 'done' : (opsOk ? 'current' : 'pending'),
+                hint: distribOk ? `${distribuidores.length} distribuidores` : 'Click "Generar todas"',
+                targetId: 'seccion-distribuidores',
+              },
+              {
+                id: '5', titulo: '5. Detectar reclamos OCASA',
+                estado: reclamosCorridos ? 'done' : (distribOk ? 'current' : 'pending'),
+                hint: reclamosCorridos ? 'Detección corrida' : 'Pendiente',
+                targetId: 'seccion-reclamos',
+              },
+              {
+                id: '6', titulo: '6. Aprobar liquidación',
+                estado: aprobada ? 'done' : (auditada ? 'current' : 'pending'),
+                hint: aprobada ? 'Aprobada' : auditada ? 'Auditada — falta aprobar' : 'Pendiente',
+              },
+            ];
+
+            const colorPaso = (e: StepState) => {
+              switch (e) {
+                case 'done':    return { bg: '#dcfce7', fg: '#166534', border: '#86efac', icon: '✓' };
+                case 'current': return { bg: '#dbeafe', fg: '#1e40af', border: '#93c5fd', icon: '●' };
+                case 'warn':    return { bg: '#fef3c7', fg: '#92400e', border: '#fcd34d', icon: '!' };
+                case 'pending':
+                default:        return { bg: '#f3f4f6', fg: '#6b7280', border: '#e5e7eb', icon: '○' };
+              }
+            };
+
+            return (
+              <div className="dashboard-card" style={{ marginBottom: 16 }}>
+                <div className="card-body" style={{ padding: 12 }}>
+                  <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'stretch' }}>
+                    {steps.map((s) => {
+                      const c = colorPaso(s.estado);
+                      return (
+                        <button
+                          key={s.id}
+                          type="button"
+                          onClick={() => {
+                            if (s.targetId) {
+                              const el = document.getElementById(s.targetId);
+                              if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                            }
+                          }}
+                          title={s.hint}
+                          style={{
+                            flex: '1 1 0', minWidth: 140,
+                            background: c.bg, color: c.fg, border: `1px solid ${c.border}`,
+                            borderRadius: 8, padding: '8px 10px', textAlign: 'left',
+                            cursor: s.targetId ? 'pointer' : 'default',
+                            display: 'flex', flexDirection: 'column', gap: 2,
+                          }}
+                        >
+                          <span style={{ fontSize: 11, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 4 }}>
+                            <span>{c.icon}</span>
+                            {s.titulo}
+                          </span>
+                          <span style={{ fontSize: 10, color: c.fg, opacity: 0.85 }}>{s.hint}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
 
           {esquemas.length > 0 && (
             <div className="dashboard-card" style={{ marginBottom: 16 }}>
@@ -2135,15 +2486,29 @@ export function LiquidacionesExtractosPage({
 
           {/* Files uploaded */}
 	          {archivos.length > 0 && (
-	            <div className="dashboard-card" style={{ marginBottom: 16 }}>
-	              <header className="card-header">
-                  <h3>Archivos cargados</h3>
-                  {Object.values(selectedArchivoIds).some(Boolean) && (
-                    <button type="button" className="btn-sm btn-danger" onClick={eliminarArchivosSeleccionados} disabled={bulkDeleting}>
+	            <div id="seccion-archivos" className="dashboard-card" style={{ marginBottom: 16 }}>
+	              <header
+                  className="card-header"
+                  style={{ cursor: 'pointer', userSelect: 'none' }}
+                  onClick={() => setArchivosExpandido((v) => !v)}
+                >
+                  <h3 style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <span style={{ fontSize: 12, color: '#6b7280' }}>{archivosExpandido ? '▼' : '▶'}</span>
+                    Archivos cargados
+                    <span style={{ fontSize: 12, color: '#6b7280', fontWeight: 400 }}>({archivos.length})</span>
+                  </h3>
+                  {Object.values(selectedArchivoIds).some(Boolean) && archivosExpandido && (
+                    <button
+                      type="button"
+                      className="btn-sm btn-danger"
+                      onClick={(e) => { e.stopPropagation(); eliminarArchivosSeleccionados(); }}
+                      disabled={bulkDeleting}
+                    >
                       Eliminar seleccionados ({Object.values(selectedArchivoIds).filter(Boolean).length})
                     </button>
                   )}
                 </header>
+              {archivosExpandido && (
 		              <div className="card-body">
 		                <table className="data-table">
 		                  <thead>
@@ -2208,6 +2573,7 @@ export function LiquidacionesExtractosPage({
 		                  </tbody>
 		                </table>
 		              </div>
+              )}
 	            </div>
 	          )}
 
@@ -2706,7 +3072,7 @@ export function LiquidacionesExtractosPage({
           )}
 
 	          {/* Operations */}
-	          <div className="dashboard-card" style={{ marginBottom: 16 }}>
+	          <div id="seccion-operaciones" className="dashboard-card" style={{ marginBottom: 16 }}>
 	            <header className="card-header">
 	              <h3>Operaciones</h3>
 	              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
@@ -3062,19 +3428,30 @@ export function LiquidacionesExtractosPage({
           )}
 
           {/* Distributor liquidations */}
-          <div className="dashboard-card">
+          <div id="seccion-distribuidores" className="dashboard-card">
             <header className="card-header">
               <h3>Liquidaciones por distribuidor</h3>
               <div style={{ display: 'flex', gap: 8 }}>
-                <button type="button" className="btn-primary" onClick={generarLiquidaciones}>
-                  Generar liquidaciones
+                <button
+                  type="button"
+                  className="btn-primary"
+                  onClick={generarLiquidaciones}
+                  title="Calcula totales por distribuidor sin generar/subir el PDF al perfil. Las deja en estado 'generada' para revisión."
+                >
+                  Generar todas (sin subir)
                 </button>
                 <button type="button" className="btn-sm" style={{ background: '#fef3c7', color: '#92400e', border: '1px solid #fcd34d' }} onClick={() => setShowLiqManualForm(true)}>
                   + Crear manual
                 </button>
-                {distribuidores.length > 0 && distribuidores.some(d => !d.pdf_path) && (
-                  <button type="button" className="btn-primary" style={{ background: '#7c3aed' }} onClick={generarYSubirTodas}>
-                    Generar y Subir Todas ({distribuidores.filter(d => d.distribuidor_id && !d.pdf_path).length})
+                {distribuidores.length > 0 && distribuidores.some(d => d.distribuidor_id && !d.pdf_path) && (
+                  <button
+                    type="button"
+                    className="btn-primary"
+                    style={{ background: '#7c3aed' }}
+                    onClick={generarYSubirTodas}
+                    title="Genera el PDF y lo sube al perfil de cada distribuidor. Las que se suben pasan a estado 'preparada'."
+                  >
+                    Subir todas las generadas ({distribuidores.filter(d => d.distribuidor_id && !d.pdf_path).length})
                   </button>
                 )}
               </div>
@@ -3111,7 +3488,7 @@ export function LiquidacionesExtractosPage({
                           >↻</button>
                         </div>
                       </td>
-                      <td style={{ fontSize: 12 }}>{d.estado}</td>
+                      <td style={{ fontSize: 12 }}>{estadoDistribuidorBadge(d.estado)}</td>
                       <td style={{ textAlign: 'right', whiteSpace: 'nowrap', display: 'flex', gap: 4, justifyContent: 'flex-end' }}>
                         <button
                           type="button"
@@ -3240,7 +3617,7 @@ export function LiquidacionesExtractosPage({
             {/* SPEC v3 · BUG B — Panel de reclamos OCASA al pie de la liquidación.
                 Carga /liquidaciones/{id}/reclamos-ocasa. Invisible si no hay reclamos. */}
             {selectedLiq && (
-              <div style={{ marginTop: 16 }}>
+              <div id="seccion-reclamos" style={{ marginTop: 16 }}>
                 <ReclamosOcasaPanel
                   liqId={selectedLiq.id}
                   api={api}

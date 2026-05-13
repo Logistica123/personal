@@ -548,16 +548,21 @@ export const PagosPage: React.FC<Props> = ({
       const json: ValidacionResult = await api.post('/pagos/validar-beneficiarios', { items });
       setValidacion(json);
 
-      if (json.validas.length === 0) {
-        setPagoError('Ninguna liquidacion paso la validacion.');
-        setPagoStep('idle');
-        return;
-      }
-
-      // Ir al paso de config
+      // Abrir siempre el modal: si hay 0 válidas, el usuario necesita ver la lista de
+      // motivos por distribuidor (sin CBU, ya en otra OP, etc.) que se renderiza dentro.
       setPagoStep('config');
       if (conceptos.length > 0 && !pagoConceptoId) {
         setPagoConceptoId(conceptos[0].id);
+      }
+
+      if (json.validas.length === 0) {
+        const motivosUnicos = Array.from(
+          new Set((json.errores ?? []).flatMap((e) => e.motivos ?? []))
+        );
+        const detalle = motivosUnicos.length > 0 ? ` (${motivosUnicos.join(' · ')})` : '';
+        setPagoError(
+          `Ninguna de las ${items.length} liquidaciones seleccionadas puede pagarse${detalle}. Revisá el detalle por distribuidor abajo.`
+        );
       }
     } catch (e: any) {
       setPagoError(e.message);
@@ -1181,6 +1186,13 @@ export const PagosPage: React.FC<Props> = ({
             </div>
 
             <div className="pagos-modal__body">
+              {/* Mensaje principal cuando no hay liquidaciones válidas. */}
+              {pagoError && validacion && validacion.validas.length === 0 ? (
+                <div className="pagos-msg pagos-msg--err" style={{ marginBottom: 12 }}>
+                  {pagoError}
+                </div>
+              ) : null}
+
               {/* Errores de validacion */}
               {validacion && validacion.errores.length > 0 ? (
                 <div className="pagos-validacion-errores">
@@ -1264,7 +1276,12 @@ export const PagosPage: React.FC<Props> = ({
               <button
                 className="primary-action"
                 onClick={handleVerPreview}
-                disabled={!pagoConceptoId}
+                disabled={!pagoConceptoId || !validacion || validacion.validas.length === 0}
+                title={
+                  !validacion || validacion.validas.length === 0
+                    ? 'No hay liquidaciones válidas para incluir en la OP'
+                    : undefined
+                }
               >
                 Ver resumen
               </button>

@@ -144,9 +144,17 @@ class LiqDistribuidorDocumentoController extends Controller
             $doc = Archivo::create($payload);
         }
 
-        // Guardar ruta en liqDist (por trazabilidad)
+        // Guardar ruta en liqDist (por trazabilidad). Si está en `generada`, promoverla a
+        // `preparada` para reflejar que el PDF ya fue subido al perfil del distribuidor.
+        // Estados aguas abajo (aprobada/pagada) o anulada no se tocan.
         try {
-            $liquidacionDistribuidor->update(['pdf_path' => $storedPath]);
+            $updates = ['pdf_path' => $storedPath];
+            if ($liquidacionDistribuidor->estado === LiqLiquidacionDistribuidor::ESTADO_GENERADA) {
+                $updates['estado'] = LiqLiquidacionDistribuidor::ESTADO_PREPARADA;
+                $updates['preparada_at'] = now();
+                $updates['preparada_por'] = $request->user()?->id;
+            }
+            $liquidacionDistribuidor->update($updates);
         } catch (\Throwable) {
         }
 

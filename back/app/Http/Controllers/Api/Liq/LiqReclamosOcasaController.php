@@ -78,6 +78,7 @@ class LiqReclamosOcasaController extends Controller
         return response()->json([
             'data' => [
                 'liquidacion_id' => $liquidacionCliente->id,
+                'ultima_deteccion_at' => optional($liquidacionCliente->reclamos_ocasa_detectado_at)->toIso8601String(),
                 'reclamos' => $reclamos,
                 'totales' => [
                     'cantidad' => $reclamos->count(),
@@ -102,6 +103,11 @@ class LiqReclamosOcasaController extends Controller
         }
 
         $stats = $service->detectar($liquidacionCliente, $tolerancia);
+
+        // Registrar timestamp de la última detección para que el panel pueda distinguir
+        // "nunca se corrió" de "se corrió y dio 0". Ver migration 2026_05_13_000001.
+        $liquidacionCliente->reclamos_ocasa_detectado_at = now();
+        $liquidacionCliente->save();
 
         return response()->json([
             'message' => sprintf(

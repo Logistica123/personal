@@ -37,15 +37,17 @@ class LiqLiquidacionCliente extends Model
         'total_diferencia',
         'deleted_by',
         'delete_motivo',
+        'reclamos_ocasa_detectado_at',
     ];
 
     protected $casts = [
-        'periodo_desde'          => 'date',
-        'periodo_hasta'          => 'date',
-        'fecha_carga'            => 'datetime',
-        'total_importe_cliente'  => 'decimal:2',
-        'total_importe_correcto' => 'decimal:2',
-        'total_diferencia'       => 'decimal:2',
+        'periodo_desde'               => 'date',
+        'periodo_hasta'               => 'date',
+        'fecha_carga'                 => 'datetime',
+        'total_importe_cliente'       => 'decimal:2',
+        'total_importe_correcto'      => 'decimal:2',
+        'total_diferencia'            => 'decimal:2',
+        'reclamos_ocasa_detectado_at' => 'datetime',
     ];
 
     // -------------------------------------------------------------------------
