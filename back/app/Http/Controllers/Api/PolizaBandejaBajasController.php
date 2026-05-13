@@ -91,45 +91,58 @@ class PolizaBandejaBajasController extends Controller
 
     public function show(PolizaSolicitudBajaPendiente $pendiente): JsonResponse
     {
-        $pendiente->load([
-            'persona:id,apellidos,nombres,cuil,patente,fecha_alta,fecha_baja,estado_id,cliente_id,sucursal_id',
-            'persona.cliente:id,nombre',
-            'persona.sucursal:id,nombre',
-            'solicitadaPor:id,name,email',
-            'procesadaPor:id,name,email',
-        ]);
+        // BUGFIX 05 — show() es defensivo: cada bloque va envuelto en try/catch
+        // para evitar que un dato corrupto o relación faltante tire 500 y
+        // bloquee toda la pantalla. Si algo falla, devuelve un detalle parcial
+        // con `warnings[]` para diagnóstico.
+        $warnings = [];
 
-        // Cargar pólizas activas vigentes de la persona para que el admin elija cuáles dar de baja.
-        $aseguradosActivos = PolizaAsegurado::query()
-            ->where('persona_id', $pendiente->persona_id)
-            ->whereIn('estado', ['activo', 'alta_solicitada'])
-            ->with('poliza:id,nombre_descriptivo,numero_poliza,aseguradora_id,ramo,tipo_asegurado',
-                   'poliza.aseguradora:id,nombre')
-            ->get();
+        try {
+            $pendiente->load([
+                'persona:id,apellidos,nombres,cuil,patente,fecha_alta,fecha_baja,estado_id,cliente_id,sucursal_id',
+                'persona.cliente:id,nombre',
+                'persona.sucursal:id,nombre',
+                'solicitadaPor:id,name,email',
+                'procesadaPor:id,name,email',
+            ]);
+        } catch (\Throwable $e) {
+            $warnings[] = 'No se pudieron cargar todos los datos de persona: ' . mb_substr($e->getMessage(), 0, 200);
+            \Log::warning("BandejaBajas.show load persona falló: {$e->getMessage()}");
+        }
 
-        $polizasActivas = $aseguradosActivos->groupBy('poliza_id')->map(function ($items) {
-            $primero = $items->first();
-            return [
-                'poliza_id'         => $primero->poliza_id,
-                'poliza_nombre'     => $primero->poliza?->nombre_descriptivo,
-                'numero_poliza'     => $primero->poliza?->numero_poliza,
-                'aseguradora'       => $primero->poliza?->aseguradora?->nombre,
-                'ramo'              => $primero->poliza?->ramo,
-                'tipo_asegurado'    => $primero->poliza?->tipo_asegurado,
-                'asegurados_count'  => $items->count(),
-                'sugerida'          => in_array($primero->poliza_id, $items->first()->poliza ? (array) ($items->first()->poliza_id) : [], true),
-            ];
-        })->values()->all();
+        $polizasActivas = [];
+        try {
+            $aseguradosActivos = PolizaAsegurado::query()
+                ->where('persona_id', $pendiente->persona_id)
+                ->whereIn('estado', ['activo', 'alta_solicitada'])
+                ->with('poliza:id,nombre_descriptivo,numero_poliza,aseguradora_id,ramo,tipo_asegurado',
+                       'poliza.aseguradora:id,nombre')
+                ->get();
 
-        // Marcar las sugeridas que vienen del JSON del payload original.
-        $sugeridas = $pendiente->polizas_sugeridas ?? [];
-        $polizasActivas = array_map(function ($p) use ($sugeridas) {
-            $p['sugerida'] = in_array($p['poliza_id'], $sugeridas, true);
-            return $p;
-        }, $polizasActivas);
+            $sugeridas = $pendiente->polizas_sugeridas ?? [];
+            $polizasActivas = $aseguradosActivos->groupBy('poliza_id')->map(function ($items, $polizaId) use ($sugeridas) {
+                $primero = $items->first();
+                return [
+                    'poliza_id'         => (int) $polizaId,
+                    'poliza_nombre'     => $primero->poliza?->nombre_descriptivo,
+                    'numero_poliza'     => $primero->poliza?->numero_poliza,
+                    'aseguradora'       => $primero->poliza?->aseguradora?->nombre,
+                    'ramo'              => $primero->poliza?->ramo,
+                    'tipo_asegurado'    => $primero->poliza?->tipo_asegurado,
+                    'asegurados_count'  => $items->count(),
+                    'sugerida'          => in_array((int) $polizaId, array_map('intval', $sugeridas), true),
+                ];
+            })->values()->all();
+        } catch (\Throwable $e) {
+            $warnings[] = 'No se pudieron cargar las pólizas activas: ' . mb_substr($e->getMessage(), 0, 200);
+            \Log::warning("BandejaBajas.show polizas activas falló: {$e->getMessage()}");
+        }
 
         $payload = $this->serializar($pendiente);
         $payload['polizas_activas'] = $polizasActivas;
+        if (!empty($warnings)) {
+            $payload['warnings'] = $warnings;
+        }
         return response()->json(['data' => $payload]);
     }
 

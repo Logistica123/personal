@@ -44,6 +44,7 @@ type PendienteRow = {
   solicitada_por: { id: number; name: string | null; email: string | null } | null;
   procesada_por: { id: number; name: string | null; email: string | null } | null;
   polizas_activas?: PolizaActiva[];
+  warnings?: string[];
 };
 
 const fmt = (iso: string | null): string => {
@@ -58,6 +59,21 @@ const ESTADO_TONE: Record<Estado, string> = {
   rechazada: 'bg-red-100 text-red-800',
   cancelada: 'bg-slate-200 text-slate-600',
   todos:     '',
+};
+
+// BUGFIX 05 — extrae mensaje legible de respuestas de error (JSON o texto).
+// Antes el banner mostraba el body crudo `{"message": "Server Error"}` que
+// devuelve Laravel en producción con APP_DEBUG=false.
+const extraerMensajeError = async (resp: Response): Promise<string> => {
+  const body = await resp.text();
+  try {
+    const json = JSON.parse(body) as { message?: string; error?: string };
+    const msg = json.message || json.error;
+    if (msg && msg.toLowerCase() !== 'server error') return msg;
+    return `Error ${resp.status} — el servidor no pudo procesar el pedido. Reintentá; si persiste, revisá los logs.`;
+  } catch {
+    return body.length > 0 && body.length < 200 ? body : `Error ${resp.status}`;
+  }
 };
 
 /**
@@ -85,7 +101,7 @@ export const PolizaBandejaBajasPendientesPage: React.FC<Props> = ({ DashboardLay
       p.set('estado', estado);
       if (search) p.set('search', search);
       const resp = await fetch(`${apiBaseUrl}/api/polizas/bandeja-bajas-pendientes?${p.toString()}`, { cache: 'no-store' });
-      if (!resp.ok) throw new Error(`Error ${resp.status}`);
+      if (!resp.ok) throw new Error(await extraerMensajeError(resp));
       const { data } = await resp.json();
       setRows(data ?? []);
     } catch (e) {
@@ -98,14 +114,17 @@ export const PolizaBandejaBajasPendientesPage: React.FC<Props> = ({ DashboardLay
   useEffect(() => { fetchData(); }, [fetchData]);
 
   const abrirDetalle = useCallback(async (id: number) => {
+    setError(null);
     try {
       const resp = await fetch(`${apiBaseUrl}/api/polizas/bandeja-bajas-pendientes/${id}`, { cache: 'no-store' });
-      if (!resp.ok) throw new Error(await resp.text());
+      if (!resp.ok) throw new Error(await extraerMensajeError(resp));
       const { data } = await resp.json();
       setSeleccionado(data);
       setSearchParams((prev) => { const next = new URLSearchParams(prev); next.set('id', String(id)); return next; }, { replace: true });
     } catch (e) {
-      setError((e as Error).message);
+      setError(`No se pudo abrir el detalle: ${(e as Error).message}`);
+      // BUGFIX 05 — limpiamos `?id=` de la URL así el useEffect no reintenta en loop.
+      setSearchParams((prev) => { const next = new URLSearchParams(prev); next.delete('id'); return next; }, { replace: true });
     }
   }, [apiBaseUrl, setSearchParams]);
 
@@ -132,7 +151,15 @@ export const PolizaBandejaBajasPendientesPage: React.FC<Props> = ({ DashboardLay
       </div>
 
       {error && (
-        <div className="mb-4 rounded-md border border-red-300 bg-red-50 p-3 text-sm text-red-800">{error}</div>
+        <div className="mb-4 rounded-md border border-red-300 bg-red-50 p-3 text-sm text-red-800 flex items-start justify-between gap-3">
+          <span className="flex-1">⚠ {error}</span>
+          <div className="flex gap-2 flex-shrink-0">
+            <button onClick={fetchData}
+              className="text-xs underline hover:text-red-900">Reintentar</button>
+            <button onClick={() => setError(null)}
+              className="text-xs text-red-600 hover:text-red-900">Cerrar</button>
+          </div>
+        </div>
       )}
 
       <div className="mb-4 flex flex-wrap items-end gap-3 rounded-md border border-slate-200 bg-slate-50 p-3">
@@ -262,7 +289,7 @@ const DetalleModal: React.FC<{
           comentarios: comentarios || undefined,
         }),
       });
-      if (!resp.ok) throw new Error(await resp.text());
+      if (!resp.ok) throw new Error(await extraerMensajeError(resp));
       onActualizado();
     } catch (e) { setError(`Procesamiento falló: ${(e as Error).message}`); }
     finally { setLoading(false); }
@@ -280,7 +307,7 @@ const DetalleModal: React.FC<{
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ motivo_rechazo: motivoRechazo }),
       });
-      if (!resp.ok) throw new Error(await resp.text());
+      if (!resp.ok) throw new Error(await extraerMensajeError(resp));
       onActualizado();
     } catch (e) { setError(`Rechazo falló: ${(e as Error).message}`); }
     finally { setLoading(false); }
@@ -291,7 +318,7 @@ const DetalleModal: React.FC<{
     setLoading(true); setError(null);
     try {
       const resp = await fetch(`${apiBaseUrl}/api/polizas/bandeja-bajas-pendientes/${pendiente.id}/cancelar`, { method: 'POST' });
-      if (!resp.ok) throw new Error(await resp.text());
+      if (!resp.ok) throw new Error(await extraerMensajeError(resp));
       onActualizado();
     } catch (e) { setError(`Cancelación falló: ${(e as Error).message}`); }
     finally { setLoading(false); }
@@ -307,6 +334,16 @@ const DetalleModal: React.FC<{
 
         <div className="p-4 space-y-3 text-sm">
           {error && <div className="rounded border border-red-300 bg-red-50 p-2 text-red-800">{error}</div>}
+
+          {/* BUGFIX 05 — el backend devuelve `warnings[]` si alguna relación falló al cargar el detalle. */}
+          {pendiente.warnings && pendiente.warnings.length > 0 && (
+            <div className="rounded border border-amber-300 bg-amber-50 p-2 text-amber-900 text-xs">
+              <strong>Atención:</strong> el detalle se cargó parcialmente:
+              <ul className="list-disc pl-5 mt-1">
+                {pendiente.warnings.map((w, i) => <li key={i}>{w}</li>)}
+              </ul>
+            </div>
+          )}
 
           <div className="rounded border border-slate-200 bg-slate-50 p-3 text-xs space-y-1">
             <div><strong>CUIL:</strong> {pendiente.persona?.cuil ?? '—'} · <strong>Patente:</strong> {pendiente.persona?.patente ?? '—'}</div>
