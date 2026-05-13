@@ -18,6 +18,7 @@ class CargaPolizaService
 {
     public function __construct(
         private readonly MatchingService $matcher,
+        private readonly ImportesCalculatorService $importes,
     ) {
     }
 
@@ -133,7 +134,15 @@ class CargaPolizaService
         return DB::transaction(function () use ($poliza, $payload) {
             $endosoId = null;
             if (!empty($payload['endoso'])) {
-                $endosoId = $this->crearEndoso($poliza, $payload['endoso']);
+                // ADDENDUM 15 Bloque 2 — autocalcular cantidad de asegurados si no llegó.
+                // Cuenta solo los marcados para crear/vincular (no los `ignorar`).
+                $endosoData = $payload['endoso'];
+                if (empty($endosoData['cantidad_asegurados_incorporados'])) {
+                    $endosoData['cantidad_asegurados_incorporados'] = collect($payload['asegurados'] ?? [])
+                        ->filter(fn ($a) => in_array($a['decision'] ?? '', ['vincular', 'crear'], true))
+                        ->count();
+                }
+                $endosoId = $this->crearEndoso($poliza, $endosoData);
             }
 
             $tipoEndoso = $payload['endoso']['tipo'] ?? null;
@@ -235,11 +244,20 @@ class CargaPolizaService
                     ->count(),
             ]);
 
+            // ADDENDUM 15 Bloque 2 — recalcular importes mensuales tras la carga.
+            // El parser ya pobló `premio_endoso`/`cantidad_asegurados_incorporados`
+            // (SC), `premio_anual`/`cantidad_vidas_unidades` (MAPFRE) o
+            // `premio_individual` por asegurado (LS). Acá se distribuye según
+            // perfil de aseguradora. No sobrescribe asegurados con override manual.
+            $endosoModelo = $endosoId ? PolizaEndoso::find($endosoId) : null;
+            $importesStats = $this->importes->recalcularPostCarga($poliza, $endosoModelo);
+
             return [
                 'endoso_id'              => $endosoId,
                 'asegurados_creados'     => $creados,
                 'asegurados_actualizados' => $actualizados,
                 'ignorados'              => $ignorados,
+                'importes_recalculados'  => $importesStats,
             ];
         });
     }
@@ -256,13 +274,21 @@ class CargaPolizaService
         if ($tipo === 'endoso_modificacion')  $tipo = 'modificacion';
         // 'asegurados_adherentes' (ADD 13A) — válido como tipo del ENUM tras la migración.
 
+        // ADDENDUM 15 Bloque 2 — para SC (premio del endoso completo), el parser
+        // o el frontend pueden mandar `cantidad_asegurados_incorporados`. Si no
+        // llega, se autocalcula con el count de items del payload.
+        $cantidadIncorporados = $data['cantidad_asegurados_incorporados']
+            ?? $data['cantidad_asegurados']
+            ?? null;
+
         $endoso = PolizaEndoso::create([
-            'poliza_id'      => $poliza->id,
-            'numero_endoso'  => (string) $numero,
-            'tipo'           => $tipo,
-            'fecha_emision'  => $data['fecha_emision'] ?? now()->toDateString(),
-            'descripcion'    => $data['descripcion']   ?? null,
-            'premio_endoso'  => $data['premio_endoso'] ?? null,
+            'poliza_id'                       => $poliza->id,
+            'numero_endoso'                   => (string) $numero,
+            'tipo'                            => $tipo,
+            'fecha_emision'                   => $data['fecha_emision'] ?? now()->toDateString(),
+            'descripcion'                     => $data['descripcion']   ?? null,
+            'premio_endoso'                   => $data['premio_endoso'] ?? null,
+            'cantidad_asegurados_incorporados'=> $cantidadIncorporados,
         ]);
 
         return $endoso->id;

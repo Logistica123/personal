@@ -23,8 +23,10 @@ use App\Http\Controllers\Api\PolizaAseguradoComentarioController;
 use App\Http\Controllers\Api\ChoferesController;
 use App\Http\Controllers\Api\PolizaAdminController;
 use App\Http\Controllers\Api\PolizaAuditoriaController;
+use App\Http\Controllers\Api\PolizaBandejaBajasController;
 use App\Http\Controllers\Api\PolizaBulkBajaGlobalController;
 use App\Http\Controllers\Api\PolizaInboxController;
+use App\Http\Controllers\Api\PolizaSolicitarAltaMultipleController;
 use App\Http\Controllers\Api\PolizaTestCorreosController;
 use App\Http\Controllers\Api\PolizaEmailConfigController;
 use App\Http\Controllers\Api\ReclamoController;
@@ -89,6 +91,7 @@ Route::pattern('comentario',   '[0-9]+');
 Route::pattern('email',        '[0-9]+');
 Route::pattern('adjunto',      '[0-9]+');
 Route::pattern('bulk',         '[0-9]+');
+Route::pattern('pendiente',    '[0-9]+');
 
 Route::middleware('auth.api')->group(function () {
     // ----- Pólizas -----
@@ -181,6 +184,26 @@ Route::middleware('auth.api')->group(function () {
     Route::post('/polizas/bulk-bajas-global/{bulk}/ejecutar', [PolizaBulkBajaGlobalController::class, 'ejecutar'])
         ->middleware('polizas.permission:puede_bulk_bajas_global');
     Route::get ('/polizas/bulk-bajas-global/{bulk}',          [PolizaBulkBajaGlobalController::class, 'show']);
+
+    // ADDENDUM 15 Bloque 1 — Bandeja de bajas pendientes (decisión humana caso a caso).
+    Route::get   ('/polizas/bandeja-bajas-pendientes',                       [PolizaBandejaBajasController::class, 'index']);
+    Route::post  ('/polizas/bandeja-bajas-pendientes',                       [PolizaBandejaBajasController::class, 'store'])
+        ->middleware('polizas.permission:puede_solicitar_baja');
+    Route::get   ('/polizas/bandeja-bajas-pendientes/{pendiente}',           [PolizaBandejaBajasController::class, 'show']);
+    Route::post  ('/polizas/bandeja-bajas-pendientes/{pendiente}/procesar',  [PolizaBandejaBajasController::class, 'procesar'])
+        ->middleware('polizas.permission:puede_procesar_bajas');
+    Route::post  ('/polizas/bandeja-bajas-pendientes/{pendiente}/rechazar',  [PolizaBandejaBajasController::class, 'rechazar'])
+        ->middleware('polizas.permission:puede_procesar_bajas');
+    Route::post  ('/polizas/bandeja-bajas-pendientes/{pendiente}/cancelar',  [PolizaBandejaBajasController::class, 'cancelar']);
+
+    // ADDENDUM 15 Bloque 2 — editar importes mensuales de un asegurado.
+    Route::put('/polizas/asegurados/{asegurado}/importes', [PolizasController::class, 'updateImportesAsegurado'])
+        ->middleware('polizas.permission:puede_editar_importes');
+
+    // ADDENDUM 15 Bloque 3.G — wizard de alta múltiple precargado desde solicitud aprobada.
+    Route::get ('/polizas/solicitar-alta-multiple/preparacion/{persona}', [PolizaSolicitarAltaMultipleController::class, 'preparacion']);
+    Route::post('/polizas/solicitar-alta-multiple/aprobar',               [PolizaSolicitarAltaMultipleController::class, 'aprobar'])
+        ->middleware('polizas.permission:puede_solicitar_alta');
     Route::post('/polizas/{poliza}/cargar-pdf',            [PolizasController::class, 'cargarPdf'])
         ->middleware('polizas.permission:puede_cargar_pdf');
     Route::post('/polizas/{poliza}/confirmar-carga',       [PolizasController::class, 'confirmarCarga'])

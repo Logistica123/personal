@@ -88,6 +88,17 @@ def _parse_constancia(text: str, warnings: list[str]) -> dict[str, Any]:
         except ValueError:
             warnings.append(f'MAPFRE: suma asegurada no parseable ({m.group(1)})')
 
+    # ADDENDUM 15 Bloque 2 — premio total de la póliza (anual). Es lo que LA paga
+    # por TODA la póliza; se divide entre vidas_vigentes en el backend para
+    # obtener importe mensual por asegurado.
+    for label in ('Premio Total', 'Premio'):
+        m = re.search(rf'{label}\s*:?\s*\$\s*([\d\.\,]+)', text, re.IGNORECASE)
+        if m:
+            val = parse_money(m.group(1))
+            if val is not None:
+                poliza['premio_anual'] = val
+                break
+
     m = re.search(r'Plan:\s*([^\n]+)', text)
     if m:
         poliza['plan'] = m.group(1).strip()
@@ -155,6 +166,15 @@ def _parse_endoso(text_paginas: list[str], warnings: list[str]) -> dict[str, Any
     if m:
         poliza['tomador_razon_social'] = m.group(1).strip()
         poliza['tomador_cuit'] = m.group(2).strip()
+
+    # ADDENDUM 15 Bloque 2 — premio del endoso (cuando el endoso tiene importe propio).
+    for label in ('Premio Total', 'Premio del Endoso', 'Premio'):
+        m = re.search(rf'{label}\s*:?\s*\$\s*([\d\.\,]+)', text_full, re.IGNORECASE)
+        if m:
+            val = parse_money(m.group(1))
+            if val is not None:
+                endoso['premio_endoso'] = val
+                break
 
     asegurados: list[dict[str, Any]] = []
     tiene_alta = False

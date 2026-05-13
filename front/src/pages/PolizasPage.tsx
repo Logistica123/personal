@@ -177,6 +177,9 @@ export const PolizasPage: React.FC<Props> = ({ DashboardLayout, resolveApiBaseUr
             className="secondary-action secondary-action--ghost">⚠ Discrepancias</button>
           <button type="button" onClick={() => navigate('/polizas/solicitudes')}
             className="secondary-action secondary-action--ghost">📨 Solicitudes</button>
+          {/* ADDENDUM 15 Bloque 1 — bandeja de bajas para revisión humana */}
+          <button type="button" onClick={() => navigate('/polizas/bandeja-bajas-pendientes')}
+            className="secondary-action secondary-action--ghost">📋 Bajas pendientes</button>
           {/* ADDENDUM 14 Parte A — diagnóstico OAuth E2E */}
           <button type="button" onClick={() => navigate('/polizas/configuracion/test-correos')}
             className="secondary-action secondary-action--ghost">🧪 Test correos</button>

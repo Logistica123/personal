@@ -54,10 +54,12 @@ import { PolizasConfigMiOutlookPage } from './pages/PolizasConfigMiOutlookPage';
 import { PolizaAdminsPage } from './pages/PolizaAdminsPage';
 import { PolizaAuditoriaPage } from './pages/PolizaAuditoriaPage';
 import { PolizaBajaMasivaPage } from './pages/PolizaBajaMasivaPage';
+import { PolizaBandejaBajasPendientesPage } from './pages/PolizaBandejaBajasPendientesPage';
 import { PolizaBulkBajasGlobalPage } from './pages/PolizaBulkBajasGlobalPage';
 import { PolizaConfiguracionPage } from './pages/PolizaConfiguracionPage';
 import { PolizaDiscrepanciasGlobalesPage } from './pages/PolizaDiscrepanciasGlobalesPage';
 import { PolizaInboxPage } from './pages/PolizaInboxPage';
+import { PolizaSolicitarAltaMultiplePage } from './pages/PolizaSolicitarAltaMultiplePage';
 import { PolizaTestCorreosPage } from './pages/PolizaTestCorreosPage';
 import { MembresiaPanelPage } from './pages/MembresiaPanelPage';
 import { ProveedorNuevoPage } from './pages/ProveedorNuevoPage';
@@ -21197,6 +21199,30 @@ const AppRoutes: React.FC = () => {
         element={
           <RequireAccess section="personal">
             <PolizaBulkBajasGlobalPage
+              DashboardLayout={DashboardLayout}
+              resolveApiBaseUrl={resolveApiBaseUrl}
+            />
+          </RequireAccess>
+        }
+      />
+      {/* ADDENDUM 15 Bloque 1 — Bandeja de bajas pendientes (revisión humana) */}
+      <Route
+        path="/polizas/bandeja-bajas-pendientes"
+        element={
+          <RequireAccess section="personal">
+            <PolizaBandejaBajasPendientesPage
+              DashboardLayout={DashboardLayout}
+              resolveApiBaseUrl={resolveApiBaseUrl}
+            />
+          </RequireAccess>
+        }
+      />
+      {/* ADDENDUM 15 Bloque 3.G — Wizard alta múltiple precargado desde Aprobaciones */}
+      <Route
+        path="/polizas/solicitar-alta-multiple"
+        element={
+          <RequireAccess section="personal">
+            <PolizaSolicitarAltaMultiplePage
               DashboardLayout={DashboardLayout}
               resolveApiBaseUrl={resolveApiBaseUrl}
             />

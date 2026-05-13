@@ -105,6 +105,22 @@ type AltaRequestForm = {
   duenoCbuAlias: string;
   duenoTelefono: string;
   duenoObservaciones: string;
+  // ADDENDUM 15 Bloque 3.E — choferes adicionales del distribuidor.
+  choferesAdicionales: ChoferAdicional[];
+  // ADDENDUM 15 Bloque 3.F — pólizas a solicitar (AP + Vehículos).
+  polizasSolicitadas: {
+    ap: { solicitar: boolean; aseguradoraId: string; clausulaId: string };
+    vehiculos: { solicitar: boolean; aseguradoraId: string; tipo: 'autos' | 'motos' | '';
+                 patente: string; clausulaId: string; importeNegociadoMensual: string };
+  };
+};
+
+type ChoferAdicional = {
+  nombres: string;
+  apellidos: string;
+  cuil: string;
+  dni: string;
+  fechaNacimiento: string;
 };
 
 type AltaSelectOption = {
@@ -189,6 +205,7 @@ type PolizaRequestForm = {
 type AltaEditableField = Exclude<
   keyof AltaRequestForm,
   'tarifaEspecial' | 'combustible' | 'perfilValue' | 'agenteResponsableIds' | 'esCobrador'
+  | 'choferesAdicionales' | 'polizasSolicitadas'
 >;
 
 const MAX_UPLOAD_SIZE_BYTES = 50 * 1024 * 1024; // 50 MB
@@ -1149,6 +1166,11 @@ export const ApprovalsRequestsPage: React.FC<ApprovalsRequestsPageProps> = ({
     duenoCbuAlias: '',
     duenoTelefono: '',
     duenoObservaciones: '',
+    choferesAdicionales: [],
+    polizasSolicitadas: {
+      ap: { solicitar: false, aseguradoraId: '', clausulaId: '' },
+      vehiculos: { solicitar: false, aseguradoraId: '', tipo: '', patente: '', clausulaId: '', importeNegociadoMensual: '' },
+    },
   }));
   const [combustibleForm, setCombustibleForm] = useState<CombustibleRequestForm>(() => ({
     empresaId: '',
@@ -2780,6 +2802,33 @@ const sucursalOptions = useMemo(() => {
       duenoTelefono: form.duenoTelefono.trim() || null,
       duenoObservaciones: form.duenoObservaciones.trim() || null,
       esSolicitud: true,
+      // ADDENDUM 15 Bloque 3.E — choferes adicionales (filtrar incompletos).
+      solicitudChoferes: form.choferesAdicionales
+        .filter((c) => c.nombres.trim().length > 0)
+        .map((c) => ({
+          nombres: c.nombres.trim(),
+          apellidos: c.apellidos.trim() || null,
+          cuil: c.cuil.trim() || null,
+          dni: c.dni.trim() || null,
+          fecha_nacimiento: c.fechaNacimiento || null,
+        })),
+      // ADDENDUM 15 Bloque 3.F — pólizas a solicitar.
+      solicitudPolizas: (form.polizasSolicitadas.ap.solicitar || form.polizasSolicitadas.vehiculos.solicitar) ? {
+        ap: form.polizasSolicitadas.ap.solicitar ? {
+          solicitar: true,
+          aseguradora_id: form.polizasSolicitadas.ap.aseguradoraId ? Number(form.polizasSolicitadas.ap.aseguradoraId) : null,
+          clausula_id:    form.polizasSolicitadas.ap.clausulaId    ? Number(form.polizasSolicitadas.ap.clausulaId)    : null,
+        } : undefined,
+        vehiculos: form.polizasSolicitadas.vehiculos.solicitar ? {
+          solicitar: true,
+          aseguradora_id: form.polizasSolicitadas.vehiculos.aseguradoraId ? Number(form.polizasSolicitadas.vehiculos.aseguradoraId) : null,
+          tipo:           form.polizasSolicitadas.vehiculos.tipo || null,
+          patente:        form.polizasSolicitadas.vehiculos.patente.trim() || form.patente.trim() || null,
+          clausula_id:    form.polizasSolicitadas.vehiculos.clausulaId ? Number(form.polizasSolicitadas.vehiculos.clausulaId) : null,
+          importe_negociado_mensual: form.polizasSolicitadas.vehiculos.importeNegociadoMensual
+            ? Number(form.polizasSolicitadas.vehiculos.importeNegociadoMensual) : null,
+        } : undefined,
+      } : null,
     };
   };
 
@@ -3034,6 +3083,11 @@ const sucursalOptions = useMemo(() => {
         duenoCbuAlias: '',
         duenoTelefono: '',
         duenoObservaciones: '',
+        choferesAdicionales: [],
+        polizasSolicitadas: {
+          ap: { solicitar: false, aseguradoraId: '', clausulaId: '' },
+          vehiculos: { solicitar: false, aseguradoraId: '', tipo: '', patente: '', clausulaId: '', importeNegociadoMensual: '' },
+        },
       }));
       setAltaAttachments([]);
       setAltaFilesVersion((value) => value + 1);
@@ -6545,6 +6599,21 @@ const sucursalOptions = useMemo(() => {
                 />
               </div>
             </div>
+
+            {/* ADDENDUM 15 Bloque 3.E — choferes adicionales */}
+            <ChoferesAdicionalesSection
+              choferes={altaForm.choferesAdicionales}
+              onChange={(next) => setAltaForm((prev) => ({ ...prev, choferesAdicionales: next }))}
+              setDirty={setAltaFormDirty}
+            />
+
+            {/* ADDENDUM 15 Bloque 3.F — pólizas a solicitar */}
+            <PolizasSolicitarSection
+              datos={altaForm.polizasSolicitadas}
+              patenteTitular={altaForm.patente}
+              onChange={(next) => setAltaForm((prev) => ({ ...prev, polizasSolicitadas: next }))}
+              setDirty={setAltaFormDirty}
+            />
           </div>
         );
       case 2:
@@ -8868,5 +8937,189 @@ const sucursalOptions = useMemo(() => {
         </div>
       ) : null}
     </DashboardLayout>
+  );
+};
+
+// ─── ADDENDUM 15 Bloque 3.E — Sección de choferes adicionales ────────────────
+
+const ChoferesAdicionalesSection: React.FC<{
+  choferes: ChoferAdicional[];
+  onChange: (next: ChoferAdicional[]) => void;
+  setDirty: (b: boolean) => void;
+}> = ({ choferes, onChange, setDirty }) => {
+  const agregar = (): void => {
+    setDirty(true);
+    onChange([...choferes, { nombres: '', apellidos: '', cuil: '', dni: '', fechaNacimiento: '' }]);
+  };
+  const quitar = (i: number): void => {
+    setDirty(true);
+    onChange(choferes.filter((_, idx) => idx !== i));
+  };
+  const actualizar = (i: number, campo: keyof ChoferAdicional, valor: string): void => {
+    setDirty(true);
+    onChange(choferes.map((c, idx) => idx === i ? { ...c, [campo]: valor } : c));
+  };
+
+  return (
+    <div className="personal-subsection" style={{ marginTop: '1rem' }}>
+      <h4>Choferes adicionales (opcional)</h4>
+      <p style={{ fontSize: '0.85rem', color: '#666', margin: '0 0 0.5rem 0' }}>
+        Si este distribuidor tiene choferes que también deben quedar vinculados, agregalos acá.
+        Al aprobar la solicitud se crean como personas independientes y se vinculan al titular.
+      </p>
+      {choferes.length === 0 && (
+        <p style={{ fontSize: '0.85rem', color: '#999', fontStyle: 'italic' }}>
+          Sin choferes — dejá vacío si no aplica.
+        </p>
+      )}
+      {choferes.map((c, i) => (
+        <div key={i} style={{
+          marginBottom: '0.5rem', padding: '0.6rem', border: '1px solid #e2e8f0', borderRadius: 6, background: '#f8fafc',
+        }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.3rem' }}>
+            <strong style={{ fontSize: '0.85rem' }}>Chofer {i + 1}</strong>
+            <button type="button" onClick={() => quitar(i)}
+              style={{ background: 'none', border: 0, color: '#c4392a', cursor: 'pointer', fontSize: '0.8rem' }}>
+              Quitar
+            </button>
+          </div>
+          <div className="form-grid">
+            <label className="input-control">
+              <span>Nombres</span>
+              <input value={c.nombres} onChange={(e) => actualizar(i, 'nombres', e.target.value)} />
+            </label>
+            <label className="input-control">
+              <span>Apellidos</span>
+              <input value={c.apellidos} onChange={(e) => actualizar(i, 'apellidos', e.target.value)} />
+            </label>
+            <label className="input-control">
+              <span>CUIL</span>
+              <input value={c.cuil} onChange={(e) => actualizar(i, 'cuil', e.target.value)} />
+            </label>
+            <label className="input-control">
+              <span>DNI</span>
+              <input value={c.dni} onChange={(e) => actualizar(i, 'dni', e.target.value)} />
+            </label>
+            <label className="input-control">
+              <span>Fecha de nacimiento</span>
+              <input type="date" value={c.fechaNacimiento} onChange={(e) => actualizar(i, 'fechaNacimiento', e.target.value)} />
+            </label>
+          </div>
+        </div>
+      ))}
+      <button type="button" onClick={agregar} className="secondary-action secondary-action--ghost">
+        + Agregar chofer
+      </button>
+    </div>
+  );
+};
+
+// ─── ADDENDUM 15 Bloque 3.F — Sección de pólizas a solicitar ─────────────────
+
+const PolizasSolicitarSection: React.FC<{
+  datos: AltaRequestForm['polizasSolicitadas'];
+  patenteTitular: string;
+  onChange: (next: AltaRequestForm['polizasSolicitadas']) => void;
+  setDirty: (b: boolean) => void;
+}> = ({ datos, patenteTitular, onChange, setDirty }) => {
+  const toggleAp = (b: boolean): void => {
+    setDirty(true);
+    onChange({ ...datos, ap: { ...datos.ap, solicitar: b } });
+  };
+  const toggleVeh = (b: boolean): void => {
+    setDirty(true);
+    onChange({
+      ...datos,
+      vehiculos: {
+        ...datos.vehiculos, solicitar: b,
+        // Heredar patente del titular automáticamente al tildar.
+        patente: b && !datos.vehiculos.patente ? patenteTitular : datos.vehiculos.patente,
+      },
+    });
+  };
+  const updateAp = (campo: 'aseguradoraId' | 'clausulaId', v: string): void => {
+    setDirty(true);
+    onChange({ ...datos, ap: { ...datos.ap, [campo]: v } });
+  };
+  const updateVeh = (campo: keyof AltaRequestForm['polizasSolicitadas']['vehiculos'], v: string): void => {
+    setDirty(true);
+    onChange({ ...datos, vehiculos: { ...datos.vehiculos, [campo]: v } });
+  };
+
+  return (
+    <div className="personal-subsection" style={{ marginTop: '1rem' }}>
+      <h4>Pólizas a solicitar</h4>
+      <p style={{ fontSize: '0.85rem', color: '#666', margin: '0 0 0.5rem 0' }}>
+        Indicá qué pólizas debería tener este distribuidor. Al aprobar la solicitud, el
+        administrativo de Pólizas va a usar estos datos para iniciar las solicitudes de alta.
+      </p>
+
+      {/* AP */}
+      <div style={{ marginBottom: '0.75rem', padding: '0.6rem', border: '1px solid #e2e8f0', borderRadius: 6 }}>
+        <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.4rem' }}>
+          <input type="checkbox" checked={datos.ap.solicitar} onChange={(e) => toggleAp(e.target.checked)} />
+          <strong>Accidentes Personales</strong>
+        </label>
+        {datos.ap.solicitar && (
+          <div className="form-grid">
+            <label className="input-control">
+              <span>Aseguradora ID</span>
+              <input type="number" min="1" value={datos.ap.aseguradoraId}
+                onChange={(e) => updateAp('aseguradoraId', e.target.value)}
+                placeholder="1 = MAPFRE, 2 = San Cristóbal" />
+            </label>
+            <label className="input-control">
+              <span>Cláusula ID (opcional)</span>
+              <input type="number" min="1" value={datos.ap.clausulaId}
+                onChange={(e) => updateAp('clausulaId', e.target.value)}
+                placeholder="ID de la cláusula" />
+            </label>
+          </div>
+        )}
+      </div>
+
+      {/* Vehículos */}
+      <div style={{ padding: '0.6rem', border: '1px solid #e2e8f0', borderRadius: 6 }}>
+        <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.4rem' }}>
+          <input type="checkbox" checked={datos.vehiculos.solicitar} onChange={(e) => toggleVeh(e.target.checked)} />
+          <strong>Vehículos</strong>
+        </label>
+        {datos.vehiculos.solicitar && (
+          <div className="form-grid">
+            <label className="input-control">
+              <span>Aseguradora ID</span>
+              <input type="number" min="1" value={datos.vehiculos.aseguradoraId}
+                onChange={(e) => updateVeh('aseguradoraId', e.target.value)}
+                placeholder="3 = La Segunda" />
+            </label>
+            <label className="input-control">
+              <span>Tipo</span>
+              <select value={datos.vehiculos.tipo}
+                onChange={(e) => updateVeh('tipo', e.target.value as 'autos' | 'motos' | '')}>
+                <option value="">Seleccionar…</option>
+                <option value="autos">Autos</option>
+                <option value="motos">Motos</option>
+              </select>
+            </label>
+            <label className="input-control">
+              <span>Patente</span>
+              <input value={datos.vehiculos.patente} onChange={(e) => updateVeh('patente', e.target.value.toUpperCase())}
+                placeholder={patenteTitular || 'Patente'} />
+            </label>
+            <label className="input-control">
+              <span>Cláusula ID (opcional)</span>
+              <input type="number" min="1" value={datos.vehiculos.clausulaId}
+                onChange={(e) => updateVeh('clausulaId', e.target.value)} />
+            </label>
+            <label className="input-control">
+              <span>Importe negociado mensual ($)</span>
+              <input type="number" step="0.01" min="0" value={datos.vehiculos.importeNegociadoMensual}
+                onChange={(e) => updateVeh('importeNegociadoMensual', e.target.value)}
+                placeholder="Ej: 1800.00" />
+            </label>
+          </div>
+        )}
+      </div>
+    </div>
   );
 };

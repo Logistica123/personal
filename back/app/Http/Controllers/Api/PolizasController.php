@@ -8,6 +8,7 @@ use App\Models\Poliza;
 use App\Models\PolizaAsegurado;
 use App\Services\Polizas\CargaPolizaService;
 use App\Services\Polizas\DiscrepanciasService;
+use App\Services\Polizas\ImportesCalculatorService;
 use App\Services\Polizas\PolizaCertificadoIndividualService;
 use App\Services\Polizas\PolizaPdfService;
 use Illuminate\Http\JsonResponse;
@@ -20,7 +21,71 @@ class PolizasController extends Controller
         private readonly PolizaPdfService $pdfService,
         private readonly CargaPolizaService $cargaService,
         private readonly PolizaCertificadoIndividualService $certificadoService,
+        private readonly ImportesCalculatorService $importesCalc,
     ) {
+    }
+
+    /**
+     * ADDENDUM 15 Bloque 2 — editar importes mensuales de un asegurado.
+     *
+     * Permite ajustar el `importe_mensual_la` (raro, pero soportado) y el
+     * `importe_mensual_distribuidor` ya sea por porcentaje de descuento o
+     * por monto manual. Setea `importe_mensual_origen='manual'` o `'editado'`
+     * para que el recálculo automático no sobrescriba.
+     */
+    public function updateImportesAsegurado(Request $request, PolizaAsegurado $asegurado): JsonResponse
+    {
+        $data = $request->validate([
+            'importe_mensual_la'                 => ['nullable', 'numeric', 'min:0'],
+            'porcentaje_descuento_distribuidor'  => ['nullable', 'numeric', 'min:0', 'max:100'],
+            'importe_mensual_distribuidor_manual'=> ['nullable', 'numeric', 'min:0'],
+        ]);
+
+        $cambios = [];
+
+        // Si se sube un importe LA distinto al actual → origen=editado (override del parser).
+        if (array_key_exists('importe_mensual_la', $data) && $data['importe_mensual_la'] !== null) {
+            $cambios['importe_mensual_la'] = $data['importe_mensual_la'];
+            $cambios['importe_mensual_origen'] = 'editado';
+        }
+
+        if (array_key_exists('importe_mensual_distribuidor_manual', $data)
+            && $data['importe_mensual_distribuidor_manual'] !== null) {
+            // Modo manual: el admin ingresó el monto directo.
+            $cambios['importe_mensual_distribuidor'] = $data['importe_mensual_distribuidor_manual'];
+            $cambios['importe_mensual_origen'] = 'manual';
+            // Mantener el porcentaje informativo si vino.
+            if (array_key_exists('porcentaje_descuento_distribuidor', $data) && $data['porcentaje_descuento_distribuidor'] !== null) {
+                $cambios['porcentaje_descuento_distribuidor'] = $data['porcentaje_descuento_distribuidor'];
+            }
+        } elseif (array_key_exists('porcentaje_descuento_distribuidor', $data) && $data['porcentaje_descuento_distribuidor'] !== null) {
+            // Modo % descuento: recalcular el importe distribuidor.
+            $importeLa = (float) ($cambios['importe_mensual_la'] ?? $asegurado->importe_mensual_la ?? 0);
+            if ($importeLa > 0) {
+                $cambios['porcentaje_descuento_distribuidor'] = $data['porcentaje_descuento_distribuidor'];
+                $cambios['importe_mensual_distribuidor'] = $this->importesCalc
+                    ->calcularImporteDistribuidor($importeLa, $data['porcentaje_descuento_distribuidor']);
+                // Si no estaba en 'editado' ni 'manual', queda como 'endoso' (recalculado).
+                if (empty($cambios['importe_mensual_origen']) && !in_array($asegurado->importe_mensual_origen, ['manual'], true)) {
+                    $cambios['importe_mensual_origen'] = $asegurado->importe_mensual_origen ?? 'endoso';
+                }
+            }
+        }
+
+        if (empty($cambios)) {
+            return response()->json(['message' => 'Nada para actualizar.'], 422);
+        }
+
+        $asegurado->update($cambios);
+        $asegurado->refresh();
+
+        return response()->json(['data' => [
+            'asegurado_id'                       => $asegurado->id,
+            'importe_mensual_la'                 => $asegurado->importe_mensual_la,
+            'importe_mensual_distribuidor'       => $asegurado->importe_mensual_distribuidor,
+            'porcentaje_descuento_distribuidor'  => $asegurado->porcentaje_descuento_distribuidor,
+            'importe_mensual_origen'             => $asegurado->importe_mensual_origen,
+        ]]);
     }
 
     /**

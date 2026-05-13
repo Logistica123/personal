@@ -83,6 +83,18 @@ def parse(text_paginas: list[str], pdf_path: str | None = None) -> dict[str, Any
         from app.parsers.polizas.common import parse_money
         poliza['suma_asegurada_total'] = parse_money(m.group(1))
 
+    # ADDENDUM 15 Bloque 2 — premio del endoso (lo que LA paga por TODOS los
+    # asegurados incorporados en este endoso). El backend divide entre
+    # `cantidad_asegurados_incorporados` y entre 12 para obtener mensual por
+    # asegurado. SC reporta el Premio explícitamente:
+    #   "Premio: $56.941,00" (formato AR)
+    from app.parsers.polizas.common import parse_money as _pm
+    m = re.search(r'Premio\s*:?\s*\$\s*([\d\.\,]+)', text_full, re.IGNORECASE)
+    if m:
+        val = _pm(m.group(1))
+        if val is not None:
+            endoso['premio_endoso'] = val
+
     # Detección de tipo: priorizar incorporación > baja > modificación.
     tiene_incorp = 'Incorporación de Asegurados' in text_full
     tiene_baja = re.search(r'Anulación de Asegurados|Bajas?\s+de\s+Asegurados', text_full, re.IGNORECASE)

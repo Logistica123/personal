@@ -113,6 +113,11 @@ export type PolizaAsegurado = {
   localidad_pdf: string | null;
   suma_asegurada: string | null;
   premio_individual: string | null;
+  // ADDENDUM 15 Bloque 2 — importes mensuales (LA paga vs. descuento al distribuidor).
+  importe_mensual_la?: string | null;
+  importe_mensual_distribuidor?: string | null;
+  porcentaje_descuento_distribuidor?: string | null;
+  importe_mensual_origen?: 'endoso' | 'manual' | 'editado' | null;
   fecha_alta_efectiva: string | null;
   fecha_baja_efectiva: string | null;
   estado: EstadoAsegurado;

@@ -19,6 +19,7 @@ class PolizaEndoso extends Model
         'archivo_id',
         'descripcion',
         'premio_endoso',
+        'cantidad_asegurados_incorporados',
     ];
 
     protected $casts = [

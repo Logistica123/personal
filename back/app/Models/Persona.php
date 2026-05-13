@@ -62,6 +62,8 @@ class Persona extends Model
         'fecha_alta',
         'fecha_baja',
         'es_solicitud',
+        'solicitud_choferes_json',
+        'solicitud_polizas_json',
         'retener_pago',
         'retener_pago_motivo',
     ];
@@ -79,6 +81,9 @@ class Persona extends Model
     protected $casts = [
         'agentes_responsables_ids' => 'array',
         'paga_peajes' => 'boolean',
+        // ADDENDUM 15 Bloque 3 — datos extendidos de la solicitud de alta.
+        'solicitud_choferes_json' => 'array',
+        'solicitud_polizas_json'  => 'array',
     ];
 
     public function cliente()

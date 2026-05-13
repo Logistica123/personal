@@ -299,6 +299,15 @@ const TabAsegurados: React.FC<TabAseguradosProps> = ({
   const [fechaAltaHasta, setFechaAltaHasta] = useState<string>('');
   // ADDENDUM 10 Parte B — modal de comentarios.
   const [modalComentarios, setModalComentarios] = useState<{ id: number; identificador: string } | null>(null);
+  // ADDENDUM 15 Bloque 2 — modal de edición de importes mensuales.
+  const [modalImportes, setModalImportes] = useState<{
+    aseguradoId: number;
+    identificador: string;
+    importeLa: string | null;
+    importeDist: string | null;
+    porcentaje: string;
+    origen: 'endoso' | 'manual' | 'editado' | null;
+  } | null>(null);
   // ADDENDUM 10 sub-fase 2 — expand ▼ por fila + filtro cobertura completa.
   const [filterCobertura, setFilterCobertura] = useState<'' | 'completa' | 'incompleta'>('');
   const [expandidos, setExpandidos] = useState<Set<number>>(new Set());
@@ -569,6 +578,8 @@ const TabAsegurados: React.FC<TabAseguradosProps> = ({
                 <th>Estado dist.</th>
                 <th>Estado póliza</th>
                 <th>Fecha alta</th>
+                <th>Importe LA</th>
+                <th>Importe distribuidor</th>
                 <th>Comentarios</th>
                 <th></th>
               </tr>
@@ -584,8 +595,8 @@ const TabAsegurados: React.FC<TabAseguradosProps> = ({
                   : incompleta
                     ? { background: '#fff5e6' }  // ámbar suave si tiene choferes sin AP
                     : undefined;
-                // +1 por checkbox, +1 por columna acción al final.
-                const totalCols = (esVehiculo ? 9 : 8) + 2;
+                // +1 por checkbox, +1 por columna acción al final, +2 por importes LA y distribuidor.
+                const totalCols = (esVehiculo ? 9 : 8) + 4;
 
                 return (
                   <React.Fragment key={a.id}>
@@ -675,6 +686,40 @@ const TabAsegurados: React.FC<TabAseguradosProps> = ({
                             Baja: {fmtDate(a.fecha_baja_efectiva)}
                           </small>
                         )}
+                      </td>
+                      {/* ADDENDUM 15 Bloque 2 — importes mensuales (LA + descuento distribuidor). */}
+                      <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontSize: '0.85rem' }}>
+                        {a.importe_mensual_la ? `$ ${Number(a.importe_mensual_la).toLocaleString('es-AR', { minimumFractionDigits: 2 })}` : '—'}
+                      </td>
+                      <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontSize: '0.85rem' }}>
+                        {a.importe_mensual_distribuidor
+                          ? `$ ${Number(a.importe_mensual_distribuidor).toLocaleString('es-AR', { minimumFractionDigits: 2 })}`
+                          : '—'}
+                        {a.porcentaje_descuento_distribuidor && a.importe_mensual_distribuidor && (
+                          <small style={{ display: 'block', color: '#888', fontSize: '0.7rem' }}>
+                            -{Number(a.porcentaje_descuento_distribuidor).toFixed(0)}%
+                            {a.importe_mensual_origen === 'manual' && ' · manual'}
+                            {a.importe_mensual_origen === 'editado' && ' · editado'}
+                          </small>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => setModalImportes({
+                            aseguradoId: a.id,
+                            identificador: a.identificador,
+                            importeLa: a.importe_mensual_la ?? null,
+                            importeDist: a.importe_mensual_distribuidor ?? null,
+                            porcentaje: a.porcentaje_descuento_distribuidor ?? '20',
+                            origen: a.importe_mensual_origen ?? null,
+                          })}
+                          title="Editar importes"
+                          style={{
+                            background: 'transparent', border: 0, cursor: 'pointer',
+                            color: '#1d74f5', fontSize: '0.7rem', padding: '0.1rem 0.3rem',
+                          }}
+                        >
+                          ✎
+                        </button>
                       </td>
                       <td>
                         <button
@@ -817,6 +862,133 @@ const TabAsegurados: React.FC<TabAseguradosProps> = ({
           }}
         />
       )}
+
+      {/* ADDENDUM 15 Bloque 2 — modal edición importes mensuales. */}
+      {modalImportes && (
+        <EditarImportesModal
+          apiBaseUrl={apiBaseUrl}
+          datos={modalImportes}
+          onClose={() => setModalImportes(null)}
+          onSaved={() => {
+            setModalImportes(null);
+            onComentariosChange?.();  // refetch del listado
+          }}
+        />
+      )}
+    </div>
+  );
+};
+
+// ─── ADDENDUM 15 Bloque 2 — Modal edición de importes mensuales ──────────────
+
+const EditarImportesModal: React.FC<{
+  apiBaseUrl: string;
+  datos: {
+    aseguradoId: number;
+    identificador: string;
+    importeLa: string | null;
+    importeDist: string | null;
+    porcentaje: string;
+    origen: 'endoso' | 'manual' | 'editado' | null;
+  };
+  onClose: () => void;
+  onSaved: () => void;
+}> = ({ apiBaseUrl, datos, onClose, onSaved }) => {
+  const [importeLa, setImporteLa] = useState(datos.importeLa ?? '');
+  const [modo, setModo] = useState<'porcentaje' | 'manual'>('porcentaje');
+  const [porcentaje, setPorcentaje] = useState(datos.porcentaje ?? '20');
+  const [importeDistManual, setImporteDistManual] = useState(datos.importeDist ?? '');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const calculado = useMemo(() => {
+    const la = parseFloat(importeLa);
+    const pct = parseFloat(porcentaje);
+    if (Number.isFinite(la) && Number.isFinite(pct)) {
+      return (la * (1 - pct / 100)).toFixed(2);
+    }
+    return '';
+  }, [importeLa, porcentaje]);
+
+  const guardar = useCallback(async () => {
+    setSaving(true); setError(null);
+    try {
+      const body: Record<string, unknown> = {};
+      if (importeLa !== '' && importeLa !== datos.importeLa) {
+        body.importe_mensual_la = parseFloat(importeLa);
+      }
+      if (modo === 'porcentaje') {
+        body.porcentaje_descuento_distribuidor = parseFloat(porcentaje);
+      } else {
+        body.importe_mensual_distribuidor_manual = parseFloat(importeDistManual);
+        body.porcentaje_descuento_distribuidor = parseFloat(porcentaje);
+      }
+      const resp = await fetch(`${apiBaseUrl}/api/polizas/asegurados/${datos.aseguradoId}/importes`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      if (!resp.ok) throw new Error(await resp.text());
+      onSaved();
+    } catch (e) {
+      setError(`Error: ${(e as Error).message}`);
+    } finally { setSaving(false); }
+  }, [apiBaseUrl, datos, importeLa, modo, porcentaje, importeDistManual, onSaved]);
+
+  return (
+    <div style={{
+      position: 'fixed', inset: 0, zIndex: 50, background: 'rgba(15,23,42,0.4)',
+      display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem',
+    }}>
+      <div style={{
+        background: '#fff', borderRadius: 8, maxWidth: '32rem', width: '100%',
+        boxShadow: '0 20px 25px -5px rgba(0,0,0,0.1)',
+      }}>
+        <div style={{ padding: '1rem 1.25rem', borderBottom: '1px solid #e5e7eb' }}>
+          <h3 style={{ margin: 0, fontSize: '1rem', fontWeight: 600 }}>
+            Editar importes — {datos.identificador}
+          </h3>
+        </div>
+        <div style={{ padding: '1rem 1.25rem', fontSize: '0.875rem' }}>
+          {error && <div style={{ padding: '0.5rem 0.75rem', background: '#fef2f2', color: '#991b1b', borderRadius: 6, marginBottom: '0.75rem' }}>{error}</div>}
+
+          <label style={{ display: 'block', marginBottom: '0.75rem' }}>
+            <span style={{ display: 'block', fontSize: '0.75rem', color: '#64748b' }}>Importe LA (mensual)</span>
+            <input type="number" step="0.01" min="0" value={importeLa} onChange={(e) => setImporteLa(e.target.value)}
+              style={{ width: '100%', borderRadius: 6, borderColor: '#cbd5e1', padding: '0.4rem' }} />
+            {datos.origen && (
+              <small style={{ color: '#64748b', fontSize: '0.7rem' }}>Origen actual: {datos.origen}</small>
+            )}
+          </label>
+
+          <div style={{ marginBottom: '0.75rem' }}>
+            <div style={{ fontSize: '0.75rem', color: '#64748b', marginBottom: '0.4rem' }}>Descuento al distribuidor:</div>
+            <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.4rem' }}>
+              <input type="radio" checked={modo === 'porcentaje'} onChange={() => setModo('porcentaje')} />
+              <span>Calcular como % menos del importe LA:</span>
+              <input type="number" min="0" max="100" step="1" value={porcentaje} onChange={(e) => setPorcentaje(e.target.value)}
+                disabled={modo !== 'porcentaje'} style={{ width: '4rem', borderRadius: 6, borderColor: '#cbd5e1', padding: '0.2rem 0.4rem' }} />
+              <span>%</span>
+              <span style={{ marginLeft: 'auto', color: '#0a8c3a', fontWeight: 600 }}>
+                = ${calculado ? Number(calculado).toLocaleString('es-AR', { minimumFractionDigits: 2 }) : '—'}
+              </span>
+            </label>
+            <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <input type="radio" checked={modo === 'manual'} onChange={() => setModo('manual')} />
+              <span>Ingresar importe manualmente:</span>
+              <input type="number" step="0.01" min="0" value={importeDistManual} onChange={(e) => setImporteDistManual(e.target.value)}
+                disabled={modo !== 'manual'} style={{ width: '7rem', borderRadius: 6, borderColor: '#cbd5e1', padding: '0.2rem 0.4rem' }} />
+            </label>
+          </div>
+        </div>
+        <div style={{ padding: '0.75rem 1.25rem', borderTop: '1px solid #e5e7eb', display: 'flex', justifyContent: 'flex-end', gap: '0.5rem' }}>
+          <button onClick={onClose} className="secondary-action secondary-action--ghost">Cancelar</button>
+          <button onClick={guardar} disabled={saving} className="secondary-action"
+            style={{ background: '#1d74f5', color: '#fff' }}>
+            {saving ? 'Guardando…' : 'Guardar cambios'}
+          </button>
+        </div>
+      </div>
     </div>
   );
 };

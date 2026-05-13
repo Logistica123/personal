@@ -1752,6 +1752,24 @@ class PersonalController extends Controller
             'duenoObservaciones' => ['nullable', 'string'],
             'autoApprove' => ['nullable', 'boolean'],
             'autoApproveUserId' => ['nullable', 'integer', 'exists:users,id'],
+            // ADDENDUM 15 Bloque 3.E — choferes adicionales del distribuidor.
+            'solicitudChoferes' => ['nullable', 'array'],
+            'solicitudChoferes.*.nombres' => ['required', 'string', 'max:255'],
+            'solicitudChoferes.*.apellidos' => ['nullable', 'string', 'max:255'],
+            'solicitudChoferes.*.cuil' => ['nullable', 'string', 'max:50'],
+            'solicitudChoferes.*.dni' => ['nullable', 'string', 'max:20'],
+            'solicitudChoferes.*.fecha_nacimiento' => ['nullable', 'date'],
+            // ADDENDUM 15 Bloque 3.F — pólizas a solicitar (AP + Vehículos).
+            'solicitudPolizas' => ['nullable', 'array'],
+            'solicitudPolizas.ap.solicitar' => ['nullable', 'boolean'],
+            'solicitudPolizas.ap.aseguradora_id' => ['nullable', 'integer', 'exists:polizas_aseguradoras,id'],
+            'solicitudPolizas.ap.clausula_id' => ['nullable', 'integer', 'exists:polizas_clausulas,id'],
+            'solicitudPolizas.vehiculos.solicitar' => ['nullable', 'boolean'],
+            'solicitudPolizas.vehiculos.aseguradora_id' => ['nullable', 'integer', 'exists:polizas_aseguradoras,id'],
+            'solicitudPolizas.vehiculos.tipo' => ['nullable', 'string', 'in:autos,motos'],
+            'solicitudPolizas.vehiculos.patente' => ['nullable', 'string', 'max:50'],
+            'solicitudPolizas.vehiculos.clausula_id' => ['nullable', 'integer', 'exists:polizas_clausulas,id'],
+            'solicitudPolizas.vehiculos.importe_negociado_mensual' => ['nullable', 'numeric', 'min:0'],
         ]);
 
         $validated = $this->normalizeTaxIdFields($validated, [
@@ -1760,6 +1778,15 @@ class PersonalController extends Controller
             'duenoCuil' => 'CUIT/CUIL (Dueño)',
             'duenoCuilCobrador' => 'CUIT/CUIL cobrador del dueño',
         ]);
+
+        // ADDENDUM 15 Bloque 3.F — si tilda vehículos, patente obligatoria.
+        if (($validated['solicitudPolizas']['vehiculos']['solicitar'] ?? false)
+            && empty($validated['solicitudPolizas']['vehiculos']['patente'])
+            && empty($validated['patente'])) {
+            throw ValidationException::withMessages([
+                'solicitudPolizas.vehiculos.patente' => 'Para solicitar Vehículos, la patente es obligatoria.',
+            ]);
+        }
 
         $cuil = trim((string) ($validated['cuil'] ?? ''));
         if ($cuil !== '') {
@@ -1849,9 +1876,19 @@ class PersonalController extends Controller
             'cobrador_cuil' => $validated['esCobrador'] ? ($validated['cobradorCuil'] ?? null) : null,
             'cobrador_cbu_alias' => $validated['esCobrador'] ? ($validated['cobradorCbuAlias'] ?? null) : null,
             'es_solicitud' => ! $autoApprove,
+            // ADDENDUM 15 Bloque 3 — datos extendidos para procesar al aprobar.
+            'solicitud_choferes_json' => !empty($validated['solicitudChoferes'])
+                ? $validated['solicitudChoferes'] : null,
+            'solicitud_polizas_json'  => !empty($validated['solicitudPolizas'])
+                ? $validated['solicitudPolizas'] : null,
         ]);
 
         PersonaPatenteHelper::syncPersonaPatentes($persona, $validated['patentesAdicionales'] ?? []);
+
+        // ADDENDUM 15 Bloque 3.E — si fue auto-aprobado y hay choferes, materializar.
+        if ($autoApprove && !empty($validated['solicitudChoferes'])) {
+            $this->materializarChoferesDeSolicitud($persona, $validated['solicitudChoferes']);
+        }
 
         $ownerPayload = [
             'nombreapellido' => $validated['duenoNombre'] ?? null,
@@ -1958,6 +1995,11 @@ class PersonalController extends Controller
         }
 
         $persona->save();
+
+        // ADDENDUM 15 Bloque 3.E — materializar choferes adicionales si los hay.
+        if (!empty($persona->solicitud_choferes_json)) {
+            $this->materializarChoferesDeSolicitud($persona, $persona->solicitud_choferes_json);
+        }
 
         ClienteRequerimientoSync::syncFromPersonaSolicitud($persona);
 
@@ -3538,5 +3580,72 @@ class PersonalController extends Controller
         $cache[$id] = Estado::query()->select('id', 'nombre')->find($id)?->nombre;
 
         return $cache[$id] ?? sprintf('Estado #%d', $id);
+    }
+
+    /**
+     * ADDENDUM 15 Bloque 3.E — al aprobar una solicitud con choferes adicionales,
+     * crear cada chofer como `Persona` independiente y vincularlo al titular
+     * via `personas_relacion_chofer`. Idempotente: si ya existe la persona por
+     * CUIL/DNI, reusa; si ya existe la relación, no duplica.
+     *
+     * @param array $choferes Array de chofers desde `solicitud_choferes_json`
+     */
+    private function materializarChoferesDeSolicitud(Persona $titular, array $choferes): void
+    {
+        foreach ($choferes as $chofer) {
+            try {
+                $cuilNorm = preg_replace('/\D/', '', (string) ($chofer['cuil'] ?? ''));
+                $dniNorm = preg_replace('/\D/', '', (string) ($chofer['dni'] ?? ''));
+
+                // Buscar persona existente por CUIL o DNI.
+                $personaChofer = null;
+                if ($cuilNorm && strlen($cuilNorm) === 11) {
+                    $personaChofer = Persona::whereRaw(
+                        'REPLACE(REPLACE(REPLACE(cuil, "-", ""), ".", ""), " ", "") = ?',
+                        [$cuilNorm]
+                    )->first();
+                }
+                if (!$personaChofer && $dniNorm && strlen($dniNorm) === 8) {
+                    // El DNI son los 8 dígitos centrales del CUIL.
+                    $personaChofer = Persona::whereRaw(
+                        'SUBSTRING(REPLACE(REPLACE(REPLACE(cuil, "-", ""), ".", ""), " ", ""), 3, 8) = ?',
+                        [$dniNorm]
+                    )->first();
+                }
+
+                if (!$personaChofer) {
+                    // Crear persona-chofer mínima — solo datos cargados; el resto
+                    // se completa después por el admin de personal.
+                    $personaChofer = Persona::create([
+                        'nombres'     => $chofer['nombres'] ?? '',
+                        'apellidos'   => $chofer['apellidos'] ?? null,
+                        'cuil'        => $chofer['cuil'] ?? null,
+                        'tipo'        => 'CHOFER',
+                        'cliente_id'  => $titular->cliente_id,
+                        'sucursal_id' => $titular->sucursal_id,
+                        'agente_id'   => $titular->agente_id,
+                        'es_solicitud' => false,
+                        'aprobado'    => true,
+                        'aprobado_at' => Carbon::now(),
+                    ]);
+                }
+
+                // Crear vínculo (idempotente vía firstOrCreate).
+                \App\Models\PersonaRelacionChofer::firstOrCreate(
+                    [
+                        'titular_persona_id' => $titular->id,
+                        'chofer_persona_id'  => $personaChofer->id,
+                    ],
+                    [
+                        'fecha_vinculacion' => Carbon::now()->toDateString(),
+                        'activo'            => true,
+                        'rol'               => 'chofer',
+                        'creado_por_user_id'=> auth()->id(),
+                    ]
+                );
+            } catch (\Throwable $e) {
+                \Log::warning("materializarChofer falló para titular={$titular->id}: " . $e->getMessage());
+            }
+        }
     }
 }
