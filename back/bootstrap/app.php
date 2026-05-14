@@ -17,6 +17,7 @@ return Application::configure(basePath: dirname(__DIR__))
             'auth.api' => \App\Http\Middleware\ApiTokenAuth::class,
             'distriapp.readonly' => \App\Http\Middleware\DistriappReadonlyAuth::class,
             'polizas.permission' => \App\Http\Middleware\PolizasPermission::class,
+            'admin' => \App\Http\Middleware\RequireAdminRole::class,
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
