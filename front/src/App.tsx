@@ -298,6 +298,7 @@ type AccessSection =
   | 'usuarios'
   | 'rrhh'
   | 'personal'
+  | 'personal-editar'
   | 'reclamos'
   | 'ticketera'
   | 'notificaciones'
@@ -675,6 +676,7 @@ const USER_PERMISSION_OPTIONS: Array<{ value: AccessSection; label: string }> = 
   { value: 'usuarios', label: 'Gestión de usuarios' },
   { value: 'rrhh', label: 'RRHH' },
   { value: 'personal', label: 'Proveedores' },
+  { value: 'personal-editar', label: 'Proveedores - modificar' },
   { value: 'reclamos', label: 'Reclamos' },
   { value: 'ticketera', label: 'Ticketera' },
   { value: 'notificaciones', label: 'Notificaciones' },
@@ -776,22 +778,19 @@ type AuthUser = {
   permissions?: string[] | null;
 };
 
-const PERSONAL_EDITOR_EMAILS = [
-  'dgimenez@logisticaargentinasrl.com.ar',
-  'msanchez@logisticaargentinasrl.com.ar',
-  'morellfrancisco@gmail.com',
-  'xmaldonado@logisticaargentinasrl.com.ar',
-  'monica@logisticaargentinasrl.com.ar',
-];
-
 const normalizeEmail = (email: string | null | undefined): string | null => {
   const normalized = email?.trim().toLowerCase() ?? '';
   return normalized.length > 0 ? normalized : null;
 };
 
 const isPersonalEditor = (authUser: AuthUser | null | undefined): boolean => {
-  // Permitir que cualquier usuario edite/gestione personal
-  return true;
+  if (!authUser) {
+    return false;
+  }
+  if (normalizeUserRole(authUser.role) === 'admin') {
+    return true;
+  }
+  return Array.isArray(authUser.permissions) && authUser.permissions.includes('personal-editar');
 };
 
 const buildActorHeaders = (authUser: unknown): Record<string, string> => {

@@ -232,8 +232,16 @@ export const UsuariosPage: React.FC<{
       const next = new Set(prev);
       if (next.has(value)) {
         next.delete(value);
+        // Si quito "ver", también quito "modificar" (no se puede modificar lo que no se ve).
+        if (value === 'personal') {
+          next.delete('personal-editar');
+        }
       } else {
         next.add(value);
+        // Si marco "modificar", aseguro que "ver" también quede marcado.
+        if (value === 'personal-editar') {
+          next.add('personal');
+        }
       }
       return next;
     });

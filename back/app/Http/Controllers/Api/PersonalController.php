@@ -36,14 +36,6 @@ use Illuminate\Validation\ValidationException;
 
 class PersonalController extends Controller
 {
-    protected array $personalEditorEmails = [
-        'dgimenez@logisticaargentinasrl.com.ar',
-        'msanchez@logisticaargentinasrl.com.ar',
-        'morellfrancisco@gmail.com',
-        'xmaldonado@logisticaargentinasrl.com.ar',
-        'monica@logisticaargentinasrl.com.ar',
-    ];
-
     protected function resolveActorEmail(Request $request): ?string
     {
         $candidates = [
@@ -105,18 +97,10 @@ class PersonalController extends Controller
 
         $role = strtolower(trim((string) ($actorUser?->role ?? '')));
         $permissions = $actorUser?->permissions ?? null;
-        $hasPersonalPermission = is_array($permissions)
-            && (
-                in_array('personal', $permissions, true)
-                || in_array('proveedores', $permissions, true)
-                || in_array('aprobaciones', $permissions, true)
-            );
-        $roleCanManage = ($role !== '' && Str::contains($role, 'admin'))
-            || in_array($role, ['asesor', 'encargado'], true);
+        $hasEditPermission = is_array($permissions) && in_array('personal-editar', $permissions, true);
+        $isAdmin = $role !== '' && Str::contains($role, 'admin') && ! Str::contains($role, '2');
 
-        $isAllowed = ($actorEmail && in_array($actorEmail, $this->personalEditorEmails, true))
-            || $roleCanManage
-            || $hasPersonalPermission;
+        $isAllowed = $isAdmin || $hasEditPermission;
         $isPendingSolicitud = $persona && (! $persona->aprobado) && ($persona->es_solicitud ?? false);
 
         if ($isAllowed || $isPendingSolicitud) {
@@ -1650,6 +1634,15 @@ class PersonalController extends Controller
     public function destroy(Request $request, Persona $persona): JsonResponse
     {
         $this->ensureCanManagePersonal($request, $persona);
+
+        AuditLogger::log($request, 'persona_delete', 'persona', (int) $persona->id, [
+            'nombres' => $persona->nombres,
+            'apellidos' => $persona->apellidos,
+            'cuil' => $persona->cuil,
+            'cliente_id' => $persona->cliente_id,
+            'sucursal_id' => $persona->sucursal_id,
+            'es_solicitud' => (bool) $persona->es_solicitud,
+        ]);
 
         ClienteRequerimientoSync::deleteSource('persona', (int) $persona->id);
         $persona->delete();
