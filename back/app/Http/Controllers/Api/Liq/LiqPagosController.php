@@ -14,6 +14,7 @@ use App\Services\Liq\PagosUnificadoService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\Rule;
 
 class LiqPagosController extends Controller
@@ -158,9 +159,22 @@ class LiqPagosController extends Controller
             'items.*.importe'    => ['required', 'numeric', 'min:0.01'],
         ]);
 
-        $resultado = $this->beneficiarioResolver->validarUnificado($validated['items']);
-
-        return response()->json($resultado);
+        try {
+            $resultado = $this->beneficiarioResolver->validarUnificado($validated['items']);
+            return response()->json($resultado);
+        } catch (\Throwable $e) {
+            Log::error('[validar-beneficiarios] excepcion', [
+                'exception' => get_class($e),
+                'message'   => $e->getMessage(),
+                'file'      => $e->getFile() . ':' . $e->getLine(),
+                'items'     => $validated['items'],
+                'trace'     => collect($e->getTrace())->take(8)->all(),
+            ]);
+            return response()->json([
+                'message' => 'Error validando beneficiarios: ' . $e->getMessage(),
+                'error'   => get_class($e) . ' en ' . basename($e->getFile()) . ':' . $e->getLine(),
+            ], 500);
+        }
     }
 
     // POST /api/liq/pagos/preview
