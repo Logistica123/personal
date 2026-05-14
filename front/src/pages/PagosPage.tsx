@@ -565,7 +565,10 @@ export const PagosPage: React.FC<Props> = ({
         );
       }
     } catch (e: any) {
-      setPagoError(e.message);
+      console.error('[handlePagar] validar-beneficiarios fallo', { status: e?.status, data: e?.data, message: e?.message });
+      const detalle = e?.status ? ` (HTTP ${e.status})` : '';
+      setMsg({ type: 'err', text: `No se pudo iniciar el pago${detalle}: ${e?.message ?? 'error desconocido'}` });
+      setPagoError(e?.message ?? '');
       setPagoStep('idle');
     }
   }, [selectedIds, buildSelectedItems, api, conceptos, pagoConceptoId]);
