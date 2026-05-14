@@ -181,18 +181,22 @@ class LiqPagosController extends Controller
     public function preview(Request $request): JsonResponse
     {
         $validated = $request->validate([
-            'concepto_id'       => ['required', 'integer', 'exists:liq_ordenes_pago_conceptos,id'],
-            'numero'            => ['nullable', 'integer', 'min:1'],
-            'agrupacion'        => ['required', Rule::in(['INDIVIDUAL', 'GLOBAL'])],
-            'liquidacion_ids'   => ['required', 'array', 'min:1'],
-            'liquidacion_ids.*' => ['integer', 'exists:liq_liquidaciones_distribuidor,id'],
-            'anio'              => ['nullable', 'integer', 'min:2020', 'max:2099'],
-            'mes'               => ['nullable', 'integer', 'min:1', 'max:12'],
-            'observaciones'     => ['nullable', 'string', 'max:5000'],
+            'concepto_id'        => ['required', 'integer', 'exists:liq_ordenes_pago_conceptos,id'],
+            'numero'             => ['nullable', 'integer', 'min:1'],
+            'agrupacion'         => ['required', Rule::in(['INDIVIDUAL', 'GLOBAL'])],
+            'items'              => ['required', 'array', 'min:1'],
+            'items.*.fuente'     => ['required', Rule::in(['EXTRACTO', 'LEGACY'])],
+            'items.*.fuente_id'  => ['nullable', 'integer'],
+            'items.*.archivo_id' => ['nullable', 'integer'],
+            'items.*.persona_id' => ['required', 'integer'],
+            'items.*.importe'    => ['required', 'numeric', 'min:0.01'],
+            'anio'               => ['nullable', 'integer', 'min:2020', 'max:2099'],
+            'mes'                => ['nullable', 'integer', 'min:1', 'max:12'],
+            'observaciones'      => ['nullable', 'string', 'max:5000'],
         ]);
 
         $concepto = LiqOrdenPagoConcepto::findOrFail($validated['concepto_id']);
-        $resultado = $this->beneficiarioResolver->validar($validated['liquidacion_ids']);
+        $resultado = $this->beneficiarioResolver->validarUnificado($validated['items']);
 
         if (empty($resultado['validas'])) {
             return response()->json([
@@ -275,46 +279,82 @@ class LiqPagosController extends Controller
         $detalles = [];
 
         foreach ($validas as $v) {
-            $liqDist = \App\Models\LiqLiquidacionDistribuidor::with([
-                'liquidacionCliente.cliente:id,nombre_corto',
-                'distribuidor:id,apellidos,nombres,es_cobrador,cobrador_nombre',
-            ])->find($v['liquidacion_id']);
+            $fuente = $v['fuente'] ?? 'EXTRACTO';
+            $cobradorNombre = ($v['beneficiario_tipo'] ?? null) === 'COBRADOR' ? ($v['beneficiario_nombre'] ?? null) : null;
 
-            if (!$liqDist) continue;
+            if ($fuente === 'EXTRACTO') {
+                $liqDistId = $v['fuente_id'] ?? $v['liquidacion_id'] ?? null;
+                $liqDist = $liqDistId
+                    ? \App\Models\LiqLiquidacionDistribuidor::with([
+                        'liquidacionCliente.cliente:id,nombre_corto',
+                        'distribuidor:id,apellidos,nombres,es_cobrador,cobrador_nombre',
+                    ])->find($liqDistId)
+                    : null;
 
-            $clienteNombre = $liqDist->liquidacionCliente?->cliente?->nombre_corto ?? 'N/A';
-            $sucursal = $liqDist->liquidacionCliente?->sucursal_tarifa ?? 'N/A';
-            $periodoDesde = $liqDist->periodo_desde?->format('Y-m');
-            $periodoHasta = $liqDist->periodo_hasta?->format('Y-m');
-            $periodo = $periodoDesde === $periodoHasta ? $periodoDesde : "{$periodoDesde} a {$periodoHasta}";
+                if (!$liqDist) continue;
 
-            $subtotalLiq = (float) $liqDist->subtotal;
-            $gastosAdmin = (float) $liqDist->gastos_administrativos;
-            $importeFinal = (float) $liqDist->total_a_pagar;
+                $clienteNombre = $liqDist->liquidacionCliente?->cliente?->nombre_corto ?? 'N/A';
+                $sucursal = $liqDist->liquidacionCliente?->sucursal_tarifa ?? 'N/A';
+                $periodoDesde = $liqDist->periodo_desde?->format('Y-m');
+                $periodoHasta = $liqDist->periodo_hasta?->format('Y-m');
+                $periodo = $periodoDesde === $periodoHasta ? $periodoDesde : "{$periodoDesde} a {$periodoHasta}";
 
-            // Buscar descuentos en archivos
-            $descCombustible = $this->buscarDescuentoArchivo($liqDist->distribuidor_id, 'DESCUENTO_COMBUSTIBLE', $liqDist);
-            $descPaquete = $this->buscarDescuentoArchivo($liqDist->distribuidor_id, 'DESCUENTO_PAQUETE', $liqDist);
-            $descAjuste = $this->buscarDescuentoArchivo($liqDist->distribuidor_id, 'AJUSTE_LIQUIDACION', $liqDist);
+                $subtotalLiq = (float) $liqDist->subtotal;
+                $gastosAdmin = (float) $liqDist->gastos_administrativos;
+                $importeFinal = (float) $liqDist->total_a_pagar;
 
-            $cobradorNombre = $v['beneficiario_tipo'] === 'COBRADOR' ? $v['beneficiario_nombre'] : null;
+                $descCombustible = $this->buscarDescuentoArchivo($liqDist->distribuidor_id, 'DESCUENTO_COMBUSTIBLE', $liqDist);
+                $descPaquete = $this->buscarDescuentoArchivo($liqDist->distribuidor_id, 'DESCUENTO_PAQUETE', $liqDist);
+                $descAjuste = $this->buscarDescuentoArchivo($liqDist->distribuidor_id, 'AJUSTE_LIQUIDACION', $liqDist);
+
+                $detalles[] = [
+                    'liquidacion_id'        => $liqDist->id,
+                    'cliente_nombre'        => $clienteNombre,
+                    'sucursal'              => $sucursal,
+                    'periodo'               => $periodo,
+                    'distribuidor_nombre'   => $v['distribuidor_nombre'],
+                    'cobrador_nombre'       => $cobradorNombre,
+                    'beneficiario_cuil'     => $v['beneficiario_cuil'],
+                    'beneficiario_cbu'      => $v['beneficiario_cbu'],
+                    'subtotal_liquidacion'  => $subtotalLiq,
+                    'gastos_admin'          => $gastosAdmin,
+                    'descuento_combustible' => $descCombustible,
+                    'descuento_paquete'     => $descPaquete,
+                    'descuento_ajuste'      => $descAjuste,
+                    'otros_descuentos'      => 0,
+                    'importe_final'         => $importeFinal,
+                ];
+                continue;
+            }
+
+            // LEGACY: datos vienen del archivo
+            $archivoId = $v['archivo_id'] ?? null;
+            $archivo = $archivoId
+                ? \App\Models\Archivo::with('persona.cliente:id,nombre')->find($archivoId)
+                : null;
+            if (!$archivo) continue;
+
+            $persona = $archivo->persona;
+            $clienteNombre = $persona?->cliente?->nombre ?? 'N/A';
+            $importeFinal = (float) ($v['total_a_pagar'] ?? $archivo->importe_facturar ?? 0);
 
             $detalles[] = [
-                'liquidacion_id'     => $liqDist->id,
-                'cliente_nombre'     => $clienteNombre,
-                'sucursal'           => $sucursal,
-                'periodo'            => $periodo,
-                'distribuidor_nombre' => $v['distribuidor_nombre'],
-                'cobrador_nombre'    => $cobradorNombre,
-                'beneficiario_cuil'  => $v['beneficiario_cuil'],
-                'beneficiario_cbu'   => $v['beneficiario_cbu'],
-                'subtotal_liquidacion' => $subtotalLiq,
-                'gastos_admin'       => $gastosAdmin,
-                'descuento_combustible' => $descCombustible,
-                'descuento_paquete'  => $descPaquete,
-                'descuento_ajuste'   => $descAjuste,
-                'otros_descuentos'   => 0,
-                'importe_final'      => $importeFinal,
+                'liquidacion_id'        => null,
+                'archivo_id'            => $archivo->id,
+                'cliente_nombre'        => $clienteNombre,
+                'sucursal'              => '',
+                'periodo'               => '',
+                'distribuidor_nombre'   => $v['distribuidor_nombre'],
+                'cobrador_nombre'       => $cobradorNombre,
+                'beneficiario_cuil'     => $v['beneficiario_cuil'],
+                'beneficiario_cbu'      => $v['beneficiario_cbu'],
+                'subtotal_liquidacion'  => $importeFinal,
+                'gastos_admin'          => 0,
+                'descuento_combustible' => 0,
+                'descuento_paquete'     => 0,
+                'descuento_ajuste'      => 0,
+                'otros_descuentos'      => 0,
+                'importe_final'         => $importeFinal,
             ];
         }
 
