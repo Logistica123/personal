@@ -1870,19 +1870,13 @@ export const ProveedoresPage: React.FC<ProveedoresPageProps> = ({
 	                        >
 	                          {`QR${(registro.transportistaQrScansCount ?? 0) > 0 ? ` (${registro.transportistaQrScansCount})` : ''}`}
 	                        </button>
-	                        {canManagePersonal ? (
-	                          <Link
-	                            to={`/personal/${registro.id}/editar`}
-	                            aria-label={`Editar proveedor ${registro.nombre ?? ''}`}
-	                            title="Editar (clic derecho para abrir en nueva pestaña)"
-	                          >
-	                            ✏️
-	                          </Link>
-	                        ) : (
-	                          <button type="button" aria-label={`Editar proveedor ${registro.nombre ?? ''}`} disabled>
-	                            ✏️
-	                          </button>
-	                        )}
+	                        <Link
+	                          to={`/personal/${registro.id}/editar`}
+	                          aria-label={canManagePersonal ? `Editar proveedor ${registro.nombre ?? ''}` : `Ver proveedor ${registro.nombre ?? ''}`}
+	                          title={canManagePersonal ? 'Editar (clic derecho para abrir en nueva pestaña)' : 'Ver detalle (sólo lectura)'}
+	                        >
+	                          ✏️
+	                        </Link>
 	                        <button
 	                          type="button"
 	                          aria-label={`Eliminar proveedor ${registro.nombre ?? ''}`}
