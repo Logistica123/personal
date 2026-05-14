@@ -7534,7 +7534,7 @@ const sucursalOptions = useMemo(() => {
               <label className="input-control">
                 <span>Estado</span>
                 <select value={altaForm.estadoId} onChange={handleAltaFieldChange('estadoId')}>
-                  <option value="">Seleccionar</option>
+                  <option value="">Sin estado</option>
                   {(meta?.estados ?? []).map((estado) => (
                     <option key={estado.id} value={estado.id}>
                       {estado.nombre ?? `Estado #${estado.id}`}
