@@ -27,6 +27,7 @@ class UserController extends Controller
         'rrhh',
         'proveedores',
         'personal',
+        'personal-editar',
         'reclamos',
         'ticketera',
         'notificaciones',
