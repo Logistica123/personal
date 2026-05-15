@@ -69,21 +69,33 @@ def _extraer_sucursal_de_nombre(nombre_archivo: str) -> Optional[str]:
 # Regex para una línea de operación OCASA real.
 # Ejemplo:
 #   202603A00530717060985 10054722 30717060985 03.2026 02.03.2026 102008890 LOGISTICA ARGENTINA SRL DTC856 COR301 153.542,56 153.542,56 0,00
-# Orden: ID_LIQ TRANSPORTE CUIT PERIODO(MM.YYYY) FECHA(DD.MM.YYYY) ID_SAP RAZON_SOCIAL DOMINIO RUTA IMPORTE IMP_GRAV IMP_NOGRAV
+# Orden: ID_LIQ TRANSPORTE CUIT PERIODO FECHA ID_SAP RAZON_SOCIAL DOMINIO RUTA IMPORTE IMP_GRAV IMP_NOGRAV
+# Periodo acepta MM.YYYY, MM/YYYY o YYYYMM. Fecha acepta DD.MM.YYYY, DD/MM/YYYY o DD-MM-YYYY.
 _RE_LINEA = re.compile(
-    r'^(\S+)\s+'                          # 1: ID Liquidacion (alfanumérico: 202603A00530717060985)
-    r'(\d+)\s+'                           # 2: Transporte (numérico)
-    r'(\d{2}-\d{8}-\d|\d{11})\s+'         # 3: CUIT (con o sin guión)
-    r'(\d{2}\.\d{4})\s+'                  # 4: Periodo MM.YYYY (ej: 03.2026)
-    r'(\d{2}\.\d{2}\.\d{4})\s+'           # 5: Fecha DD.MM.YYYY (ej: 02.03.2026)
-    r'(\S+)\s+'                           # 6: ID SAP
-    r'(.+?)\s+'                           # 7: Razon Social (lazy, acepta "LOGISTICA ARGENTINA SRL")
-    r'([A-Z0-9]{5,8})\s+'                 # 8: Dominio (patente)
-    r'([A-Z0-9]{3,10})\s+'                # 9: Ruta (COR301, ROS001, etc.)
-    r'\$?([\d.,]+)\s+'                    # 10: Importe
-    r'\$?([\d.,]+)\s+'                    # 11: Imp.Grav
-    r'\$?([\d.,]+)\s*$'                   # 12: Imp.NoGrav
+    r'^(\S+)\s+'                                  # 1: ID Liquidacion (alfanumérico: 202603A00530717060985)
+    r'(\d+)\s+'                                   # 2: Transporte (numérico)
+    r'(\d{2}-\d{8}-\d|\d{11})\s+'                 # 3: CUIT (con o sin guión)
+    r'(\d{2}[./]\d{4}|\d{6})\s+'                  # 4: Periodo MM.YYYY / MM/YYYY / YYYYMM
+    r'(\d{2}[./-]\d{2}[./-]\d{4})\s+'             # 5: Fecha DD.MM.YYYY / DD/MM/YYYY / DD-MM-YYYY
+    r'(\S+)\s+'                                   # 6: ID SAP
+    r'(.+?)\s+'                                   # 7: Razon Social (lazy, acepta "LOGISTICA ARGENTINA SRL")
+    r'([A-Z0-9]{5,8})\s+'                         # 8: Dominio (patente)
+    r'([A-Z0-9]{3,10})\s+'                        # 9: Ruta (COR301, ROS001, etc.)
+    r'\$?([\d.,]+)\s+'                            # 10: Importe
+    r'\$?([\d.,]+)\s+'                            # 11: Imp.Grav
+    r'\$?([\d.,]+)\s*$'                           # 12: Imp.NoGrav
 )
+
+
+def _normalizar_periodo(raw: str) -> str:
+    """Normaliza periodo a YYYYMM canónico. Acepta MM.YYYY, MM/YYYY, YYYYMM."""
+    s = (raw or '').strip()
+    if re.fullmatch(r'\d{6}', s):
+        return s
+    m = re.fullmatch(r'(\d{2})[./](\d{4})', s)
+    if m:
+        return f"{m.group(2)}{m.group(1)}"
+    return s
 
 
 def parse_pdf_ocasa(filepath: str, nombre_archivo: Optional[str] = None) -> dict:
@@ -123,6 +135,7 @@ def parse_pdf_ocasa(filepath: str, nombre_archivo: Optional[str] = None) -> dict
     operaciones = []
     warnings = []
     lineas_no_parseadas = 0
+    muestras_no_parseadas: list[str] = []
 
     try:
         with pdfplumber.open(filepath) as pdf:
@@ -142,8 +155,10 @@ def parse_pdf_ocasa(filepath: str, nombre_archivo: Optional[str] = None) -> dict
                     m = _RE_LINEA.match(line)
                     if not m:
                         # Probable línea de encabezado o subtotal; sólo reportar como no parseada si tiene pinta de datos
-                        if re.search(r'\d{2}\.\d{2}\.\d{4}', line) or re.search(r'\d{2}/\d{2}/\d{4}', line):
+                        if re.search(r'\d{2}[./-]\d{2}[./-]\d{4}', line):
                             lineas_no_parseadas += 1
+                            if len(muestras_no_parseadas) < 5:
+                                muestras_no_parseadas.append(line[:200])
                         continue
 
                     try:
@@ -151,7 +166,7 @@ def parse_pdf_ocasa(filepath: str, nombre_archivo: Optional[str] = None) -> dict
                             'id_liquidacion': m.group(1),
                             'transporte': m.group(2),
                             'cuit': m.group(3),
-                            'periodo': m.group(4),
+                            'periodo': _normalizar_periodo(m.group(4)),
                             'fecha': _parse_fecha(m.group(5)),
                             'id_sap': m.group(6),
                             'razon_social': m.group(7).strip(),
@@ -175,6 +190,8 @@ def parse_pdf_ocasa(filepath: str, nombre_archivo: Optional[str] = None) -> dict
 
     if lineas_no_parseadas > 0:
         warnings.append(f"{lineas_no_parseadas} línea(s) con pinta de datos no se pudieron parsear")
+        for i, muestra in enumerate(muestras_no_parseadas, start=1):
+            warnings.append(f"Muestra #{i} no parseada: {muestra}")
 
     total_importe = sum(op['importe'] for op in operaciones)
     total_grav = sum(op['imp_gravado'] for op in operaciones)
