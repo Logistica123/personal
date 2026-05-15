@@ -43,6 +43,9 @@ type LiqRow = {
   distribuidor_nombre: string;
   cobrador_nombre: string | null;
   importe: number;
+  tipo_comprobante?: 'B' | 'C' | 'A' | 'M' | 'SIN_FACTURA';
+  iva_porcentaje?: number | null;
+  importe_iva?: number;
   enviada: boolean;
   facturado: boolean;
   factura_doc_id: number | null;
@@ -719,6 +722,54 @@ export const PagosPage: React.FC<Props> = ({
     [api, fetchOrdenes, fetchLiquidaciones, showOpDetalle, opDetalle]
   );
 
+  // ── Factura A: marcar / revertir ────────────────────────────────────
+  // Agrega IVA al total_a_pagar cuando el distribuidor factura como Responsable Inscripto.
+  const marcarFacturaA = useCallback(
+    async (row: LiqRow) => {
+      if (!row.pdf_liq_dist_id) {
+        setMsg({ type: 'err', text: 'Esta liquidacion legacy no soporta Factura A.' });
+        return;
+      }
+      const input = window.prompt(
+        `Marcar como Factura A - ${row.distribuidor_nombre}\n` +
+        `Importe actual (neto): $${row.importe.toLocaleString('es-AR', { minimumFractionDigits: 2 })}\n\n` +
+        `Ingresa el porcentaje de IVA (21, 10.5 o 0):`,
+        '21'
+      );
+      if (input === null) return;
+      const pct = parseFloat(input.replace(',', '.'));
+      if (![21, 10.5, 0].includes(pct)) {
+        setMsg({ type: 'err', text: 'IVA invalido. Usa 21, 10.5 o 0.' });
+        return;
+      }
+      try {
+        const json = await api.post(`/liquidaciones-distribuidor/${row.pdf_liq_dist_id}/marcar-factura-a`, {
+          iva_porcentaje: pct,
+        });
+        setMsg({ type: 'ok', text: json.message ?? 'Marcada como Factura A' });
+        fetchLiquidaciones();
+      } catch (e: any) {
+        setMsg({ type: 'err', text: e.message });
+      }
+    },
+    [api, fetchLiquidaciones]
+  );
+
+  const revertirFacturaA = useCallback(
+    async (row: LiqRow) => {
+      if (!row.pdf_liq_dist_id) return;
+      if (!window.confirm(`Revertir Factura A de ${row.distribuidor_nombre}? Vuelve al neto sin IVA.`)) return;
+      try {
+        const json = await api.post(`/liquidaciones-distribuidor/${row.pdf_liq_dist_id}/revertir-factura-a`, {});
+        setMsg({ type: 'ok', text: json.message ?? 'Factura A revertida' });
+        fetchLiquidaciones();
+      } catch (e: any) {
+        setMsg({ type: 'err', text: e.message });
+      }
+    },
+    [api, fetchLiquidaciones]
+  );
+
   // ── Descargar PDF ──────────────────────────────────────────────────
   const baseUrlRef = useRef(resolveApiBaseUrl());
   const descargarPdf = useCallback((opId: number, label: string) => {
@@ -990,6 +1041,27 @@ export const PagosPage: React.FC<Props> = ({
                             >
                               Fac
                             </button>
+                            {/* Factura A: marcar / revertir. Solo extractos sin OP activa ni pagados. */}
+                            {row.fuente === 'EXTRACTO' && !row.tiene_op_activa && !row.pagado ? (
+                              row.tipo_comprobante === 'A' ? (
+                                <button
+                                  className="pagos-action-btn"
+                                  title={`Revertir Factura A (IVA ${row.iva_porcentaje ?? 21}% incluido)`}
+                                  onClick={() => revertirFacturaA(row)}
+                                  style={{ background: '#dcfce7', color: '#166534', fontWeight: 600 }}
+                                >
+                                  A ↺
+                                </button>
+                              ) : (
+                                <button
+                                  className="pagos-action-btn"
+                                  title="Marcar como Factura A (suma IVA al total)"
+                                  onClick={() => marcarFacturaA(row)}
+                                >
+                                  A
+                                </button>
+                              )
+                            ) : null}
                           </div>
                         </td>
                       </tr>

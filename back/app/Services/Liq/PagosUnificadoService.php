@@ -116,6 +116,9 @@ class PagosUnificadoService
                 'distribuidor_nombre' => $dist ? trim($dist->apellidos . ', ' . $dist->nombres) : 'N/A',
                 'cobrador_nombre'     => $dist?->es_cobrador ? $dist->cobrador_nombre : null,
                 'importe'             => (float) $liq->total_a_pagar,
+                'tipo_comprobante'    => (string) ($liq->tipo_comprobante ?? 'C'),
+                'iva_porcentaje'      => $liq->iva_porcentaje !== null ? (float) $liq->iva_porcentaje : null,
+                'importe_iva'         => (float) ($liq->importe_iva ?? 0),
                 'enviada'             => in_array($estado, ['subida', 'publicada', 'pagada']),
                 'facturado'           => false, // Extractos no tienen archivo padre en tabla archivos
                 'factura_doc_id'      => null, // Se usa endpoint factura-distribuidor

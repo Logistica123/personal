@@ -529,6 +529,9 @@ Route::middleware('auth.api')->group(function () {
         Route::post('/liquidaciones-distribuidor/{liquidacionDistribuidor}/documento', [LiqDistribuidorDocumentoController::class, 'store']);
         Route::get('/liquidaciones-distribuidor/{liquidacionDistribuidor}/pdf', [LiqDistribuidorDocumentoController::class, 'descargarPdf']);
         Route::put('/liquidaciones-distribuidor/{liquidacionDistribuidor}/editar', [LiqDistribuidorLiquidacionesController::class, 'editar']);
+        // ADDENDUM Pagos B: marcar/revertir Factura A (suma IVA al total)
+        Route::post('/liquidaciones-distribuidor/{liquidacionDistribuidor}/marcar-factura-a', [LiqDistribuidorLiquidacionesController::class, 'marcarFacturaA']);
+        Route::post('/liquidaciones-distribuidor/{liquidacionDistribuidor}/revertir-factura-a', [LiqDistribuidorLiquidacionesController::class, 'revertirFacturaA']);
         Route::post('/liquidaciones-distribuidor/{liquidacionDistribuidor}/recalcular-eficiencia', [LiqExtractosController::class, 'recalcularEficiencia']);
 
         // BUGFIX 27.1: ciclo de vida (preparar/anular/borrar con auditoría) en ambas tablas.

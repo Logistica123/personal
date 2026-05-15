@@ -143,6 +143,129 @@ class LiqDistribuidorLiquidacionesController extends Controller
     }
 
     /**
+     * POST /liq/liquidaciones-distribuidor/{liquidacionDistribuidor}/marcar-factura-a
+     *
+     * Marca la liq como Factura A: snapshot del neto en importe_base, calcula IVA
+     * y deja total_a_pagar = base + IVA. Si ya es 'A' devuelve 422.
+     */
+    public function marcarFacturaA(Request $request, LiqLiquidacionDistribuidor $liquidacionDistribuidor): JsonResponse
+    {
+        $role = strtolower(trim((string) ($request->user()?->role ?? '')));
+        if (!in_array($role, ['admin', 'admin2'], true)) {
+            return response()->json(['error' => 'No tenes permisos para cambiar el tipo de comprobante.'], 403);
+        }
+
+        if ($liquidacionDistribuidor->tieneOrdenPagoActiva()) {
+            return response()->json(['error' => 'La liquidacion esta incluida en una OP activa. Sacala de la OP primero.'], 422);
+        }
+        if ($liquidacionDistribuidor->estado === LiqLiquidacionDistribuidor::ESTADO_PAGADA) {
+            return response()->json(['error' => 'La liquidacion ya fue pagada.'], 422);
+        }
+        if ($liquidacionDistribuidor->tipo_comprobante === 'A') {
+            return response()->json(['error' => 'La liquidacion ya esta marcada como Factura A. Usa revertir para volver atras.'], 422);
+        }
+
+        $data = $request->validate([
+            'iva_porcentaje' => 'required|numeric|in:21,10.5,0',
+        ]);
+
+        $pct = (float) $data['iva_porcentaje'];
+        $base = round((float) $liquidacionDistribuidor->total_a_pagar, 2);
+        $iva = round($base * ($pct / 100), 2);
+        $totalNuevo = round($base + $iva, 2);
+
+        $anteriores = [
+            'tipo_comprobante' => $liquidacionDistribuidor->tipo_comprobante,
+            'total_a_pagar'    => $base,
+        ];
+        $nuevos = [
+            'tipo_comprobante' => 'A',
+            'iva_porcentaje'   => $pct,
+            'importe_base'     => $base,
+            'importe_iva'      => $iva,
+            'total_a_pagar'    => $totalNuevo,
+        ];
+
+        $liquidacionDistribuidor->update($nuevos);
+
+        LiqHistorialAuditoria::registrar(
+            'liquidacion_distribuidor',
+            $liquidacionDistribuidor->id,
+            'marcar_factura_a',
+            $anteriores,
+            $nuevos,
+            "Marcada como Factura A (IVA {$pct}%)",
+            $request->user(),
+            $request->ip()
+        );
+
+        return response()->json([
+            'data'    => $liquidacionDistribuidor->fresh(),
+            'message' => sprintf('Marcada como Factura A. IVA %s%% = $%s. Nuevo total $%s.',
+                rtrim(rtrim(number_format($pct, 2, '.', ''), '0'), '.'),
+                number_format($iva, 2, ',', '.'),
+                number_format($totalNuevo, 2, ',', '.')
+            ),
+        ]);
+    }
+
+    /**
+     * POST /liq/liquidaciones-distribuidor/{liquidacionDistribuidor}/revertir-factura-a
+     *
+     * Vuelve la liq al tipo 'C', restaurando total_a_pagar = importe_base.
+     */
+    public function revertirFacturaA(Request $request, LiqLiquidacionDistribuidor $liquidacionDistribuidor): JsonResponse
+    {
+        $role = strtolower(trim((string) ($request->user()?->role ?? '')));
+        if (!in_array($role, ['admin', 'admin2'], true)) {
+            return response()->json(['error' => 'No tenes permisos para cambiar el tipo de comprobante.'], 403);
+        }
+
+        if ($liquidacionDistribuidor->tieneOrdenPagoActiva()) {
+            return response()->json(['error' => 'La liquidacion esta incluida en una OP activa. Sacala de la OP primero.'], 422);
+        }
+        if ($liquidacionDistribuidor->estado === LiqLiquidacionDistribuidor::ESTADO_PAGADA) {
+            return response()->json(['error' => 'La liquidacion ya fue pagada.'], 422);
+        }
+        if ($liquidacionDistribuidor->tipo_comprobante !== 'A' || $liquidacionDistribuidor->importe_base === null) {
+            return response()->json(['error' => 'La liquidacion no esta marcada como Factura A.'], 422);
+        }
+
+        $anteriores = [
+            'tipo_comprobante' => 'A',
+            'iva_porcentaje'   => (float) $liquidacionDistribuidor->iva_porcentaje,
+            'importe_iva'      => (float) $liquidacionDistribuidor->importe_iva,
+            'total_a_pagar'    => (float) $liquidacionDistribuidor->total_a_pagar,
+        ];
+        $totalRestaurado = round((float) $liquidacionDistribuidor->importe_base, 2);
+        $nuevos = [
+            'tipo_comprobante' => 'C',
+            'iva_porcentaje'   => null,
+            'importe_iva'      => 0,
+            'importe_base'     => null,
+            'total_a_pagar'    => $totalRestaurado,
+        ];
+
+        $liquidacionDistribuidor->update($nuevos);
+
+        LiqHistorialAuditoria::registrar(
+            'liquidacion_distribuidor',
+            $liquidacionDistribuidor->id,
+            'revertir_factura_a',
+            $anteriores,
+            $nuevos,
+            'Revertida Factura A',
+            $request->user(),
+            $request->ip()
+        );
+
+        return response()->json([
+            'data'    => $liquidacionDistribuidor->fresh(),
+            'message' => 'Factura A revertida. Total restaurado: $' . number_format($totalRestaurado, 2, ',', '.'),
+        ]);
+    }
+
+    /**
      * GET /liq/liquidaciones-distribuidor/{liquidacionDistribuidor}/historial
      *
      * Historial de auditoria de una liquidacion distribuidor especifica.
