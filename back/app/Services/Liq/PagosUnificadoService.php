@@ -219,7 +219,18 @@ class PagosUnificadoService
                 'periodo_sort'        => $archivo->created_at?->format('Y-m-d') ?? '',
                 'distribuidor_nombre' => $persona ? trim($persona->apellidos . ', ' . $persona->nombres) : 'N/A',
                 'cobrador_nombre'     => $persona?->es_cobrador ? $persona->cobrador_nombre : null,
+                'override_cobrador'   => $archivo->cobrador_override_cbu ? [
+                    'nombre' => $archivo->cobrador_override_nombre,
+                    'cuit'   => $archivo->cobrador_override_cuit,
+                    'cbu'    => $archivo->cobrador_override_cbu,
+                    'motivo' => $archivo->cobrador_override_motivo,
+                ] : null,
                 'importe'             => max($importeConDescuento, 0),
+                'tipo_comprobante'    => (string) ($archivo->tipo_comprobante ?? 'C'),
+                'iva_porcentaje'      => $archivo->iva_porcentaje !== null ? (float) $archivo->iva_porcentaje : null,
+                'importe_iva'         => (float) ($archivo->importe_iva ?? 0),
+                'total_a_pagar_overridido' => (bool) ($archivo->importe_facturar_overridido ?? false),
+                'requiere_revision_dual'   => (bool) ($archivo->requiere_revision_dual ?? false),
                 'enviada'             => (bool) $archivo->enviada,
                 'facturado'           => (bool) $archivo->recibido || $this->tieneFacturaDistribuidor($archivo->id),
                 'factura_doc_id'      => null, // Se usa endpoint factura-distribuidor

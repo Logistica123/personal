@@ -540,6 +540,12 @@ Route::middleware('auth.api')->group(function () {
         Route::get('/liquidaciones-distribuidor/{liquidacionDistribuidor}/ajustes-importe',      [LiqDistribuidorLiquidacionesController::class, 'ajustesImporte']);
         // ADDENDUM Pagos D: cargar datos bancarios del distribuidor desde el modal de OP
         Route::patch('/distribuidores/{persona}/datos-bancarios',                                 [LiqPagosController::class, 'datosBancariosDistribuidor']);
+        // ADDENDUM Pagos LEGACY: A/B/C aplicados al flujo viejo (tabla archivos)
+        Route::post('/pagos/archivos/{archivo}/marcar-factura-a',          [LiqPagosController::class, 'marcarFacturaALegacy']);
+        Route::post('/pagos/archivos/{archivo}/revertir-factura-a',        [LiqPagosController::class, 'revertirFacturaALegacy']);
+        Route::post('/pagos/archivos/{archivo}/cobrador-override',         [LiqPagosController::class, 'aplicarCobradorOverrideLegacy']);
+        Route::delete('/pagos/archivos/{archivo}/cobrador-override',       [LiqPagosController::class, 'quitarCobradorOverrideLegacy']);
+        Route::post('/pagos/archivos/{archivo}/ajustar-importe',           [LiqPagosController::class, 'ajustarImporteLegacy']);
         Route::post('/liquidaciones-distribuidor/{liquidacionDistribuidor}/recalcular-eficiencia', [LiqExtractosController::class, 'recalcularEficiencia']);
 
         // BUGFIX 27.1: ciclo de vida (preparar/anular/borrar con auditoría) en ambas tablas.

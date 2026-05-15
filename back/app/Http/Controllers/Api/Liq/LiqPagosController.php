@@ -3,10 +3,13 @@
 namespace App\Http\Controllers\Api\Liq;
 
 use App\Http\Controllers\Controller;
+use App\Models\Archivo;
+use App\Models\LiqAjusteImporte;
 use App\Models\LiqConfigBanco;
 use App\Models\LiqHistorialAuditoria;
 use App\Models\LiqOrdenPago;
 use App\Models\LiqOrdenPagoConcepto;
+use App\Models\LiqOrdenPagoDetalle;
 use App\Models\Persona;
 use App\Rules\CuitValido;
 use App\Services\Liq\BeneficiarioResolver;
@@ -870,6 +873,184 @@ class LiqPagosController extends Controller
             'Content-Type'        => 'application/pdf',
             'Content-Disposition' => "inline; filename=\"{$filename}\"",
         ]);
+    }
+
+    // =========================================================================
+    // ADDENDUM Pagos LEGACY: A/B/C aplicados al flujo viejo (tabla archivos)
+    // =========================================================================
+
+    /**
+     * Helper: archivos.id pertenece al flujo LEGACY. Valida que no este en OP activa,
+     * que el rol sea admin, y que el archivo este vivo.
+     */
+    private function ensureArchivoLegacyEditable(Request $request, Archivo $archivo): ?JsonResponse
+    {
+        $role = strtolower(trim((string) ($request->user()?->role ?? '')));
+        if (!in_array($role, ['admin', 'admin2'], true)) {
+            return response()->json(['error' => 'No tenes permisos para editar este archivo.'], 403);
+        }
+        if ($archivo->pagado) {
+            return response()->json(['error' => 'El archivo ya esta pagado.'], 422);
+        }
+        $yaEnOp = LiqOrdenPagoDetalle::where('archivo_id', $archivo->id)
+            ->whereHas('ordenPago', fn ($q) => $q->whereNotIn('estado', ['ANULADA']))
+            ->exists();
+        if ($yaEnOp) {
+            return response()->json(['error' => 'Este archivo esta incluido en una OP activa. Sacalo de la OP primero.'], 422);
+        }
+        return null;
+    }
+
+    // POST /api/liq/pagos/archivos/{archivo}/marcar-factura-a
+    public function marcarFacturaALegacy(Request $request, Archivo $archivo): JsonResponse
+    {
+        if ($err = $this->ensureArchivoLegacyEditable($request, $archivo)) return $err;
+        if (($archivo->tipo_comprobante ?? 'C') === 'A') {
+            return response()->json(['error' => 'El archivo ya esta marcado como Factura A.'], 422);
+        }
+        $data = $request->validate(['iva_porcentaje' => 'required|numeric|in:21,10.5,0']);
+        $pct = (float) $data['iva_porcentaje'];
+        $base = round((float) $archivo->importe_facturar, 2);
+        $iva = round($base * ($pct / 100), 2);
+        $total = round($base + $iva, 2);
+
+        $antes = ['tipo_comprobante' => $archivo->tipo_comprobante ?? 'C', 'importe_facturar' => $base];
+        $nuevos = [
+            'tipo_comprobante'        => 'A',
+            'importe_facturar_base'   => $base,
+            'iva_porcentaje'          => $pct,
+            'importe_iva'             => $iva,
+            'importe_facturar'        => $total,
+        ];
+        $archivo->update($nuevos);
+        LiqHistorialAuditoria::registrar('archivo', $archivo->id, 'marcar_factura_a',
+            $antes, $nuevos, "Marcada como Factura A (IVA {$pct}%)",
+            $request->user(), $request->ip());
+        return response()->json(['data' => $archivo->fresh(), 'message' => "Marcada Factura A. Nuevo total \$" . number_format($total, 2, ',', '.')]);
+    }
+
+    // POST /api/liq/pagos/archivos/{archivo}/revertir-factura-a
+    public function revertirFacturaALegacy(Request $request, Archivo $archivo): JsonResponse
+    {
+        if ($err = $this->ensureArchivoLegacyEditable($request, $archivo)) return $err;
+        if (($archivo->tipo_comprobante ?? 'C') !== 'A' || $archivo->importe_facturar_base === null) {
+            return response()->json(['error' => 'El archivo no esta marcado como Factura A.'], 422);
+        }
+        $antes = ['tipo_comprobante' => 'A', 'iva_porcentaje' => $archivo->iva_porcentaje, 'importe_iva' => $archivo->importe_iva, 'importe_facturar' => $archivo->importe_facturar];
+        $restaurado = round((float) $archivo->importe_facturar_base, 2);
+        $nuevos = [
+            'tipo_comprobante'      => 'C',
+            'iva_porcentaje'        => null,
+            'importe_iva'           => 0,
+            'importe_facturar_base' => null,
+            'importe_facturar'      => $restaurado,
+        ];
+        $archivo->update($nuevos);
+        LiqHistorialAuditoria::registrar('archivo', $archivo->id, 'revertir_factura_a',
+            $antes, $nuevos, 'Revertida Factura A', $request->user(), $request->ip());
+        return response()->json(['data' => $archivo->fresh(), 'message' => 'Factura A revertida. Total: $' . number_format($restaurado, 2, ',', '.')]);
+    }
+
+    // POST /api/liq/pagos/archivos/{archivo}/cobrador-override
+    public function aplicarCobradorOverrideLegacy(Request $request, Archivo $archivo): JsonResponse
+    {
+        if ($err = $this->ensureArchivoLegacyEditable($request, $archivo)) return $err;
+        $data = $request->validate([
+            'nombre'    => 'required|string|max:200',
+            'cuit'      => 'required|string|max:20',
+            'cbu'       => 'required|string|max:50',
+            'alias_cbu' => 'nullable|string|max:50',
+            'motivo'    => 'required|string|min:5|max:300',
+        ]);
+        $cbuDigits = preg_replace('/\D+/', '', (string) $data['cbu']);
+        $cuitDigits = preg_replace('/\D+/', '', (string) $data['cuit']);
+        if (strlen($cbuDigits) !== 22) return response()->json(['error' => 'El CBU debe tener 22 digitos.'], 422);
+        if (strlen($cuitDigits) !== 11) return response()->json(['error' => 'El CUIT debe tener 11 digitos.'], 422);
+        $antes = [
+            'cobrador_override_nombre' => $archivo->cobrador_override_nombre,
+            'cobrador_override_cuit'   => $archivo->cobrador_override_cuit,
+            'cobrador_override_cbu'    => $archivo->cobrador_override_cbu,
+        ];
+        $nuevos = [
+            'cobrador_override_nombre'    => $data['nombre'],
+            'cobrador_override_cuit'      => $cuitDigits,
+            'cobrador_override_cbu'       => $cbuDigits,
+            'cobrador_override_alias_cbu' => $data['alias_cbu'] ?? null,
+            'cobrador_override_motivo'    => $data['motivo'],
+            'cobrador_override_at'        => now(),
+            'cobrador_override_por'       => $request->user()?->id,
+        ];
+        $archivo->update($nuevos);
+        LiqHistorialAuditoria::registrar('archivo', $archivo->id, 'cobrador_override_aplicado',
+            $antes, $nuevos, $data['motivo'], $request->user(), $request->ip());
+        return response()->json(['data' => $archivo->fresh(), 'message' => "Override aplicado. El pago va a {$data['nombre']}."]);
+    }
+
+    // DELETE /api/liq/pagos/archivos/{archivo}/cobrador-override
+    public function quitarCobradorOverrideLegacy(Request $request, Archivo $archivo): JsonResponse
+    {
+        if ($err = $this->ensureArchivoLegacyEditable($request, $archivo)) return $err;
+        if (empty($archivo->cobrador_override_cbu)) {
+            return response()->json(['error' => 'Este archivo no tiene override de cobrador.'], 422);
+        }
+        $antes = [
+            'cobrador_override_nombre' => $archivo->cobrador_override_nombre,
+            'cobrador_override_cuit'   => $archivo->cobrador_override_cuit,
+            'cobrador_override_cbu'    => $archivo->cobrador_override_cbu,
+        ];
+        $nuevos = [
+            'cobrador_override_nombre'    => null,
+            'cobrador_override_cuit'      => null,
+            'cobrador_override_cbu'       => null,
+            'cobrador_override_alias_cbu' => null,
+            'cobrador_override_motivo'    => null,
+            'cobrador_override_at'        => null,
+            'cobrador_override_por'       => null,
+        ];
+        $archivo->update($nuevos);
+        LiqHistorialAuditoria::registrar('archivo', $archivo->id, 'cobrador_override_quitado',
+            $antes, $nuevos, 'Override removido', $request->user(), $request->ip());
+        return response()->json(['data' => $archivo->fresh(), 'message' => 'Override removido. Vuelve al beneficiario por defecto.']);
+    }
+
+    // POST /api/liq/pagos/archivos/{archivo}/ajustar-importe
+    public function ajustarImporteLegacy(Request $request, Archivo $archivo): JsonResponse
+    {
+        if ($err = $this->ensureArchivoLegacyEditable($request, $archivo)) return $err;
+        $data = $request->validate([
+            'nuevo_importe' => 'required|numeric|min:0',
+            'motivo'        => 'required|string|min:10|max:500',
+        ]);
+        $importeAntes = round((float) $archivo->importe_facturar, 2);
+        $importeDespues = round((float) $data['nuevo_importe'], 2);
+        $diferencia = round($importeDespues - $importeAntes, 2);
+        if ($importeAntes <= 0 && $importeDespues > 0) {
+            $diferenciaPct = 100.0;
+        } elseif ($importeAntes <= 0) {
+            $diferenciaPct = 0.0;
+        } else {
+            $diferenciaPct = round(abs($diferencia) / $importeAntes * 100, 2);
+        }
+        $requiereRevision = $diferenciaPct > 20;
+        $archivo->update([
+            'importe_facturar'           => $importeDespues,
+            'importe_facturar_overridido' => true,
+            'requiere_revision_dual'     => $requiereRevision,
+        ]);
+        // Reusa la tabla liq_ajustes_importe pero con liq_id=archivo_id en el contexto LEGACY.
+        // Para no romper la FK que apunta a liq_liquidaciones_distribuidor, registramos
+        // solo en la auditoria generica.
+        LiqHistorialAuditoria::registrar('archivo', $archivo->id, 'ajuste_importe',
+            ['importe_facturar' => $importeAntes],
+            ['importe_facturar' => $importeDespues, 'diferencia_pct' => $diferenciaPct],
+            $data['motivo'], $request->user(), $request->ip());
+        $msg = sprintf('Importe ajustado: $%s → $%s (%s%s%%)',
+            number_format($importeAntes, 2, ',', '.'),
+            number_format($importeDespues, 2, ',', '.'),
+            $diferencia >= 0 ? '+' : '',
+            number_format($diferencia >= 0 ? $diferenciaPct : -$diferenciaPct, 2, ',', '.'));
+        if ($requiereRevision) $msg .= '. ⚠ Ajuste >20% — requiere aprobacion dual.';
+        return response()->json(['data' => $archivo->fresh(), 'message' => $msg]);
     }
 
     // =========================================================================

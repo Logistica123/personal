@@ -124,34 +124,63 @@
       </table>
     </div>
 
-    {{-- Datos de la OP y beneficiario --}}
+    {{-- Datos de la OP. El bloque "Beneficiario" solo se muestra en OP individual
+         (1 beneficiario distinto); para OP global con N beneficiarios distintos no
+         tiene sentido y confunde (era un bug que copiaba el primer beneficiario). --}}
     <div class="meta">
-      <table class="meta-grid">
-        <tr>
-          <td style="width: 50%;">
-            <div class="section-title">Datos de la Orden</div>
-            <table class="meta-grid">
-              <tr><td class="label">Fecha de emisión</td><td class="value">{{ $fmtText($op['fecha_emision'] ?? null) }}</td></tr>
-              <tr><td class="label">Concepto</td><td class="value">{{ $fmtText($op['concepto'] ?? null) }}</td></tr>
-              <tr><td class="label">Periodo</td><td class="value">{{ $mesNombre }} {{ $op['anio'] ?? '' }}</td></tr>
-              <tr><td class="label">Liquidaciones</td><td>{{ $op['cantidad_liquidaciones'] ?? 0 }}</td></tr>
-              <tr><td class="label">Estado</td><td class="value">{{ $fmtText($op['estado'] ?? null) }}</td></tr>
-            </table>
-          </td>
-          <td style="width: 50%;">
-            <div class="section-title">Beneficiario</div>
-            <table class="meta-grid">
-              <tr><td class="label">Nombre</td><td class="value">{{ $fmtText($beneficiario['nombre'] ?? null) }}</td></tr>
-              <tr><td class="label">CUIL</td><td>{{ $fmtText($beneficiario['cuil'] ?? null) }}</td></tr>
-              <tr><td class="label">CBU</td><td>{{ $fmtText($beneficiario['cbu'] ?? null) }}</td></tr>
-              <tr><td class="label">Tipo</td><td>{{ $fmtText($beneficiario['tipo'] ?? null) }}</td></tr>
-            </table>
-          </td>
-        </tr>
-      </table>
+      @if(empty($op['es_global']))
+        <table class="meta-grid">
+          <tr>
+            <td style="width: 50%;">
+              <div class="section-title">Datos de la Orden</div>
+              <table class="meta-grid">
+                <tr><td class="label">Fecha de emisión</td><td class="value">{{ $fmtText($op['fecha_emision'] ?? null) }}</td></tr>
+                <tr><td class="label">Concepto</td><td class="value">{{ $fmtText($op['concepto'] ?? null) }}</td></tr>
+                <tr><td class="label">Periodo</td><td class="value">{{ $mesNombre }} {{ $op['anio'] ?? '' }}</td></tr>
+                <tr><td class="label">Liquidaciones</td><td>{{ $op['cantidad_liquidaciones'] ?? 0 }}</td></tr>
+                <tr><td class="label">Estado</td><td class="value">{{ $fmtText($op['estado'] ?? null) }}</td></tr>
+              </table>
+            </td>
+            <td style="width: 50%;">
+              <div class="section-title">Beneficiario</div>
+              <table class="meta-grid">
+                <tr><td class="label">Nombre</td><td class="value">{{ $fmtText($beneficiario['nombre'] ?? null) }}</td></tr>
+                <tr><td class="label">CUIL</td><td>{{ $fmtText($beneficiario['cuil'] ?? null) }}</td></tr>
+                <tr><td class="label">CBU</td><td>{{ $fmtText($beneficiario['cbu'] ?? null) }}</td></tr>
+                <tr><td class="label">Tipo</td><td>{{ $fmtText($beneficiario['tipo'] ?? null) }}</td></tr>
+              </table>
+            </td>
+          </tr>
+        </table>
+      @else
+        <table class="meta-grid">
+          <tr>
+            <td style="width: 100%;">
+              <div class="section-title">Datos de la Orden</div>
+              <table class="meta-grid">
+                <tr>
+                  <td class="label">Fecha de emisión</td><td class="value">{{ $fmtText($op['fecha_emision'] ?? null) }}</td>
+                  <td class="label">Concepto</td><td class="value">{{ $fmtText($op['concepto'] ?? null) }}</td>
+                </tr>
+                <tr>
+                  <td class="label">Periodo</td><td class="value">{{ $mesNombre }} {{ $op['anio'] ?? '' }}</td>
+                  <td class="label">Estado</td><td class="value">{{ $fmtText($op['estado'] ?? null) }}</td>
+                </tr>
+                <tr>
+                  <td class="label">Liquidaciones</td><td>{{ $op['cantidad_liquidaciones'] ?? 0 }}</td>
+                  <td class="label">Beneficiarios distintos</td><td>{{ $op['cantidad_beneficiarios_distintos'] ?? 0 }}</td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+        </table>
+      @endif
     </div>
 
-    {{-- Tabla de detalle --}}
+    {{-- Tabla de detalle. Para OP global usamos el formato extendido (estilo OP 393)
+         con Forma de Pago, IVA 2da fact (si la liq es Factura A) y Observaciones (que
+         incluye "COBRA X" cuando hay cobrador real). Para OP individual mantenemos las
+         columnas compactas que ya estaban. --}}
     <div class="section-title">Detalle de liquidaciones</div>
     <table class="detalle">
       <thead>
@@ -159,16 +188,25 @@
           <th style="width: 22px;">#</th>
           <th>Cliente</th>
           <th>Sucursal</th>
-          <th>Periodo</th>
           <th>Distribuidor</th>
-          <th>Cobrador</th>
+          <th>Periodo</th>
+          @if(!empty($op['es_global']))
+            <th style="width: 70px;">Forma Pago</th>
+          @endif
           <th class="right" style="width: 72px;">Subtotal</th>
-          <th class="right" style="width: 68px;">Gastos Adm.</th>
-          <th class="right" style="width: 68px;">Desc. Comb.</th>
-          <th class="right" style="width: 68px;">Desc. Paq.</th>
-          <th class="right" style="width: 60px;">Ajuste</th>
-          <th class="right" style="width: 56px;">Otros</th>
-          <th class="right bold" style="width: 80px;">Importe Final</th>
+          <th class="right" style="width: 56px;">Gastos Adm.</th>
+          <th class="right" style="width: 60px;">Desc. Comb.</th>
+          <th class="right" style="width: 60px;">Desc. Deuda</th>
+          <th class="right" style="width: 56px;">Ajuste</th>
+          @if(!empty($op['es_global']))
+            <th class="right" style="width: 56px;">IVA 2da Fact.</th>
+          @else
+            <th class="right" style="width: 56px;">Otros</th>
+          @endif
+          <th class="right bold" style="width: 78px;">Monto a Pagar</th>
+          @if(!empty($op['es_global']))
+            <th style="width: 130px;">Observaciones</th>
+          @endif
         </tr>
       </thead>
       <tbody>
@@ -177,20 +215,29 @@
             <td>{{ $i + 1 }}</td>
             <td>{{ $fmtText($d['cliente_nombre'] ?? null) }}</td>
             <td>{{ $fmtText($d['sucursal'] ?? null) }}</td>
-            <td>{{ $fmtText($d['periodo'] ?? null) }}</td>
             <td>{{ $fmtText($d['distribuidor_nombre'] ?? null) }}</td>
-            <td>{{ $fmtText($d['cobrador_nombre'] ?? null) }}</td>
+            <td>{{ $fmtText($d['periodo'] ?? null) }}</td>
+            @if(!empty($op['es_global']))
+              <td>{{ $fmtText($d['forma_pago'] ?? 'TRANSFERENCIA') }}</td>
+            @endif
             <td class="right">{{ $fmtMoney($d['subtotal_liquidacion'] ?? null) }}</td>
-            <td class="right">{{ $fmtMoney($d['gastos_admin'] ?? null) }}</td>
+            <td class="right">{{ ($d['gastos_admin'] ?? 0) != 0 ? $fmtMoney($d['gastos_admin']) : '—' }}</td>
             <td class="right">{{ ($d['descuento_combustible'] ?? 0) != 0 ? $fmtMoney($d['descuento_combustible']) : '—' }}</td>
             <td class="right">{{ ($d['descuento_paquete'] ?? 0) != 0 ? $fmtMoney($d['descuento_paquete']) : '—' }}</td>
-            <td class="right">{{ ($d['descuento_ajuste'] ?? 0) != 0 ? $fmtMoney($d['descuento_ajuste']) : '—' }}</td>
-            <td class="right">{{ ($d['otros_descuentos'] ?? 0) != 0 ? $fmtMoney($d['otros_descuentos']) : '—' }}</td>
+            <td class="right">{{ ($d['descuento_ajuste'] ?? 0) != 0 ? $fmtMoney($d['descuento_ajuste']) : ((!empty($d['importe_overridido'])) ? '✎' : '—') }}</td>
+            @if(!empty($op['es_global']))
+              <td class="right">{{ ($d['iva_2da_factura'] ?? 0) != 0 ? $fmtMoney($d['iva_2da_factura']) . ' (' . rtrim(rtrim(number_format($d['iva_porcentaje'] ?? 21, 2, '.', ''), '0'), '.') . '%)' : '—' }}</td>
+            @else
+              <td class="right">{{ ($d['otros_descuentos'] ?? 0) != 0 ? $fmtMoney($d['otros_descuentos']) : '—' }}</td>
+            @endif
             <td class="right bold">{{ $fmtMoney($d['importe_final'] ?? null) }}</td>
+            @if(!empty($op['es_global']))
+              <td style="font-size: 9px;">{{ $fmtText($d['observaciones'] ?? null) }}</td>
+            @endif
           </tr>
         @empty
           <tr>
-            <td colspan="13">No hay detalles para mostrar.</td>
+            <td colspan="14">No hay detalles para mostrar.</td>
           </tr>
         @endforelse
       </tbody>

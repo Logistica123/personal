@@ -740,12 +740,28 @@ export const PagosPage: React.FC<Props> = ({
     [api, fetchOrdenes, fetchLiquidaciones, showOpDetalle, opDetalle]
   );
 
+  // Helper: arma la URL del endpoint que aplica segun fuente (EXTRACTO o LEGACY).
+  // Devuelve null si la fila no tiene un id valido para la accion.
+  const endpointFor = useCallback((row: LiqRow, action:
+    | 'marcar-factura-a' | 'revertir-factura-a'
+    | 'cobrador-override' | 'ajustar-importe'
+  ): string | null => {
+    if (row.fuente === 'EXTRACTO' && row.pdf_liq_dist_id) {
+      return `/liquidaciones-distribuidor/${row.pdf_liq_dist_id}/${action}`;
+    }
+    if (row.fuente === 'LEGACY' && row.archivo_id) {
+      return `/pagos/archivos/${row.archivo_id}/${action}`;
+    }
+    return null;
+  }, []);
+
   // ── Factura A: marcar / revertir ────────────────────────────────────
   // Agrega IVA al total_a_pagar cuando el distribuidor factura como Responsable Inscripto.
   const marcarFacturaA = useCallback(
     async (row: LiqRow) => {
-      if (!row.pdf_liq_dist_id) {
-        setMsg({ type: 'err', text: 'Esta liquidacion legacy no soporta Factura A.' });
+      const url = endpointFor(row, 'marcar-factura-a');
+      if (!url) {
+        setMsg({ type: 'err', text: 'No se puede marcar Factura A en esta fila.' });
         return;
       }
       const input = window.prompt(
@@ -761,38 +777,38 @@ export const PagosPage: React.FC<Props> = ({
         return;
       }
       try {
-        const json = await api.post(`/liquidaciones-distribuidor/${row.pdf_liq_dist_id}/marcar-factura-a`, {
-          iva_porcentaje: pct,
-        });
+        const json = await api.post(url, { iva_porcentaje: pct });
         setMsg({ type: 'ok', text: json.message ?? 'Marcada como Factura A' });
         fetchLiquidaciones();
       } catch (e: any) {
         setMsg({ type: 'err', text: e.message });
       }
     },
-    [api, fetchLiquidaciones]
+    [api, endpointFor, fetchLiquidaciones]
   );
 
   const revertirFacturaA = useCallback(
     async (row: LiqRow) => {
-      if (!row.pdf_liq_dist_id) return;
+      const url = endpointFor(row, 'revertir-factura-a');
+      if (!url) return;
       if (!window.confirm(`Revertir Factura A de ${row.distribuidor_nombre}? Vuelve al neto sin IVA.`)) return;
       try {
-        const json = await api.post(`/liquidaciones-distribuidor/${row.pdf_liq_dist_id}/revertir-factura-a`, {});
+        const json = await api.post(url, {});
         setMsg({ type: 'ok', text: json.message ?? 'Factura A revertida' });
         fetchLiquidaciones();
       } catch (e: any) {
         setMsg({ type: 'err', text: e.message });
       }
     },
-    [api, fetchLiquidaciones]
+    [api, endpointFor, fetchLiquidaciones]
   );
 
   // ── Feature C: ajustar importe manual ───────────────────────────────
   const ajustarImporte = useCallback(
     async (row: LiqRow) => {
-      if (!row.pdf_liq_dist_id) {
-        setMsg({ type: 'err', text: 'Esta liquidacion legacy no soporta ajuste manual.' });
+      const url = endpointFor(row, 'ajustar-importe');
+      if (!url) {
+        setMsg({ type: 'err', text: 'No se puede ajustar el importe en esta fila.' });
         return;
       }
       const nuevoStr = window.prompt(
@@ -817,7 +833,7 @@ export const PagosPage: React.FC<Props> = ({
         return;
       }
       try {
-        const json = await api.post(`/liquidaciones-distribuidor/${row.pdf_liq_dist_id}/ajustar-importe`, {
+        const json = await api.post(url, {
           nuevo_importe: nuevoImporte,
           motivo: motivo.trim(),
         });
@@ -827,13 +843,17 @@ export const PagosPage: React.FC<Props> = ({
         setMsg({ type: 'err', text: e.message });
       }
     },
-    [api, fetchLiquidaciones]
+    [api, endpointFor, fetchLiquidaciones]
   );
 
   // ── Feature A: override cobrador por liquidacion ────────────────────
   const aplicarCobradorOverride = useCallback(
     async (row: LiqRow) => {
-      if (!row.pdf_liq_dist_id) return;
+      const url = endpointFor(row, 'cobrador-override');
+      if (!url) {
+        setMsg({ type: 'err', text: 'No se puede cambiar el cobrador en esta fila.' });
+        return;
+      }
       const nombre = window.prompt(`Cobrador para ESTA liquidacion (${row.distribuidor_nombre})\nNombre completo del cobrador:`, '');
       if (nombre === null || !nombre.trim()) return;
       const cuit = window.prompt('CUIT/CUIL del cobrador (11 digitos):', '');
@@ -851,7 +871,7 @@ export const PagosPage: React.FC<Props> = ({
       const motivo = window.prompt('Motivo del cambio (obligatorio, min 5 chars):', '');
       if (motivo === null || motivo.trim().length < 5) return;
       try {
-        const json = await api.post(`/liquidaciones-distribuidor/${row.pdf_liq_dist_id}/cobrador-override`, {
+        const json = await api.post(url, {
           nombre: nombre.trim(),
           cuit,
           cbu,
@@ -863,22 +883,23 @@ export const PagosPage: React.FC<Props> = ({
         setMsg({ type: 'err', text: e.message });
       }
     },
-    [api, fetchLiquidaciones]
+    [api, endpointFor, fetchLiquidaciones]
   );
 
   const quitarCobradorOverride = useCallback(
     async (row: LiqRow) => {
-      if (!row.pdf_liq_dist_id) return;
+      const url = endpointFor(row, 'cobrador-override');
+      if (!url) return;
       if (!window.confirm(`Quitar el cobrador puntual de ${row.distribuidor_nombre}? Vuelve al beneficiario por defecto.`)) return;
       try {
-        const json = await api.delete(`/liquidaciones-distribuidor/${row.pdf_liq_dist_id}/cobrador-override`);
+        const json = await api.delete(url);
         setMsg({ type: 'ok', text: json.message ?? 'Override removido' });
         fetchLiquidaciones();
       } catch (e: any) {
         setMsg({ type: 'err', text: e.message });
       }
     },
-    [api, fetchLiquidaciones]
+    [api, endpointFor, fetchLiquidaciones]
   );
 
   // ── Feature D: cargar datos bancarios del distribuidor sin salir del modal de OP ──
@@ -1217,7 +1238,7 @@ export const PagosPage: React.FC<Props> = ({
                               Fac
                             </button>
                             {/* Factura A: marcar / revertir. Solo extractos sin OP activa ni pagados. */}
-                            {row.fuente === 'EXTRACTO' && !row.tiene_op_activa && !row.pagado ? (
+                            {((row.fuente === 'EXTRACTO' && row.pdf_liq_dist_id) || (row.fuente === 'LEGACY' && row.archivo_id)) && !row.tiene_op_activa && !row.pagado ? (
                               row.tipo_comprobante === 'A' ? (
                                 <button
                                   className="pagos-action-btn"
@@ -1238,7 +1259,7 @@ export const PagosPage: React.FC<Props> = ({
                               )
                             ) : null}
                             {/* Feature C: ajuste manual del importe. Solo extractos sin OP activa ni pagados. */}
-                            {row.fuente === 'EXTRACTO' && !row.tiene_op_activa && !row.pagado ? (
+                            {((row.fuente === 'EXTRACTO' && row.pdf_liq_dist_id) || (row.fuente === 'LEGACY' && row.archivo_id)) && !row.tiene_op_activa && !row.pagado ? (
                               <button
                                 className="pagos-action-btn"
                                 title="Ajustar importe manual (motivo obligatorio)"
@@ -1248,7 +1269,7 @@ export const PagosPage: React.FC<Props> = ({
                               </button>
                             ) : null}
                             {/* Feature A: cobrador override puntual */}
-                            {row.fuente === 'EXTRACTO' && !row.tiene_op_activa && !row.pagado ? (
+                            {((row.fuente === 'EXTRACTO' && row.pdf_liq_dist_id) || (row.fuente === 'LEGACY' && row.archivo_id)) && !row.tiene_op_activa && !row.pagado ? (
                               row.override_cobrador ? (
                                 <button
                                   className="pagos-action-btn"
