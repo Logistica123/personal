@@ -36,6 +36,13 @@ class LiqLiquidacionDistribuidor extends Model
         'importe_base',
         'iva_porcentaje',
         'importe_iva',
+        'cobrador_override_nombre',
+        'cobrador_override_cuit',
+        'cobrador_override_cbu',
+        'cobrador_override_alias_cbu',
+        'cobrador_override_motivo',
+        'cobrador_override_at',
+        'cobrador_override_por',
         'estado',
         'pdf_path',
         'beneficio_seguro',
@@ -69,6 +76,7 @@ class LiqLiquidacionDistribuidor extends Model
         'importe_base'            => 'decimal:2',
         'iva_porcentaje'          => 'decimal:2',
         'importe_iva'             => 'decimal:2',
+        'cobrador_override_at'    => 'datetime',
         'beneficio_seguro'        => 'decimal:2',
         'subtotal_peajes'         => 'decimal:2',
         'eficiencia_pct'          => 'decimal:2',
@@ -112,5 +120,38 @@ class LiqLiquidacionDistribuidor extends Model
     {
         return in_array($this->estado, [self::ESTADO_GENERADA, self::ESTADO_APROBADA])
             && !$this->tieneOrdenPagoActiva();
+    }
+
+    /**
+     * Indica si esta liquidacion tiene un override de cobrador cargado.
+     */
+    public function tieneOverrideCobrador(): bool
+    {
+        return !empty($this->cobrador_override_cbu);
+    }
+
+    /**
+     * Resuelve el beneficiario efectivo para esta liquidacion.
+     * Prioridad: override > cobrador del distribuidor > distribuidor directo.
+     * Retorna ['origen', 'tipo', 'nombre', 'cuil', 'cbu'].
+     */
+    public function datosBeneficiarioEfectivo(): array
+    {
+        if ($this->tieneOverrideCobrador()) {
+            return [
+                'origen' => 'override_liquidacion',
+                'tipo'   => 'COBRADOR',
+                'nombre' => $this->cobrador_override_nombre,
+                'cuil'   => $this->cobrador_override_cuit,
+                'cbu'    => $this->cobrador_override_cbu,
+            ];
+        }
+        $datos = $this->distribuidor?->datosBeneficiario() ?? [
+            'tipo' => 'DISTRIBUIDOR', 'nombre' => null, 'cuil' => null, 'cbu' => null,
+        ];
+        $datos['origen'] = $datos['tipo'] === 'COBRADOR'
+            ? 'distribuidor_cobrador_real'
+            : 'distribuidor_directo';
+        return $datos;
     }
 }

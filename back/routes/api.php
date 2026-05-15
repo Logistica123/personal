@@ -532,6 +532,14 @@ Route::middleware('auth.api')->group(function () {
         // ADDENDUM Pagos B: marcar/revertir Factura A (suma IVA al total)
         Route::post('/liquidaciones-distribuidor/{liquidacionDistribuidor}/marcar-factura-a', [LiqDistribuidorLiquidacionesController::class, 'marcarFacturaA']);
         Route::post('/liquidaciones-distribuidor/{liquidacionDistribuidor}/revertir-factura-a', [LiqDistribuidorLiquidacionesController::class, 'revertirFacturaA']);
+        // ADDENDUM Pagos A: override cobrador por liquidacion
+        Route::post('/liquidaciones-distribuidor/{liquidacionDistribuidor}/cobrador-override',   [LiqDistribuidorLiquidacionesController::class, 'aplicarCobradorOverride']);
+        Route::delete('/liquidaciones-distribuidor/{liquidacionDistribuidor}/cobrador-override', [LiqDistribuidorLiquidacionesController::class, 'quitarCobradorOverride']);
+        // ADDENDUM Pagos C: ajustar importe manual (motivo obligatorio, auditoria dedicada)
+        Route::post('/liquidaciones-distribuidor/{liquidacionDistribuidor}/ajustar-importe',     [LiqDistribuidorLiquidacionesController::class, 'ajustarImporte']);
+        Route::get('/liquidaciones-distribuidor/{liquidacionDistribuidor}/ajustes-importe',      [LiqDistribuidorLiquidacionesController::class, 'ajustesImporte']);
+        // ADDENDUM Pagos D: cargar datos bancarios del distribuidor desde el modal de OP
+        Route::patch('/distribuidores/{persona}/datos-bancarios',                                 [LiqPagosController::class, 'datosBancariosDistribuidor']);
         Route::post('/liquidaciones-distribuidor/{liquidacionDistribuidor}/recalcular-eficiencia', [LiqExtractosController::class, 'recalcularEficiencia']);
 
         // BUGFIX 27.1: ciclo de vida (preparar/anular/borrar con auditoría) en ambas tablas.

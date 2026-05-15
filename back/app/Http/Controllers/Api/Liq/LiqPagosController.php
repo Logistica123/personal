@@ -4,8 +4,11 @@ namespace App\Http\Controllers\Api\Liq;
 
 use App\Http\Controllers\Controller;
 use App\Models\LiqConfigBanco;
+use App\Models\LiqHistorialAuditoria;
 use App\Models\LiqOrdenPago;
 use App\Models\LiqOrdenPagoConcepto;
+use App\Models\Persona;
+use App\Rules\CuitValido;
 use App\Services\Liq\BeneficiarioResolver;
 use App\Services\Liq\Banco\BancoTransferenciaService;
 use App\Services\Liq\OrdenPagoService;
@@ -866,6 +869,136 @@ class LiqPagosController extends Controller
         return response($pdfContent, 200, [
             'Content-Type'        => 'application/pdf',
             'Content-Disposition' => "inline; filename=\"{$filename}\"",
+        ]);
+    }
+
+    // =========================================================================
+    // ADDENDUM Pagos D: cargar datos bancarios de un distribuidor desde el modal de OP
+    // =========================================================================
+
+    /**
+     * PATCH /api/liq/distribuidores/{persona}/datos-bancarios
+     *
+     * Carga (o actualiza) los datos bancarios del distribuidor sin salir del modal de
+     * "Generar OP". Persiste en la ficha (personas) y deja auditoria con el origen.
+     * Body:
+     *   modo: "directo"          → cbu, alias_cbu? → setea persona.cbu_alias
+     *   modo: "cobrador_real"    → cobrador_real_* → setea persona.es_cobrador=1 + cobrador_*
+     */
+    public function datosBancariosDistribuidor(Request $request, Persona $persona): JsonResponse
+    {
+        $role = strtolower(trim((string) ($request->user()?->role ?? '')));
+        if (!in_array($role, ['admin', 'admin2'], true)) {
+            return response()->json(['error' => 'No tenes permisos para editar datos bancarios.'], 403);
+        }
+
+        $data = $request->validate([
+            'modo'                    => 'required|in:directo,cobrador_real',
+            'cbu'                     => 'nullable|string|max:50',
+            'alias_cbu'               => 'nullable|string|max:50',
+            'cobrador_real_nombre'    => 'nullable|string|max:200',
+            'cobrador_real_cuit'      => ['nullable', 'string', 'max:20', new CuitValido()],
+            'cobrador_real_cbu'       => 'nullable|string|max:50',
+            'cobrador_real_alias_cbu' => 'nullable|string|max:50',
+            'cobrador_real_notas'     => 'nullable|string|max:1000',
+        ]);
+
+        $antes = [
+            'cbu_alias'          => $persona->cbu_alias,
+            'es_cobrador'        => (bool) $persona->es_cobrador,
+            'cobrador_nombre'    => $persona->cobrador_nombre,
+            'cobrador_cuil'      => $persona->cobrador_cuil,
+            'cobrador_cbu_alias' => $persona->cobrador_cbu_alias,
+        ];
+
+        if ($data['modo'] === 'directo') {
+            $cbu = preg_replace('/\D+/', '', (string) ($data['cbu'] ?? ''));
+            if (strlen($cbu) !== 22) {
+                return response()->json(['error' => 'El CBU debe tener 22 digitos.'], 422);
+            }
+            // CBU duplicado: warning (no bloquea). Devolvemos referencias para que el front decida.
+            $duplicados = Persona::where('id', '!=', $persona->id)
+                ->where(function ($q) use ($cbu) {
+                    $q->where('cbu_alias', $cbu)->orWhere('cobrador_cbu_alias', $cbu);
+                })
+                ->select('id', 'apellidos', 'nombres')
+                ->limit(5)
+                ->get();
+            $persona->cbu_alias = $cbu;
+            if (!empty($data['alias_cbu'])) {
+                // alias_cbu se guarda como cbu_alias mismo cuando viene texto no numerico,
+                // pero como en esquema actual solo hay una columna, lo dejamos en cbu_alias.
+                // Si se quiere distinguir, agregar columna especifica en el futuro.
+            }
+            $persona->save();
+
+            LiqHistorialAuditoria::registrar(
+                'persona',
+                $persona->id,
+                'datos_bancarios_directo',
+                $antes,
+                ['cbu_alias' => $persona->cbu_alias],
+                'Carga inline desde modal OP',
+                $request->user(),
+                $request->ip()
+            );
+
+            return response()->json([
+                'data'    => [
+                    'modo'              => 'directo',
+                    'cbu_alias'         => $persona->cbu_alias,
+                    'duplicados_warning' => $duplicados->isEmpty() ? null : $duplicados->map(fn ($d) => [
+                        'id' => $d->id,
+                        'nombre' => trim($d->apellidos . ', ' . $d->nombres),
+                    ])->values(),
+                ],
+                'message' => 'Datos bancarios cargados. La liquidacion ya esta lista para incluir en la OP.',
+            ]);
+        }
+
+        // modo cobrador_real
+        $cobradorCbu = preg_replace('/\D+/', '', (string) ($data['cobrador_real_cbu'] ?? ''));
+        if (strlen($cobradorCbu) !== 22) {
+            return response()->json(['error' => 'El CBU del cobrador debe tener 22 digitos.'], 422);
+        }
+        $cobradorCuit = preg_replace('/\D+/', '', (string) ($data['cobrador_real_cuit'] ?? ''));
+        if (strlen($cobradorCuit) !== 11) {
+            return response()->json(['error' => 'El CUIT del cobrador debe tener 11 digitos.'], 422);
+        }
+        if (empty(trim((string) ($data['cobrador_real_nombre'] ?? '')))) {
+            return response()->json(['error' => 'El nombre del cobrador es obligatorio.'], 422);
+        }
+
+        $persona->es_cobrador = true;
+        $persona->cobrador_nombre = $data['cobrador_real_nombre'];
+        $persona->cobrador_cuil = $cobradorCuit;
+        $persona->cobrador_cbu_alias = $cobradorCbu;
+        $persona->save();
+
+        LiqHistorialAuditoria::registrar(
+            'persona',
+            $persona->id,
+            'datos_bancarios_cobrador_real',
+            $antes,
+            [
+                'es_cobrador'        => true,
+                'cobrador_nombre'    => $persona->cobrador_nombre,
+                'cobrador_cuil'      => $persona->cobrador_cuil,
+                'cobrador_cbu_alias' => $persona->cobrador_cbu_alias,
+            ],
+            'Carga inline desde modal OP — notas: ' . ($data['cobrador_real_notas'] ?? 'sin notas'),
+            $request->user(),
+            $request->ip()
+        );
+
+        return response()->json([
+            'data'    => [
+                'modo'               => 'cobrador_real',
+                'cobrador_nombre'    => $persona->cobrador_nombre,
+                'cobrador_cuil'      => $persona->cobrador_cuil,
+                'cobrador_cbu_alias' => $persona->cobrador_cbu_alias,
+            ],
+            'message' => "Cobrador real cargado: {$persona->cobrador_nombre}. La liquidacion ya esta lista para la OP.",
         ]);
     }
 }

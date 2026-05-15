@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\Liq;
 
 use App\Http\Controllers\Controller;
 use App\Models\Archivo;
+use App\Models\LiqAjusteImporte;
 use App\Models\LiqHistorialAuditoria;
 use App\Models\LiqLiquidacionDistribuidor;
 use App\Models\Persona;
@@ -263,6 +264,239 @@ class LiqDistribuidorLiquidacionesController extends Controller
             'data'    => $liquidacionDistribuidor->fresh(),
             'message' => 'Factura A revertida. Total restaurado: $' . number_format($totalRestaurado, 2, ',', '.'),
         ]);
+    }
+
+    /**
+     * POST /liq/liquidaciones-distribuidor/{liquidacionDistribuidor}/cobrador-override
+     *
+     * Aplica un override de cobrador puntual para ESTA liquidacion (sin tocar la ficha
+     * del distribuidor). El TXT ICBC va a usar nombre/CUIT/CBU del override.
+     */
+    public function aplicarCobradorOverride(Request $request, LiqLiquidacionDistribuidor $liquidacionDistribuidor): JsonResponse
+    {
+        $role = strtolower(trim((string) ($request->user()?->role ?? '')));
+        if (!in_array($role, ['admin', 'admin2'], true)) {
+            return response()->json(['error' => 'No tenes permisos para cambiar el cobrador.'], 403);
+        }
+        if ($liquidacionDistribuidor->tieneOrdenPagoActiva()) {
+            return response()->json(['error' => 'La liquidacion esta incluida en una OP activa. Sacala de la OP primero.'], 422);
+        }
+        if ($liquidacionDistribuidor->estado === LiqLiquidacionDistribuidor::ESTADO_PAGADA) {
+            return response()->json(['error' => 'La liquidacion ya fue pagada.'], 422);
+        }
+
+        $data = $request->validate([
+            'nombre'    => 'required|string|max:200',
+            'cuit'      => 'required|string|max:20',
+            'cbu'       => 'required|string|max:50',
+            'alias_cbu' => 'nullable|string|max:50',
+            'motivo'    => 'required|string|min:5|max:300',
+        ]);
+
+        $cbuDigits = preg_replace('/\D+/', '', (string) $data['cbu']);
+        $cuitDigits = preg_replace('/\D+/', '', (string) $data['cuit']);
+        if (strlen($cbuDigits) !== 22) {
+            return response()->json(['error' => 'El CBU debe tener 22 digitos.'], 422);
+        }
+        if (strlen($cuitDigits) !== 11) {
+            return response()->json(['error' => 'El CUIT debe tener 11 digitos.'], 422);
+        }
+
+        $anteriores = [
+            'cobrador_override_nombre' => $liquidacionDistribuidor->cobrador_override_nombre,
+            'cobrador_override_cuit'   => $liquidacionDistribuidor->cobrador_override_cuit,
+            'cobrador_override_cbu'    => $liquidacionDistribuidor->cobrador_override_cbu,
+            'cobrador_override_motivo' => $liquidacionDistribuidor->cobrador_override_motivo,
+        ];
+        $nuevos = [
+            'cobrador_override_nombre'    => $data['nombre'],
+            'cobrador_override_cuit'      => $cuitDigits,
+            'cobrador_override_cbu'       => $cbuDigits,
+            'cobrador_override_alias_cbu' => $data['alias_cbu'] ?? null,
+            'cobrador_override_motivo'    => $data['motivo'],
+            'cobrador_override_at'        => now(),
+            'cobrador_override_por'       => $request->user()?->id,
+        ];
+
+        $liquidacionDistribuidor->update($nuevos);
+
+        LiqHistorialAuditoria::registrar(
+            'liquidacion_distribuidor',
+            $liquidacionDistribuidor->id,
+            'cobrador_override_aplicado',
+            $anteriores,
+            $nuevos,
+            $data['motivo'],
+            $request->user(),
+            $request->ip()
+        );
+
+        return response()->json([
+            'data'    => $liquidacionDistribuidor->fresh(),
+            'message' => "Override aplicado. El pago va a {$data['nombre']} (CBU {$cbuDigits}).",
+        ]);
+    }
+
+    /**
+     * DELETE /liq/liquidaciones-distribuidor/{liquidacionDistribuidor}/cobrador-override
+     *
+     * Quita el override y vuelve al beneficiario por defecto (cobrador del distribuidor o el propio).
+     */
+    public function quitarCobradorOverride(Request $request, LiqLiquidacionDistribuidor $liquidacionDistribuidor): JsonResponse
+    {
+        $role = strtolower(trim((string) ($request->user()?->role ?? '')));
+        if (!in_array($role, ['admin', 'admin2'], true)) {
+            return response()->json(['error' => 'No tenes permisos para cambiar el cobrador.'], 403);
+        }
+        if ($liquidacionDistribuidor->tieneOrdenPagoActiva()) {
+            return response()->json(['error' => 'La liquidacion esta incluida en una OP activa. Sacala de la OP primero.'], 422);
+        }
+        if (!$liquidacionDistribuidor->tieneOverrideCobrador()) {
+            return response()->json(['error' => 'Esta liquidacion no tiene override de cobrador.'], 422);
+        }
+
+        $anteriores = [
+            'cobrador_override_nombre' => $liquidacionDistribuidor->cobrador_override_nombre,
+            'cobrador_override_cuit'   => $liquidacionDistribuidor->cobrador_override_cuit,
+            'cobrador_override_cbu'    => $liquidacionDistribuidor->cobrador_override_cbu,
+        ];
+        $nuevos = [
+            'cobrador_override_nombre'    => null,
+            'cobrador_override_cuit'      => null,
+            'cobrador_override_cbu'       => null,
+            'cobrador_override_alias_cbu' => null,
+            'cobrador_override_motivo'    => null,
+            'cobrador_override_at'        => null,
+            'cobrador_override_por'       => null,
+        ];
+
+        $liquidacionDistribuidor->update($nuevos);
+
+        LiqHistorialAuditoria::registrar(
+            'liquidacion_distribuidor',
+            $liquidacionDistribuidor->id,
+            'cobrador_override_quitado',
+            $anteriores,
+            $nuevos,
+            'Override de cobrador removido',
+            $request->user(),
+            $request->ip()
+        );
+
+        return response()->json([
+            'data'    => $liquidacionDistribuidor->fresh(),
+            'message' => 'Override de cobrador removido. La OP vuelve al beneficiario por defecto.',
+        ]);
+    }
+
+    /**
+     * POST /liq/liquidaciones-distribuidor/{liquidacionDistribuidor}/ajustar-importe
+     *
+     * Ajuste manual del total_a_pagar con motivo obligatorio. Si la diferencia supera
+     * el 20%, marca la liq como requiere_revision_dual para que un 2do admin apruebe
+     * antes de generar la OP. Cada ajuste queda en liq_ajustes_importe (tooltip historial).
+     */
+    public function ajustarImporte(Request $request, LiqLiquidacionDistribuidor $liquidacionDistribuidor): JsonResponse
+    {
+        $role = strtolower(trim((string) ($request->user()?->role ?? '')));
+        if (!in_array($role, ['admin', 'admin2'], true)) {
+            return response()->json(['error' => 'No tenes permisos para ajustar importes.'], 403);
+        }
+        if ($liquidacionDistribuidor->tieneOrdenPagoActiva()) {
+            return response()->json(['error' => 'La liquidacion esta incluida en una OP activa. Sacala de la OP primero.'], 422);
+        }
+        if ($liquidacionDistribuidor->estado === LiqLiquidacionDistribuidor::ESTADO_PAGADA) {
+            return response()->json(['error' => 'La liquidacion ya fue pagada.'], 422);
+        }
+
+        $data = $request->validate([
+            'nuevo_importe' => 'required|numeric|min:0',
+            'motivo'        => 'required|string|min:10|max:500',
+        ]);
+
+        $importeAntes = round((float) $liquidacionDistribuidor->total_a_pagar, 2);
+        $importeDespues = round((float) $data['nuevo_importe'], 2);
+        $diferencia = round($importeDespues - $importeAntes, 2);
+
+        if ($importeAntes <= 0 && $importeDespues > 0) {
+            $diferenciaPct = 100.0; // de 0 a algo: forzar revision dual
+        } elseif ($importeAntes <= 0) {
+            $diferenciaPct = 0.0;
+        } else {
+            $diferenciaPct = round(abs($diferencia) / $importeAntes * 100, 2);
+        }
+        $requiereRevision = $diferenciaPct > 20;
+
+        $liquidacionDistribuidor->update([
+            'total_a_pagar'             => $importeDespues,
+            'total_a_pagar_overridido'  => true,
+            'requiere_revision_dual'    => $requiereRevision,
+        ]);
+
+        $ajuste = LiqAjusteImporte::create([
+            'liq_id'                 => $liquidacionDistribuidor->id,
+            'importe_antes'          => $importeAntes,
+            'importe_despues'        => $importeDespues,
+            'diferencia'             => $diferencia,
+            'diferencia_pct'         => $diferenciaPct,
+            'motivo'                 => $data['motivo'],
+            'user_id'                => $request->user()?->id,
+            'requiere_revision_dual' => $requiereRevision,
+        ]);
+
+        LiqHistorialAuditoria::registrar(
+            'liquidacion_distribuidor',
+            $liquidacionDistribuidor->id,
+            'ajuste_importe',
+            ['total_a_pagar' => $importeAntes],
+            ['total_a_pagar' => $importeDespues, 'diferencia_pct' => $diferenciaPct],
+            $data['motivo'],
+            $request->user(),
+            $request->ip()
+        );
+
+        $msg = sprintf(
+            'Importe ajustado: $%s → $%s (%s%s%%)',
+            number_format($importeAntes, 2, ',', '.'),
+            number_format($importeDespues, 2, ',', '.'),
+            $diferencia >= 0 ? '+' : '',
+            number_format($diferencia >= 0 ? $diferenciaPct : -$diferenciaPct, 2, ',', '.')
+        );
+        if ($requiereRevision) {
+            $msg .= '. ⚠ Ajuste >20% — requiere aprobacion de un 2do admin antes de generar la OP.';
+        }
+
+        return response()->json([
+            'data'    => $liquidacionDistribuidor->fresh(),
+            'ajuste'  => $ajuste,
+            'message' => $msg,
+        ]);
+    }
+
+    /**
+     * GET /liq/liquidaciones-distribuidor/{liquidacionDistribuidor}/ajustes-importe
+     *
+     * Lista los ajustes historicos de importe de esta liquidacion (para tooltip en UI).
+     */
+    public function ajustesImporte(LiqLiquidacionDistribuidor $liquidacionDistribuidor): JsonResponse
+    {
+        $ajustes = LiqAjusteImporte::where('liq_id', $liquidacionDistribuidor->id)
+            ->with('usuario:id,name')
+            ->orderByDesc('created_at')
+            ->get()
+            ->map(fn ($a) => [
+                'id'               => $a->id,
+                'importe_antes'    => (float) $a->importe_antes,
+                'importe_despues'  => (float) $a->importe_despues,
+                'diferencia'       => (float) $a->diferencia,
+                'diferencia_pct'   => (float) $a->diferencia_pct,
+                'motivo'           => $a->motivo,
+                'usuario'          => $a->usuario?->name,
+                'requiere_revision_dual' => (bool) $a->requiere_revision_dual,
+                'aprobado_at'      => $a->aprobado_at?->toIso8601String(),
+                'created_at'       => $a->created_at?->toIso8601String(),
+            ]);
+        return response()->json(['data' => $ajustes]);
     }
 
     /**

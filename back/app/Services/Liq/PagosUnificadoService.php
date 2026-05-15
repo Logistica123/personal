@@ -115,10 +115,18 @@ class PagosUnificadoService
                 'periodo_sort'        => $liq->periodo_desde?->format('Y-m-d') ?? '',
                 'distribuidor_nombre' => $dist ? trim($dist->apellidos . ', ' . $dist->nombres) : 'N/A',
                 'cobrador_nombre'     => $dist?->es_cobrador ? $dist->cobrador_nombre : null,
+                'override_cobrador'   => $liq->cobrador_override_cbu ? [
+                    'nombre' => $liq->cobrador_override_nombre,
+                    'cuit'   => $liq->cobrador_override_cuit,
+                    'cbu'    => $liq->cobrador_override_cbu,
+                    'motivo' => $liq->cobrador_override_motivo,
+                ] : null,
                 'importe'             => (float) $liq->total_a_pagar,
                 'tipo_comprobante'    => (string) ($liq->tipo_comprobante ?? 'C'),
                 'iva_porcentaje'      => $liq->iva_porcentaje !== null ? (float) $liq->iva_porcentaje : null,
                 'importe_iva'         => (float) ($liq->importe_iva ?? 0),
+                'total_a_pagar_overridido' => (bool) ($liq->total_a_pagar_overridido ?? false),
+                'requiere_revision_dual'   => (bool) ($liq->requiere_revision_dual ?? false),
                 'enviada'             => in_array($estado, ['subida', 'publicada', 'pagada']),
                 'facturado'           => false, // Extractos no tienen archivo padre en tabla archivos
                 'factura_doc_id'      => null, // Se usa endpoint factura-distribuidor

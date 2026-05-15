@@ -42,10 +42,18 @@ type LiqRow = {
   periodo_sort: string;
   distribuidor_nombre: string;
   cobrador_nombre: string | null;
+  override_cobrador?: {
+    nombre: string;
+    cuit: string;
+    cbu: string;
+    motivo?: string | null;
+  } | null;
   importe: number;
   tipo_comprobante?: 'B' | 'C' | 'A' | 'M' | 'SIN_FACTURA';
   iva_porcentaje?: number | null;
   importe_iva?: number;
+  total_a_pagar_overridido?: boolean;
+  requiere_revision_dual?: boolean;
   enviada: boolean;
   facturado: boolean;
   factura_doc_id: number | null;
@@ -279,6 +287,16 @@ export const PagosPage: React.FC<Props> = ({
   // ── Flujo de pago ─────────────────────────────────────────────────
   const [pagoStep, setPagoStep] = useState<PagoStep>('idle');
   const [validacion, setValidacion] = useState<ValidacionResult | null>(null);
+  // Feature D: form inline para cargar CBU/cobrador desde el banner de excluidas
+  const [cbuFormDistribuidorId, setCbuFormDistribuidorId] = useState<number | null>(null);
+  const [cbuFormMode, setCbuFormMode] = useState<'directo' | 'cobrador_real'>('directo');
+  const cbuFormInitial = {
+    cbu: '', alias_cbu: '',
+    cobrador_real_nombre: '', cobrador_real_cuit: '',
+    cobrador_real_cbu: '', cobrador_real_alias_cbu: '', cobrador_real_notas: '',
+  };
+  const [cbuFormValues, setCbuFormValues] = useState(cbuFormInitial);
+  const [cbuSaving, setCbuSaving] = useState(false);
   const [pagoConceptoId, setPagoConceptoId] = useState<number>(0);
   const [pagoNumero, setPagoNumero] = useState<number | ''>('');
   const [pagoAgrupacion, setPagoAgrupacion] = useState<'INDIVIDUAL' | 'GLOBAL'>('INDIVIDUAL');
@@ -770,6 +788,138 @@ export const PagosPage: React.FC<Props> = ({
     [api, fetchLiquidaciones]
   );
 
+  // ── Feature C: ajustar importe manual ───────────────────────────────
+  const ajustarImporte = useCallback(
+    async (row: LiqRow) => {
+      if (!row.pdf_liq_dist_id) {
+        setMsg({ type: 'err', text: 'Esta liquidacion legacy no soporta ajuste manual.' });
+        return;
+      }
+      const nuevoStr = window.prompt(
+        `Ajustar importe — ${row.distribuidor_nombre}\n` +
+        `Importe actual: $${row.importe.toLocaleString('es-AR', { minimumFractionDigits: 2 })}\n\n` +
+        `Nuevo importe a pagar:`,
+        String(row.importe.toFixed(2))
+      );
+      if (nuevoStr === null) return;
+      const nuevoImporte = parseFloat(nuevoStr.replace(',', '.'));
+      if (!Number.isFinite(nuevoImporte) || nuevoImporte < 0) {
+        setMsg({ type: 'err', text: 'Importe invalido.' });
+        return;
+      }
+      const motivo = window.prompt(
+        `Motivo del ajuste (minimo 10 caracteres, obligatorio).\nEj: "Descuento combustible 10/05"`,
+        ''
+      );
+      if (motivo === null) return;
+      if (motivo.trim().length < 10) {
+        setMsg({ type: 'err', text: 'El motivo debe tener al menos 10 caracteres.' });
+        return;
+      }
+      try {
+        const json = await api.post(`/liquidaciones-distribuidor/${row.pdf_liq_dist_id}/ajustar-importe`, {
+          nuevo_importe: nuevoImporte,
+          motivo: motivo.trim(),
+        });
+        setMsg({ type: 'ok', text: json.message ?? 'Importe ajustado' });
+        fetchLiquidaciones();
+      } catch (e: any) {
+        setMsg({ type: 'err', text: e.message });
+      }
+    },
+    [api, fetchLiquidaciones]
+  );
+
+  // ── Feature A: override cobrador por liquidacion ────────────────────
+  const aplicarCobradorOverride = useCallback(
+    async (row: LiqRow) => {
+      if (!row.pdf_liq_dist_id) return;
+      const nombre = window.prompt(`Cobrador para ESTA liquidacion (${row.distribuidor_nombre})\nNombre completo del cobrador:`, '');
+      if (nombre === null || !nombre.trim()) return;
+      const cuit = window.prompt('CUIT/CUIL del cobrador (11 digitos):', '');
+      if (cuit === null) return;
+      if ((cuit.replace(/\D/g, '').length) !== 11) {
+        setMsg({ type: 'err', text: 'CUIT invalido.' });
+        return;
+      }
+      const cbu = window.prompt('CBU del cobrador (22 digitos):', '');
+      if (cbu === null) return;
+      if ((cbu.replace(/\D/g, '').length) !== 22) {
+        setMsg({ type: 'err', text: 'CBU invalido.' });
+        return;
+      }
+      const motivo = window.prompt('Motivo del cambio (obligatorio, min 5 chars):', '');
+      if (motivo === null || motivo.trim().length < 5) return;
+      try {
+        const json = await api.post(`/liquidaciones-distribuidor/${row.pdf_liq_dist_id}/cobrador-override`, {
+          nombre: nombre.trim(),
+          cuit,
+          cbu,
+          motivo: motivo.trim(),
+        });
+        setMsg({ type: 'ok', text: json.message ?? 'Override aplicado' });
+        fetchLiquidaciones();
+      } catch (e: any) {
+        setMsg({ type: 'err', text: e.message });
+      }
+    },
+    [api, fetchLiquidaciones]
+  );
+
+  const quitarCobradorOverride = useCallback(
+    async (row: LiqRow) => {
+      if (!row.pdf_liq_dist_id) return;
+      if (!window.confirm(`Quitar el cobrador puntual de ${row.distribuidor_nombre}? Vuelve al beneficiario por defecto.`)) return;
+      try {
+        const json = await api.delete(`/liquidaciones-distribuidor/${row.pdf_liq_dist_id}/cobrador-override`);
+        setMsg({ type: 'ok', text: json.message ?? 'Override removido' });
+        fetchLiquidaciones();
+      } catch (e: any) {
+        setMsg({ type: 'err', text: e.message });
+      }
+    },
+    [api, fetchLiquidaciones]
+  );
+
+  // ── Feature D: cargar datos bancarios del distribuidor sin salir del modal de OP ──
+  const guardarDatosBancariosInline = useCallback(
+    async (distribuidorId: number) => {
+      setCbuSaving(true);
+      try {
+        const body: any = cbuFormMode === 'directo'
+          ? { modo: 'directo', cbu: cbuFormValues.cbu.trim(), alias_cbu: cbuFormValues.alias_cbu.trim() || null }
+          : {
+              modo: 'cobrador_real',
+              cobrador_real_nombre: cbuFormValues.cobrador_real_nombre.trim(),
+              cobrador_real_cuit: cbuFormValues.cobrador_real_cuit.trim(),
+              cobrador_real_cbu: cbuFormValues.cobrador_real_cbu.trim(),
+              cobrador_real_alias_cbu: cbuFormValues.cobrador_real_alias_cbu.trim() || null,
+              cobrador_real_notas: cbuFormValues.cobrador_real_notas.trim() || null,
+            };
+        const json = await api.patch(`/distribuidores/${distribuidorId}/datos-bancarios`, body);
+        setMsg({ type: 'ok', text: json.message ?? 'Datos cargados' });
+        // Re-validar las mismas liquidaciones seleccionadas para que Lucena (u otros) pasen a validas.
+        const items = buildSelectedItems();
+        try {
+          const reval: ValidacionResult = await api.post('/pagos/validar-beneficiarios', { items });
+          setValidacion(reval);
+        } catch {
+          /* si falla el re-validar, el form igual se cerro y los datos quedaron */
+        }
+        setCbuFormDistribuidorId(null);
+        setCbuFormValues(cbuFormInitial);
+        // Tambien refrescar el listado principal para que muestre cobrador_nombre etc.
+        fetchLiquidaciones();
+      } catch (e: any) {
+        setMsg({ type: 'err', text: e.message });
+      } finally {
+        setCbuSaving(false);
+      }
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [api, cbuFormMode, cbuFormValues, buildSelectedItems, fetchLiquidaciones]
+  );
+
   // ── Descargar PDF ──────────────────────────────────────────────────
   const baseUrlRef = useRef(resolveApiBaseUrl());
   const descargarPdf = useCallback((opId: number, label: string) => {
@@ -979,8 +1129,33 @@ export const PagosPage: React.FC<Props> = ({
                         </td>
                         <td>{row.cliente_nombre}</td>
                         <td>{row.periodo}</td>
-                        <td>{row.distribuidor_nombre}</td>
-                        <td style={{ textAlign: 'right', fontWeight: 600 }}>{fmt(row.importe)}</td>
+                        <td>
+                          <div>{row.distribuidor_nombre}</div>
+                          {row.override_cobrador ? (
+                            <div
+                              style={{ fontSize: '0.75rem', color: '#1e40af', marginTop: 2 }}
+                              title={`Override: ${row.override_cobrador.nombre} - CUIT ${row.override_cobrador.cuit} - CBU ${row.override_cobrador.cbu}${row.override_cobrador.motivo ? '\nMotivo: ' + row.override_cobrador.motivo : ''}`}
+                            >
+                              🔵 {row.override_cobrador.nombre} (override)
+                            </div>
+                          ) : row.cobrador_nombre ? (
+                            <div
+                              style={{ fontSize: '0.75rem', color: '#0369a1', marginTop: 2 }}
+                              title="Cobrador real del distribuidor"
+                            >
+                              🔵 {row.cobrador_nombre}
+                            </div>
+                          ) : null}
+                        </td>
+                        <td style={{ textAlign: 'right', fontWeight: 600 }}>
+                          {fmt(row.importe)}
+                          {row.total_a_pagar_overridido ? (
+                            <span title="Importe ajustado manualmente" style={{ fontSize: '0.7rem', color: '#92400e', marginLeft: 4 }}>✎</span>
+                          ) : null}
+                          {row.requiere_revision_dual ? (
+                            <span title="Ajuste >20% — requiere aprobacion dual" style={{ fontSize: '0.7rem', color: '#dc2626', marginLeft: 4 }}>⚠</span>
+                          ) : null}
+                        </td>
                         <td style={{ fontSize: '0.8rem' }}>{row.medio_pago ?? <span style={{ color: '#aaa' }}>-</span>}</td>
                         <td>
                           <span className={`pagos-sino pagos-sino--${row.enviada ? 'si' : 'no'}`}>
@@ -1059,6 +1234,37 @@ export const PagosPage: React.FC<Props> = ({
                                   onClick={() => marcarFacturaA(row)}
                                 >
                                   A
+                                </button>
+                              )
+                            ) : null}
+                            {/* Feature C: ajuste manual del importe. Solo extractos sin OP activa ni pagados. */}
+                            {row.fuente === 'EXTRACTO' && !row.tiene_op_activa && !row.pagado ? (
+                              <button
+                                className="pagos-action-btn"
+                                title="Ajustar importe manual (motivo obligatorio)"
+                                onClick={() => ajustarImporte(row)}
+                              >
+                                ✎
+                              </button>
+                            ) : null}
+                            {/* Feature A: cobrador override puntual */}
+                            {row.fuente === 'EXTRACTO' && !row.tiene_op_activa && !row.pagado ? (
+                              row.override_cobrador ? (
+                                <button
+                                  className="pagos-action-btn"
+                                  title={`Quitar override de cobrador (vuelve al beneficiario por defecto)`}
+                                  onClick={() => quitarCobradorOverride(row)}
+                                  style={{ background: '#dbeafe', color: '#1e40af', fontWeight: 600 }}
+                                >
+                                  🔵 ↺
+                                </button>
+                              ) : (
+                                <button
+                                  className="pagos-action-btn"
+                                  title="Cambiar cobrador para ESTA liquidacion (override puntual)"
+                                  onClick={() => aplicarCobradorOverride(row)}
+                                >
+                                  🔵
                                 </button>
                               )
                             ) : null}
@@ -1273,11 +1479,91 @@ export const PagosPage: React.FC<Props> = ({
                 <div className="pagos-validacion-errores">
                   <strong>Liquidaciones excluidas ({validacion.errores.length}):</strong>
                   <ul>
-                    {validacion.errores.map((e, i) => (
-                      <li key={i}>
-                        {e.distribuidor_nombre ?? 'Desconocido'}: {(e.motivos ?? []).join(', ')}
-                      </li>
-                    ))}
+                    {validacion.errores.map((e, i) => {
+                      const distribId = e.distribuidor_id ?? null;
+                      const necesitaCbu = (e.motivos ?? []).some((m) => /sin\s+cbu/i.test(m) || /sin\s+cuil/i.test(m));
+                      const formAbierto = distribId !== null && cbuFormDistribuidorId === distribId;
+                      return (
+                        <li key={i} style={{ marginBottom: 6 }}>
+                          {e.distribuidor_nombre ?? 'Desconocido'}: {(e.motivos ?? []).join(', ')}
+                          {necesitaCbu && distribId !== null ? (
+                            <>
+                              {' '}
+                              <button
+                                type="button"
+                                className="pagos-action-btn"
+                                onClick={() => {
+                                  setCbuFormDistribuidorId(formAbierto ? null : distribId);
+                                  setCbuFormMode('directo');
+                                  setCbuFormValues(cbuFormInitial);
+                                }}
+                              >
+                                {formAbierto ? 'Cancelar' : '✎ Cargar datos'}
+                              </button>
+                            </>
+                          ) : null}
+                          {formAbierto && distribId !== null ? (
+                            <div style={{
+                              marginTop: 8, padding: 10, background: '#f9fafb', border: '1px solid #e5e7eb',
+                              borderRadius: 6, fontSize: '0.85rem',
+                            }}>
+                              <div style={{ marginBottom: 6 }}>
+                                <label style={{ marginRight: 12 }}>
+                                  <input type="radio" name={`cbumode-${distribId}`} value="directo"
+                                    checked={cbuFormMode === 'directo'}
+                                    onChange={() => setCbuFormMode('directo')} />
+                                  {' '}Cobra él mismo
+                                </label>
+                                <label>
+                                  <input type="radio" name={`cbumode-${distribId}`} value="cobrador_real"
+                                    checked={cbuFormMode === 'cobrador_real'}
+                                    onChange={() => setCbuFormMode('cobrador_real')} />
+                                  {' '}Cobra a través de un tercero
+                                </label>
+                              </div>
+                              {cbuFormMode === 'directo' ? (
+                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                                  <input placeholder="CBU (22 dígitos)" value={cbuFormValues.cbu}
+                                    onChange={(ev) => setCbuFormValues((p) => ({ ...p, cbu: ev.target.value }))}
+                                    style={{ padding: 4 }} />
+                                  <input placeholder="Alias (opcional)" value={cbuFormValues.alias_cbu}
+                                    onChange={(ev) => setCbuFormValues((p) => ({ ...p, alias_cbu: ev.target.value }))}
+                                    style={{ padding: 4 }} />
+                                </div>
+                              ) : (
+                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                                  <input placeholder="Nombre del cobrador" value={cbuFormValues.cobrador_real_nombre}
+                                    onChange={(ev) => setCbuFormValues((p) => ({ ...p, cobrador_real_nombre: ev.target.value }))}
+                                    style={{ padding: 4, gridColumn: '1 / -1' }} />
+                                  <input placeholder="CUIT/CUIL (11 dígitos)" value={cbuFormValues.cobrador_real_cuit}
+                                    onChange={(ev) => setCbuFormValues((p) => ({ ...p, cobrador_real_cuit: ev.target.value }))}
+                                    style={{ padding: 4 }} />
+                                  <input placeholder="CBU (22 dígitos)" value={cbuFormValues.cobrador_real_cbu}
+                                    onChange={(ev) => setCbuFormValues((p) => ({ ...p, cobrador_real_cbu: ev.target.value }))}
+                                    style={{ padding: 4 }} />
+                                  <input placeholder="Alias CBU (opcional)" value={cbuFormValues.cobrador_real_alias_cbu}
+                                    onChange={(ev) => setCbuFormValues((p) => ({ ...p, cobrador_real_alias_cbu: ev.target.value }))}
+                                    style={{ padding: 4 }} />
+                                  <input placeholder="Notas (opcional)" value={cbuFormValues.cobrador_real_notas}
+                                    onChange={(ev) => setCbuFormValues((p) => ({ ...p, cobrador_real_notas: ev.target.value }))}
+                                    style={{ padding: 4 }} />
+                                </div>
+                              )}
+                              <div style={{ marginTop: 6, color: '#92400e' }}>
+                                ⚠ Se guardan en la ficha del distribuidor. Disponibles para futuras OPs.
+                              </div>
+                              <div style={{ marginTop: 8, textAlign: 'right' }}>
+                                <button type="button" className="pagos-action-btn pagos-action-btn--primary"
+                                  disabled={cbuSaving}
+                                  onClick={() => guardarDatosBancariosInline(distribId)}>
+                                  {cbuSaving ? 'Guardando...' : 'Guardar e incluir'}
+                                </button>
+                              </div>
+                            </div>
+                          ) : null}
+                        </li>
+                      );
+                    })}
                   </ul>
                 </div>
               ) : null}
@@ -1452,11 +1738,91 @@ export const PagosPage: React.FC<Props> = ({
                 <div className="pagos-validacion-errores" style={{ marginTop: 16 }}>
                   <strong>Liquidaciones excluidas ({validacion.errores.length}):</strong>
                   <ul>
-                    {validacion.errores.map((e, i) => (
-                      <li key={i}>
-                        {e.distribuidor_nombre ?? 'Desconocido'}: {(e.motivos ?? []).join(', ')}
-                      </li>
-                    ))}
+                    {validacion.errores.map((e, i) => {
+                      const distribId = e.distribuidor_id ?? null;
+                      const necesitaCbu = (e.motivos ?? []).some((m) => /sin\s+cbu/i.test(m) || /sin\s+cuil/i.test(m));
+                      const formAbierto = distribId !== null && cbuFormDistribuidorId === distribId;
+                      return (
+                        <li key={i} style={{ marginBottom: 6 }}>
+                          {e.distribuidor_nombre ?? 'Desconocido'}: {(e.motivos ?? []).join(', ')}
+                          {necesitaCbu && distribId !== null ? (
+                            <>
+                              {' '}
+                              <button
+                                type="button"
+                                className="pagos-action-btn"
+                                onClick={() => {
+                                  setCbuFormDistribuidorId(formAbierto ? null : distribId);
+                                  setCbuFormMode('directo');
+                                  setCbuFormValues(cbuFormInitial);
+                                }}
+                              >
+                                {formAbierto ? 'Cancelar' : '✎ Cargar datos'}
+                              </button>
+                            </>
+                          ) : null}
+                          {formAbierto && distribId !== null ? (
+                            <div style={{
+                              marginTop: 8, padding: 10, background: '#f9fafb', border: '1px solid #e5e7eb',
+                              borderRadius: 6, fontSize: '0.85rem',
+                            }}>
+                              <div style={{ marginBottom: 6 }}>
+                                <label style={{ marginRight: 12 }}>
+                                  <input type="radio" name={`cbumode2-${distribId}`} value="directo"
+                                    checked={cbuFormMode === 'directo'}
+                                    onChange={() => setCbuFormMode('directo')} />
+                                  {' '}Cobra él mismo
+                                </label>
+                                <label>
+                                  <input type="radio" name={`cbumode2-${distribId}`} value="cobrador_real"
+                                    checked={cbuFormMode === 'cobrador_real'}
+                                    onChange={() => setCbuFormMode('cobrador_real')} />
+                                  {' '}Cobra a través de un tercero
+                                </label>
+                              </div>
+                              {cbuFormMode === 'directo' ? (
+                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                                  <input placeholder="CBU (22 dígitos)" value={cbuFormValues.cbu}
+                                    onChange={(ev) => setCbuFormValues((p) => ({ ...p, cbu: ev.target.value }))}
+                                    style={{ padding: 4 }} />
+                                  <input placeholder="Alias (opcional)" value={cbuFormValues.alias_cbu}
+                                    onChange={(ev) => setCbuFormValues((p) => ({ ...p, alias_cbu: ev.target.value }))}
+                                    style={{ padding: 4 }} />
+                                </div>
+                              ) : (
+                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                                  <input placeholder="Nombre del cobrador" value={cbuFormValues.cobrador_real_nombre}
+                                    onChange={(ev) => setCbuFormValues((p) => ({ ...p, cobrador_real_nombre: ev.target.value }))}
+                                    style={{ padding: 4, gridColumn: '1 / -1' }} />
+                                  <input placeholder="CUIT/CUIL (11 dígitos)" value={cbuFormValues.cobrador_real_cuit}
+                                    onChange={(ev) => setCbuFormValues((p) => ({ ...p, cobrador_real_cuit: ev.target.value }))}
+                                    style={{ padding: 4 }} />
+                                  <input placeholder="CBU (22 dígitos)" value={cbuFormValues.cobrador_real_cbu}
+                                    onChange={(ev) => setCbuFormValues((p) => ({ ...p, cobrador_real_cbu: ev.target.value }))}
+                                    style={{ padding: 4 }} />
+                                  <input placeholder="Alias CBU (opcional)" value={cbuFormValues.cobrador_real_alias_cbu}
+                                    onChange={(ev) => setCbuFormValues((p) => ({ ...p, cobrador_real_alias_cbu: ev.target.value }))}
+                                    style={{ padding: 4 }} />
+                                  <input placeholder="Notas (opcional)" value={cbuFormValues.cobrador_real_notas}
+                                    onChange={(ev) => setCbuFormValues((p) => ({ ...p, cobrador_real_notas: ev.target.value }))}
+                                    style={{ padding: 4 }} />
+                                </div>
+                              )}
+                              <div style={{ marginTop: 6, color: '#92400e' }}>
+                                ⚠ Se guardan en la ficha del distribuidor. Disponibles para futuras OPs.
+                              </div>
+                              <div style={{ marginTop: 8, textAlign: 'right' }}>
+                                <button type="button" className="pagos-action-btn pagos-action-btn--primary"
+                                  disabled={cbuSaving}
+                                  onClick={() => guardarDatosBancariosInline(distribId)}>
+                                  {cbuSaving ? 'Guardando...' : 'Guardar e incluir'}
+                                </button>
+                              </div>
+                            </div>
+                          ) : null}
+                        </li>
+                      );
+                    })}
                   </ul>
                 </div>
               ) : null}

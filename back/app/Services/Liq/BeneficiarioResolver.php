@@ -37,7 +37,22 @@ class BeneficiarioResolver
                 continue;
             }
 
-            $datos = $persona->datosBeneficiario();
+            // ADDENDUM Pagos A: si la liquidacion tiene override, prevalece sobre el
+            // cobrador real / distribuidor directo.
+            $liqOverride = null;
+            if ($fuente === 'EXTRACTO' && !empty($item['fuente_id'])) {
+                $liqOverride = LiqLiquidacionDistribuidor::find($item['fuente_id']);
+            }
+            if ($liqOverride && $liqOverride->tieneOverrideCobrador()) {
+                $datos = [
+                    'tipo'   => 'COBRADOR',
+                    'nombre' => $liqOverride->cobrador_override_nombre,
+                    'cuil'   => $liqOverride->cobrador_override_cuit,
+                    'cbu'    => $liqOverride->cobrador_override_cbu,
+                ];
+            } else {
+                $datos = $persona->datosBeneficiario();
+            }
             $problemas = [];
 
             if (empty($datos['cuil'])) {
