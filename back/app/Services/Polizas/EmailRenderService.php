@@ -23,7 +23,8 @@ use Illuminate\Support\Collection;
  *
  * Placeholders por asegurado:
  *   {nombre_apellido}, {dni}, {dni_con_puntos}, {cuil}, {cuil_sin_guiones},
- *   {fecha_nac}, {patente}, {clausula_inline}, {numero_asegurado}
+ *   {fecha_nac}, {patente}, {clausula_inline}, {numero_asegurado}, {indice}
+ *   ({indice} es alias de {numero_asegurado} — correlativo 1..N dentro del correo)
  */
 class EmailRenderService
 {
@@ -47,18 +48,12 @@ class EmailRenderService
         $clausulasIndividuales = $opciones['clausulas_individuales'] ?? [];
 
         $perfil = $poliza->aseguradora?->parser_perfil ?? '';
-        $separador = $config->separador_entre_asegurados ?: "\n";
 
-        $bloque = $asegurados
-            ->values()
-            ->map(fn ($a, $i) => $this->renderAsegurado(
-                $a,
-                $config->asegurado_template,
-                $i + 1,
-                $clausulasIndividuales[$a->id] ?? null,
-                $perfil,
-            ))
-            ->implode($separador);
+        $bloque = $this->renderBloqueAsegurados(
+            $asegurados, $config->asegurado_template,
+            $config->separador_entre_asegurados ?: "\n",
+            $clausulasIndividuales, $perfil
+        );
 
         $globales = $this->placeholdersGlobales(
             $poliza, $config, $admin, $bloque, $asegurados,
@@ -75,6 +70,87 @@ class EmailRenderService
             'destinatarios_cc'   => $config->destinatarios_cc ?? [],
             'destinatarios_bcc'  => $config->destinatarios_bcc ?? [],
         ];
+    }
+
+    /**
+     * ADDENDUM 16 Parte B — render para solicitudes tipo='combinado'.
+     *
+     * Usa el `body_template` del config combinado (con placeholders
+     * `{altas_block}` y `{bajas_block}`) y compone cada sección con el
+     * `asegurado_template` del config de alta y baja respectivamente.
+     * Cada sección reinicia el correlativo `{indice}` en 1.
+     *
+     * Cláusulas: por simplicidad, en modo combinado no se aplican cláusulas
+     * (ni globales ni individuales). El frontend no permite seleccionarlas
+     * para este modo.
+     */
+    public function renderCombinado(
+        Poliza $poliza,
+        PolizaEmailConfig $configCombinado,
+        PolizaEmailConfig $configAlta,
+        PolizaEmailConfig $configBaja,
+        Collection $altas,
+        Collection $bajas,
+        User $admin,
+    ): array {
+        $perfil = $poliza->aseguradora?->parser_perfil ?? '';
+
+        $altasBlock = $this->renderBloqueAsegurados(
+            $altas, $configAlta->asegurado_template,
+            $configAlta->separador_entre_asegurados ?: "\n",
+            [], $perfil
+        );
+        $bajasBlock = $this->renderBloqueAsegurados(
+            $bajas, $configBaja->asegurado_template,
+            $configBaja->separador_entre_asegurados ?: "\n",
+            [], $perfil
+        );
+
+        // Los globales se calculan con el config combinado (asunto, recipients)
+        // pero el {asegurados_block} clásico no aplica acá. Lo dejamos vacío
+        // por si alguien usa templates legacy en el wrapper.
+        $globales = $this->placeholdersGlobales(
+            $poliza, $configCombinado, $admin, '', $altas->merge($bajas),
+            'ninguna', null, $perfil, 'combinado'
+        );
+        $globales['{altas_block}'] = $altasBlock;
+        $globales['{bajas_block}'] = $bajasBlock;
+
+        $asunto = $this->aplicar($configCombinado->asunto_template, $globales);
+        $body   = $this->aplicar($configCombinado->body_template, $globales);
+
+        return [
+            'asunto'             => $asunto,
+            'body'               => $body,
+            'destinatarios_to'   => $configCombinado->destinatarios_to ?? [],
+            'destinatarios_cc'   => $configCombinado->destinatarios_cc ?? [],
+            'destinatarios_bcc'  => $configCombinado->destinatarios_bcc ?? [],
+        ];
+    }
+
+    /**
+     * Renderiza el bloque de asegurados (header ya rendido por afuera; acá
+     * solo van las filas). El correlativo arranca en 1 y crece de a uno.
+     *
+     * @param array<int,?PolizaClausula> $clausulasIndividuales [asegurado_id => clausula|null]
+     */
+    private function renderBloqueAsegurados(
+        Collection $asegurados,
+        string $aseguradoTemplate,
+        string $separador,
+        array $clausulasIndividuales,
+        string $perfil,
+    ): string {
+        return $asegurados
+            ->values()
+            ->map(fn ($a, $i) => $this->renderAsegurado(
+                $a,
+                $aseguradoTemplate,
+                $i + 1,
+                $clausulasIndividuales[$a->id] ?? null,
+                $perfil,
+            ))
+            ->implode($separador);
     }
 
     private function renderAsegurado(
@@ -103,6 +179,7 @@ class EmailRenderService
 
         return $this->aplicar($template, [
             '{numero_asegurado}'  => (string) $numero,
+            '{indice}'            => (string) $numero,
             '{nombre_apellido}'   => $nombre ?? '',
             '{dni}'               => $dni ?? '',
             '{dni_con_puntos}'    => $this->formatDniConPuntos($dni),

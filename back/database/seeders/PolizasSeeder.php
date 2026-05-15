@@ -164,7 +164,11 @@ class PolizasSeeder extends Seeder
                 'adjuntos_requeridos' => [],
             ],
 
-            // ----- San Cristóbal -----
+            // ----- San Cristóbal — ADDENDUM 16 Parte A: formato tabular (TAB)
+            //   Las columnas se separan con `\t` (TAB) para que SC pueda copiar
+            //   el bloque y pegarlo en Excel obteniendo cada columna en su celda.
+            //   `{indice}` es el correlativo 1..N dentro del correo (no es el
+            //   `numero_orden_aseguradora` que asigna la aseguradora al alta).
             [
                 'poliza_id'           => $polizas['sc_ap']->id,
                 'tipo'                => 'alta',
@@ -172,8 +176,8 @@ class PolizasSeeder extends Seeder
                 'destinatarios_cc'    => [],
                 'contacto_nombre'     => null,
                 'asunto_template'     => 'Altas - Póliza {numero_poliza}',
-                'body_template'       => "Cliente Póliza {numero_poliza} _Logística Argentina Srl-_ N° cuenta: {numero_cuenta}\n\nInforma Altas\n\n{asegurados_block}",
-                'asegurado_template'  => '{nombre_apellido} CUIL: {cuil_sin_guiones} FECHA DE NACIMIENTO: {fecha_nac}',
+                'body_template'       => "Cliente Póliza {numero_poliza} _Logística Argentina Srl-_ N° cuenta: {numero_cuenta}\n\nInforma Altas\n\nN° orden\tNombre completo\tDNI\tCUIL\tFecha de Nacimiento\n{asegurados_block}",
+                'asegurado_template'  => "{indice}\t{nombre_apellido}\t{dni}\t{cuil_sin_guiones}\t{fecha_nac}",
                 'adjuntos_requeridos' => [],
             ],
             [
@@ -183,8 +187,25 @@ class PolizasSeeder extends Seeder
                 'destinatarios_cc'    => [],
                 'contacto_nombre'     => null,
                 'asunto_template'     => 'Bajas - Póliza {numero_poliza}',
-                'body_template'       => "Cliente Póliza {numero_poliza} _Logística Argentina Srl-_ N° cuenta: {numero_cuenta}\n\nInforma BAJAS\n\n{asegurados_block}",
-                'asegurado_template'  => '{nombre_apellido} CUIL: {cuil_sin_guiones} FECHA DE NACIMIENTO: {fecha_nac}',
+                'body_template'       => "Cliente Póliza {numero_poliza} _Logística Argentina Srl-_ N° cuenta: {numero_cuenta}\n\nInforma BAJAS\n\nN° orden\tNombre completo\tDNI\tCUIL\n{asegurados_block}",
+                'asegurado_template'  => "{indice}\t{nombre_apellido}\t{dni}\t{cuil_sin_guiones}",
+                'adjuntos_requeridos' => [],
+            ],
+            // ADDENDUM 16 Parte B — fila de configuración del correo combinado.
+            //   Si existe esta row (tipo='combinado') con `activo=true`, la póliza
+            //   soporta combinar altas+bajas en un solo correo. Body template
+            //   usa los placeholders {altas_block} y {bajas_block} que el render
+            //   service llena con las tablas de altas y bajas respectivamente.
+            //   Cada sección reinicia el correlativo {indice} en 1.
+            [
+                'poliza_id'           => $polizas['sc_ap']->id,
+                'tipo'                => 'combinado',
+                'destinatarios_to'    => ['TODO_movimientos@sancristobal.com.ar'],
+                'destinatarios_cc'    => [],
+                'contacto_nombre'     => null,
+                'asunto_template'     => 'Altas y Bajas - Póliza {numero_poliza}',
+                'body_template'       => "Cliente Póliza {numero_poliza} _Logística Argentina Srl-_ N° cuenta: {numero_cuenta}\n\nALTAS\n\nN° orden\tNombre completo\tDNI\tCUIL\tFecha de Nacimiento\n{altas_block}\n\nBAJAS\n\nN° orden\tNombre completo\tDNI\tCUIL\n{bajas_block}",
+                'asegurado_template'  => '', // no se usa: el render compone desde alta + baja
                 'adjuntos_requeridos' => [],
             ],
 

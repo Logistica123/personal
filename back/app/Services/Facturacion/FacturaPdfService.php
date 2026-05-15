@@ -230,7 +230,7 @@ class FacturaPdfService
         $this->addText($elements, $left + 4, $cy, 'F2', 8, 'CUIT:');
         $this->addText($elements, $left + 30, $cy, 'F1', 8, (string) $factura->doc_nro);
         $this->addText($elements, $clientMid + 4, $cy, 'F2', 8, 'Apellido y Nombre / Razon Social:');
-        $this->addText($elements, $clientMid + 132, $cy, 'F1', 8, $this->truncate((string) $factura->cliente_nombre, 25));
+        $this->addText($elements, $clientMid + 132, $cy, 'F1', 8, $this->truncate((string) $factura->cliente_nombre, 33));
 
         // Row 1: Condicion frente al IVA | Domicilio Comercial.
         $cy = $clientRow1 - 13;
@@ -241,15 +241,12 @@ class FacturaPdfService
         $domicilio = (string) ($factura->cliente_domicilio ?? '');
         $this->addText($elements, $clientMid + 76, $cy, 'F1', 8, $this->truncate($domicilio, 28));
 
-        // Row 2: Condicion de venta | Sucursal.
+        // Row 2: Condicion de venta. (Bloque "Sucursal" removido: no es parte del
+        // estándar AFIP y el sistema de cobranzas OCASA lo rechazaba.)
         $cy = $clientRow2 - 13;
         $condicionesVenta = $this->formatCondicionesVenta($factura->condiciones_venta ?? []);
         $this->addText($elements, $left + 4, $cy, 'F2', 8, 'Condicion de venta:');
         $this->addText($elements, $left + 72, $cy, 'F1', 8, $this->truncate($condicionesVenta, 28));
-        if ($factura->sucursal) {
-            $this->addText($elements, $clientMid + 4, $cy, 'F2', 8, 'Sucursal:');
-            $this->addText($elements, $clientMid + 42, $cy, 'F1', 8, $this->truncate((string) ($factura->sucursal->nombre ?? ''), 28));
-        }
 
         // ─── ITEMS TABLE ─────────────────────────────────────────────────────────
         $tableTop = $clientBottom;
@@ -293,7 +290,7 @@ class FacturaPdfService
             }
             $bonif = (float) ($item->bonificacion_pct ?? 0);
             $this->addText($elements, $left + 2,        $rowY, 'F1', 8, '');
-            $this->addText($elements, $colCodigo + 2,   $rowY, 'F1', 8, $this->truncate((string) $item->descripcion, 34));
+            $this->addText($elements, $colCodigo + 2,   $rowY, 'F1', 8, $this->truncate((string) $item->descripcion, 60));
             $this->addText($elements, $colDesc + 2,     $rowY, 'F1', 8, $this->formatNumber($item->cantidad));
             $this->addText($elements, $colCant + 2,     $rowY, 'F1', 8, $this->truncate((string) ($item->unidad_medida ?? 'unidades'), 9));
             $this->addText($elements, $colUmed + 2,     $rowY, 'F1', 8, $this->formatMoney($item->precio_unitario));

@@ -99,6 +99,78 @@ class SolicitudService
     }
 
     /**
+     * ADDENDUM 16 Parte B — crea una solicitud combinada (altas + bajas en un
+     * único correo). Requiere que la póliza tenga config tipo='combinado'
+     * activa (la existencia de esa row es la señal de "soporta combinado").
+     *
+     * Cada asegurado queda registrado en el pivot con `operacion='alta'|'baja'`
+     * para que el render arme las dos secciones y `enviar()` mueva cada uno a
+     * su estado correspondiente (alta_solicitada / baja_solicitada).
+     *
+     * @param int[] $altaAseguradoIds  IDs de PolizaAsegurado ya existentes (path tradicional).
+     * @param int[] $altaPersonaIds    Personas que aún no son PolizaAsegurado (BUGFIX 02 — se crean al vuelo).
+     * @param int[] $bajaAseguradoIds  IDs de PolizaAsegurado para dar de baja.
+     */
+    public function crearBorradorCombinado(
+        Poliza $poliza,
+        array $altaAseguradoIds,
+        array $altaPersonaIds,
+        array $bajaAseguradoIds,
+        User $admin,
+    ): PolizaSolicitud {
+        if (empty($altaAseguradoIds) && empty($altaPersonaIds)) {
+            throw new RuntimeException('Combinado requiere al menos 1 alta seleccionada.');
+        }
+        if (empty($bajaAseguradoIds)) {
+            throw new RuntimeException('Combinado requiere al menos 1 baja seleccionada.');
+        }
+
+        $cfgCombinado = PolizaEmailConfig::query()
+            ->where('poliza_id', $poliza->id)
+            ->where('tipo', 'combinado')
+            ->where('activo', true)
+            ->first();
+        if (!$cfgCombinado) {
+            throw new RuntimeException("La póliza {$poliza->id} no soporta correo combinado (sin config tipo='combinado' activa).");
+        }
+
+        return DB::transaction(function () use ($poliza, $altaAseguradoIds, $altaPersonaIds, $bajaAseguradoIds, $admin) {
+            $solicitud = PolizaSolicitud::create([
+                'poliza_id'                  => $poliza->id,
+                'tipo'                       => 'combinado',
+                'administrativo_user_id'     => $admin->id,
+                'destinatarios_to_resueltos' => [],
+                'destinatarios_cc_resueltos' => [],
+                'asunto'                     => '',
+                'body'                       => '',
+                'estado'                     => 'borrador',
+                'tipo_clausula_global'       => 'ninguna',
+            ]);
+
+            // Altas: existentes + creados desde personas.
+            $altasIds = $altaAseguradoIds;
+            if (!empty($altaPersonaIds)) {
+                $creados = $this->crearAseguradosDesdePersonas($poliza, $altaPersonaIds);
+                $altasIds = array_values(array_unique([...$altasIds, ...$creados]));
+            }
+            foreach ($altasIds as $aid) {
+                PolizaSolicitudAsegurado::firstOrCreate(
+                    ['solicitud_id' => $solicitud->id, 'asegurado_id' => $aid],
+                    ['operacion' => 'alta']
+                );
+            }
+            foreach ($bajaAseguradoIds as $aid) {
+                PolizaSolicitudAsegurado::firstOrCreate(
+                    ['solicitud_id' => $solicitud->id, 'asegurado_id' => $aid],
+                    ['operacion' => 'baja']
+                );
+            }
+
+            return $solicitud;
+        });
+    }
+
+    /**
      * Crea (o reusa) `polizas_asegurados` para cada persona dada. Devuelve los IDs
      * de los registros (creados o existentes) listos para vincular a la solicitud.
      *
@@ -179,19 +251,36 @@ class SolicitudService
      */
     public function previewRender(PolizaSolicitud $solicitud): array
     {
-        $config = $this->cargarEmailConfig($solicitud);
-        $asegurados = $this->cargarAsegurados($solicitud);
         $admin = $solicitud->administrativo;
-        $opciones = $this->opcionesClausulas($solicitud);
+        $poliza = $solicitud->poliza()->with('aseguradora')->first();
 
-        $rendered = $this->renderer->render(
-            $solicitud->poliza()->with('aseguradora')->first(),
-            $config, $asegurados, $admin, $opciones
-        );
+        if ($solicitud->tipo === 'combinado') {
+            [$cfgCombinado, $cfgAlta, $cfgBaja] = $this->cargarConfigsCombinado($solicitud);
+            ['altas' => $altas, 'bajas' => $bajas] = $this->cargarAseguradosPorOperacion($solicitud);
+            $rendered = $this->renderer->renderCombinado(
+                $poliza, $cfgCombinado, $cfgAlta, $cfgBaja, $altas, $bajas, $admin
+            );
+            $asegurados = $altas->merge($bajas);
+            $config = $cfgCombinado;
+        } else {
+            $config = $this->cargarEmailConfig($solicitud);
+            $asegurados = $this->cargarAsegurados($solicitud);
+            $opciones = $this->opcionesClausulas($solicitud);
+            $rendered = $this->renderer->render($poliza, $config, $asegurados, $admin, $opciones);
+        }
 
         $check = ['ok' => true, 'faltantes' => []];
+        // Adjuntos solo se chequean para altas (también dentro de combinado).
         if ($solicitud->tipo === 'alta' && !empty($config->adjuntos_requeridos)) {
             $check = $this->adjuntosCheck->verificar($asegurados, $config->adjuntos_requeridos);
+        } elseif ($solicitud->tipo === 'combinado') {
+            $cfgAltaCheck = $this->cargarConfigAlta($solicitud->poliza_id);
+            if ($cfgAltaCheck && !empty($cfgAltaCheck->adjuntos_requeridos)) {
+                $altasOnly = $this->cargarAseguradosPorOperacion($solicitud)['altas'];
+                if ($altasOnly->count() > 0) {
+                    $check = $this->adjuntosCheck->verificar($altasOnly, $cfgAltaCheck->adjuntos_requeridos);
+                }
+            }
         }
 
         // Bloque A.3 — informar al admin desde qué casilla saldrá el email.
@@ -227,6 +316,73 @@ class SolicitudService
     }
 
     /**
+     * Carga las 3 configs necesarias para renderizar/enviar un combinado.
+     * @return array{0:PolizaEmailConfig,1:PolizaEmailConfig,2:PolizaEmailConfig}
+     */
+    private function cargarConfigsCombinado(PolizaSolicitud $solicitud): array
+    {
+        $cfgCombinado = PolizaEmailConfig::query()
+            ->where('poliza_id', $solicitud->poliza_id)
+            ->where('tipo', 'combinado')
+            ->where('activo', true)
+            ->first();
+        if (!$cfgCombinado) {
+            throw new RuntimeException("No hay email_config tipo='combinado' activa para póliza {$solicitud->poliza_id}");
+        }
+
+        $cfgAlta = PolizaEmailConfig::query()
+            ->where('poliza_id', $solicitud->poliza_id)
+            ->where('tipo', 'alta')
+            ->where('activo', true)
+            ->first();
+        $cfgBaja = PolizaEmailConfig::query()
+            ->where('poliza_id', $solicitud->poliza_id)
+            ->where('tipo', 'baja')
+            ->where('activo', true)
+            ->first();
+        if (!$cfgAlta || !$cfgBaja) {
+            throw new RuntimeException(
+                "Combinado requiere configs de alta y baja activas (póliza {$solicitud->poliza_id})."
+            );
+        }
+
+        return [$cfgCombinado, $cfgAlta, $cfgBaja];
+    }
+
+    private function cargarConfigAlta(int $polizaId): ?PolizaEmailConfig
+    {
+        return PolizaEmailConfig::query()
+            ->where('poliza_id', $polizaId)
+            ->where('tipo', 'alta')
+            ->where('activo', true)
+            ->first();
+    }
+
+    /**
+     * Separa los asegurados del pivot por `operacion` (solo aplica a combinado).
+     * @return array{altas:Collection<int,PolizaAsegurado>, bajas:Collection<int,PolizaAsegurado>}
+     */
+    private function cargarAseguradosPorOperacion(PolizaSolicitud $solicitud): array
+    {
+        $pivots = PolizaSolicitudAsegurado::where('solicitud_id', $solicitud->id)->get();
+
+        $altaIds = $pivots->where('operacion', 'alta')->pluck('asegurado_id')->all();
+        $bajaIds = $pivots->where('operacion', 'baja')->pluck('asegurado_id')->all();
+
+        $altas = $altaIds ? PolizaAsegurado::query()
+            ->whereIn('id', $altaIds)
+            ->with('persona:id,apellidos,nombres,cuil,patente')
+            ->get() : collect();
+
+        $bajas = $bajaIds ? PolizaAsegurado::query()
+            ->whereIn('id', $bajaIds)
+            ->with('persona:id,apellidos,nombres,cuil,patente')
+            ->get() : collect();
+
+        return ['altas' => $altas, 'bajas' => $bajas];
+    }
+
+    /**
      * Envía el email y marca la solicitud como `enviado`.
      *
      * Si el driver de Mail configurado es `log` (default en dev), no manda email
@@ -238,23 +394,47 @@ class SolicitudService
             throw new RuntimeException("Solicitud {$solicitud->id} ya enviada o cerrada (estado={$solicitud->estado})");
         }
 
-        $config = $this->cargarEmailConfig($solicitud);
-        $asegurados = $this->cargarAsegurados($solicitud);
         $admin = $solicitud->administrativo;
-        $opciones = $this->opcionesClausulas($solicitud);
+        $poliza = $solicitud->poliza()->with('aseguradora')->first();
 
-        $rendered = $this->renderer->render(
-            $solicitud->poliza()->with('aseguradora')->first(),
-            $config, $asegurados, $admin, $opciones
-        );
+        if ($solicitud->tipo === 'combinado') {
+            [$cfgCombinado, $cfgAlta, $cfgBaja] = $this->cargarConfigsCombinado($solicitud);
+            ['altas' => $altas, 'bajas' => $bajas] = $this->cargarAseguradosPorOperacion($solicitud);
+            if ($altas->isEmpty() || $bajas->isEmpty()) {
+                throw new RuntimeException("Combinado requiere al menos 1 alta y 1 baja en el momento del envío.");
+            }
+            $rendered = $this->renderer->renderCombinado(
+                $poliza, $cfgCombinado, $cfgAlta, $cfgBaja, $altas, $bajas, $admin
+            );
 
-        // Validar adjuntos requeridos antes de mandar.
-        if ($solicitud->tipo === 'alta' && !empty($config->adjuntos_requeridos)) {
-            $check = $this->adjuntosCheck->verificar($asegurados, $config->adjuntos_requeridos);
-            if (!$check['ok']) {
-                throw new RuntimeException(
-                    'Faltan adjuntos requeridos: ' . json_encode($check['faltantes'], JSON_UNESCAPED_UNICODE)
-                );
+            // Validar adjuntos solo sobre el grupo de altas (las bajas no
+            // requieren adjuntos en ninguna póliza).
+            if (!empty($cfgAlta->adjuntos_requeridos)) {
+                $check = $this->adjuntosCheck->verificar($altas, $cfgAlta->adjuntos_requeridos);
+                if (!$check['ok']) {
+                    throw new RuntimeException(
+                        'Faltan adjuntos requeridos en altas: ' . json_encode($check['faltantes'], JSON_UNESCAPED_UNICODE)
+                    );
+                }
+            }
+
+            $asegurados = $altas->merge($bajas);
+            $config = $cfgCombinado;
+        } else {
+            $config = $this->cargarEmailConfig($solicitud);
+            $asegurados = $this->cargarAsegurados($solicitud);
+            $opciones = $this->opcionesClausulas($solicitud);
+
+            $rendered = $this->renderer->render($poliza, $config, $asegurados, $admin, $opciones);
+
+            // Validar adjuntos requeridos antes de mandar.
+            if ($solicitud->tipo === 'alta' && !empty($config->adjuntos_requeridos)) {
+                $check = $this->adjuntosCheck->verificar($asegurados, $config->adjuntos_requeridos);
+                if (!$check['ok']) {
+                    throw new RuntimeException(
+                        'Faltan adjuntos requeridos: ' . json_encode($check['faltantes'], JSON_UNESCAPED_UNICODE)
+                    );
+                }
             }
         }
 
@@ -304,10 +484,24 @@ class SolicitudService
                 'procesado'            => true,
             ]);
 
-            $nuevoEstado = $solicitud->tipo === 'alta' ? 'alta_solicitada' : 'baja_solicitada';
-            PolizaAsegurado::query()
-                ->whereIn('id', $asegurados->pluck('id'))
-                ->update(['estado' => $nuevoEstado]);
+            if ($solicitud->tipo === 'combinado') {
+                // Altas y bajas a sus estados respectivos, no all-at-once.
+                $altaIds = PolizaSolicitudAsegurado::where('solicitud_id', $solicitud->id)
+                    ->where('operacion', 'alta')->pluck('asegurado_id');
+                $bajaIds = PolizaSolicitudAsegurado::where('solicitud_id', $solicitud->id)
+                    ->where('operacion', 'baja')->pluck('asegurado_id');
+                if ($altaIds->isNotEmpty()) {
+                    PolizaAsegurado::whereIn('id', $altaIds)->update(['estado' => 'alta_solicitada']);
+                }
+                if ($bajaIds->isNotEmpty()) {
+                    PolizaAsegurado::whereIn('id', $bajaIds)->update(['estado' => 'baja_solicitada']);
+                }
+            } else {
+                $nuevoEstado = $solicitud->tipo === 'alta' ? 'alta_solicitada' : 'baja_solicitada';
+                PolizaAsegurado::query()
+                    ->whereIn('id', $asegurados->pluck('id'))
+                    ->update(['estado' => $nuevoEstado]);
+            }
 
             return $solicitud->fresh();
         });
@@ -337,9 +531,18 @@ class SolicitudService
         }
 
         return DB::transaction(function () use ($solicitud, $tipoRespuesta, $resumen) {
-            $aseguradoIds = PolizaSolicitudAsegurado::where('solicitud_id', $solicitud->id)
-                ->pluck('asegurado_id')
-                ->all();
+            $pivots = PolizaSolicitudAsegurado::where('solicitud_id', $solicitud->id)->get();
+            $aseguradoIds = $pivots->pluck('asegurado_id')->all();
+
+            // Para combinado, separar por operación; para alta/baja clásicas
+            // todos van con la operación implícita del solicitud->tipo.
+            if ($solicitud->tipo === 'combinado') {
+                $altaIds = $pivots->where('operacion', 'alta')->pluck('asegurado_id')->all();
+                $bajaIds = $pivots->where('operacion', 'baja')->pluck('asegurado_id')->all();
+            } else {
+                $altaIds = $solicitud->tipo === 'alta' ? $aseguradoIds : [];
+                $bajaIds = $solicitud->tipo === 'baja' ? $aseguradoIds : [];
+            }
 
             if ($tipoRespuesta === 'ok') {
                 $solicitud->update([
@@ -348,17 +551,16 @@ class SolicitudService
                     'respuesta_resumen'     => $resumen,
                 ]);
 
-                if ($solicitud->tipo === 'alta') {
-                    PolizaAsegurado::whereIn('id', $aseguradoIds)->update([
+                if (!empty($altaIds)) {
+                    PolizaAsegurado::whereIn('id', $altaIds)->update([
                         'estado'              => 'activo',
                         'fecha_alta_efectiva' => now()->toDateString(),
                     ]);
 
                     // ADDENDUM 9 Parte B — generar certificado individual por
-                    // asegurado activado. Falla silenciosa: si el PDF da error,
-                    // se loguea pero no rompe el flujo de confirmación.
+                    // asegurado activado. Falla silenciosa.
                     $aseguradosActivados = PolizaAsegurado::query()
-                        ->whereIn('id', $aseguradoIds)
+                        ->whereIn('id', $altaIds)
                         ->whereNotNull('persona_id')
                         ->get();
                     foreach ($aseguradosActivados as $a) {
@@ -368,8 +570,9 @@ class SolicitudService
                             \Log::warning("No se pudo generar certificado individual para asegurado #{$a->id}: " . $e->getMessage());
                         }
                     }
-                } else { // baja
-                    PolizaAsegurado::whereIn('id', $aseguradoIds)->update([
+                }
+                if (!empty($bajaIds)) {
+                    PolizaAsegurado::whereIn('id', $bajaIds)->update([
                         'estado'              => 'dado_de_baja',
                         'fecha_baja_efectiva' => now()->toDateString(),
                     ]);
@@ -381,11 +584,14 @@ class SolicitudService
                     'respuesta_resumen'     => $resumen,
                 ]);
 
-                // Rollback al estado anterior razonable según el tipo de solicitud.
-                $estadoVuelta = $solicitud->tipo === 'alta' ? 'no_matcheado' : 'activo';
-                PolizaAsegurado::whereIn('id', $aseguradoIds)->update([
-                    'estado' => $estadoVuelta,
-                ]);
+                // Rollback al estado anterior razonable: alta → no_matcheado,
+                // baja → activo (mantienen su vida útil en la póliza).
+                if (!empty($altaIds)) {
+                    PolizaAsegurado::whereIn('id', $altaIds)->update(['estado' => 'no_matcheado']);
+                }
+                if (!empty($bajaIds)) {
+                    PolizaAsegurado::whereIn('id', $bajaIds)->update(['estado' => 'activo']);
+                }
             }
 
             // Recalcular contador de vidas activas en la póliza.
@@ -396,13 +602,15 @@ class SolicitudService
             ]);
 
             // ADD 15 — detectar personas en es_solicitud pendiente de aprobar.
+            // Solo aplica a asegurados que pasaron a `activo` (altas), tanto en
+            // solicitudes tipo='alta' como combinadas con sección de altas.
             $pendientes = [];
-            if ($tipoRespuesta === 'ok' && $solicitud->tipo === 'alta'
+            if ($tipoRespuesta === 'ok' && !empty($altaIds)
                 && $solicitud->poliza->ofrecer_auto_aprobacion_distribuidor) {
 
                 $pendientes = \App\Models\Persona::query()
                     ->whereIn('id', PolizaAsegurado::query()
-                        ->whereIn('id', $aseguradoIds)
+                        ->whereIn('id', $altaIds)
                         ->whereNotNull('persona_id')
                         ->pluck('persona_id'))
                     ->where(function ($q) {

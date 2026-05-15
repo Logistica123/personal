@@ -15,18 +15,28 @@ class PolizaSolicitudController extends Controller
     {
     }
 
-    /** Crear borrador de solicitud (alta o baja) con asegurados seleccionados. */
+    /** Crear borrador de solicitud (alta, baja, o combinado) con asegurados seleccionados. */
     public function store(Request $request, Poliza $poliza): JsonResponse
     {
         // BUGFIX 02 Issue 2: el wizard "Solicitar alta" puede mandar `persona_ids`
         // (proveedores que aún NO son asegurados de esta póliza) en lugar de
         // `asegurado_ids`. Al menos uno de los dos arrays debe venir.
+        //
+        // ADDENDUM 16 Parte B: tipo='combinado' usa los campos alta_*/baja_*
+        // para distinguir cada sección dentro del mismo correo.
         $data = $request->validate([
-            'tipo'                                        => ['required', 'in:alta,baja'],
+            'tipo'                                        => ['required', 'in:alta,baja,combinado'],
             'asegurado_ids'                               => ['nullable', 'array'],
             'asegurado_ids.*'                             => ['integer', 'exists:polizas_asegurados,id'],
             'persona_ids'                                 => ['nullable', 'array'],
             'persona_ids.*'                               => ['integer', 'exists:personas,id'],
+            // Combinado
+            'alta_asegurado_ids'                          => ['nullable', 'array'],
+            'alta_asegurado_ids.*'                        => ['integer', 'exists:polizas_asegurados,id'],
+            'alta_persona_ids'                            => ['nullable', 'array'],
+            'alta_persona_ids.*'                          => ['integer', 'exists:personas,id'],
+            'baja_asegurado_ids'                          => ['nullable', 'array'],
+            'baja_asegurado_ids.*'                        => ['integer', 'exists:polizas_asegurados,id'],
             'tipo_clausula_global'                        => ['nullable', 'in:ninguna,aplicar,previa_existente'],
             'clausula_global_id'                          => ['nullable', 'integer', 'exists:polizas_clausulas,id'],
             'clausulas_individuales'                      => ['nullable', 'array'],
@@ -34,15 +44,30 @@ class PolizaSolicitudController extends Controller
             'clausulas_individuales.*.clausula_id'        => ['required_with:clausulas_individuales', 'integer', 'exists:polizas_clausulas,id'],
         ]);
 
+        $admin = $request->user();
+        if (!$admin) {
+            return response()->json(['message' => 'No autenticado.'], 401);
+        }
+
+        if ($data['tipo'] === 'combinado') {
+            $altaA = $data['alta_asegurado_ids'] ?? [];
+            $altaP = $data['alta_persona_ids']   ?? [];
+            $bajaA = $data['baja_asegurado_ids'] ?? [];
+            if ((empty($altaA) && empty($altaP)) || empty($bajaA)) {
+                return response()->json([
+                    'message' => 'Combinado requiere al menos 1 alta y 1 baja seleccionadas.',
+                ], 422);
+            }
+            $solicitud = $this->service->crearBorradorCombinado(
+                $poliza, $altaA, $altaP, $bajaA, $admin
+            );
+            return response()->json(['data' => $solicitud->fresh(['asegurados.asegurado'])], 201);
+        }
+
         $aseguradoIds = $data['asegurado_ids'] ?? [];
         $personaIds   = $data['persona_ids']   ?? [];
         if (empty($aseguradoIds) && empty($personaIds)) {
             return response()->json(['message' => 'Sin asegurados ni personas seleccionados.'], 422);
-        }
-
-        $admin = $request->user();
-        if (!$admin) {
-            return response()->json(['message' => 'No autenticado.'], 401);
         }
 
         $opciones = [
@@ -174,12 +199,26 @@ class PolizaSolicitudController extends Controller
             ]);
 
             if ($estabaEnviado) {
-                $aseguradoIds = \App\Models\PolizaSolicitudAsegurado::where('solicitud_id', $solicitud->id)
-                    ->pluck('asegurado_id')
-                    ->all();
-                $estadoVuelta = $solicitud->tipo === 'alta' ? 'no_matcheado' : 'activo';
-                \App\Models\PolizaAsegurado::whereIn('id', $aseguradoIds)
-                    ->update(['estado' => $estadoVuelta]);
+                if ($solicitud->tipo === 'combinado') {
+                    // Combinado: cada operación vuelve a su estado natural.
+                    $altaIds = \App\Models\PolizaSolicitudAsegurado::where('solicitud_id', $solicitud->id)
+                        ->where('operacion', 'alta')->pluck('asegurado_id');
+                    $bajaIds = \App\Models\PolizaSolicitudAsegurado::where('solicitud_id', $solicitud->id)
+                        ->where('operacion', 'baja')->pluck('asegurado_id');
+                    if ($altaIds->isNotEmpty()) {
+                        \App\Models\PolizaAsegurado::whereIn('id', $altaIds)->update(['estado' => 'no_matcheado']);
+                    }
+                    if ($bajaIds->isNotEmpty()) {
+                        \App\Models\PolizaAsegurado::whereIn('id', $bajaIds)->update(['estado' => 'activo']);
+                    }
+                } else {
+                    $aseguradoIds = \App\Models\PolizaSolicitudAsegurado::where('solicitud_id', $solicitud->id)
+                        ->pluck('asegurado_id')
+                        ->all();
+                    $estadoVuelta = $solicitud->tipo === 'alta' ? 'no_matcheado' : 'activo';
+                    \App\Models\PolizaAsegurado::whereIn('id', $aseguradoIds)
+                        ->update(['estado' => $estadoVuelta]);
+                }
             }
         });
 

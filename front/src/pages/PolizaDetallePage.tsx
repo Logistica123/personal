@@ -167,6 +167,18 @@ export const PolizaDetallePage: React.FC<Props> = ({ DashboardLayout, resolveApi
           >
             − Solicitar baja
           </Link>
+          {/* ADDENDUM 16 Parte B — combinar Altas+Bajas en un solo correo.
+              Solo aparece si la póliza tiene config tipo='combinado' activa. */}
+          {(poliza.email_configs ?? []).some((c) => c.tipo === 'combinado' && c.activo) && (
+            <Link
+              to={`/polizas/${poliza.id}/solicitar-combinado`}
+              className="secondary-action"
+              style={{ background: '#7c3aed', color: '#fff', padding: '0.5rem 0.9rem', borderRadius: 10, textDecoration: 'none' }}
+              title="Mandar altas y bajas pendientes en un solo correo"
+            >
+              ⇄ Combinar Altas+Bajas
+            </Link>
+          )}
           {/* ADDENDUM 12 Parte G — baja masiva por bulk import. */}
           <Link
             to={`/polizas/${poliza.id}/baja-masiva`}

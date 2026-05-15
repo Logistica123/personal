@@ -84,6 +84,19 @@ export const PolizaConfiguracionPage: React.FC<Props> = ({ DashboardLayout, reso
         // El separador no aparece en el type pero se usa en seeders. Default \n.
         setSeparador((c as { separador_entre_asegurados?: string }).separador_entre_asegurados ?? '\n');
         setAdjuntos(c.adjuntos_requeridos ?? []);
+      } else if (tipo === 'combinado') {
+        // ADDENDUM 16 Parte B: la fila combinado puede no existir todavía;
+        // dejamos los campos vacíos para que el admin la cree desde acá.
+        // El backend acepta crearla on-demand en PUT email-config/combinado.
+        setConfig({
+          id: 0, poliza_id: data.id, tipo: 'combinado',
+          destinatarios_to: [], destinatarios_cc: [], destinatarios_bcc: [],
+          contacto_nombre: null, asunto_template: '', body_template: '',
+          asegurado_template: '', adjuntos_requeridos: [], activo: false,
+        });
+        setDestTo([]); setDestCc([]); setDestBcc([]);
+        setContactoNombre(''); setAsunto(''); setBody('');
+        setAseguradoTpl(''); setSeparador('\n'); setAdjuntos([]);
       } else {
         setConfig(null);
         setError(`No existe email_config para tipo "${tipo}" en esta póliza.`);
@@ -207,9 +220,9 @@ export const PolizaConfiguracionPage: React.FC<Props> = ({ DashboardLayout, reso
         </div>
       )}
 
-      {/* Selector tipo (alta / baja). */}
+      {/* Selector tipo (alta / baja / combinado). */}
       <div className="liq-tabbar" style={{ marginBottom: '1rem' }}>
-        {(['alta', 'baja'] as TipoEmail[]).map((t) => (
+        {(['alta', 'baja', 'combinado'] as TipoEmail[]).map((t) => (
           <button
             key={t}
             type="button"
@@ -217,10 +230,29 @@ export const PolizaConfiguracionPage: React.FC<Props> = ({ DashboardLayout, reso
             onClick={() => setTipo(t)}
             style={tipo === t ? { background: '#1d74f5', color: '#fff' } : undefined}
           >
-            Email de {t}
+            {t === 'combinado' ? 'Correo combinado (Altas+Bajas)' : `Email de ${t}`}
           </button>
         ))}
       </div>
+
+      {/* ADDENDUM 16 Parte B — explicación corta del modo combinado. */}
+      {tipo === 'combinado' && (
+        <div className="dashboard-card" style={{ marginBottom: '1rem', background: '#f4f7ff' }}>
+          <h3 style={{ margin: 0 }}>¿Cómo funciona el correo combinado?</h3>
+          <p style={{ margin: 0, fontSize: '0.85rem', color: '#444' }}>
+            Si esta póliza tiene casilla y asunto configurados acá, en la pantalla de envío
+            aparece la opción de mandar Altas y Bajas en un solo correo (en vez de los dos
+            separados de siempre). El cuerpo se arma combinando una sección <b>ALTAS</b> y
+            otra <b>BAJAS</b>, cada una con la tabla configurada en sus respectivos tabs.
+          </p>
+          <p style={{ margin: '0.4rem 0 0 0', fontSize: '0.85rem', color: '#444' }}>
+            Placeholders especiales en el body de combinado:&nbsp;
+            <code>{'{altas_block}'}</code>&nbsp;y&nbsp;<code>{'{bajas_block}'}</code>.
+            (No se usan <code>{'{asegurados_block}'}</code> ni el template por asegurado
+            de esta fila — los toma del tab Alta y Baja respectivamente.)
+          </p>
+        </div>
+      )}
 
       {loading && <div style={{ padding: '1rem', color: '#666' }}>Cargando…</div>}
 
@@ -314,6 +346,7 @@ export const PolizaConfiguracionPage: React.FC<Props> = ({ DashboardLayout, reso
             />
           </div>
 
+          {tipo !== 'combinado' && (
           <div className="dashboard-card" style={{ marginBottom: '1rem' }}>
             <h3 style={{ margin: 0 }}>Probar configuración</h3>
             <p style={{ fontSize: '0.85rem', color: '#666', margin: '0.25rem 0 0.5rem 0' }}>
@@ -343,6 +376,7 @@ export const PolizaConfiguracionPage: React.FC<Props> = ({ DashboardLayout, reso
               </button>
             </div>
           </div>
+          )}
 
           <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem' }}>
             <Link to={polizaId ? `/polizas/${polizaId}` : '/polizas'} className="secondary-action secondary-action--ghost">

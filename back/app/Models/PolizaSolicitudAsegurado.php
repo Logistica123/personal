@@ -16,6 +16,7 @@ class PolizaSolicitudAsegurado extends Model
     protected $fillable = [
         'solicitud_id',
         'asegurado_id',
+        'operacion',
         'observaciones',
     ];
 

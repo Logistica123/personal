@@ -46,6 +46,7 @@ import { PolizasPage } from './pages/PolizasPage';
 import { PolizaDetallePage } from './pages/PolizaDetallePage';
 import { PolizaCargarPdfPage } from './pages/PolizaCargarPdfPage';
 import { PolizaSolicitarPage } from './pages/PolizaSolicitarPage';
+import { PolizaSolicitarCombinadoPage } from './pages/PolizaSolicitarCombinadoPage';
 import { PolizaSolicitudesPage } from './pages/PolizaSolicitudesPage';
 import { PolizaSolicitudDetallePage } from './pages/PolizaSolicitudDetallePage';
 import { PersonaPolizasPage } from './pages/PersonaPolizasPage';
@@ -21279,6 +21280,17 @@ const AppRoutes: React.FC = () => {
         element={
           <RequireAccess section="personal">
             <PolizaSolicitarPage
+              DashboardLayout={DashboardLayout}
+              resolveApiBaseUrl={resolveApiBaseUrl}
+            />
+          </RequireAccess>
+        }
+      />
+      <Route
+        path="/polizas/:polizaId/solicitar-combinado"
+        element={
+          <RequireAccess section="personal">
+            <PolizaSolicitarCombinadoPage
               DashboardLayout={DashboardLayout}
               resolveApiBaseUrl={resolveApiBaseUrl}
             />

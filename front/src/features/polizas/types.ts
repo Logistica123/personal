@@ -10,7 +10,10 @@ export type EstadoAsegurado =
   | 'dado_de_baja'
   | 'no_matcheado';
 export type TipoEndoso = 'constancia' | 'incorporacion' | 'baja' | 'modificacion';
-export type TipoEmail = 'alta' | 'baja';
+/** `combinado` — ADDENDUM 16 Parte B: una sola solicitud que junta altas+bajas. */
+export type TipoEmail = 'alta' | 'baja' | 'combinado';
+/** Tipos de email_config que existen "por defecto" en toda póliza. */
+export type TipoEmailBase = 'alta' | 'baja';
 
 export type Aseguradora = {
   id: number;

@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\Cliente;
+use App\Rules\CuitValido;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -86,7 +87,7 @@ class ClienteController extends Controller
             'codigo' => ['nullable', 'string'],
             'nombre' => ['nullable', 'string'],
             'direccion' => ['nullable', 'string'],
-            'documento_fiscal' => ['nullable', 'string'],
+            'documento_fiscal' => ['nullable', 'string', new CuitValido()],
             'logo_url' => ['nullable', 'string', 'max:4096'],
             'sucursales' => ['sometimes', 'array'],
             'sucursales.*.nombre' => ['nullable', 'string'],
@@ -147,7 +148,7 @@ class ClienteController extends Controller
             'codigo' => ['nullable', 'string'],
             'nombre' => ['nullable', 'string'],
             'direccion' => ['nullable', 'string'],
-            'documento_fiscal' => ['nullable', 'string'],
+            'documento_fiscal' => ['nullable', 'string', new CuitValido()],
             'logo_url' => ['nullable', 'string', 'max:4096'],
             'sucursales' => ['sometimes', 'array'],
             'sucursales.*.id' => [

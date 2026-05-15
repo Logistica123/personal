@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\Liq;
 use App\Http\Controllers\Controller;
 use App\Models\Cliente;
 use App\Models\LiqCliente;
+use App\Rules\CuitValido;
 use App\Models\LiqEsquemaTarifario;
 use App\Models\LiqDimensionValor;
 use App\Models\LiqLineaTarifa;
@@ -68,7 +69,7 @@ class LiqClienteController extends Controller
             'razon_social' => 'sometimes|string|max:255',
             'nombre_corto' => 'sometimes|string|max:80',
             'codigo_corto' => 'nullable|string|max:3',
-            'cuit' => 'nullable|string|max:20',
+            'cuit' => ['nullable', 'string', 'max:20', new CuitValido()],
             'configuracion_excel' => 'nullable|array',
         ]);
 
@@ -120,7 +121,7 @@ class LiqClienteController extends Controller
             'razon_social' => 'sometimes|string|max:255',
             'nombre_corto' => 'sometimes|string|max:80',
             'codigo_corto' => 'sometimes|nullable|string|max:3',
-            'cuit' => 'sometimes|nullable|string|max:20',
+            'cuit' => ['sometimes', 'nullable', 'string', 'max:20', new CuitValido()],
             'configuracion_excel' => 'sometimes|nullable|array',
             'activo' => 'sometimes|boolean',
         ]);

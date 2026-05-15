@@ -18,6 +18,7 @@ type SolicitudDetalle = PolizaSolicitud & {
   asegurados?: Array<{
     id: number;
     asegurado_id: number;
+    operacion?: 'alta' | 'baja' | null;
     asegurado: {
       id: number;
       identificador: string;
@@ -276,11 +277,23 @@ export const PolizaSolicitudDetallePage: React.FC<Props> = ({ DashboardLayout, r
         <div className="table-wrapper">
           <table className="bdd-activos-table" style={{ width: '100%' }}>
             <thead>
-              <tr><th>Identificador</th><th>Nombre / Vehículo</th><th>Persona</th><th>Estado actual</th></tr>
+              <tr>
+                {solicitud.tipo === 'combinado' && <th>Operación</th>}
+                <th>Identificador</th><th>Nombre / Vehículo</th><th>Persona</th><th>Estado actual</th>
+              </tr>
             </thead>
             <tbody>
               {(solicitud.asegurados ?? []).map((sa) => (
                 <tr key={sa.id}>
+                  {solicitud.tipo === 'combinado' && (
+                    <td>
+                      <span style={{
+                        background: sa.operacion === 'alta' ? '#dcfce7' : '#fee2e2',
+                        color:      sa.operacion === 'alta' ? '#166534' : '#991b1b',
+                        padding: '0.15rem 0.5rem', borderRadius: 6, fontSize: '0.8rem',
+                      }}>{sa.operacion ?? '—'}</span>
+                    </td>
+                  )}
                   <td><code>{sa.asegurado.identificador}</code></td>
                   <td>{sa.asegurado.nombre_apellido_pdf ?? sa.asegurado.marca_modelo_pdf ?? '—'}</td>
                   <td>

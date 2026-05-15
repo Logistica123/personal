@@ -21,11 +21,17 @@ use Illuminate\Support\Facades\Mail;
  */
 class PolizaEmailConfigController extends Controller
 {
-    /** Editar template de email para `alta` o `baja` de una póliza. */
+    /**
+     * Editar template de email para `alta`, `baja` o `combinado` de una póliza.
+     *
+     * ADDENDUM 16 Parte B: para `combinado` se permite además `crear` la fila
+     * (no existe en el seeder de pólizas que aún no soportan combinado).
+     * La existencia de la fila + `activo=true` es la señal de "soporta combinado".
+     */
     public function update(Request $request, Poliza $poliza, string $tipo): JsonResponse
     {
-        if (!in_array($tipo, ['alta', 'baja'], true)) {
-            return response()->json(['message' => 'tipo debe ser alta o baja'], 422);
+        if (!in_array($tipo, ['alta', 'baja', 'combinado'], true)) {
+            return response()->json(['message' => 'tipo debe ser alta, baja o combinado'], 422);
         }
 
         $data = $request->validate([
@@ -51,10 +57,19 @@ class PolizaEmailConfigController extends Controller
             ->first();
 
         if (!$config) {
-            return response()->json([
-                'message' => "No existe email_config para tipo '{$tipo}' en esta póliza. " .
-                             "Las configs base se crean con el seeder; pedile al admin que la genere si falta.",
-            ], 404);
+            // Combinado puede crearse on-demand desde la UI; alta/baja deben
+            // venir del seeder (estructura de la póliza).
+            if ($tipo !== 'combinado') {
+                return response()->json([
+                    'message' => "No existe email_config para tipo '{$tipo}' en esta póliza. " .
+                                 "Las configs base se crean con el seeder; pedile al admin que la genere si falta.",
+                ], 404);
+            }
+            $config = new PolizaEmailConfig([
+                'poliza_id' => $poliza->id,
+                'tipo'      => 'combinado',
+                'activo'    => true,
+            ]);
         }
 
         $config->fill(array_filter($data, fn ($v) => $v !== null))->save();
