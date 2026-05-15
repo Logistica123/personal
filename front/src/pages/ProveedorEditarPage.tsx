@@ -2273,6 +2273,13 @@ export const ProveedorEditarPage: React.FC<ProveedorEditarPageProps> = ({
                 onChange={(v) => setFormValues((prev) => ({ ...prev, cobradorCbuAlias: v }))}
                 disabled={isReadOnly || !canEditCbu}
               />
+              {formValues.cbuAlias.trim() !== ''
+                && formValues.cobradorCbuAlias.trim() !== ''
+                && formValues.cbuAlias.trim() === formValues.cobradorCbuAlias.trim() ? (
+                <div style={{ gridColumn: '1 / -1', color: '#92400e', background: '#fef3c7', border: '1px solid #fcd34d', padding: '6px 10px', borderRadius: 6, fontSize: '0.85rem' }}>
+                  ⚠ El CBU del cobrador coincide con el CBU del distribuidor. Si es a propósito (mismo titular) podés continuar; si no, revisá uno de los dos.
+                </div>
+              ) : null}
             </>
           ) : null}
         </div>
