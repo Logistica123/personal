@@ -6211,6 +6211,148 @@ const sucursalOptions = useMemo(() => {
     );
   };
 
+  const handleExportSolicitudesCsv = () => {
+    const dataset = filteredSolicitudes;
+
+    if (dataset.length === 0) {
+      window.alert('No hay solicitudes para exportar.');
+      return;
+    }
+
+    const formatCreated = (registro: PersonalRecord): string => {
+      const created = resolveSolicitudCreated(registro);
+      if (!created) {
+        return '';
+      }
+      const parsed = new Date(created);
+      if (Number.isNaN(parsed.getTime())) {
+        return created;
+      }
+      return parsed.toLocaleString('es-AR', { dateStyle: 'short', timeStyle: 'short' });
+    };
+
+    const resolveSolicitanteLabel = (registro: PersonalRecord): string => {
+      const data = registro.solicitudData as any;
+      return (
+        data?.form?.solicitanteNombre ??
+        data?.form?.empleadoNombre ??
+        data?.form?.transportista ??
+        registro.nombre ??
+        ''
+      );
+    };
+
+    const resolveDestinatarioLabel = (registro: PersonalRecord): string => {
+      const data = registro.solicitudData as any;
+      const destinatarioIds = Array.isArray(data?.form?.destinatarioIds)
+        ? data?.form?.destinatarioIds
+        : data?.form?.destinatarioId
+        ? [String(data?.form?.destinatarioId)]
+        : [];
+      return resolveApproverNames(destinatarioIds) ?? registro.agente ?? '';
+    };
+
+    const resolveImporteSolicitado = (registro: PersonalRecord): string => {
+      const data = registro.solicitudData as any;
+      let importe: string | number | null | undefined = null;
+      switch (registro.solicitudTipo) {
+        case 'adelanto':
+          importe = data?.form?.monto ?? null;
+          break;
+        case 'prestamo':
+          importe = data?.form?.montoSolicitado ?? null;
+          break;
+        default:
+          importe = null;
+      }
+      if (importe === null || importe === undefined || importe === '') {
+        return '';
+      }
+      return formatCurrency(importe);
+    };
+
+    const columns: Array<{ header: string; resolve: (registro: PersonalRecord) => string | number | null | undefined }> = [
+      { header: 'Tipo', resolve: (registro) => resolveSolicitudTipoMeta(registro).label },
+      { header: 'ID', resolve: (registro) => registro.id },
+      { header: 'Nombre', resolve: (registro) => registro.nombre ?? '' },
+    ];
+
+    if (isSolicitudPersonalView) {
+      columns.push(
+        { header: 'Solicitante', resolve: (registro) => resolveSolicitanteLabel(registro) },
+        { header: 'Enviada a', resolve: (registro) => resolveDestinatarioLabel(registro) },
+      );
+    }
+
+    columns.push({
+      header: 'Perfil',
+      resolve: (registro) => perfilNames[registro.perfilValue ?? 0] ?? registro.perfil ?? '',
+    });
+
+    if (!isSolicitudPersonalView) {
+      columns.push(
+        { header: 'Cliente', resolve: (registro) => registro.cliente ?? '' },
+        { header: 'Sucursal', resolve: (registro) => registro.sucursal ?? '' },
+      );
+    }
+
+    columns.push(
+      { header: 'Agente', resolve: (registro) => registro.agente ?? '' },
+      { header: 'Estado', resolve: (registro) => registro.estado ?? '' },
+    );
+
+    if (isSolicitudPersonalView) {
+      columns.push({ header: 'Importe', resolve: (registro) => resolveImporteSolicitado(registro) });
+    }
+
+    columns.push({ header: 'Creada', resolve: (registro) => formatCreated(registro) });
+
+    if (!isSolicitudPersonalView) {
+      columns.push({ header: 'Fecha alta', resolve: (registro) => registro.fechaAlta ?? '' });
+    }
+
+    const sanitizeCell = (raw: string): string => {
+      const cleaned = raw.replace(/[\t\r\n]+/g, ' ').trim();
+      if (/^\d+$/.test(cleaned) && (cleaned.length >= 10 || cleaned.startsWith('0'))) {
+        return `⁠${cleaned}`;
+      }
+      return cleaned;
+    };
+
+    const rows = dataset.map((registro) =>
+      columns.map((column) => {
+        const value = column.resolve(registro);
+        const text = value === null || value === undefined ? '' : String(value);
+        return sanitizeCell(text);
+      })
+    );
+
+    const headerRow = columns.map((column) => column.header);
+
+    const delimiter = ';';
+    const csvEscape = (value: string) => {
+      const needsQuotes = value.includes(delimiter) || value.includes('"') || value.includes('\n') || value.includes('\r');
+      const safe = value.replace(/"/g, '""');
+      return needsQuotes ? `"${safe}"` : safe;
+    };
+
+    const csv = [headerRow, ...rows]
+      .map((row) => row.map((cell) => csvEscape(String(cell ?? ''))).join(delimiter))
+      .join('\n');
+
+    const BOM = '﻿';
+    const blob = new Blob([BOM + csv], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    const filenamePrefix = isSolicitudPersonalView ? 'solicitudes-personal' : 'solicitudes';
+    link.download = `${filenamePrefix}-${Date.now()}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
   const renderSolicitudesList = () => {
     const listColSpan = isSolicitudPersonalView ? 11 : 11;
     return (
@@ -6238,6 +6380,9 @@ const sucursalOptions = useMemo(() => {
               {bulkRejectingSolicitudes ? 'Rechazando...' : 'Rechazar todos'}
             </button>
           ) : null}
+          <button type="button" className="secondary-action" onClick={handleExportSolicitudesCsv}>
+            Exportar CSV
+          </button>
           <button type="button" className="secondary-action" onClick={handleSolicitudesReset}>
             Limpiar
           </button>

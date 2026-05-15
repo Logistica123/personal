@@ -150,8 +150,15 @@ class OcasaExcelProcessor
             // Parsear capacidad vehicular
             $capacidadKg = $this->parsearCapacidadVehicular($pesoAprox);
 
-            // Resolver sucursal
-            $sucursalTarifa = $mapeosSucursal[$sucursalCod] ?? null;
+            // Resolver sucursal: el TMS de OCASA trae el código canónico en Pto.Planif.
+            // (ej. "A005", "A022"). Se guarda tal cual; el mapeo se usa solo si existe,
+            // como fallback al esquema anterior (cliente cargó "A005" => "CORDOBA").
+            // Si no hay mapeo, se conserva el código crudo del TMS.
+            if ($sucursalCod !== '') {
+                $sucursalTarifa = $mapeosSucursal[$sucursalCod] ?? $sucursalCod;
+            } else {
+                $sucursalTarifa = null;
+            }
 
             // Campos originales
             $camposOriginales = [];
